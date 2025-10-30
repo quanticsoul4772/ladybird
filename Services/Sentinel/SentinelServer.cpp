@@ -11,6 +11,9 @@
 #include <AK/JsonParser.h>
 #include <AK/JsonValue.h>
 #include <LibCore/File.h>
+#include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
+#include <sys/stat.h>
 #include <yara.h>
 
 // Undefine YARA macros that conflict with AK classes
@@ -90,8 +93,21 @@ ErrorOr<NonnullOwnPtr<SentinelServer>> SentinelServer::create()
     // Initialize YARA rules
     TRY(initialize_yara());
 
+    // Remove stale socket file if it exists (from previous unclean shutdown)
+    auto socket_path = "/tmp/sentinel.sock"sv;
+    if (FileSystem::exists(socket_path)) {
+        // Socket exists - try to remove it
+        auto remove_result = FileSystem::remove(socket_path, FileSystem::RecursionMode::Disallowed);
+        if (remove_result.is_error()) {
+            dbgln("Sentinel: Warning: Could not remove stale socket: {}", remove_result.error());
+            // Continue anyway - maybe we can still bind
+        } else {
+            dbgln("Sentinel: Removed stale socket file");
+        }
+    }
+
     auto server = Core::LocalServer::construct();
-    if (!server->listen("/tmp/sentinel.sock"sv))
+    if (!server->listen(socket_path))
         return Error::from_string_literal("Failed to listen on /tmp/sentinel.sock");
 
     auto sentinel_server = adopt_own(*new SentinelServer(move(server)));
@@ -211,10 +227,58 @@ ErrorOr<void> SentinelServer::process_message(Core::LocalSocket& socket, String 
     return {};
 }
 
+static ErrorOr<ByteString> validate_scan_path(StringView file_path)
+{
+    // Resolve canonical path to prevent directory traversal
+    auto canonical = TRY(FileSystem::real_path(file_path));
+
+    // Check for directory traversal attempts in canonical path
+    if (canonical.contains(".."sv))
+        return Error::from_string_literal("Path traversal detected");
+
+    // Whitelist allowed directories - only scan files in user-accessible locations
+    Vector<StringView> allowed_prefixes = {
+        "/home"sv,      // User home directories
+        "/tmp"sv,       // Temporary downloads
+        "/var/tmp"sv,   // Alternative temp directory
+    };
+
+    bool allowed = false;
+    for (auto& prefix : allowed_prefixes) {
+        if (canonical.view().starts_with(prefix)) {
+            allowed = true;
+            break;
+        }
+    }
+
+    if (!allowed)
+        return Error::from_string_literal("File path not in allowed directory");
+
+    // Check file is not a symlink (prevent symlink attacks)
+    auto stat_result = TRY(Core::System::lstat(canonical));
+    if (S_ISLNK(stat_result.st_mode))
+        return Error::from_string_literal("Cannot scan symlinks");
+
+    // Check file is a regular file (prevent scanning device files, pipes, etc.)
+    if (!S_ISREG(stat_result.st_mode))
+        return Error::from_string_literal("Can only scan regular files");
+
+    return canonical;
+}
+
 ErrorOr<ByteString> SentinelServer::scan_file(ByteString const& file_path)
 {
-    // Read file content
-    auto file = TRY(Core::File::open(file_path, Core::File::OpenMode::Read));
+    // Validate and canonicalize the file path for security
+    auto validated_path = TRY(validate_scan_path(file_path));
+
+    // Check file size before reading to prevent memory exhaustion
+    auto stat_result = TRY(Core::System::stat(validated_path));
+    constexpr size_t MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB
+    if (static_cast<size_t>(stat_result.st_size) > MAX_FILE_SIZE)
+        return Error::from_string_literal("File too large to scan");
+
+    // Read file content using validated path
+    auto file = TRY(Core::File::open(validated_path, Core::File::OpenMode::Read));
     auto content = TRY(file->read_until_eof());
 
     return scan_content(content.bytes());

@@ -1,0 +1,58 @@
+PolicyGraph: Cleaning up threats older than 30 days (cutoff: 1759267354000)
+====================================
+  Download Vetting Flow Tests
+  (Phase 5 Days 29-30)
+====================================
+✅ PolicyGraph initialized at /tmp/sentinel_download_test
+
+=== Test 1: EICAR File Detection and Policy Creation ===
+  No existing policy for EICAR (expected for first run)
+  Created block policy for EICAR (ID: 1)
+  Recorded EICAR threat in history
+  Second EICAR detection matched policy (Action: Block, ID: 1)
+  AUTO-BLOCK: No user prompt required for second detection
+✅ PASSED: EICAR Detection and Policy Creation
+
+=== Test 2: Clean File Download (No Alert) ===
+  Clean file hash: 2278dbf7f19c13e2eb8d3b9236dc3cb1110b0df3e18511cdcc6608e1c97402dd
+  Clean file: No policy matched (expected)
+  Download proceeds without user alert
+✅ PASSED: Clean File Download (No Alert)
+
+=== Test 3: Policy Enforcement Actions ===
+  ✓ Block action enforced: Download prevented
+  ✓ Quarantine action enforced: File isolated
+  ✓ Allow action enforced: Download permitted
+✅ PASSED: Policy Enforcement Actions
+
+=== Test 4: Rate Limiting Simulation ===
+  Simulating rapid policy creation...
+  Created policy 1/5 (ID: 5)
+  Created policy 2/5 (ID: 6)
+  Created policy 3/5 (ID: 7)
+  Created policy 4/5 (ID: 8)
+  Created policy 5/5 (ID: 9)
+  All 5 policies created successfully
+  Note: Rate limiting is enforced at UI/IPC layer (5 policies/minute)
+✅ PASSED: Rate Limiting Simulation
+
+=== Test 5: Threat History Tracking ===
+  Recorded 3 threats to history
+  Retrieved 3 threats from history
+  Verified all threats present in history
+✅ PASSED: Threat History Tracking
+
+====================================
+  Test Summary
+====================================
+  Passed: 5
+  Failed: 0
+  Total:  5
+====================================
+
+✅ All Download Vetting Tests PASSED!
+
+Note: These tests verify policy enforcement logic.
+Full end-to-end testing requires running Sentinel daemon.
+
+Database location: /tmp/sentinel_download_test/policy_graph.db
