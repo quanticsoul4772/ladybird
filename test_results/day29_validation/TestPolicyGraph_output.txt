@@ -1,0 +1,47 @@
+PolicyGraph: Cleaning up threats older than 30 days (cutoff: 1759267342000)
+====================================
+  PolicyGraph Integration Tests
+====================================
+✅ PolicyGraph initialized at /tmp/sentinel_test
+
+=== Test: Create Policy ===
+✅ PASSED: Created policy with ID 5
+
+=== Test: List Policies ===
+✅ PASSED: Found 5 policies
+  - ID: 5, Rule: EICAR_Test_File, Action: Block, Hits: 0
+  - ID: 4, Rule: Windows_PE_Suspicious, Action: Quarantine, Hits: 1
+  - ID: 3, Rule: Malicious_Domain, Action: Block, Hits: 1
+  - ID: 2, Rule: Test_Rule, Action: Quarantine, Hits: 1
+  - ID: 1, Rule: EICAR_Test_File, Action: Block, Hits: 0
+
+=== Test: Match Policy by Hash ===
+✅ PASSED: Matched policy ID 2 by hash
+  Action: Quarantine, Hit count: 0
+
+=== Test: Match Policy by URL Pattern ===
+✅ PASSED: Matched policy ID 3 by URL pattern
+  Pattern: %malicious.com%, Action: Block
+
+=== Test: Match Policy by Rule Name ===
+✅ PASSED: Matched policy ID 4 by rule name
+  Rule: Windows_PE_Suspicious, Action: Quarantine
+
+=== Test: Record Threat History ===
+✅ PASSED: Recorded threat to history
+
+=== Test: Get Threat History ===
+✅ PASSED: Retrieved 2 threat records
+  - threat.exe from http://test.com/threat.exem.exead.exe: Test_Threat (action: blocked ȔP�)
+  - threat.exe from http://test.com/threat.exeexe: Test_Threat (action: blocked ȔP�)
+
+=== Test: Policy Statistics ===
+✅ PASSED: Statistics retrieved
+  Total policies: 8
+  Total threats: 2
+
+====================================
+  All Tests Complete!
+====================================
+
+Database location: /tmp/sentinel_test/policy_graph.db
