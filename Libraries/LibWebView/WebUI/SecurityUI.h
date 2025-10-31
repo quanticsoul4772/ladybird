@@ -53,6 +53,10 @@ private:
     // Credential Education Preference (Phase 6 Day 41)
     void set_credential_education_shown(JsonValue const&);
 
+    // Import/Export (Milestone 0.3 Phase 4)
+    void export_credential_relationships();
+    void import_credential_relationships(JsonValue const&);
+
     // PolicyGraph instance for security policy management
     Optional<ErrorOr<NonnullOwnPtr<Sentinel::PolicyGraph>>> m_policy_graph;
 };

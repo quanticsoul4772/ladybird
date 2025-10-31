@@ -645,6 +645,22 @@
                     </div>
                 </div>
 
+                <!-- Import/Export Relationships (Milestone 0.3 Phase 4) -->
+                <div style="margin-top: 20px; padding: 16px; background-color: var(--stat-background); border-radius: 8px; border: 1px solid var(--stat-border);">
+                    <h4 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 600;">Manage Relationships</h4>
+                    <div style="display: flex; gap: 12px;">
+                        <button class="button button-secondary" onclick="exportCredentialRelationships()">
+                            Export Trusted Relationships
+                        </button>
+                        <button class="button button-secondary" onclick="importCredentialRelationships()">
+                            Import Trusted Relationships
+                        </button>
+                    </div>
+                    <p style="margin-top: 12px; font-size: 12px; opacity: 0.7;">
+                        Export your trusted relationships to back them up or transfer to another browser. Import allows you to restore previously exported relationships.
+                    </p>
+                </div>
+
                 <!-- Security Tips Section (Sentinel Phase 6 Day 41) -->
                 <div class="security-tips-section">
                     <h3 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px; font-weight: 600;">
@@ -957,6 +973,12 @@
                         break;
                     case "trustedFormRevoked":
                         handleTrustedFormRevoked(data);
+                        break;
+                    case "credentialExported":
+                        handleCredentialExport(data);
+                        break;
+                    case "credentialImported":
+                        handleCredentialImport(data);
                         break;
                 }
             });
@@ -1530,6 +1552,77 @@
 
             // Make revokeTrustedForm available globally
             window.revokeTrustedForm = revokeTrustedForm;
+
+            // Import/Export Functions (Milestone 0.3 Phase 4)
+
+            function exportCredentialRelationships() {
+                ladybird.sendMessage("exportCredentialRelationships", {});
+            }
+
+            function importCredentialRelationships() {
+                // Create file input element
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.json';
+
+                input.onchange = (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        try {
+                            const json = event.target.result;
+                            // Validate it's valid JSON
+                            JSON.parse(json);
+                            // Send to backend
+                            ladybird.sendMessage("importCredentialRelationships", { json: json });
+                        } catch (error) {
+                            alert('Invalid JSON file: ' + error.message);
+                        }
+                    };
+                    reader.readAsText(file);
+                };
+
+                input.click();
+            }
+
+            function handleCredentialExport(data) {
+                if (data.error) {
+                    alert('Failed to export relationships: ' + data.error);
+                    return;
+                }
+
+                // Create a blob from the JSON data
+                const blob = new Blob([data.json], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+
+                // Create a temporary link and trigger download
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `credential-relationships-${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+
+                // Cleanup
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                alert('Credential relationships exported successfully!');
+            }
+
+            function handleCredentialImport(data) {
+                if (data.error) {
+                    alert('Failed to import relationships: ' + data.error);
+                } else {
+                    alert(`Successfully imported ${data.count} credential relationships!`);
+                    loadCredentialProtectionData();
+                }
+            }
+
+            // Make import/export functions available globally
+            window.exportCredentialRelationships = exportCredentialRelationships;
+            window.importCredentialRelationships = importCredentialRelationships;
 
             // Credential Protection Education Modal Functions (Sentinel Phase 6 Day 41)
 

@@ -94,6 +94,15 @@ void SecurityUI::register_interfaces()
     register_interface("setCredentialEducationShown"sv, [this](auto const& data) {
         set_credential_education_shown(data);
     });
+
+    // Milestone 0.3 Phase 4: Import/Export credential relationships
+    register_interface("exportCredentialRelationships"sv, [this](auto const&) {
+        export_credential_relationships();
+    });
+
+    register_interface("importCredentialRelationships"sv, [this](auto const& data) {
+        import_credential_relationships(data);
+    });
 }
 
 void SecurityUI::get_system_status()
@@ -1153,6 +1162,80 @@ void SecurityUI::set_credential_education_shown(JsonValue const& data)
             dbgln("SecurityUI: Credential education preference saved successfully");
         }
     }
+}
+
+void SecurityUI::export_credential_relationships()
+{
+    // Milestone 0.3 Phase 4: Export credential relationships to JSON
+
+    JsonObject response;
+
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized for export");
+        response.set("error"sv, JsonValue { "PolicyGraph not initialized"_string });
+        async_send_message("credentialExported"sv, response);
+        return;
+    }
+
+    auto export_result = m_policy_graph->value()->export_relationships_json();
+    if (export_result.is_error()) {
+        dbgln("SecurityUI: Failed to export relationships: {}", export_result.error());
+        response.set("error"sv, JsonValue { "Failed to export relationships"_string });
+    } else {
+        dbgln("SecurityUI: Successfully exported credential relationships");
+        response.set("json"sv, JsonValue { export_result.value() });
+    }
+
+    async_send_message("credentialExported"sv, response);
+}
+
+void SecurityUI::import_credential_relationships(JsonValue const& data)
+{
+    // Milestone 0.3 Phase 4: Import credential relationships from JSON
+
+    JsonObject response;
+
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized for import");
+        response.set("error"sv, JsonValue { "PolicyGraph not initialized"_string });
+        async_send_message("credentialImported"sv, response);
+        return;
+    }
+
+    if (!data.is_object()) {
+        dbgln("SecurityUI: Invalid data for import");
+        response.set("error"sv, JsonValue { "Invalid request data"_string });
+        async_send_message("credentialImported"sv, response);
+        return;
+    }
+
+    auto const& data_obj = data.as_object();
+    auto json_str = data_obj.get_string("json"sv);
+    if (!json_str.has_value()) {
+        dbgln("SecurityUI: Missing JSON data for import");
+        response.set("error"sv, JsonValue { "Missing JSON data"_string });
+        async_send_message("credentialImported"sv, response);
+        return;
+    }
+
+    // Import relationships
+    auto import_result = m_policy_graph->value()->import_relationships_json(json_str.value());
+    if (import_result.is_error()) {
+        dbgln("SecurityUI: Failed to import relationships: {}", import_result.error());
+        response.set("error"sv, JsonValue { "Failed to import relationships"_string });
+    } else {
+        // Count how many relationships were imported by querying the database
+        auto list_result = m_policy_graph->value()->list_relationships({});
+        size_t count = 0;
+        if (!list_result.is_error()) {
+            count = list_result.value().size();
+        }
+
+        dbgln("SecurityUI: Successfully imported credential relationships (total: {})", count);
+        response.set("count"sv, JsonValue { static_cast<i64>(count) });
+    }
+
+    async_send_message("credentialImported"sv, response);
 }
 
 }
