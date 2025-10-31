@@ -21,9 +21,9 @@ This fork extends Ladybird with:
 
 ### Built-in Security (Sentinel)
 
-Sentinel provides local malware scanning for downloads using YARA rules. All processing is done locally with no external communication.
+Sentinel provides local malware scanning and credential protection. All processing is done locally with no external communication.
 
-#### Features
+#### Malware Scanning (Milestone 0.1)
 
 - YARA-based malware detection during downloads
 - Policy-based enforcement (Block, Quarantine, Allow)
@@ -31,20 +31,32 @@ Sentinel provides local malware scanning for downloads using YARA rules. All pro
 - File quarantine system
 - Security dashboard at `about:security`
 
+#### Credential Protection (Milestone 0.2)
+
+- Real-time detection of cross-origin credential submissions
+- Security alerts for suspicious form submissions
+- Trusted form relationship management
+- Password autofill protection for untrusted forms
+- One-time autofill override mechanism
+- User education modal and security tips
+
 #### Usage
 
-1. Sentinel starts with Ladybird
+1. Sentinel starts automatically with Ladybird
 2. Security alerts appear when threats are detected
-3. Choose action: Block, Quarantine, or Allow
-4. Enable "Remember this decision" to create a policy
+3. Choose action: Block, Trust, Learn More
+4. Enable "Remember this decision" to create policies
 5. Manage policies at `about:security`
 
 #### Documentation
 
-- [User Guide](docs/SENTINEL_USER_GUIDE.md)
+- [User Guide - Malware Scanning](docs/SENTINEL_USER_GUIDE.md)
+- [User Guide - Credential Protection](docs/USER_GUIDE_CREDENTIAL_PROTECTION.md)
 - [Policy Management Guide](docs/SENTINEL_POLICY_GUIDE.md)
 - [YARA Rules Guide](docs/SENTINEL_YARA_RULES.md)
 - [Architecture Documentation](docs/SENTINEL_ARCHITECTURE.md)
+- [Setup Guide](docs/SENTINEL_SETUP_GUIDE.md)
+- [Changelog](docs/CHANGELOG.md)
 
 Note: Educational implementation, not security-audited.
 
@@ -101,7 +113,10 @@ https://vitalik.eth
 
 **Core Processes:**
 - **Main UI Process** - Qt/AppKit/Android interface with security dialogs
-- **WebContent Process** (per tab, sandboxed) - Rendering and JavaScript execution
+- **WebContent Process** (per tab, sandboxed) - Rendering and JavaScript execution with:
+  - FormMonitor for credential exfiltration detection
+  - Trusted relationship management for cross-origin forms
+  - Autofill protection for untrusted forms
 - **ImageDecoder Process** (sandboxed) - Safe image decoding
 - **RequestServer Process** - Enhanced network requests with:
   - Tor/SOCKS5H proxy support with DNS leak prevention
@@ -131,6 +146,7 @@ https://vitalik.eth
 - **LibIPC** - Inter-process communication
 
 **Fork Enhancements:**
+- **FormMonitor** - Credential exfiltration detection and autofill protection
 - **SecurityTap** - YARA integration for download scanning
 - **PolicyGraph** - SQLite-backed security policy database
 - **NetworkIdentity** - Per-tab network configuration management

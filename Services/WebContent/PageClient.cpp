@@ -553,12 +553,79 @@ void PageClient::page_did_submit_form(Web::HTML::HTMLFormElement& form, String c
     if (m_form_monitor.is_suspicious_submission(event)) {
         auto alert = m_form_monitor.analyze_submission(event);
         if (alert.has_value()) {
-            // TODO: Send IPC message to UI for the alert
-            // This will be implemented once the IPC message is defined
+            // Check if this submission has been blocked by user
+            if (m_form_monitor.is_blocked_submission(alert->form_origin, alert->action_origin)) {
+                dbgln("FormMonitor: BLOCKED submission from {} to {} (user previously blocked this)",
+                      alert->form_origin, alert->action_origin);
+                // NOTE: Form has already been submitted by the browser at this point.
+                // We log the blocking but can't prevent the actual HTTP request.
+                // Future enhancement: Prevent submission earlier in the pipeline.
+                return;
+            }
+
             dbgln("FormMonitor: Detected suspicious form submission from {} to {}",
                 alert->form_origin, alert->action_origin);
+
+            // Generate description based on alert type
+            String description;
+            if (alert->alert_type == "insecure_credential_post"sv) {
+                description = "Password field submitted over insecure HTTP connection"_string;
+            } else if (alert->alert_type == "credential_exfiltration"sv) {
+                description = MUST(String::formatted("Password field submitted to different origin: {}", alert->action_origin));
+            } else if (alert->alert_type == "third_party_form_post"sv) {
+                description = MUST(String::formatted("Form data submitted to third-party domain: {}", alert->action_origin));
+            } else if (alert->alert_type == "form_action_mismatch"sv) {
+                description = "Form action URL differs from page origin"_string;
+            } else {
+                description = "Suspicious form submission detected"_string;
+            }
+
+            // Send IPC message to UI for alert
+            client().async_did_detect_credential_exfiltration(
+                m_id,
+                alert->alert_type,
+                alert->severity,
+                alert->form_origin,
+                alert->action_origin,
+                alert->uses_https,
+                alert->has_password_field,
+                alert->is_cross_origin,
+                description
+            );
+
+            dbgln("FormMonitor: Sent credential exfiltration alert via IPC");
         }
     }
+}
+
+// Sentinel Phase 6 Day 39: Autofill Protection System
+// Determines if autofill should be blocked for a given form→action URL pair
+bool PageClient::should_block_autofill(URL::URL const& form_url, URL::URL const& action_url) const
+{
+    // Extract origins using FormMonitor's origin extraction logic
+    auto form_origin = m_form_monitor.extract_origin(form_url);
+    auto action_origin = m_form_monitor.extract_origin(action_url);
+
+    // Check if this submission is blocked by user
+    if (m_form_monitor.is_blocked_submission(form_origin, action_origin)) {
+        dbgln("PageClient: Blocking autofill for user-blocked form {} -> {}", form_origin, action_origin);
+        return true;
+    }
+
+    // Check if this is a trusted relationship - allow autofill
+    if (m_form_monitor.is_trusted_relationship(form_origin, action_origin)) {
+        dbgln("PageClient: Allowing autofill for trusted form {} -> {}", form_origin, action_origin);
+        return false;
+    }
+
+    // Check for cross-origin submission - block autofill as a security measure
+    if (m_form_monitor.is_cross_origin_submission(form_url, action_url)) {
+        dbgln("PageClient: Blocking autofill for cross-origin form {} -> {}", form_origin, action_origin);
+        return true;
+    }
+
+    // Same-origin forms can be autofilled
+    return false;
 }
 
 void PageClient::page_did_change_favicon(Gfx::Bitmap const& favicon)

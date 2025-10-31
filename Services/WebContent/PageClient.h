@@ -34,6 +34,9 @@ public:
 
     virtual u64 id() const override { return m_id; }
 
+    FormMonitor& form_monitor() { return m_form_monitor; }
+    FormMonitor const& form_monitor() const { return m_form_monitor; }
+
     enum class UseSkiaPainter {
         CPUBackend,
         GPUBackendIfAvailable,
@@ -145,6 +148,7 @@ private:
     virtual void page_did_request_dismiss_dialog() override;
     virtual void page_did_receive_security_alert(ByteString const& alert_json, i32 request_id) override;
     virtual void page_did_submit_form(Web::HTML::HTMLFormElement& form, String const& method, URL::URL const& action) override;
+    virtual bool should_block_autofill(URL::URL const& form_url, URL::URL const& action_url) const override;
     virtual void page_did_change_favicon(Gfx::Bitmap const&) override;
     virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_webdriver(URL::URL const&) override;
     virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_cookiestore(URL::URL const&) override;

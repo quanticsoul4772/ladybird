@@ -33,6 +33,14 @@ void FormMonitor::on_form_submit(FormSubmitEvent const& event)
 
 bool FormMonitor::is_suspicious_submission(FormSubmitEvent const& event) const
 {
+    // Check if this is a trusted relationship first
+    auto form_origin = extract_origin(event.document_url);
+    auto action_origin = extract_origin(event.action_url);
+    if (is_trusted_relationship(form_origin, action_origin)) {
+        dbgln("FormMonitor: Form submission from {} to {} is trusted, skipping checks", form_origin, action_origin);
+        return false;
+    }
+
     // Check for password or email fields
     bool has_sensitive_fields = event.has_password_field || event.has_email_field;
     if (!has_sensitive_fields)
@@ -174,6 +182,103 @@ String FormMonitor::CredentialAlert::to_json() const
     StringBuilder builder;
     json.serialize(builder);
     return MUST(builder.to_string());
+}
+
+void FormMonitor::learn_trusted_relationship(String const& form_origin, String const& action_origin)
+{
+    dbgln("FormMonitor: Learning trusted relationship from {} to {}", form_origin, action_origin);
+
+    // Get or create the HashTable for this form_origin
+    if (!m_trusted_relationships.contains(form_origin)) {
+        m_trusted_relationships.set(form_origin, HashTable<String> {});
+    }
+
+    // Add the action_origin to the set
+    auto& action_origins = m_trusted_relationships.get(form_origin).value();
+    action_origins.set(action_origin);
+
+    dbgln("FormMonitor: Trusted relationship learned. Now have {} trusted origins for {}",
+          action_origins.size(), form_origin);
+}
+
+bool FormMonitor::is_trusted_relationship(String const& form_origin, String const& action_origin) const
+{
+    auto it = m_trusted_relationships.find(form_origin);
+    if (it == m_trusted_relationships.end())
+        return false;
+
+    return it->value.contains(action_origin);
+}
+
+void FormMonitor::block_submission(String const& form_origin, String const& action_origin)
+{
+    dbgln("FormMonitor: Blocking submission from {} to {}", form_origin, action_origin);
+
+    // Get or create the HashTable for this form_origin
+    if (!m_blocked_submissions.contains(form_origin)) {
+        m_blocked_submissions.set(form_origin, HashTable<String> {});
+    }
+
+    // Add the action_origin to the blocked set
+    auto& action_origins = m_blocked_submissions.get(form_origin).value();
+    action_origins.set(action_origin);
+
+    dbgln("FormMonitor: Submission blocked. Now have {} blocked origins for {}",
+          action_origins.size(), form_origin);
+}
+
+bool FormMonitor::is_blocked_submission(String const& form_origin, String const& action_origin) const
+{
+    auto it = m_blocked_submissions.find(form_origin);
+    if (it == m_blocked_submissions.end())
+        return false;
+
+    return it->value.contains(action_origin);
+}
+
+void FormMonitor::grant_autofill_override(String const& form_origin, String const& action_origin)
+{
+    dbgln("FormMonitor: Granting one-time autofill override from {} to {}", form_origin, action_origin);
+
+    // Get or create the HashTable for this form_origin
+    if (!m_autofill_overrides.contains(form_origin)) {
+        m_autofill_overrides.set(form_origin, HashTable<String> {});
+    }
+
+    // Add the action_origin to the override set
+    auto& action_origins = m_autofill_overrides.get(form_origin).value();
+    action_origins.set(action_origin);
+
+    dbgln("FormMonitor: One-time autofill override granted");
+}
+
+bool FormMonitor::has_autofill_override(String const& form_origin, String const& action_origin) const
+{
+    auto it = m_autofill_overrides.find(form_origin);
+    if (it == m_autofill_overrides.end())
+        return false;
+
+    return it->value.contains(action_origin);
+}
+
+void FormMonitor::consume_autofill_override(String const& form_origin, String const& action_origin)
+{
+    dbgln("FormMonitor: Consuming one-time autofill override from {} to {}", form_origin, action_origin);
+
+    auto it = m_autofill_overrides.find(form_origin);
+    if (it == m_autofill_overrides.end())
+        return;
+
+    // Remove the action_origin from the override set
+    it->value.remove(action_origin);
+
+    // Clean up empty HashTable to prevent memory leak
+    if (it->value.is_empty()) {
+        m_autofill_overrides.remove(form_origin);
+        dbgln("FormMonitor: Removed empty override set for {}", form_origin);
+    }
+
+    dbgln("FormMonitor: One-time autofill override consumed and removed");
 }
 
 }

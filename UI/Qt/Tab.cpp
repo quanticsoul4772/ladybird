@@ -9,6 +9,7 @@
 #include <AK/JsonParser.h>
 #include <LibCore/StandardPaths.h>
 #include <LibIPC/NetworkIdentity.h>
+#include <LibURL/Parser.h>
 #include <LibURL/URL.h>
 #include <LibWeb/HTML/SelectedFile.h>
 #include <LibWebView/Application.h>
@@ -75,7 +76,55 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
     focus_location_editor_action->setShortcuts({ QKeySequence("Ctrl+L"), QKeySequence("Alt+D") });
     addAction(focus_location_editor_action);
 
+    // Create autofill blocked banner (hidden by default)
+    m_autofill_blocked_banner = new QWidget(this);
+    m_autofill_blocked_banner->setVisible(false);
+    m_autofill_blocked_banner->setFixedHeight(60);
+    m_autofill_blocked_banner->setStyleSheet("QWidget { background-color: #FF9800; border-bottom: 2px solid #F57C00; }"); // Orange warning color
+
+    auto* banner_layout = new QHBoxLayout(m_autofill_blocked_banner);
+    banner_layout->setContentsMargins(15, 10, 15, 10);
+    banner_layout->setSpacing(10);
+
+    auto* banner_icon = new QLabel(m_autofill_blocked_banner);
+    banner_icon->setPixmap(load_icon_from_uri("resource://icons/16x16/spoof.png"sv).pixmap(24, 24));
+    banner_icon->setFixedSize(24, 24);
+
+    auto* banner_text = new QLabel(m_autofill_blocked_banner);
+    banner_text->setStyleSheet("color: white; font-weight: bold;");
+    banner_text->setObjectName("banner_text");
+    banner_text->setText("Autofill blocked for security reasons");
+
+    auto* banner_details = new QLabel(m_autofill_blocked_banner);
+    banner_details->setStyleSheet("color: white; font-size: 11px;");
+    banner_details->setObjectName("banner_details");
+
+    auto* allow_once_button = new QPushButton("Allow Once", m_autofill_blocked_banner);
+    allow_once_button->setObjectName("allow_once_button");
+    allow_once_button->setStyleSheet(
+        "QPushButton { background-color: white; border: none; border-radius: 3px; padding: 5px 15px; color: #333; font-weight: bold; }"
+        "QPushButton:hover { background-color: #f5f5f5; }");
+    allow_once_button->setFixedHeight(30);
+
+    auto* dismiss_button = new QPushButton("Dismiss", m_autofill_blocked_banner);
+    dismiss_button->setObjectName("dismiss_button");
+    dismiss_button->setStyleSheet(
+        "QPushButton { background-color: rgba(255, 255, 255, 0.8); border: none; border-radius: 3px; padding: 5px 15px; color: #333; }"
+        "QPushButton:hover { background-color: rgba(255, 255, 255, 1.0); }");
+    dismiss_button->setFixedHeight(30);
+
+    QObject::connect(dismiss_button, &QPushButton::clicked, this, [this] {
+        m_autofill_blocked_banner->setVisible(false);
+    });
+
+    banner_layout->addWidget(banner_icon);
+    banner_layout->addWidget(banner_text);
+    banner_layout->addWidget(banner_details, 1);
+    banner_layout->addWidget(allow_once_button);
+    banner_layout->addWidget(dismiss_button);
+
     m_layout->addWidget(m_toolbar);
+    m_layout->addWidget(m_autofill_blocked_banner);
     m_layout->addWidget(m_view);
     m_layout->addWidget(m_find_in_page);
 
@@ -421,6 +470,10 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
             case SecurityAlertDialog::UserDecision::Quarantine:
                 decision_str = "quarantine";
                 break;
+            case SecurityAlertDialog::UserDecision::Trust:
+            case SecurityAlertDialog::UserDecision::LearnMore:
+                // These are only for credential alerts, not download alerts
+                VERIFY_NOT_REACHED();
             }
 
             dbgln("Tab: User security decision for request {}: {} (remember: {})",
@@ -574,6 +627,132 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
         });
 
         m_dialog->open();
+    };
+
+    view().on_credential_exfiltration_alert = [this](String const& alert_type, String const& severity, String const& form_origin, String const& action_origin, bool uses_https, bool has_password_field, bool is_cross_origin, String const& description) {
+        dbgln("Tab: Credential exfiltration alert received");
+        dbgln("  Alert type: {}", alert_type);
+        dbgln("  Severity: {}", severity);
+        dbgln("  Form origin: {}", form_origin);
+        dbgln("  Action origin: {}", action_origin);
+
+        // Create CredentialDetails struct for the dialog
+        SecurityAlertDialog::CredentialDetails details {
+            .form_origin = QString::fromUtf8(form_origin.to_byte_string().characters()),
+            .action_origin = QString::fromUtf8(action_origin.to_byte_string().characters()),
+            .alert_type = QString::fromUtf8(alert_type.to_byte_string().characters()),
+            .severity = QString::fromUtf8(severity.to_byte_string().characters()),
+            .description = QString::fromUtf8(description.to_byte_string().characters()),
+            .uses_https = uses_https,
+            .has_password_field = has_password_field,
+            .is_cross_origin = is_cross_origin
+        };
+
+        m_dialog = new SecurityAlertDialog(details, &view());
+        auto* security_dialog = qobject_cast<SecurityAlertDialog*>(m_dialog.data());
+
+        QObject::connect(security_dialog, &SecurityAlertDialog::userDecided, this, [this, security_dialog, form_origin, action_origin](SecurityAlertDialog::UserDecision decision) {
+            // Special handling for "Learn More" - open about:security with education modal
+            if (decision == SecurityAlertDialog::UserDecision::LearnMore) {
+                dbgln("Tab: Opening about:security with credential protection education modal");
+
+                // Navigate to about:security with a fragment to trigger the education modal
+                auto url_string = "about:security#show-credential-education"_string;
+                m_location_edit->setText(qstring_from_ak_string(url_string));
+                auto url = URL::Parser::basic_parse(url_string);
+                if (url.has_value()) {
+                    view().load(url.value());
+                }
+
+                // Cancel the form submission by sending block decision
+                view().client().async_credential_alert_action(
+                    view().page_id(),
+                    form_origin,
+                    action_origin,
+                    "block"_string
+                );
+                return;
+            }
+
+            // Map UserDecision to action string for IPC
+            ByteString decision_str;
+            switch (decision) {
+            case SecurityAlertDialog::UserDecision::Block:
+                decision_str = "block";
+                break;
+            case SecurityAlertDialog::UserDecision::Trust:
+                decision_str = "trust";
+                break;
+            case SecurityAlertDialog::UserDecision::AllowOnce:
+            case SecurityAlertDialog::UserDecision::AlwaysAllow:
+            case SecurityAlertDialog::UserDecision::Quarantine:
+            case SecurityAlertDialog::UserDecision::LearnMore:
+                // These are only for download alerts or already handled above
+                VERIFY_NOT_REACHED();
+            }
+
+            dbgln("Tab: User credential alert decision: {} (remember: {})",
+                  decision_str.characters(), security_dialog->should_remember());
+
+            // Send decision to WebContent via IPC
+            view().client().async_credential_alert_action(
+                view().page_id(),
+                form_origin,
+                action_origin,
+                decision_str
+            );
+        });
+
+        QObject::connect(m_dialog, &QDialog::finished, this, [this]() {
+            m_dialog = nullptr;
+        });
+
+        m_dialog->open();
+    };
+
+    view().on_autofill_blocked = [this](String const& form_origin, String const& action_origin, bool is_cross_origin, String const& reason) {
+        dbgln("Tab: Autofill blocked notification received");
+        dbgln("  Form origin: {}", form_origin);
+        dbgln("  Action origin: {}", action_origin);
+        dbgln("  Cross-origin: {}", is_cross_origin);
+        dbgln("  Reason: {}", reason);
+
+        // Update banner text
+        auto* banner_details = m_autofill_blocked_banner->findChild<QLabel*>("banner_details");
+        if (banner_details) {
+            QString details_text = QString("Form on %1 submits to %2")
+                .arg(QString::fromUtf8(form_origin.to_byte_string().characters()))
+                .arg(QString::fromUtf8(action_origin.to_byte_string().characters()));
+            banner_details->setText(details_text);
+        }
+
+        // Wire up the "Allow Once" button with the current origins
+        auto* allow_once_button = m_autofill_blocked_banner->findChild<QPushButton*>("allow_once_button");
+        if (allow_once_button) {
+            // Disconnect any previous connections
+            allow_once_button->disconnect();
+
+            // Connect new handler with captured origins
+            QObject::connect(allow_once_button, &QPushButton::clicked, this, [this, form_origin, action_origin] {
+                dbgln("Tab: User clicked 'Allow Once' - granting autofill override");
+
+                // Send IPC message to grant override
+                view().client().async_grant_autofill_override(
+                    view().page_id(),
+                    form_origin,
+                    action_origin
+                );
+
+                // Hide the banner
+                m_autofill_blocked_banner->setVisible(false);
+
+                // TODO: Trigger autofill to happen now that override is granted
+                // This would require calling the autofill logic again
+            });
+        }
+
+        // Show the banner
+        m_autofill_blocked_banner->setVisible(true);
     };
 
     view().on_request_color_picker = [this](Color current_color) {

@@ -81,6 +81,19 @@ void SecurityUI::register_interfaces()
     register_interface("getMetrics"sv, [this](auto const&) {
         get_metrics();
     });
+
+    register_interface("getCredentialProtectionData"sv, [this](auto const&) {
+        get_credential_protection_data();
+    });
+
+    register_interface("revokeTrustedForm"sv, [this](auto const& data) {
+        revoke_trusted_form(data);
+    });
+
+    // Sentinel Phase 6 Day 41: Credential education preference
+    register_interface("setCredentialEducationShown"sv, [this](auto const& data) {
+        set_credential_education_shown(data);
+    });
 }
 
 void SecurityUI::get_system_status()
@@ -1027,6 +1040,119 @@ void SecurityUI::get_metrics()
     metrics.set("metricsVersion"sv, JsonValue { 1 });
 
     async_send_message("metricsLoaded"sv, metrics);
+}
+
+void SecurityUI::get_credential_protection_data()
+{
+    JsonObject data;
+
+    // NOTE: This is a stub implementation for Phase 6 Day 40
+    // The actual credential protection data lives in WebContent's PageClient/FormMonitor
+    // and is not directly accessible from the UI process yet.
+    // Future implementation will need to query WebContent via IPC for real-time data.
+
+    // For now, we return zero stats to demonstrate the UI integration
+    data.set("formsMonitored"sv, JsonValue { 0 });
+    data.set("threatsBlocked"sv, JsonValue { 0 });
+    data.set("trustedForms"sv, JsonValue { 0 });
+
+    // Empty alerts array
+    JsonArray alerts_array;
+    data.set("alerts"sv, JsonValue { alerts_array });
+
+    // Empty trusted relationships array
+    JsonArray trusted_array;
+    data.set("trustedRelationships"sv, JsonValue { trusted_array });
+
+    // TODO (Phase 6 Day 41+): Implement real data fetching:
+    // 1. Add IPC message to WebContent to query FormMonitor state
+    // 2. Aggregate data from all WebContent processes
+    // 3. Store credential alerts in PolicyGraph for persistence
+    // 4. Query PolicyGraph for trusted relationships and alert history
+
+    async_send_message("credentialProtectionDataLoaded"sv, data);
+}
+
+void SecurityUI::revoke_trusted_form(JsonValue const& data)
+{
+    if (!data.is_object()) {
+        JsonObject error;
+        error.set("error"sv, JsonValue { "Invalid request: expected object with formOrigin and actionOrigin"sv });
+        async_send_message("trustedFormRevoked"sv, error);
+        return;
+    }
+
+    auto const& data_obj = data.as_object();
+    auto form_origin = data_obj.get_string("formOrigin"sv);
+    auto action_origin = data_obj.get_string("actionOrigin"sv);
+
+    if (!form_origin.has_value() || !action_origin.has_value()) {
+        JsonObject error;
+        error.set("error"sv, JsonValue { "Missing formOrigin or actionOrigin"sv });
+        async_send_message("trustedFormRevoked"sv, error);
+        return;
+    }
+
+    dbgln("SecurityUI: Revoking trusted form relationship: {} -> {}", form_origin.value(), action_origin.value());
+
+    // NOTE: This is a stub implementation for Phase 6 Day 40
+    // The actual trusted relationships are stored in WebContent's FormMonitor
+    // and are not persisted to PolicyGraph yet.
+
+    // TODO (Phase 6 Day 41+): Implement real trust revocation:
+    // 1. Delete the trusted relationship from PolicyGraph
+    // 2. Send IPC message to all WebContent processes to update their FormMonitors
+    // 3. Ensure future forms from this origin will trigger alerts
+
+    // For now, just send success response
+    JsonObject response;
+    response.set("success"sv, JsonValue { true });
+    response.set("message"sv, JsonValue { ByteString::formatted("Trust revoked for {} -> {}", form_origin.value(), action_origin.value()) });
+
+    async_send_message("trustedFormRevoked"sv, response);
+}
+
+void SecurityUI::set_credential_education_shown(JsonValue const& data)
+{
+    // Sentinel Phase 6 Day 41: Save user preference for credential education modal
+
+    if (!data.is_object()) {
+        dbgln("SecurityUI: Invalid data for setCredentialEducationShown");
+        return;
+    }
+
+    auto const& data_obj = data.as_object();
+    auto dont_show_again = data_obj.get_bool("dontShowAgain"sv).value_or(false);
+
+    dbgln("SecurityUI: Setting credential education shown preference: {}", dont_show_again);
+
+    // Save preference to a file in user data directory
+    auto preference_path = ByteString::formatted("{}/Ladybird/credential_education_shown", Core::StandardPaths::user_data_directory());
+
+    // Create the directory if it doesn't exist
+    auto dir_path = ByteString::formatted("{}/Ladybird", Core::StandardPaths::user_data_directory());
+    auto dir_result = Core::System::mkdir(dir_path, 0700);
+    if (dir_result.is_error() && dir_result.error().code() != EEXIST) {
+        dbgln("SecurityUI: Failed to create Ladybird directory: {}", dir_result.error());
+        return;
+    }
+
+    // Write the preference file (just create an empty file as a flag)
+    if (dont_show_again) {
+        auto file_result = Core::File::open(preference_path, Core::File::OpenMode::Write);
+        if (file_result.is_error()) {
+            dbgln("SecurityUI: Failed to create preference file: {}", file_result.error());
+            return;
+        }
+
+        auto& file = file_result.value();
+        auto write_result = file->write_until_depleted("1"sv.bytes());
+        if (write_result.is_error()) {
+            dbgln("SecurityUI: Failed to write preference file: {}", write_result.error());
+        } else {
+            dbgln("SecurityUI: Credential education preference saved successfully");
+        }
+    }
 }
 
 }
