@@ -97,11 +97,11 @@ Initial release of Sentinel malware protection system.
 
 ## Milestone 0.3 - Enhanced Credential Protection (In Progress)
 
-Phases 1-4 complete. Database schema, PolicyGraph API, FormMonitor integration, and import/export UI implemented.
+Phases 1-5 complete. Database schema, PolicyGraph API, FormMonitor integration, import/export UI, and policy templates implemented.
 
-### Completed Features (Phases 1-4)
+### Completed Features (Phases 1-5)
 
-- Database schema for credential relationships and alerts
+- Database schema for credential relationships, alerts, and templates
 - PolicyGraph API extensions (21 new methods)
 - Persistent trusted/blocked form relationships
 - Credential alert history tracking
@@ -110,17 +110,21 @@ Phases 1-4 complete. Database schema, PolicyGraph API, FormMonitor integration, 
 - Import/export UI for backing up and restoring trusted relationships
 - JSON-based credential relationship export with browser download
 - File picker-based import with validation
+- Policy template system with 5 builtin credential protection templates
+- Template instantiation with variable substitution
+- Template import/export for sharing and backup
+- One-click policy application from templates
 
 ### Implementation Documentation
 
 - Services/Sentinel/PolicyGraph.h: API extensions for Milestone 0.3
 - Services/Sentinel/DatabaseMigrations.cpp: Schema v2 to v3 migration
 - Services/WebContent/FormMonitor.h/cpp: PolicyGraph integration
-- Base/res/ladybird/about-pages/security.html: Import/export UI
-- Libraries/LibWebView/WebUI/SecurityUI.h/cpp: Import/export handlers
+- Services/Sentinel/PolicyTemplates.h/cpp: Builtin template definitions
+- Base/res/ladybird/about-pages/security.html: Import/export and template UI
+- Libraries/LibWebView/WebUI/SecurityUI.h/cpp: Import/export and template handlers
 - docs/MILESTONE_0.3_PLAN.md: Complete implementation plan
 
-### Remaining Features (Phases 5-6)
+### Remaining Features (Phase 6)
 
-- Policy templates for credential protection (Phase 5)
 - Basic form anomaly detection (Phase 6, optional)
