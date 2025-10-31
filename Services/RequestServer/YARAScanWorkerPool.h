@@ -17,6 +17,8 @@
 
 namespace RequestServer {
 
+using AK::Duration;
+
 // Telemetry data for monitoring worker pool performance
 struct WorkerPoolTelemetry {
     size_t total_scans_completed { 0 };

@@ -73,7 +73,7 @@ static ErrorOr<void> command_status()
         // Open database and get counts
         auto pg_result = PolicyGraph::create(db_dir.to_byte_string());
         if (!pg_result.is_error()) {
-            auto pg = pg_result.release_value();
+            auto& pg = pg_result.value();
             auto policy_count = pg.get_policy_count();
             auto threat_count = pg.get_threat_count();
 
