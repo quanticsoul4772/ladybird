@@ -94,3 +94,19 @@ Initial release of Sentinel malware protection system.
 - Autofill protection
 - User education
 - Comprehensive testing
+
+## Milestone 0.3 - Enhanced Credential Protection (Planned)
+
+Planning complete. Ready for implementation.
+
+### Planned Features
+
+- Persistent trusted form relationships (PolicyGraph storage)
+- Credential alert history tracking
+- Import/export functionality for trust lists
+- Policy templates for credential protection
+- Basic form anomaly detection
+
+### Planning Documentation
+
+- docs/MILESTONE_0.3_PLAN.md: Complete implementation plan
