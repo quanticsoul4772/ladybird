@@ -661,6 +661,27 @@
                     </p>
                 </div>
 
+                <!-- Policy Templates (Milestone 0.3 Phase 5) -->
+                <div style="margin-top: 20px; padding: 16px; background-color: var(--stat-background); border-radius: 8px; border: 1px solid var(--stat-border);">
+                    <h4 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 600;">Policy Templates</h4>
+                    <p style="margin: 0 0 16px 0; font-size: 12px; opacity: 0.7;">
+                        Pre-configured security policies for common scenarios. Apply templates to quickly enhance your protection.
+                    </p>
+
+                    <div id="template-list" style="display: flex; flex-direction: column; gap: 12px;">
+                        <!-- Templates will be loaded here -->
+                    </div>
+
+                    <div style="display: flex; gap: 12px; margin-top: 16px;">
+                        <button class="button button-secondary" onclick="exportPolicyTemplates()">
+                            Export Templates
+                        </button>
+                        <button class="button button-secondary" onclick="importPolicyTemplates()">
+                            Import Templates
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Security Tips Section (Sentinel Phase 6 Day 41) -->
                 <div class="security-tips-section">
                     <h3 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px; font-weight: 600;">
@@ -928,6 +949,7 @@
                 loadThreats();
                 loadTemplates();
                 loadCredentialProtectionData();  // NEW: Load credential protection data
+                loadPolicyTemplates();  // NEW: Load policy templates (Milestone 0.3 Phase 5)
 
                 // Start periodic status refresh
                 startStatusRefresh();
@@ -979,6 +1001,18 @@
                         break;
                     case "credentialImported":
                         handleCredentialImport(data);
+                        break;
+                    case "policyTemplates":
+                        handlePolicyTemplates(data);
+                        break;
+                    case "templateApplied":
+                        handleTemplateApplied(data);
+                        break;
+                    case "templateExported":
+                        handleTemplateExport(data);
+                        break;
+                    case "templateImported":
+                        handleTemplateImport(data);
                         break;
                 }
             });
@@ -1623,6 +1657,141 @@
             // Make import/export functions available globally
             window.exportCredentialRelationships = exportCredentialRelationships;
             window.importCredentialRelationships = importCredentialRelationships;
+
+            // Policy Template Functions (Milestone 0.3 Phase 5)
+
+            function loadPolicyTemplates() {
+                ladybird.sendMessage("getPolicyTemplates", {});
+            }
+
+            function handlePolicyTemplates(data) {
+                if (data.error) {
+                    console.error('Failed to load policy templates:', data.error);
+                    return;
+                }
+
+                const templateList = document.getElementById('template-list');
+                templateList.innerHTML = '';
+
+                const templates = JSON.parse(data.templates);
+                if (templates.length === 0) {
+                    templateList.innerHTML = '<p style="opacity: 0.5; font-size: 12px;">No templates available</p>';
+                    return;
+                }
+
+                templates.forEach(template => {
+                    const templateCard = document.createElement('div');
+                    templateCard.style.cssText = 'padding: 12px; background-color: var(--background); border: 1px solid var(--stat-border); border-radius: 6px;';
+
+                    const header = document.createElement('div');
+                    header.style.cssText = 'display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;';
+
+                    const titleDiv = document.createElement('div');
+                    titleDiv.style.cssText = 'flex: 1;';
+
+                    const title = document.createElement('div');
+                    title.style.cssText = 'font-weight: 600; font-size: 13px; margin-bottom: 4px;';
+                    title.textContent = template.name;
+
+                    const category = document.createElement('span');
+                    category.style.cssText = 'font-size: 11px; padding: 2px 8px; background-color: var(--stat-background); border-radius: 3px; opacity: 0.8;';
+                    category.textContent = template.category;
+
+                    const description = document.createElement('p');
+                    description.style.cssText = 'margin: 8px 0 0 0; font-size: 12px; opacity: 0.7; line-height: 1.4;';
+                    description.textContent = template.description;
+
+                    const applyBtn = document.createElement('button');
+                    applyBtn.className = 'button button-primary';
+                    applyBtn.style.cssText = 'font-size: 11px; padding: 4px 12px;';
+                    applyBtn.textContent = template.is_builtin ? 'Apply' : 'Apply Custom';
+                    applyBtn.onclick = () => applyPolicyTemplate(template.id, template.name);
+
+                    titleDiv.appendChild(title);
+                    titleDiv.appendChild(category);
+                    header.appendChild(titleDiv);
+                    header.appendChild(applyBtn);
+
+                    templateCard.appendChild(header);
+                    templateCard.appendChild(description);
+                    templateList.appendChild(templateCard);
+                });
+            }
+
+            function applyPolicyTemplate(templateId, templateName) {
+                if (confirm(`Apply policy template "${templateName}"?\n\nThis will create new security policies based on this template.`)) {
+                    ladybird.sendMessage("applyPolicyTemplate", { template_id: templateId });
+                }
+            }
+
+            function handleTemplateApplied(data) {
+                if (data.error) {
+                    alert('Failed to apply template: ' + data.error);
+                } else {
+                    alert(`Policy template applied successfully!\n\nCreated ${data.policies_created} new policies.`);
+                }
+            }
+
+            function exportPolicyTemplates() {
+                ladybird.sendMessage("exportPolicyTemplates", {});
+            }
+
+            function importPolicyTemplates() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.json';
+
+                input.onchange = (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        try {
+                            const json = event.target.result;
+                            JSON.parse(json); // Validate
+                            ladybird.sendMessage("importPolicyTemplates", { json: json });
+                        } catch (error) {
+                            alert('Invalid JSON file: ' + error.message);
+                        }
+                    };
+                    reader.readAsText(file);
+                };
+
+                input.click();
+            }
+
+            function handleTemplateExport(data) {
+                if (data.error) {
+                    alert('Failed to export templates: ' + data.error);
+                    return;
+                }
+
+                const blob = new Blob([data.json], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `policy-templates-${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                alert('Policy templates exported successfully!');
+            }
+
+            function handleTemplateImport(data) {
+                if (data.error) {
+                    alert('Failed to import templates: ' + data.error);
+                } else {
+                    alert(`Successfully imported ${data.count} policy templates!`);
+                    loadPolicyTemplates();
+                }
+            }
+
+            // Make template functions available globally
+            window.exportPolicyTemplates = exportPolicyTemplates;
+            window.importPolicyTemplates = importPolicyTemplates;
 
             // Credential Protection Education Modal Functions (Sentinel Phase 6 Day 41)
 

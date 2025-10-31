@@ -11,6 +11,7 @@ set(SOURCES
     HealthCheck.cpp
     InputValidator.cpp
     PolicyGraph.cpp
+    PolicyTemplates.cpp
     SentinelMetrics.cpp
     SentinelServer.cpp
 )

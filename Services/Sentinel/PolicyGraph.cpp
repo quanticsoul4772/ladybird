@@ -7,6 +7,7 @@
 #include "PolicyGraph.h"
 #include "DatabaseMigrations.h"
 #include "InputValidator.h"
+#include "PolicyTemplates.h"
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/NonnullOwnPtr.h>
@@ -527,6 +528,11 @@ ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_dir
     auto cleanup_result = policy_graph->cleanup_old_threats();
     if (cleanup_result.is_error())
         dbgln("PolicyGraph: Warning - failed to cleanup old threats: {}", cleanup_result.error());
+
+    // Seed builtin policy templates (Milestone 0.3 Phase 5)
+    auto seed_result = policy_graph->seed_builtin_templates();
+    if (seed_result.is_error())
+        dbgln("PolicyGraph: Warning - failed to seed builtin templates: {}", seed_result.error());
 
     return policy_graph;
 }
@@ -1815,6 +1821,34 @@ ErrorOr<PolicyGraph::Policy> PolicyGraph::instantiate_template(i64 template_id, 
     policy.created_by = "template"_string;
 
     return policy;
+}
+
+ErrorOr<void> PolicyGraph::seed_builtin_templates()
+{
+    auto builtin_templates = PolicyTemplates::get_builtin_templates();
+
+    for (auto const& template_def : builtin_templates) {
+        // Check if template already exists
+        auto existing = get_template_by_name(template_def.name);
+        if (!existing.is_error()) {
+            // Template already exists, skip
+            continue;
+        }
+
+        // Create the template
+        PolicyTemplate tmpl;
+        tmpl.name = template_def.name;
+        tmpl.description = template_def.description;
+        tmpl.category = template_def.category;
+        tmpl.template_json = template_def.template_json;
+        tmpl.is_builtin = true;
+        tmpl.created_at = UnixDateTime::now();
+
+        TRY(create_template(tmpl));
+        dbgln("Seeded builtin template: {}", template_def.name);
+    }
+
+    return {};
 }
 
 // Milestone 0.3: Import/Export

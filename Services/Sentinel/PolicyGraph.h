@@ -214,6 +214,7 @@ public:
     ErrorOr<void> update_template(i64 template_id, PolicyTemplate const& tmpl);
     ErrorOr<void> delete_template(i64 template_id);
     ErrorOr<Policy> instantiate_template(i64 template_id, HashMap<String, String> const& variables);
+    ErrorOr<void> seed_builtin_templates();
 
     // Milestone 0.3: Import/Export
     ErrorOr<String> export_relationships_json();

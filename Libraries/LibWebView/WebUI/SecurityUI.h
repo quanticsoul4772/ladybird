@@ -57,6 +57,11 @@ private:
     void export_credential_relationships();
     void import_credential_relationships(JsonValue const&);
 
+    // Policy Templates (Milestone 0.3 Phase 5) - additional methods
+    void apply_policy_template(JsonValue const&);
+    void export_policy_templates();
+    void import_policy_templates(JsonValue const&);
+
     // PolicyGraph instance for security policy management
     Optional<ErrorOr<NonnullOwnPtr<Sentinel::PolicyGraph>>> m_policy_graph;
 };

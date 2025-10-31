@@ -103,6 +103,23 @@ void SecurityUI::register_interfaces()
     register_interface("importCredentialRelationships"sv, [this](auto const& data) {
         import_credential_relationships(data);
     });
+
+    // Milestone 0.3 Phase 5: Policy template management
+    register_interface("getPolicyTemplates"sv, [this](auto const&) {
+        get_policy_templates();
+    });
+
+    register_interface("applyPolicyTemplate"sv, [this](auto const& data) {
+        apply_policy_template(data);
+    });
+
+    register_interface("exportPolicyTemplates"sv, [this](auto const&) {
+        export_policy_templates();
+    });
+
+    register_interface("importPolicyTemplates"sv, [this](auto const& data) {
+        import_policy_templates(data);
+    });
 }
 
 void SecurityUI::get_system_status()
@@ -702,59 +719,39 @@ void SecurityUI::load_threat_history(JsonValue const& data)
 
 void SecurityUI::get_policy_templates()
 {
-    JsonArray templates_array;
+    // Milestone 0.3 Phase 5: Load policy templates from PolicyGraph database
 
-    // Load policy templates from resource directory
-    auto templates_resource_result = Core::Resource::load_from_uri("resource://ladybird/policy-templates"sv);
+    JsonObject response;
 
-    if (templates_resource_result.is_error()) {
-        dbgln("SecurityUI: Failed to load policy templates resource: {}", templates_resource_result.error());
-        JsonObject response;
-        response.set("templates"sv, JsonValue { templates_array });
-        async_send_message("templatesLoaded"sv, response);
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized for get templates");
+        response.set("error"sv, JsonValue { "PolicyGraph not initialized"_string });
+        async_send_message("policyTemplates"sv, response);
         return;
     }
 
-    auto templates_resource = templates_resource_result.release_value();
-
-    // Iterate through all template JSON files
-    templates_resource->for_each_descendant_file([&](Core::Resource const& resource) -> IterationDecision {
-        auto filename = resource.filename();
-
-        // Only process .json files
-        if (!filename.ends_with_bytes(".json"sv)) {
-            return IterationDecision::Continue;
+    auto list_result = m_policy_graph->value()->list_templates({});
+    if (list_result.is_error()) {
+        dbgln("SecurityUI: Failed to list templates: {}", list_result.error());
+        response.set("error"sv, JsonValue { "Failed to list templates"_string });
+    } else {
+        // Convert templates to JSON array
+        JsonArray templates_array;
+        for (auto const& tmpl : list_result.value()) {
+            JsonObject tmpl_obj;
+            tmpl_obj.set("id"sv, tmpl.id);
+            tmpl_obj.set("name"sv, tmpl.name);
+            tmpl_obj.set("description"sv, tmpl.description);
+            tmpl_obj.set("category"sv, tmpl.category);
+            tmpl_obj.set("is_builtin"sv, tmpl.is_builtin);
+            templates_array.must_append(tmpl_obj);
         }
 
-        // Parse the template JSON
-        auto json_data = ByteString(reinterpret_cast<char const*>(resource.data().data()), resource.data().size());
-        auto json_result = JsonValue::from_string(json_data);
+        dbgln("SecurityUI: Retrieved {} policy templates", templates_array.size());
+        response.set("templates"sv, JsonValue(templates_array).serialized());
+    }
 
-        if (json_result.is_error()) {
-            dbgln("SecurityUI: Failed to parse template {}: {}", filename, json_result.error());
-            return IterationDecision::Continue;
-        }
-
-        auto template_json = json_result.release_value();
-        if (!template_json.is_object()) {
-            dbgln("SecurityUI: Template {} is not a JSON object", filename);
-            return IterationDecision::Continue;
-        }
-
-        // Add template ID (filename without .json)
-        auto template_obj = template_json.as_object();
-        auto filename_view = filename.bytes_as_string_view();
-        auto template_id = filename_view.substring_view(0, filename_view.length() - 5); // Remove .json
-        template_obj.set("id"sv, JsonValue { template_id });
-
-        templates_array.must_append(template_obj);
-        return IterationDecision::Continue;
-    });
-
-    JsonObject response;
-    response.set("templates"sv, JsonValue { templates_array });
-
-    async_send_message("templatesLoaded"sv, response);
+    async_send_message("policyTemplates"sv, response);
 }
 
 void SecurityUI::create_policy_from_template(JsonValue const& data)
@@ -1236,6 +1233,127 @@ void SecurityUI::import_credential_relationships(JsonValue const& data)
     }
 
     async_send_message("credentialImported"sv, response);
+}
+
+// Milestone 0.3 Phase 5: Policy Template Management (Additional Methods)
+
+void SecurityUI::apply_policy_template(JsonValue const& data)
+{
+    JsonObject response;
+
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized for apply template");
+        response.set("error"sv, JsonValue { "PolicyGraph not initialized"_string });
+        async_send_message("templateApplied"sv, response);
+        return;
+    }
+
+    if (!data.is_object()) {
+        dbgln("SecurityUI: Invalid data for apply template");
+        response.set("error"sv, JsonValue { "Invalid request data"_string });
+        async_send_message("templateApplied"sv, response);
+        return;
+    }
+
+    auto const& data_obj = data.as_object();
+    auto template_id_opt = data_obj.get_integer<i64>("template_id"sv);
+    if (!template_id_opt.has_value()) {
+        dbgln("SecurityUI: Missing template_id for apply");
+        response.set("error"sv, JsonValue { "Missing template_id"_string });
+        async_send_message("templateApplied"sv, response);
+        return;
+    }
+
+    auto template_id = template_id_opt.value();
+
+    // Instantiate the template (for now with no variables)
+    HashMap<String, String> variables;
+    auto policy_result = m_policy_graph->value()->instantiate_template(template_id, variables);
+    if (policy_result.is_error()) {
+        dbgln("SecurityUI: Failed to instantiate template {}: {}", template_id, policy_result.error());
+        response.set("error"sv, JsonValue { "Failed to instantiate template"_string });
+    } else {
+        // Create the policy
+        auto create_result = m_policy_graph->value()->create_policy(policy_result.value());
+        if (create_result.is_error()) {
+            dbgln("SecurityUI: Failed to create policy from template: {}", create_result.error());
+            response.set("error"sv, JsonValue { "Failed to create policy"_string });
+        } else {
+            dbgln("SecurityUI: Successfully applied template {} as policy {}", template_id, create_result.value());
+            response.set("policies_created"sv, JsonValue { 1 });
+        }
+    }
+
+    async_send_message("templateApplied"sv, response);
+}
+
+void SecurityUI::export_policy_templates()
+{
+    JsonObject response;
+
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized for export templates");
+        response.set("error"sv, JsonValue { "PolicyGraph not initialized"_string });
+        async_send_message("templateExported"sv, response);
+        return;
+    }
+
+    auto export_result = m_policy_graph->value()->export_templates_json();
+    if (export_result.is_error()) {
+        dbgln("SecurityUI: Failed to export templates: {}", export_result.error());
+        response.set("error"sv, JsonValue { "Failed to export templates"_string });
+    } else {
+        dbgln("SecurityUI: Successfully exported policy templates");
+        response.set("json"sv, JsonValue { export_result.value() });
+    }
+
+    async_send_message("templateExported"sv, response);
+}
+
+void SecurityUI::import_policy_templates(JsonValue const& data)
+{
+    JsonObject response;
+
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized for import templates");
+        response.set("error"sv, JsonValue { "PolicyGraph not initialized"_string });
+        async_send_message("templateImported"sv, response);
+        return;
+    }
+
+    if (!data.is_object()) {
+        dbgln("SecurityUI: Invalid data for import templates");
+        response.set("error"sv, JsonValue { "Invalid request data"_string });
+        async_send_message("templateImported"sv, response);
+        return;
+    }
+
+    auto const& data_obj = data.as_object();
+    auto json_str = data_obj.get_string("json"sv);
+    if (!json_str.has_value()) {
+        dbgln("SecurityUI: Missing JSON data for import templates");
+        response.set("error"sv, JsonValue { "Missing JSON data"_string });
+        async_send_message("templateImported"sv, response);
+        return;
+    }
+
+    auto import_result = m_policy_graph->value()->import_templates_json(json_str.value());
+    if (import_result.is_error()) {
+        dbgln("SecurityUI: Failed to import templates: {}", import_result.error());
+        response.set("error"sv, JsonValue { "Failed to import templates"_string });
+    } else {
+        // Count how many templates were imported
+        auto list_result = m_policy_graph->value()->list_templates({});
+        size_t count = 0;
+        if (!list_result.is_error()) {
+            count = list_result.value().size();
+        }
+
+        dbgln("SecurityUI: Successfully imported policy templates (total: {})", count);
+        response.set("count"sv, JsonValue { static_cast<i64>(count) });
+    }
+
+    async_send_message("templateImported"sv, response);
 }
 
 }
