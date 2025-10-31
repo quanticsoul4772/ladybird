@@ -20,40 +20,40 @@ static u64 measure_time_ns(auto&& func)
 
 TEST_CASE(equal_strings_same_length)
 {
-    StringView a = "hello_world_test_string_42";
-    StringView b = "hello_world_test_string_42";
+    StringView a = "hello_world_test_string_42"sv;
+    StringView b = "hello_world_test_string_42"sv;
 
     EXPECT(Crypto::ConstantTimeComparison::compare_strings(a, b));
 }
 
 TEST_CASE(different_strings_same_length)
 {
-    StringView a = "hello_world_test_string_42";
-    StringView b = "hello_world_test_string_43";
+    StringView a = "hello_world_test_string_42"sv;
+    StringView b = "hello_world_test_string_43"sv;
 
     EXPECT(!Crypto::ConstantTimeComparison::compare_strings(a, b));
 }
 
 TEST_CASE(different_lengths)
 {
-    StringView a = "hello_world";
-    StringView b = "hello";
+    StringView a = "hello_world"sv;
+    StringView b = "hello"sv;
 
     EXPECT(!Crypto::ConstantTimeComparison::compare_strings(a, b));
 }
 
 TEST_CASE(empty_strings)
 {
-    StringView a = "";
-    StringView b = "";
+    StringView a = ""sv;
+    StringView b = ""sv;
 
     EXPECT(Crypto::ConstantTimeComparison::compare_strings(a, b));
 }
 
 TEST_CASE(one_empty_one_not)
 {
-    StringView a = "";
-    StringView b = "hello";
+    StringView a = ""sv;
+    StringView b = "hello"sv;
 
     EXPECT(!Crypto::ConstantTimeComparison::compare_strings(a, b));
 }
@@ -92,24 +92,24 @@ TEST_CASE(very_long_strings_different_at_end)
 
 TEST_CASE(strings_differing_at_start)
 {
-    StringView a = "a_test_string_with_lots_of_content_following";
-    StringView b = "b_test_string_with_lots_of_content_following";
+    StringView a = "a_test_string_with_lots_of_content_following"sv;
+    StringView b = "b_test_string_with_lots_of_content_following"sv;
 
     EXPECT(!Crypto::ConstantTimeComparison::compare_strings(a, b));
 }
 
 TEST_CASE(strings_differing_at_middle)
 {
-    StringView a = "test_string_a_with_content";
-    StringView b = "test_string_b_with_content";
+    StringView a = "test_string_a_with_content"sv;
+    StringView b = "test_string_b_with_content"sv;
 
     EXPECT(!Crypto::ConstantTimeComparison::compare_strings(a, b));
 }
 
 TEST_CASE(strings_differing_at_end)
 {
-    StringView a = "test_string_with_content_a";
-    StringView b = "test_string_with_content_b";
+    StringView a = "test_string_with_content_a"sv;
+    StringView b = "test_string_with_content_b"sv;
 
     EXPECT(!Crypto::ConstantTimeComparison::compare_strings(a, b));
 }
@@ -132,16 +132,16 @@ TEST_CASE(all_zeros_vs_all_ones)
 TEST_CASE(hash_comparison_64_hex_chars)
 {
     // Typical SHA256 hash (64 hex characters)
-    StringView hash_a = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7a";
-    StringView hash_b = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7a";
+    StringView hash_a = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7a"sv;
+    StringView hash_b = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7a"sv;
 
     EXPECT(Crypto::ConstantTimeComparison::compare_hashes(hash_a, hash_b));
 }
 
 TEST_CASE(hash_comparison_different_hashes)
 {
-    StringView hash_a = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7a";
-    StringView hash_b = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7b";
+    StringView hash_a = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7a"sv;
+    StringView hash_b = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7b"sv;
 
     EXPECT(!Crypto::ConstantTimeComparison::compare_hashes(hash_a, hash_b));
 }
@@ -149,9 +149,9 @@ TEST_CASE(hash_comparison_different_hashes)
 TEST_CASE(timing_consistency_verification)
 {
     // This test verifies that comparison time doesn't depend on where strings differ
-    StringView correct = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7a";
-    StringView wrong_at_start = "0000000000000000000000000000000000000000000000000000000000000000";
-    StringView wrong_at_end = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f70";
+    StringView correct = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7a"sv;
+    StringView wrong_at_start = "0000000000000000000000000000000000000000000000000000000000000000"sv;
+    StringView wrong_at_end = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f70"sv;
 
     // Run each comparison many times and measure average time
     constexpr int iterations = 1000;
@@ -222,9 +222,9 @@ TEST_CASE(byte_array_different_lengths)
 TEST_CASE(real_world_sha256_hashes)
 {
     // Real SHA256 hashes from actual files
-    StringView hash1 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // Empty file
-    StringView hash2 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"; // "abc"
-    StringView hash3 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // Empty file (duplicate)
+    StringView hash1 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"sv; // Empty file
+    StringView hash2 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"sv; // "abc"
+    StringView hash3 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"sv; // Empty file (duplicate)
 
     EXPECT(Crypto::ConstantTimeComparison::compare_hashes(hash1, hash3));
     EXPECT(!Crypto::ConstantTimeComparison::compare_hashes(hash1, hash2));
@@ -233,7 +233,7 @@ TEST_CASE(real_world_sha256_hashes)
 TEST_CASE(performance_benchmark)
 {
     // Benchmark to ensure constant-time comparison is acceptably fast
-    StringView hash = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7a";
+    StringView hash = "3a4f9c2b8d1e6f0a9c3b7d2e8f1a4c6b9d2e7f3a8c1b4d7e0f9a2c5b8d1e4f7a"sv;
 
     constexpr int iterations = 10000;
     auto total_time = measure_time_ns([&]() {
@@ -281,9 +281,9 @@ TEST_CASE(single_bit_difference)
 TEST_CASE(unicode_strings)
 {
     // Test with UTF-8 encoded strings
-    StringView a = "Hello, 世界! 🌍";
-    StringView b = "Hello, 世界! 🌍";
-    StringView c = "Hello, 世界! 🌎";
+    StringView a = "Hello, 世界! 🌍"sv;
+    StringView b = "Hello, 世界! 🌍"sv;
+    StringView c = "Hello, 世界! 🌎"sv;
 
     EXPECT(Crypto::ConstantTimeComparison::compare_strings(a, b));
     EXPECT(!Crypto::ConstantTimeComparison::compare_strings(a, c));
@@ -291,9 +291,9 @@ TEST_CASE(unicode_strings)
 
 TEST_CASE(special_characters)
 {
-    StringView a = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~";
-    StringView b = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~";
-    StringView c = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~!";
+    StringView a = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~"sv;
+    StringView b = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~"sv;
+    StringView c = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~!"sv;
 
     EXPECT(Crypto::ConstantTimeComparison::compare_strings(a, b));
     EXPECT(!Crypto::ConstantTimeComparison::compare_strings(a, c));

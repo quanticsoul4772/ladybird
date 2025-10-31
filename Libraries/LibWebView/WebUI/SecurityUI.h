@@ -46,8 +46,15 @@ private:
     // Metrics (Phase 5 Day 34)
     void get_metrics();
 
+    // Credential Protection (Phase 6 Day 40)
+    void get_credential_protection_data();
+    void revoke_trusted_form(JsonValue const&);
+
+    // Credential Education Preference (Phase 6 Day 41)
+    void set_credential_education_shown(JsonValue const&);
+
     // PolicyGraph instance for security policy management
-    Optional<Sentinel::PolicyGraph> m_policy_graph;
+    Optional<ErrorOr<NonnullOwnPtr<Sentinel::PolicyGraph>>> m_policy_graph;
 };
 
 }

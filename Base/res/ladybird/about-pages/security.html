@@ -420,6 +420,143 @@
                 margin-bottom: 8px;
                 font-family: monospace;
             }
+
+            /* Credential Protection Education Modal Styles (Sentinel Phase 6 Day 41) */
+            .credential-education-modal-content {
+                max-width: 700px;
+                animation: slideIn 0.3s ease-out;
+            }
+
+            @keyframes slideIn {
+                from {
+                    transform: translateY(-30px);
+                    opacity: 0;
+                }
+                to {
+                    transform: translateY(0);
+                    opacity: 1;
+                }
+            }
+
+            .education-modal-body {
+                font-size: 14px;
+                line-height: 1.6;
+            }
+
+            .education-section {
+                margin-bottom: 25px;
+            }
+
+            .education-section h3 {
+                font-size: 16px;
+                font-weight: 600;
+                margin-bottom: 10px;
+                color: var(--violet-100);
+            }
+
+            .education-section p {
+                margin: 8px 0;
+            }
+
+            .education-section ul {
+                margin: 10px 0;
+                padding-left: 24px;
+            }
+
+            .education-section li {
+                margin: 8px 0;
+            }
+
+            .education-action-box {
+                border-left: 4px solid;
+                padding: 12px 15px;
+                margin: 12px 0;
+                border-radius: 6px;
+            }
+
+            .education-action-box-safe {
+                background-color: rgba(34, 197, 94, 0.1);
+                border-color: #22c55e;
+            }
+
+            .education-action-box-danger {
+                background-color: rgba(239, 68, 68, 0.1);
+                border-color: #ef4444;
+            }
+
+            .education-action-box strong {
+                display: block;
+                margin-bottom: 6px;
+            }
+
+            .education-action-box p {
+                margin: 0;
+                font-size: 13px;
+                opacity: 0.95;
+            }
+
+            .education-footer {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-top: 30px;
+                padding-top: 20px;
+                border-top: 1px solid var(--stat-border);
+            }
+
+            .education-checkbox-label {
+                display: flex;
+                align-items: center;
+                font-size: 14px;
+                cursor: pointer;
+                user-select: none;
+            }
+
+            .education-checkbox-label input[type="checkbox"] {
+                margin-right: 8px;
+                cursor: pointer;
+            }
+
+            /* Security Tips Section Styles (Sentinel Phase 6 Day 41) */
+            .security-tips-section {
+                margin-top: 30px;
+                padding-top: 30px;
+                border-top: 2px solid var(--stat-border);
+            }
+
+            .security-tip {
+                background-color: var(--stat-background);
+                border-left: 3px solid var(--violet-100);
+                padding: 15px 18px;
+                margin-bottom: 12px;
+                border-radius: 6px;
+                transition: all 0.2s;
+            }
+
+            .security-tip:hover {
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            }
+
+            .security-tip strong {
+                display: block;
+                font-size: 14px;
+                font-weight: 600;
+                margin-bottom: 6px;
+                color: var(--violet-100);
+            }
+
+            .security-tip p {
+                margin: 0;
+                font-size: 13px;
+                line-height: 1.5;
+                opacity: 0.9;
+            }
+
+            .security-tip-learn-more {
+                margin-top: 8px;
+                padding: 8px 16px;
+                font-size: 13px;
+            }
         </style>
     </head>
     <body>
@@ -445,6 +582,105 @@
                 <p style="margin-top: 10px; font-size: 13px; opacity: 0.8;">
                     View and manage files that have been quarantined by the security system.
                 </p>
+            </div>
+        </div>
+
+        <!-- Credential Protection (Sentinel Phase 6 Day 40) -->
+        <div class="card">
+            <div class="card-header">Credential Protection</div>
+            <div class="card-body">
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-forms-monitored">0</div>
+                        <div class="stat-label">Forms Monitored</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-credential-threats-blocked">0</div>
+                        <div class="stat-label">Credential Theft Attempts Blocked</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-trusted-forms">0</div>
+                        <div class="stat-label">Trusted Form Relationships</div>
+                    </div>
+                </div>
+
+                <h3 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px; font-weight: 600;">Recent Credential Alerts</h3>
+                <div id="credential-alerts-container">
+                    <table id="credential-alerts-table" class="hidden" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="text-align: left; border-bottom: 2px solid var(--stat-border);">
+                                <th style="padding: 12px 8px;">Time</th>
+                                <th style="padding: 12px 8px;">Type</th>
+                                <th style="padding: 12px 8px;">Form Origin</th>
+                                <th style="padding: 12px 8px;">Action Origin</th>
+                                <th style="padding: 12px 8px;">Severity</th>
+                                <th style="padding: 12px 8px;">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="credential-alerts-tbody">
+                        </tbody>
+                    </table>
+                    <div id="credential-alerts-empty" class="empty-message">
+                        No credential alerts yet. Ladybird is monitoring your forms for suspicious activity.
+                    </div>
+                </div>
+
+                <h3 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px; font-weight: 600;">Trusted Form Relationships</h3>
+                <div id="trusted-forms-container">
+                    <table id="trusted-forms-table" class="hidden" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="text-align: left; border-bottom: 2px solid var(--stat-border);">
+                                <th style="padding: 12px 8px;">Form Origin</th>
+                                <th style="padding: 12px 8px;">Action Origin</th>
+                                <th style="padding: 12px 8px;">Learned On</th>
+                                <th style="padding: 12px 8px;">Submission Count</th>
+                                <th style="padding: 12px 8px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trusted-forms-tbody">
+                        </tbody>
+                    </table>
+                    <div id="trusted-forms-empty" class="empty-message">
+                        No trusted form relationships yet. When you trust a cross-origin form, it will appear here.
+                    </div>
+                </div>
+
+                <!-- Security Tips Section (Sentinel Phase 6 Day 41) -->
+                <div class="security-tips-section">
+                    <h3 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px; font-weight: 600;">
+                        <span style="font-size: 18px; margin-right: 8px;">💡</span>
+                        Security Tips
+                    </h3>
+
+                    <div class="security-tip">
+                        <strong>Verify URLs Before Entering Credentials</strong>
+                        <p>Always check that the URL in the address bar matches the expected domain. Phishing sites often use similar-looking domains to trick users.</p>
+                    </div>
+
+                    <div class="security-tip">
+                        <strong>Use HTTPS for Sensitive Information</strong>
+                        <p>Look for the lock icon in the address bar. HTTPS encrypts your connection and protects your data from interception.</p>
+                    </div>
+
+                    <div class="security-tip">
+                        <strong>Be Cautious with Cross-Origin Forms</strong>
+                        <p>If Ladybird alerts you about a form sending data to a different domain, verify that this is expected behavior before proceeding.</p>
+                    </div>
+
+                    <div class="security-tip">
+                        <strong>Review Trusted Relationships Regularly</strong>
+                        <p>Periodically review your trusted form relationships above and revoke any that you no longer recognize or trust.</p>
+                    </div>
+
+                    <div class="security-tip">
+                        <strong>Learn More About Credential Protection</strong>
+                        <p>
+                            <button class="button button-secondary security-tip-learn-more" onclick="showCredentialEducationModal()">
+                                Learn How Protection Works
+                            </button>
+                        </p>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -588,6 +824,71 @@
             </div>
         </div>
 
+        <!-- Credential Protection Education Modal (Sentinel Phase 6 Day 41) -->
+        <div id="credential-education-modal" class="modal">
+            <div class="modal-content credential-education-modal-content">
+                <div class="modal-header">
+                    <span style="font-size: 24px; margin-right: 12px;">🛡️</span>
+                    Understanding Credential Protection
+                </div>
+                <div class="education-modal-body">
+                    <p style="font-size: 15px; line-height: 1.6; margin-bottom: 20px;">
+                        Ladybird actively protects your passwords and sensitive information from theft attempts. Here's what you need to know:
+                    </p>
+
+                    <div class="education-section">
+                        <h3>What is Credential Exfiltration?</h3>
+                        <p>
+                            Credential exfiltration occurs when a malicious website tries to steal your login information by:
+                        </p>
+                        <ul>
+                            <li>Sending your password to a different domain than expected</li>
+                            <li>Using insecure connections (HTTP instead of HTTPS) for sensitive data</li>
+                            <li>Embedding third-party forms that collect your credentials</li>
+                            <li>Mimicking legitimate login pages to capture your information</li>
+                        </ul>
+                    </div>
+
+                    <div class="education-section">
+                        <h3>How Ladybird Protects You</h3>
+                        <ul>
+                            <li><strong>Real-time Monitoring:</strong> Every form submission is analyzed for suspicious patterns</li>
+                            <li><strong>Alert System:</strong> You'll be warned before credentials are sent to unexpected destinations</li>
+                            <li><strong>Autofill Protection:</strong> Password autofill is blocked on suspicious forms</li>
+                            <li><strong>Trust Learning:</strong> After you approve a form once, Ladybird remembers your decision</li>
+                        </ul>
+                    </div>
+
+                    <div class="education-section">
+                        <h3>What to Do When Alerted</h3>
+                        <div class="education-action-box education-action-box-safe">
+                            <strong>If you recognize the website and trust it:</strong>
+                            <p>Click "Trust This Form" to proceed. Ladybird will remember your decision and won't alert you again for this site.</p>
+                        </div>
+                        <div class="education-action-box education-action-box-danger">
+                            <strong>If something seems suspicious:</strong>
+                            <p>Click "Block" to prevent the submission. Double-check the URL and verify you're on the legitimate website.</p>
+                        </div>
+                    </div>
+
+                    <div class="education-section">
+                        <h3>Managing Trusted Forms</h3>
+                        <p>
+                            You can review and revoke trusted form relationships at any time on this Security Center page. Look for the "Trusted Form Relationships" section above.
+                        </p>
+                    </div>
+
+                    <div class="education-footer">
+                        <label class="education-checkbox-label">
+                            <input type="checkbox" id="credential-education-dont-show">
+                            Don't show this again
+                        </label>
+                        <button class="button" id="credential-education-close">Got It</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <script type="module">
             // Security Page JavaScript Controller
 
@@ -610,12 +911,23 @@
                 loadPolicies();
                 loadThreats();
                 loadTemplates();
+                loadCredentialProtectionData();  // NEW: Load credential protection data
 
                 // Start periodic status refresh
                 startStatusRefresh();
 
                 // Setup template UI
                 setupTemplateUI();
+
+                // Check URL fragment to auto-show education modal (Sentinel Phase 6 Day 41)
+                if (window.location.hash === '#show-credential-education') {
+                    // Show the education modal after a brief delay to ensure page is fully loaded
+                    setTimeout(() => {
+                        showCredentialEducationModal();
+                        // Clear the hash so refreshing doesn't show it again
+                        history.replaceState(null, '', window.location.pathname);
+                    }, 100);
+                }
             });
 
             document.addEventListener("WebUIMessage", event => {
@@ -639,6 +951,12 @@
                         break;
                     case "policyFromTemplateCreated":
                         handleTemplateCreated(data);
+                        break;
+                    case "credentialProtectionDataLoaded":
+                        renderCredentialProtectionData(data);
+                        break;
+                    case "trustedFormRevoked":
+                        handleTrustedFormRevoked(data);
                         break;
                 }
             });
@@ -1011,6 +1329,245 @@
                     loadPolicies();
                 }
             }
+
+            // Credential Protection Functions (Sentinel Phase 6 Day 40)
+
+            function loadCredentialProtectionData() {
+                ladybird.sendMessage("getCredentialProtectionData");
+            }
+
+            function renderCredentialProtectionData(data) {
+                // Update stats cards
+                document.getElementById('stat-forms-monitored').textContent = data.formsMonitored || 0;
+                document.getElementById('stat-credential-threats-blocked').textContent = data.threatsBlocked || 0;
+                document.getElementById('stat-trusted-forms').textContent = data.trustedForms || 0;
+
+                // Render credential alerts table
+                renderCredentialAlerts(data.alerts || []);
+
+                // Render trusted forms table
+                renderTrustedForms(data.trustedRelationships || []);
+            }
+
+            function renderCredentialAlerts(alerts) {
+                const table = document.getElementById('credential-alerts-table');
+                const tbody = document.getElementById('credential-alerts-tbody');
+                const emptyMsg = document.getElementById('credential-alerts-empty');
+
+                if (!alerts || alerts.length === 0) {
+                    table.classList.add('hidden');
+                    emptyMsg.classList.remove('hidden');
+                    return;
+                }
+
+                table.classList.remove('hidden');
+                emptyMsg.classList.add('hidden');
+
+                tbody.innerHTML = '';
+
+                alerts.forEach(alert => {
+                    const row = document.createElement('tr');
+                    row.style.borderBottom = '1px solid var(--stat-border)';
+
+                    // Time
+                    const timeCell = document.createElement('td');
+                    timeCell.style.padding = '12px 8px';
+                    const date = new Date(alert.timestamp);
+                    timeCell.textContent = date.toLocaleString();
+                    row.appendChild(timeCell);
+
+                    // Type
+                    const typeCell = document.createElement('td');
+                    typeCell.style.padding = '12px 8px';
+                    typeCell.textContent = formatAlertType(alert.alertType);
+                    row.appendChild(typeCell);
+
+                    // Form Origin
+                    const formOriginCell = document.createElement('td');
+                    formOriginCell.style.padding = '12px 8px';
+                    formOriginCell.style.fontSize = '13px';
+                    formOriginCell.textContent = alert.formOrigin;
+                    row.appendChild(formOriginCell);
+
+                    // Action Origin
+                    const actionOriginCell = document.createElement('td');
+                    actionOriginCell.style.padding = '12px 8px';
+                    actionOriginCell.style.fontSize = '13px';
+                    actionOriginCell.textContent = alert.actionOrigin;
+                    row.appendChild(actionOriginCell);
+
+                    // Severity
+                    const severityCell = document.createElement('td');
+                    severityCell.style.padding = '12px 8px';
+                    const severityBadge = document.createElement('span');
+                    severityBadge.style.padding = '4px 12px';
+                    severityBadge.style.borderRadius = '12px';
+                    severityBadge.style.fontSize = '12px';
+                    severityBadge.style.fontWeight = '600';
+                    severityBadge.textContent = alert.severity || 'Unknown';
+
+                    // Color code by severity
+                    if (alert.severity === 'critical') {
+                        severityBadge.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
+                        severityBadge.style.color = '#ef4444';
+                    } else if (alert.severity === 'high') {
+                        severityBadge.style.backgroundColor = 'rgba(245, 158, 11, 0.2)';
+                        severityBadge.style.color = '#f59e0b';
+                    } else {
+                        severityBadge.style.backgroundColor = 'rgba(59, 130, 246, 0.2)';
+                        severityBadge.style.color = '#3b82f6';
+                    }
+
+                    severityCell.appendChild(severityBadge);
+                    row.appendChild(severityCell);
+
+                    // Status
+                    const statusCell = document.createElement('td');
+                    statusCell.style.padding = '12px 8px';
+                    statusCell.style.fontSize = '13px';
+                    statusCell.textContent = alert.status || 'Blocked';
+                    row.appendChild(statusCell);
+
+                    tbody.appendChild(row);
+                });
+            }
+
+            function renderTrustedForms(trustedForms) {
+                const table = document.getElementById('trusted-forms-table');
+                const tbody = document.getElementById('trusted-forms-tbody');
+                const emptyMsg = document.getElementById('trusted-forms-empty');
+
+                if (!trustedForms || trustedForms.length === 0) {
+                    table.classList.add('hidden');
+                    emptyMsg.classList.remove('hidden');
+                    return;
+                }
+
+                table.classList.remove('hidden');
+                emptyMsg.classList.add('hidden');
+
+                tbody.innerHTML = '';
+
+                trustedForms.forEach(trust => {
+                    const row = document.createElement('tr');
+                    row.style.borderBottom = '1px solid var(--stat-border)';
+
+                    // Form Origin
+                    const formOriginCell = document.createElement('td');
+                    formOriginCell.style.padding = '12px 8px';
+                    formOriginCell.style.fontSize = '13px';
+                    formOriginCell.textContent = trust.formOrigin;
+                    row.appendChild(formOriginCell);
+
+                    // Action Origin
+                    const actionOriginCell = document.createElement('td');
+                    actionOriginCell.style.padding = '12px 8px';
+                    actionOriginCell.style.fontSize = '13px';
+                    actionOriginCell.textContent = trust.actionOrigin;
+                    row.appendChild(actionOriginCell);
+
+                    // Learned On
+                    const learnedCell = document.createElement('td');
+                    learnedCell.style.padding = '12px 8px';
+                    learnedCell.style.fontSize = '13px';
+                    const date = new Date(trust.learnedAt);
+                    learnedCell.textContent = date.toLocaleDateString();
+                    row.appendChild(learnedCell);
+
+                    // Submission Count
+                    const countCell = document.createElement('td');
+                    countCell.style.padding = '12px 8px';
+                    countCell.textContent = trust.submissionCount || 0;
+                    row.appendChild(countCell);
+
+                    // Actions
+                    const actionsCell = document.createElement('td');
+                    actionsCell.style.padding = '12px 8px';
+
+                    const revokeBtn = document.createElement('button');
+                    revokeBtn.className = 'button button-secondary';
+                    revokeBtn.style.padding = '6px 12px';
+                    revokeBtn.style.fontSize = '13px';
+                    revokeBtn.textContent = 'Revoke Trust';
+                    revokeBtn.onclick = () => revokeTrustedForm(trust.formOrigin, trust.actionOrigin);
+
+                    actionsCell.appendChild(revokeBtn);
+                    row.appendChild(actionsCell);
+
+                    tbody.appendChild(row);
+                });
+            }
+
+            function formatAlertType(alertType) {
+                const types = {
+                    'insecure_credential_post': 'Insecure Credential Post',
+                    'credential_exfiltration': 'Credential Exfiltration',
+                    'third_party_form_post': 'Third-Party Form',
+                    'form_action_mismatch': 'Form Action Mismatch'
+                };
+                return types[alertType] || alertType;
+            }
+
+            function revokeTrustedForm(formOrigin, actionOrigin) {
+                if (!confirm(`Revoke trust for forms from "${formOrigin}" to "${actionOrigin}"?\n\nYou will be alerted again if this form attempts to submit credentials.`)) {
+                    return;
+                }
+
+                ladybird.sendMessage("revokeTrustedForm", {
+                    formOrigin: formOrigin,
+                    actionOrigin: actionOrigin
+                });
+            }
+
+            function handleTrustedFormRevoked(data) {
+                if (data.error) {
+                    alert('Failed to revoke trust: ' + data.error);
+                } else {
+                    // Reload credential protection data
+                    loadCredentialProtectionData();
+                }
+            }
+
+            // Make revokeTrustedForm available globally
+            window.revokeTrustedForm = revokeTrustedForm;
+
+            // Credential Protection Education Modal Functions (Sentinel Phase 6 Day 41)
+
+            function showCredentialEducationModal() {
+                const modal = document.getElementById('credential-education-modal');
+                modal.classList.add('active');
+            }
+
+            function closeCredentialEducationModal() {
+                const modal = document.getElementById('credential-education-modal');
+                const dontShowCheckbox = document.getElementById('credential-education-dont-show');
+
+                // If "Don't show again" is checked, save preference
+                if (dontShowCheckbox.checked) {
+                    ladybird.sendMessage("setCredentialEducationShown", { dontShowAgain: true });
+                }
+
+                modal.classList.remove('active');
+            }
+
+            // Setup education modal event handlers
+            document.addEventListener("WebUILoaded", () => {
+                const closeBtn = document.getElementById('credential-education-close');
+                const modal = document.getElementById('credential-education-modal');
+
+                closeBtn.addEventListener('click', closeCredentialEducationModal);
+
+                // Close modal when clicking outside
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) {
+                        closeCredentialEducationModal();
+                    }
+                });
+            });
+
+            // Make education modal functions available globally
+            window.showCredentialEducationModal = showCredentialEducationModal;
+            window.closeCredentialEducationModal = closeCredentialEducationModal;
         </script>
     </body>
 </html>

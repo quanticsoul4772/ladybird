@@ -14,6 +14,9 @@
 
 namespace Sentinel {
 
+// Forward declaration
+class PolicyGraph;
+
 // FlowInspector analyzes form submission patterns to detect credential exfiltration
 class FlowInspector {
 public:
@@ -64,9 +67,17 @@ public:
         String action_origin;
         UnixDateTime learned_at;
         u64 submission_count { 0 };
+        double confidence_score { 0.0 }; // 0.0-1.0, higher = more trusted
     };
 
-    FlowInspector() = default;
+    struct DetectionRule {
+        String name;
+        AlertType type;
+        AlertSeverity severity;
+        Function<bool(FormSubmissionEvent const&)> predicate;
+    };
+
+    explicit FlowInspector(PolicyGraph* policy_graph = nullptr);
 
     // Analyze form submission event and generate alert if suspicious
     ErrorOr<Optional<CredentialAlert>> analyze_form_submission(FormSubmissionEvent const& event);
@@ -83,15 +94,20 @@ public:
     // Clear old alerts from memory
     void cleanup_old_alerts(u64 hours_to_keep = 24);
 
+    // Persistence methods for PolicyGraph integration
+    ErrorOr<void> persist_trusted_relationship(TrustedFormRelationship const& relationship);
+    ErrorOr<void> load_trusted_relationships();
+
+    // Confidence scoring methods
+    bool should_auto_trust(String const& form_origin, String const& action_origin) const;
+    double get_relationship_confidence(String const& form_origin, String const& action_origin) const;
+
 private:
     // Generate alert based on event characteristics
     Optional<CredentialAlert> generate_alert(FormSubmissionEvent const& event) const;
 
-    // Determine severity based on threat characteristics
-    AlertSeverity determine_severity(FormSubmissionEvent const& event) const;
-
-    // Determine alert type based on event
-    AlertType determine_alert_type(FormSubmissionEvent const& event) const;
+    // Create detection rules for form analysis
+    Vector<DetectionRule> create_detection_rules() const;
 
     // Generate human-readable description
     String generate_description(CredentialAlert const& alert) const;
@@ -101,6 +117,9 @@ private:
 
     // Store trusted relationships (whitelist)
     HashMap<String, Vector<TrustedFormRelationship>> m_trusted_relationships;
+
+    // PolicyGraph for persistence (optional, can be null)
+    PolicyGraph* m_policy_graph { nullptr };
 };
 
 }

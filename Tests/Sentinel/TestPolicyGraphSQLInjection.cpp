@@ -416,7 +416,7 @@ int main()
         return 1;
     }
 
-    auto pg = pg_result.release_value();
+    auto& pg = *pg_result.value();
     printf("✅ PolicyGraph initialized at %s\n", db_path.characters_without_null_termination());
 
     // Run all tests

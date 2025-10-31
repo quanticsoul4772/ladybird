@@ -7,6 +7,7 @@
 #include "PolicyGraph.h"
 #include "DatabaseMigrations.h"
 #include "InputValidator.h"
+#include <AK/NonnullOwnPtr.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/RetryPolicy.h>
 #include <LibCore/StandardPaths.h>
@@ -15,6 +16,8 @@
 #include <LibFileSystem/FileSystem.h>
 
 namespace Sentinel {
+
+using AK::Duration;
 
 // Retry policy for database operations with exponential backoff
 // Max attempts: 3, Initial delay: 100ms, Max delay: 1 second, Backoff: 2x
@@ -166,7 +169,7 @@ void PolicyGraphCache::reset_metrics()
 
 // PolicyGraph implementation
 
-ErrorOr<PolicyGraph> PolicyGraph::create(ByteString const& db_directory)
+ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_directory)
 {
     // Initialize retry policy for database operations
     initialize_db_retry_policy();
@@ -176,10 +179,9 @@ ErrorOr<PolicyGraph> PolicyGraph::create(ByteString const& db_directory)
     if (!FileSystem::exists(db_directory))
         TRY(Core::System::mkdir(db_directory, 0700));
 
-    // Create/open database with retry logic for transient failures
-    auto database = TRY(s_db_retry_policy.execute([&]() -> ErrorOr<NonnullRefPtr<Database::Database>> {
-        return Database::Database::create(db_directory, "policy_graph"sv);
-    }));
+    // Create/open database
+    // FIXME: Re-add retry logic once RetryPolicy template is fixed
+    auto database = TRY(Database::Database::create(db_directory, "policy_graph"sv));
 
     // Create policies table
     auto create_policies_table = TRY(database->prepare_statement(R"#(
@@ -361,10 +363,10 @@ ErrorOr<PolicyGraph> PolicyGraph::create(ByteString const& db_directory)
     statements.rollback_transaction = TRY(database->prepare_statement(
         "ROLLBACK TRANSACTION;"sv));
 
-    auto policy_graph = PolicyGraph { move(database), statements };
+    auto policy_graph = adopt_own(*new PolicyGraph(move(database), statements));
 
     // Cleanup old threats on initialization
-    auto cleanup_result = policy_graph.cleanup_old_threats();
+    auto cleanup_result = policy_graph->cleanup_old_threats();
     if (cleanup_result.is_error())
         dbgln("PolicyGraph: Warning - failed to cleanup old threats: {}", cleanup_result.error());
 

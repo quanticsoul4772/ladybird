@@ -208,6 +208,29 @@ WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(GC::Ref<HTMLElement> subm
     if (cannot_navigate())
         return {};
 
+    // SECURITY: Notify form monitor about submission for credential exfil detection
+    // This must happen before the actual submission so we can potentially block it
+    auto action_url = action_from_form_element(submitter);
+    if (action_url.is_empty())
+        action_url = form_document->url_string();
+    auto parsed_action_for_monitoring = submitter->document().encoding_parse_url(action_url);
+    if (parsed_action_for_monitoring.has_value()) {
+        auto method_state = method_state_from_form_element(submitter);
+        String method_str;
+        switch (method_state) {
+        case MethodAttributeState::GET:
+            method_str = "GET"_string;
+            break;
+        case MethodAttributeState::POST:
+            method_str = "POST"_string;
+            break;
+        case MethodAttributeState::Dialog:
+            method_str = "Dialog"_string;
+            break;
+        }
+        document().page().client().page_did_submit_form(*this, method_str, parsed_action_for_monitoring.value());
+    }
+
     // 10. Let method be the submitter element's method.
     auto method = method_state_from_form_element(submitter);
 

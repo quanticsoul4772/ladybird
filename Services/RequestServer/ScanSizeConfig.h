@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Types.h>
+#include <cstring>
 
 namespace RequestServer {
 

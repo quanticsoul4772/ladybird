@@ -6,7 +6,7 @@
 
 #include "GracefulDegradation.h"
 #include <AK/Debug.h>
-#include <LibCore/DateTime.h>
+#include <AK/Time.h>
 
 namespace Sentinel {
 
@@ -44,7 +44,7 @@ void GracefulDegradation::set_service_state(
         }
         // If state is degrading, update failure metrics
         else if (static_cast<int>(state) > static_cast<int>(old_state)) {
-            m_service_failures.get(service_name)->failure_count++;
+            m_service_failures.get(service_name).value().failure_count++;
             m_total_failures++;
             m_last_failure_time = now;
             dbgln("GracefulDegradation: Service '{}' degraded from {} to {}: {}",
@@ -55,15 +55,15 @@ void GracefulDegradation::set_service_state(
         }
 
         // Update existing failure record
-        m_service_failures.get(service_name)->state = state;
-        m_service_failures.get(service_name)->failure_reason = reason;
-        m_service_failures.get(service_name)->last_check_at = now;
-        m_service_failures.get(service_name)->fallback_strategy = fallback;
+        m_service_failures.get(service_name).value().state = state;
+        m_service_failures.get(service_name).value().failure_reason = reason;
+        m_service_failures.get(service_name).value().last_check_at = now;
+        m_service_failures.get(service_name).value().fallback_strategy = fallback;
 
         // Reset failure count if recovered
         if (state == ServiceState::Healthy) {
-            m_service_failures.get(service_name)->failure_count = 0;
-            m_service_failures.get(service_name)->recovery_attempts = 0;
+            m_service_failures.get(service_name).value().failure_count = 0;
+            m_service_failures.get(service_name).value().recovery_attempts = 0;
         }
     } else {
         // Create new failure record
@@ -73,7 +73,7 @@ void GracefulDegradation::set_service_state(
             .failure_reason = reason,
             .failed_at = now,
             .last_check_at = now,
-            .failure_count = (state == ServiceState::Healthy) ? 0 : 1,
+            .failure_count = static_cast<size_t>((state == ServiceState::Healthy) ? 0 : 1),
             .recovery_attempts = 0,
             .fallback_strategy = fallback,
             .auto_recovery_enabled = true
@@ -207,26 +207,26 @@ void GracefulDegradation::attempt_recovery(String const& service_name)
 {
     Threading::MutexLocker locker(m_mutex);
 
-    auto it = m_service_failures.find(service_name);
-    if (it == m_service_failures.end()) {
+    auto failure_opt = m_service_failures.get(service_name);
+    if (!failure_opt.has_value()) {
         dbgln("GracefulDegradation: Cannot attempt recovery for unknown service '{}'", service_name);
         return;
     }
 
-    auto& failure = m_service_failures.get(service_name);
-    failure->recovery_attempts++;
-    failure->last_check_at = UnixDateTime::now();
+    auto& failure = failure_opt.value();
+    failure.recovery_attempts++;
+    failure.last_check_at = UnixDateTime::now();
 
     dbgln("GracefulDegradation: Attempting recovery for '{}' (attempt {}/{})",
         service_name,
-        failure->recovery_attempts,
+        failure.recovery_attempts,
         m_recovery_attempt_limit);
 
     // Check if we've exceeded recovery attempt limit
-    if (failure->recovery_attempts >= m_recovery_attempt_limit) {
+    if (failure.recovery_attempts >= m_recovery_attempt_limit) {
         dbgln("GracefulDegradation: Service '{}' exceeded recovery attempt limit, marking as critical",
             service_name);
-        failure->state = ServiceState::Critical;
+        failure.state = ServiceState::Critical;
     }
 }
 
@@ -251,7 +251,7 @@ void GracefulDegradation::enable_auto_recovery(String service_name, bool enabled
 
     auto it = m_service_failures.find(service_name);
     if (it != m_service_failures.end()) {
-        m_service_failures.get(service_name)->auto_recovery_enabled = enabled;
+        m_service_failures.get(service_name).value().auto_recovery_enabled = enabled;
         dbgln("GracefulDegradation: Auto-recovery for '{}' set to {}", service_name, enabled);
     } else {
         // Create a new healthy service entry with auto-recovery setting
@@ -366,7 +366,7 @@ GracefulDegradation::HealthStatus GracefulDegradation::get_health_status() const
         } else if (failure.state == ServiceState::Critical) {
             failed_list.append(name);
             if (!critical_msg.has_value()) {
-                critical_msg = String::formatted("Critical failure in service: {}", name);
+                critical_msg = MUST(String::formatted("Critical failure in service: {}", name));
             }
         }
     }

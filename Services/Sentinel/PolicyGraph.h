@@ -8,6 +8,7 @@
 
 #include <AK/Error.h>
 #include <AK/HashMap.h>
+#include <AK/NonnullOwnPtr.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/String.h>
@@ -98,7 +99,7 @@ public:
         String alert_json;
     };
 
-    static ErrorOr<PolicyGraph> create(ByteString const& db_directory);
+    static ErrorOr<NonnullOwnPtr<PolicyGraph>> create(ByteString const& db_directory);
 
     // Policy CRUD operations
     ErrorOr<i64> create_policy(Policy const& policy);

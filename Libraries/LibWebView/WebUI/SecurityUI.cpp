@@ -29,7 +29,7 @@ void SecurityUI::register_interfaces()
         error.set("message"sv, JsonValue { "The security policy database could not be loaded. Some features may not work."sv });
         async_send_message("databaseError"sv, error);
     } else {
-        m_policy_graph = pg_result.release_value();
+        m_policy_graph = move(pg_result);
         dbgln("SecurityUI: PolicyGraph initialized successfully");
     }
 
@@ -81,6 +81,19 @@ void SecurityUI::register_interfaces()
     register_interface("getMetrics"sv, [this](auto const&) {
         get_metrics();
     });
+
+    register_interface("getCredentialProtectionData"sv, [this](auto const&) {
+        get_credential_protection_data();
+    });
+
+    register_interface("revokeTrustedForm"sv, [this](auto const& data) {
+        revoke_trusted_form(data);
+    });
+
+    // Sentinel Phase 6 Day 41: Credential education preference
+    register_interface("setCredentialEducationShown"sv, [this](auto const& data) {
+        set_credential_education_shown(data);
+    });
 }
 
 void SecurityUI::get_system_status()
@@ -105,7 +118,7 @@ void SecurityUI::handle_sentinel_status(bool connected, bool scanning_enabled)
     i64 last_scan_timestamp = 0;
     if (m_policy_graph.has_value()) {
         // Get the most recent threat from history
-        auto threats_result = m_policy_graph->get_threat_history({}); // All threats (empty Optional)
+        auto threats_result = m_policy_graph->value()->get_threat_history({}); // All threats (empty Optional)
         if (!threats_result.is_error()) {
             auto threats = threats_result.release_value();
             if (!threats.is_empty()) {
@@ -140,8 +153,8 @@ void SecurityUI::load_statistics()
     }
 
     // Query PolicyGraph for statistics
-    auto policy_count_result = m_policy_graph->get_policy_count();
-    auto threat_count_result = m_policy_graph->get_threat_count();
+    auto policy_count_result = m_policy_graph->value()->get_policy_count();
+    auto threat_count_result = m_policy_graph->value()->get_threat_count();
 
     if (policy_count_result.is_error()) {
         dbgln("SecurityUI: Failed to get policy count: {}", policy_count_result.error());
@@ -157,7 +170,7 @@ void SecurityUI::load_statistics()
         stats.set("threatsToday"sv, JsonValue { 0 });
     } else {
         // Get all threats to analyze by action_taken
-        auto threats_result = m_policy_graph->get_threat_history({});
+        auto threats_result = m_policy_graph->value()->get_threat_history({});
 
         if (threats_result.is_error()) {
             stats.set("threatsBlocked"sv, JsonValue { 0 });
@@ -211,7 +224,7 @@ void SecurityUI::load_policies()
     }
 
     // Query PolicyGraph for all policies
-    auto policies_result = m_policy_graph->list_policies();
+    auto policies_result = m_policy_graph->value()->list_policies();
 
     if (policies_result.is_error()) {
         dbgln("SecurityUI: Failed to list policies: {}", policies_result.error());
@@ -310,7 +323,7 @@ void SecurityUI::get_policy(JsonValue const& data)
     }
 
     // Retrieve policy from PolicyGraph
-    auto policy_result = m_policy_graph->get_policy(policy_id_value.value());
+    auto policy_result = m_policy_graph->value()->get_policy(policy_id_value.value());
 
     if (policy_result.is_error()) {
         JsonObject error;
@@ -452,7 +465,7 @@ void SecurityUI::create_policy(JsonValue const& data)
     };
 
     // Create policy in PolicyGraph
-    auto policy_id_result = m_policy_graph->create_policy(policy);
+    auto policy_id_result = m_policy_graph->value()->create_policy(policy);
 
     if (policy_id_result.is_error()) {
         JsonObject error;
@@ -556,7 +569,7 @@ void SecurityUI::update_policy(JsonValue const& data)
     };
 
     // Update policy in PolicyGraph
-    auto update_result = m_policy_graph->update_policy(policy_id_value.value(), policy);
+    auto update_result = m_policy_graph->value()->update_policy(policy_id_value.value(), policy);
 
     if (update_result.is_error()) {
         JsonObject error;
@@ -599,7 +612,7 @@ void SecurityUI::delete_policy(JsonValue const& data)
     }
 
     // Delete policy from PolicyGraph
-    auto delete_result = m_policy_graph->delete_policy(policy_id_value.value());
+    auto delete_result = m_policy_graph->value()->delete_policy(policy_id_value.value());
 
     if (delete_result.is_error()) {
         JsonObject error;
@@ -638,7 +651,7 @@ void SecurityUI::load_threat_history(JsonValue const& data)
     }
 
     // Query PolicyGraph for threat history
-    auto threats_result = m_policy_graph->get_threat_history(since);
+    auto threats_result = m_policy_graph->value()->get_threat_history(since);
 
     if (threats_result.is_error()) {
         dbgln("SecurityUI: Failed to get threat history: {}", threats_result.error());
@@ -914,7 +927,7 @@ void SecurityUI::create_policy_from_template(JsonValue const& data)
             .last_hit = {}
         };
 
-        auto policy_id_result = m_policy_graph->create_policy(policy);
+        auto policy_id_result = m_policy_graph->value()->create_policy(policy);
         if (!policy_id_result.is_error()) {
             created_policy_ids.append(policy_id_result.value());
         } else {
@@ -967,7 +980,7 @@ void SecurityUI::get_metrics()
     }
 
     // Get policy count
-    auto policy_count_result = m_policy_graph->get_policy_count();
+    auto policy_count_result = m_policy_graph->value()->get_policy_count();
     if (!policy_count_result.is_error()) {
         metrics.set("totalPolicies"sv, JsonValue { static_cast<i64>(policy_count_result.value()) });
     } else {
@@ -975,7 +988,7 @@ void SecurityUI::get_metrics()
     }
 
     // Get threat count
-    auto threat_count_result = m_policy_graph->get_threat_count();
+    auto threat_count_result = m_policy_graph->value()->get_threat_count();
     if (!threat_count_result.is_error()) {
         metrics.set("totalThreats"sv, JsonValue { static_cast<i64>(threat_count_result.value()) });
     } else {
@@ -983,7 +996,7 @@ void SecurityUI::get_metrics()
     }
 
     // Get detailed threat breakdown
-    auto threats_result = m_policy_graph->get_threat_history({});
+    auto threats_result = m_policy_graph->value()->get_threat_history({});
     if (!threats_result.is_error()) {
         auto threats = threats_result.release_value();
 
@@ -1027,6 +1040,119 @@ void SecurityUI::get_metrics()
     metrics.set("metricsVersion"sv, JsonValue { 1 });
 
     async_send_message("metricsLoaded"sv, metrics);
+}
+
+void SecurityUI::get_credential_protection_data()
+{
+    JsonObject data;
+
+    // NOTE: This is a stub implementation for Phase 6 Day 40
+    // The actual credential protection data lives in WebContent's PageClient/FormMonitor
+    // and is not directly accessible from the UI process yet.
+    // Future implementation will need to query WebContent via IPC for real-time data.
+
+    // For now, we return zero stats to demonstrate the UI integration
+    data.set("formsMonitored"sv, JsonValue { 0 });
+    data.set("threatsBlocked"sv, JsonValue { 0 });
+    data.set("trustedForms"sv, JsonValue { 0 });
+
+    // Empty alerts array
+    JsonArray alerts_array;
+    data.set("alerts"sv, JsonValue { alerts_array });
+
+    // Empty trusted relationships array
+    JsonArray trusted_array;
+    data.set("trustedRelationships"sv, JsonValue { trusted_array });
+
+    // TODO (Phase 6 Day 41+): Implement real data fetching:
+    // 1. Add IPC message to WebContent to query FormMonitor state
+    // 2. Aggregate data from all WebContent processes
+    // 3. Store credential alerts in PolicyGraph for persistence
+    // 4. Query PolicyGraph for trusted relationships and alert history
+
+    async_send_message("credentialProtectionDataLoaded"sv, data);
+}
+
+void SecurityUI::revoke_trusted_form(JsonValue const& data)
+{
+    if (!data.is_object()) {
+        JsonObject error;
+        error.set("error"sv, JsonValue { "Invalid request: expected object with formOrigin and actionOrigin"sv });
+        async_send_message("trustedFormRevoked"sv, error);
+        return;
+    }
+
+    auto const& data_obj = data.as_object();
+    auto form_origin = data_obj.get_string("formOrigin"sv);
+    auto action_origin = data_obj.get_string("actionOrigin"sv);
+
+    if (!form_origin.has_value() || !action_origin.has_value()) {
+        JsonObject error;
+        error.set("error"sv, JsonValue { "Missing formOrigin or actionOrigin"sv });
+        async_send_message("trustedFormRevoked"sv, error);
+        return;
+    }
+
+    dbgln("SecurityUI: Revoking trusted form relationship: {} -> {}", form_origin.value(), action_origin.value());
+
+    // NOTE: This is a stub implementation for Phase 6 Day 40
+    // The actual trusted relationships are stored in WebContent's FormMonitor
+    // and are not persisted to PolicyGraph yet.
+
+    // TODO (Phase 6 Day 41+): Implement real trust revocation:
+    // 1. Delete the trusted relationship from PolicyGraph
+    // 2. Send IPC message to all WebContent processes to update their FormMonitors
+    // 3. Ensure future forms from this origin will trigger alerts
+
+    // For now, just send success response
+    JsonObject response;
+    response.set("success"sv, JsonValue { true });
+    response.set("message"sv, JsonValue { ByteString::formatted("Trust revoked for {} -> {}", form_origin.value(), action_origin.value()) });
+
+    async_send_message("trustedFormRevoked"sv, response);
+}
+
+void SecurityUI::set_credential_education_shown(JsonValue const& data)
+{
+    // Sentinel Phase 6 Day 41: Save user preference for credential education modal
+
+    if (!data.is_object()) {
+        dbgln("SecurityUI: Invalid data for setCredentialEducationShown");
+        return;
+    }
+
+    auto const& data_obj = data.as_object();
+    auto dont_show_again = data_obj.get_bool("dontShowAgain"sv).value_or(false);
+
+    dbgln("SecurityUI: Setting credential education shown preference: {}", dont_show_again);
+
+    // Save preference to a file in user data directory
+    auto preference_path = ByteString::formatted("{}/Ladybird/credential_education_shown", Core::StandardPaths::user_data_directory());
+
+    // Create the directory if it doesn't exist
+    auto dir_path = ByteString::formatted("{}/Ladybird", Core::StandardPaths::user_data_directory());
+    auto dir_result = Core::System::mkdir(dir_path, 0700);
+    if (dir_result.is_error() && dir_result.error().code() != EEXIST) {
+        dbgln("SecurityUI: Failed to create Ladybird directory: {}", dir_result.error());
+        return;
+    }
+
+    // Write the preference file (just create an empty file as a flag)
+    if (dont_show_again) {
+        auto file_result = Core::File::open(preference_path, Core::File::OpenMode::Write);
+        if (file_result.is_error()) {
+            dbgln("SecurityUI: Failed to create preference file: {}", file_result.error());
+            return;
+        }
+
+        auto& file = file_result.value();
+        auto write_result = file->write_until_depleted("1"sv.bytes());
+        if (write_result.is_error()) {
+            dbgln("SecurityUI: Failed to write preference file: {}", write_result.error());
+        } else {
+            dbgln("SecurityUI: Credential education preference saved successfully");
+        }
+    }
 }
 
 }

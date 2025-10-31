@@ -48,6 +48,7 @@ set(SOURCES
     MappedFile.cpp
     MimeData.cpp
     Notifier.cpp
+    RateLimiter.cpp
     Resource.cpp
     ResourceImplementation.cpp
     ResourceImplementationFile.cpp

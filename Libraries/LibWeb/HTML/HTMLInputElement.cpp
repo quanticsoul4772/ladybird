@@ -3216,6 +3216,47 @@ bool HTMLInputElement::has_selectable_text() const
     }
 }
 
+// Sentinel Phase 6 Day 39: Autofill Protection System
+// Determines if autofill should be allowed on this input field
+bool HTMLInputElement::can_autofill() const
+{
+    // Non-password fields can be autofilled without security checks
+    if (type_state() != TypeAttributeState::Password)
+        return true;
+
+    // If autocomplete is explicitly off, respect that
+    auto details = parse_autocomplete_attribute();
+    if (details.field_name == "off"sv)
+        return false;
+
+    // Check if we have a form owner
+    auto* form_element = form();
+    if (!form_element)
+        return true; // Orphan password inputs can be autofilled
+
+    // Get action URL string (same pattern as form submission monitoring)
+    auto action_string = form_element->action();
+    if (action_string.is_empty())
+        action_string = form_element->document().url_string();
+
+    // Parse action to URL
+    auto action_url = form_element->document().encoding_parse_url(action_string);
+    if (!action_url.has_value())
+        return true; // If we can't parse action URL, allow autofill as fallback
+
+    auto form_url = form_element->document().url();
+
+    // Query PageClient for autofill blocking policy
+    auto& page_client = form_element->document().page().client();
+    if (page_client.should_block_autofill(form_url, action_url.value())) {
+        dbgln("HTMLInputElement: Autofill blocked for password field from {} to {}",
+            form_url, action_url.value());
+        return false;
+    }
+
+    return true; // Default: allow autofill
+}
+
 bool HTMLInputElement::selection_or_range_applies_for_type_state(TypeAttributeState type_state)
 {
     switch (type_state) {

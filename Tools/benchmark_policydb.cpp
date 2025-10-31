@@ -395,7 +395,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         TRY(FileSystem::remove(temp_db_dir, FileSystem::RecursionMode::Allowed));
 
     outln("Creating benchmark database at: {}", temp_db_dir);
-    auto graph = TRY(PolicyGraph::create(temp_db_dir));
+    auto graph_ptr = TRY(PolicyGraph::create(temp_db_dir));
+    auto& graph = *graph_ptr;
 
     // Populate test data
     TRY(populate_test_data(graph, num_policies, num_threats));

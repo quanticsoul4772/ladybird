@@ -4,8 +4,10 @@ set(CMAKE_AUTOUIC OFF)
 
 set(SOURCES
     AuditLog.cpp
+    ClientRateLimiter.cpp
     DatabaseMigrations.cpp
     FlowInspector.cpp
+    GracefulDegradation.cpp
     HealthCheck.cpp
     InputValidator.cpp
     PolicyGraph.cpp
@@ -20,6 +22,7 @@ add_executable(TestPolicyGraph TestPolicyGraph.cpp)
 add_executable(TestPhase3Integration TestPhase3Integration.cpp)
 add_executable(TestBackend TestBackend.cpp)
 add_executable(TestDownloadVetting TestDownloadVetting.cpp)
+add_executable(TestFlowInspector TestFlowInspector.cpp)
 add_executable(sentinel-cli ../../Tools/sentinel-cli.cpp)
 
 target_include_directories(sentinelservice PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../..)
@@ -39,12 +42,13 @@ else()
     target_link_libraries(sentinelservice PRIVATE ${YARA_LIBRARY})
 endif()
 
-target_link_libraries(sentinelservice PRIVATE LibCore LibCrypto LibDatabase LibFileSystem LibIPC LibURL)
+target_link_libraries(sentinelservice PUBLIC AK LibCore LibCrypto LibDatabase LibFileSystem LibIPC LibURL)
 target_link_libraries(Sentinel PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestPolicyGraph PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestPhase3Integration PRIVATE sentinelservice LibCore LibMain LibFileSystem)
 target_link_libraries(TestBackend PRIVATE sentinelservice LibCore LibMain LibFileSystem)
 target_link_libraries(TestDownloadVetting PRIVATE sentinelservice LibCore LibMain LibFileSystem LibCrypto)
+target_link_libraries(TestFlowInspector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(sentinel-cli PRIVATE sentinelservice LibCore LibMain LibFileSystem requestserverservice)
 
 # Install targets

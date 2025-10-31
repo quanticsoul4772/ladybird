@@ -17,6 +17,8 @@
 
 namespace RequestServer {
 
+using AK::Duration;
+
 // Telemetry data for monitoring worker pool performance
 struct WorkerPoolTelemetry {
     size_t total_scans_completed { 0 };
@@ -70,7 +72,7 @@ private:
     // Schedule callback execution on main event loop
     void schedule_callback(
         SecurityTap::ScanCallback callback,
-        ErrorOr<ScanResult> result);
+        ErrorOr<SecurityTap::ScanResult> result);
 
     SecurityTap* m_security_tap { nullptr };
     size_t m_num_threads { 4 };

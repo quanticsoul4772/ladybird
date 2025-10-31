@@ -163,14 +163,14 @@ ErrorOr<SentinelConfig> SentinelConfig::from_json(String const& json_string)
     auto cache_size_value = obj.get_u64("policy_cache_size"sv).value_or(1000);
     auto cache_size_validation = Sentinel::InputValidator::validate_config_value("policy_cache_size"sv, JsonValue(cache_size_value));
     if (!cache_size_validation.is_valid)
-        return Error::from_string_view(cache_size_validation.error_message);
+        return Error::from_string_literal("Invalid policy_cache_size value");
     config.policy_cache_size = static_cast<size_t>(cache_size_value);
 
     // Validate and load threat_retention_days
     auto retention_days_value = obj.get_u64("threat_retention_days"sv).value_or(30);
     auto retention_days_validation = Sentinel::InputValidator::validate_config_value("threat_retention_days"sv, JsonValue(retention_days_value));
     if (!retention_days_validation.is_valid)
-        return Error::from_string_view(retention_days_validation.error_message);
+        return Error::from_string_literal("Invalid threat_retention_days value");
     config.threat_retention_days = static_cast<size_t>(retention_days_value);
 
     // Load rate limit config with validation
@@ -181,13 +181,13 @@ ErrorOr<SentinelConfig> SentinelConfig::from_json(String const& json_string)
         auto policies_per_min = rl.get_u64("policies_per_minute"sv).value_or(5);
         auto policies_validation = Sentinel::InputValidator::validate_config_value("policies_per_minute"sv, JsonValue(policies_per_min));
         if (!policies_validation.is_valid)
-            return Error::from_string_view(policies_validation.error_message);
+            return Error::from_string_literal("Invalid policies_per_minute value");
         config.rate_limit.policies_per_minute = static_cast<size_t>(policies_per_min);
 
         auto rate_window = rl.get_u64("rate_window_seconds"sv).value_or(60);
         auto window_validation = Sentinel::InputValidator::validate_config_value("rate_window_seconds"sv, JsonValue(rate_window));
         if (!window_validation.is_valid)
-            return Error::from_string_view(window_validation.error_message);
+            return Error::from_string_literal("Invalid rate_window_seconds value");
         config.rate_limit.rate_window_seconds = static_cast<size_t>(rate_window);
     }
 

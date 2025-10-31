@@ -300,7 +300,7 @@ TEST_CASE(test_fallback_strategies)
 
     int i = 0;
     for (auto strategy : strategies) {
-        auto service_name = String::formatted("Service{}", i++);
+        auto service_name = MUST(String::formatted("Service{}", i++));
         degradation.set_service_state(
             service_name,
             GracefulDegradation::ServiceState::Failed,

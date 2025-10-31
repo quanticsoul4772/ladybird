@@ -23,7 +23,7 @@ namespace RequestServer {
 ErrorOr<NonnullOwnPtr<SecurityTap>> SecurityTap::create()
 {
     // Connect to Sentinel daemon
-    auto socket = TRY(Core::Socket::connect("/tmp/sentinel.sock"sv));
+    auto socket = TRY(Core::LocalSocket::connect("/tmp/sentinel.sock"_string.to_byte_string()));
 
     // Set socket timeout to 5 seconds (fail-fast if Sentinel hangs)
     // FIXME: Add timeout configuration
@@ -67,7 +67,7 @@ ErrorOr<void> SecurityTap::reconnect()
     dbgln("SecurityTap: Attempting to reconnect to Sentinel...");
 
     // Try to connect to Sentinel daemon
-    auto socket_result = Core::Socket::connect("/tmp/sentinel.sock"sv);
+    auto socket_result = Core::LocalSocket::connect("/tmp/sentinel.sock"_string.to_byte_string());
     if (socket_result.is_error()) {
         dbgln("SecurityTap: Reconnection failed: {}", socket_result.error());
         return socket_result.release_error();
@@ -117,7 +117,7 @@ ErrorOr<SecurityTap::ScanResult> SecurityTap::inspect_download(
     ReadonlyBytes content)
 {
     // Use size-based scanning strategy
-    auto start_time = Core::ElapsedTimer::start();
+    auto start_time = Core::ElapsedTimer::start_new();
     auto result = TRY(scan_with_size_limits(metadata, content));
     auto elapsed_ms = start_time.elapsed_milliseconds();
 

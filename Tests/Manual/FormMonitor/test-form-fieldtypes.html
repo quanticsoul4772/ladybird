@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multiple Field Types Test</title>
+</head>
+<body>
+    <h1>Form with Multiple Field Types</h1>
+    <p>Tests field type detection (password, email, text, hidden, etc.)</p>
+
+    <form action="/submit" method="POST">
+        <label>Text: <input type="text" name="fullname" value="John Doe"></label><br>
+        <label>Email: <input type="email" name="email" value="john@example.com"></label><br>
+        <label>Password: <input type="password" name="password" value="secret"></label><br>
+        <label>Hidden: <input type="hidden" name="token" value="abc123"></label><br>
+        <label>Search: <input type="search" name="query" value="test"></label><br>
+        <label>Tel: <input type="tel" name="phone" value="555-1234"></label><br>
+        <label>URL: <input type="url" name="website" value="http://example.com"></label><br>
+        <label>Date: <input type="date" name="birthday"></label><br>
+        <label>Checkbox: <input type="checkbox" name="agree"></label><br>
+        <label>Radio: <input type="radio" name="choice" value="yes"></label><br>
+        <button type="submit">Submit</button>
+    </form>
+
+    <script>
+        // Capture the form submission to see field extraction in console
+        document.querySelector('form').addEventListener('submit', (e) => {
+            console.log('Form submitted - check FormMonitor debug output');
+        });
+    </script>
+</body>
+</html>

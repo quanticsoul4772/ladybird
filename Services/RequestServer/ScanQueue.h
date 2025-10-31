@@ -14,20 +14,15 @@
 #include <AK/Time.h>
 #include <AK/Vector.h>
 #include <LibThreading/Mutex.h>
+#include <Services/RequestServer/SecurityTap.h>
 
 namespace RequestServer {
-
-// Forward declaration for ScanResult
-struct ScanResult {
-    bool is_threat { false };
-    Optional<ByteString> alert_json;
-};
 
 // Scan request queued for asynchronous processing
 struct ScanRequest {
     String request_id;
     ByteBuffer content;
-    Function<void(ErrorOr<ScanResult>)> callback;
+    Function<void(ErrorOr<SecurityTap::ScanResult>)> callback;
     UnixDateTime enqueued_time;
     size_t priority; // Lower number = higher priority (small files first)
 };

@@ -223,6 +223,8 @@ public:
     bool checked_applies() const;
     bool has_selectable_text() const;
 
+    bool can_autofill() const;
+
     bool supports_a_picker() const;
     bool is_open() const { return m_is_open; }
     void set_is_open(bool);

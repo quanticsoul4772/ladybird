@@ -16,6 +16,7 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/SystemTheme.h>
+#include <LibIPC/Limits.h>
 #include <LibJS/Runtime/ConsoleObject.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibUnicode/TimeZone.h>
@@ -1356,6 +1357,26 @@ void ConnectionFromClient::enable_tor(u64 page_id, ByteString circuit_id)
         return;
     }
 
+    // SECURITY: Validate circuit_id length at IPC boundary to prevent DoS attacks
+    // Defense in depth: validate before forwarding to RequestServer
+    if (circuit_id.length() > IPC::Limits::MaxCircuitIDLength) {
+        dbgln("WebContent::ConnectionFromClient::enable_tor: SECURITY: Circuit ID too long ({} bytes, max {})",
+            circuit_id.length(), IPC::Limits::MaxCircuitIDLength);
+        return;
+    }
+
+    // SECURITY: Validate circuit_id contains only safe characters (alphanumeric, dash, underscore)
+    // Prevents injection attacks and ensures compatibility with Tor
+    if (!circuit_id.is_empty()) {
+        for (char c : circuit_id) {
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '-' || c == '_')) {
+                dbgln("WebContent::ConnectionFromClient::enable_tor: SECURITY: Circuit ID contains invalid character: {}", c);
+                return;
+            }
+        }
+    }
+
     // Forward the Tor enable request to RequestServer via ResourceLoader
     auto request_client = Web::ResourceLoader::the().request_client();
     if (!request_client) {
@@ -1365,6 +1386,7 @@ void ConnectionFromClient::enable_tor(u64 page_id, ByteString circuit_id)
 
     // Call enable_tor on RequestServer via IPC with page_id for per-tab isolation
     // SECURITY: Passing page_id ensures each tab has independent Tor circuit
+    // Note: RequestServer also validates circuit_id (defense in depth)
     request_client->async_enable_tor(page_id, move(circuit_id));
 
     dbgln("WebContent: Enabled Tor for page {} with circuit {}", page_id, circuit_id);
@@ -1508,6 +1530,58 @@ void ConnectionFromClient::form_submission_detected(u64 page_id, String form_ori
 
     // TODO: Send form submission alert to Sentinel via IPC for monitoring
     // This would typically call into a Sentinel connection to report the form submission
+}
+
+void ConnectionFromClient::credential_alert_action(u64 page_id, String form_origin, String action_origin, String action)
+{
+    dbgln("WebContent: Credential alert action received on page {}", page_id);
+    dbgln("  Form origin: {}", form_origin);
+    dbgln("  Action origin: {}", action_origin);
+    dbgln("  User action: {}", action);
+
+    auto maybe_page = page(page_id);
+    if (!maybe_page.has_value()) {
+        dbgln("WebContent: Cannot find page {} for credential alert action", page_id);
+        return;
+    }
+
+    auto& page_client = maybe_page.value();
+
+    if (action == "block"sv) {
+        dbgln("WebContent: User chose to BLOCK credential submission from {} to {}", form_origin, action_origin);
+        page_client.form_monitor().block_submission(form_origin, action_origin);
+    } else if (action == "trust"sv) {
+        dbgln("WebContent: User chose to TRUST relationship from {} to {}", form_origin, action_origin);
+        // Store trusted relationship in FormMonitor
+        // FormMonitor will learn this as a trusted relationship
+        page_client.form_monitor().learn_trusted_relationship(form_origin, action_origin);
+    } else if (action == "learn_more"sv) {
+        dbgln("WebContent: User requested LEARN MORE for alert from {} to {}", form_origin, action_origin);
+        // Open help documentation or show detailed alert information
+        // For now, just log the action
+    } else {
+        dbgln("WebContent: Unknown credential alert action: {}", action);
+    }
+}
+
+void ConnectionFromClient::grant_autofill_override(u64 page_id, String form_origin, String action_origin)
+{
+    dbgln("WebContent: Grant autofill override received on page {}", page_id);
+    dbgln("  Form origin: {}", form_origin);
+    dbgln("  Action origin: {}", action_origin);
+
+    auto maybe_page = page(page_id);
+    if (!maybe_page.has_value()) {
+        dbgln("WebContent: Cannot find page {} for autofill override", page_id);
+        return;
+    }
+
+    auto& page_client = maybe_page.value();
+
+    // Grant one-time autofill permission in FormMonitor
+    page_client.form_monitor().grant_autofill_override(form_origin, action_origin);
+
+    dbgln("WebContent: Autofill override granted - next autofill attempt will succeed");
 }
 
 }
