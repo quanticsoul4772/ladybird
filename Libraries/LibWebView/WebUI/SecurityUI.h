@@ -47,7 +47,7 @@ private:
     void get_metrics();
 
     // PolicyGraph instance for security policy management
-    Optional<ErrorOr<Sentinel::PolicyGraph>> m_policy_graph;
+    Optional<ErrorOr<NonnullOwnPtr<Sentinel::PolicyGraph>>> m_policy_graph;
 };
 
 }

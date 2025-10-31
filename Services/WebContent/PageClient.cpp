@@ -20,6 +20,9 @@
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/MutationType.h>
 #include <LibWeb/DOM/NodeList.h>
+#include <LibWeb/HTML/HTMLFormControlsCollection.h>
+#include <LibWeb/HTML/HTMLFormElement.h>
+#include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/HTMLLinkElement.h>
 #include <LibWeb/HTML/Scripting/ClassicScript.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
@@ -480,6 +483,82 @@ void PageClient::page_did_request_dismiss_dialog()
 void PageClient::page_did_receive_security_alert(ByteString const& alert_json, i32 request_id)
 {
     client().async_did_receive_security_alert(m_id, alert_json, request_id);
+}
+
+void PageClient::page_did_submit_form(Web::HTML::HTMLFormElement& form, String const& method, URL::URL const& action)
+{
+    // Create form submit event with basic info
+    FormMonitor::FormSubmitEvent event;
+    event.document_url = form.document().url();
+    event.action_url = action;
+    event.method = method;
+    event.timestamp = UnixDateTime::now();
+
+    // Extract form fields and types from DOM by traversing the subtree
+    form.root().for_each_in_subtree([&](auto& node) {
+        // Check if this is an HTMLInputElement
+        if (is<Web::HTML::HTMLInputElement>(node)) {
+            auto& input = static_cast<Web::HTML::HTMLInputElement&>(node);
+
+            FormMonitor::FormField field;
+            // input.name() returns Optional<FlyString>
+            auto name_optional = input.name();
+            field.name = name_optional.has_value() ? MUST(String::from_utf8(name_optional.value().bytes_as_string_view())) : String {};
+            field.has_value = !input.value().is_empty();
+
+            // Map HTMLInputElement::TypeAttributeState to FormMonitor::FieldType
+            auto type_state = input.type_state();
+            switch (type_state) {
+            case Web::HTML::HTMLInputElement::TypeAttributeState::Password:
+                field.type = FormMonitor::FieldType::Password;
+                break;
+            case Web::HTML::HTMLInputElement::TypeAttributeState::Email:
+                field.type = FormMonitor::FieldType::Email;
+                break;
+            case Web::HTML::HTMLInputElement::TypeAttributeState::Hidden:
+                field.type = FormMonitor::FieldType::Hidden;
+                break;
+            case Web::HTML::HTMLInputElement::TypeAttributeState::Text:
+            case Web::HTML::HTMLInputElement::TypeAttributeState::Search:
+            case Web::HTML::HTMLInputElement::TypeAttributeState::Telephone:
+            case Web::HTML::HTMLInputElement::TypeAttributeState::URL:
+                field.type = FormMonitor::FieldType::Text;
+                break;
+            default:
+                // For all other types (date, checkbox, radio, file, etc.)
+                field.type = FormMonitor::FieldType::Other;
+                break;
+            }
+
+            event.fields.append(field);
+        }
+
+        return Web::TraversalDecision::Continue;
+    });
+
+    // Set convenience flags for password and email fields
+    event.has_password_field = false;
+    event.has_email_field = false;
+    for (auto const& field : event.fields) {
+        if (field.type == FormMonitor::FieldType::Password)
+            event.has_password_field = true;
+        if (field.type == FormMonitor::FieldType::Email)
+            event.has_email_field = true;
+    }
+
+    // Notify FormMonitor about the submission
+    m_form_monitor.on_form_submit(event);
+
+    // Check if submission is suspicious
+    if (m_form_monitor.is_suspicious_submission(event)) {
+        auto alert = m_form_monitor.analyze_submission(event);
+        if (alert.has_value()) {
+            // TODO: Send IPC message to UI for the alert
+            // This will be implemented once the IPC message is defined
+            dbgln("FormMonitor: Detected suspicious form submission from {} to {}",
+                alert->form_origin, alert->action_origin);
+        }
+    }
 }
 
 void PageClient::page_did_change_favicon(Gfx::Bitmap const& favicon)

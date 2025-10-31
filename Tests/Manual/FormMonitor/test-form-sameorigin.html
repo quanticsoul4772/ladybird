@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Same-Origin Form Test</title>
+</head>
+<body>
+    <h1>Same-Origin Login Form</h1>
+    <p>This should NOT trigger an alert (legitimate same-origin form)</p>
+
+    <form action="/login" method="POST">
+        <label>Email: <input type="email" name="email" value="test@example.com"></label><br>
+        <label>Password: <input type="password" name="password" value="secret123"></label><br>
+        <label>Remember: <input type="checkbox" name="remember"></label><br>
+        <button type="submit">Login</button>
+    </form>
+</body>
+</html>

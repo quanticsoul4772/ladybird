@@ -73,7 +73,7 @@ static ErrorOr<void> command_status()
         // Open database and get counts
         auto pg_result = PolicyGraph::create(db_dir.to_byte_string());
         if (!pg_result.is_error()) {
-            auto& pg = pg_result.value();
+            auto& pg = *pg_result.value();
             auto policy_count = pg.get_policy_count();
             auto threat_count = pg.get_threat_count();
 
@@ -129,7 +129,7 @@ static ErrorOr<void> command_list_policies()
     auto db_dir = TRY(get_database_path());
     auto pg = TRY(PolicyGraph::create(db_dir.to_byte_string()));
 
-    auto policies = TRY(pg.list_policies());
+    auto policies = TRY(pg->list_policies());
 
     if (policies.is_empty()) {
         outln("No policies found.");
@@ -184,7 +184,7 @@ static ErrorOr<void> command_show_policy(i64 policy_id)
     auto db_dir = TRY(get_database_path());
     auto pg = TRY(PolicyGraph::create(db_dir.to_byte_string()));
 
-    auto policy = TRY(pg.get_policy(policy_id));
+    auto policy = TRY(pg->get_policy(policy_id));
 
     outln("=== Policy {} ===\n", policy.id);
     outln("Rule Name:     {}", policy.rule_name);
@@ -285,7 +285,7 @@ static ErrorOr<void> command_vacuum()
 
     outln("Running database vacuum...");
 
-    TRY(pg.vacuum_database());
+    TRY(pg->vacuum_database());
 
     outln("\033[32mVacuum completed successfully.\033[0m");
     return {};
@@ -311,11 +311,11 @@ static ErrorOr<void> command_verify()
     auto pg = pg_result.release_value();
 
     // Try to count policies
-    auto policy_count = TRY(pg.get_policy_count());
+    auto policy_count = TRY(pg->get_policy_count());
     outln("  Policies: {}", policy_count);
 
     // Try to count threats
-    auto threat_count = TRY(pg.get_threat_count());
+    auto threat_count = TRY(pg->get_threat_count());
     outln("  Threats: {}", threat_count);
 
     outln("\033[32mDatabase integrity verified.\033[0m");

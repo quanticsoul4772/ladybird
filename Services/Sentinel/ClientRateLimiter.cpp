@@ -19,13 +19,13 @@ Core::TokenBucketRateLimiter& ClientRateLimiter::get_scan_limiter(int client_id)
     auto it = m_scan_limiters.find(client_id);
     if (it == m_scan_limiters.end()) {
         // Create new rate limiter for this client
-        auto result = m_scan_limiters.set(client_id,
-            Core::TokenBucketRateLimiter(
-                m_limits.scan_burst_capacity,
-                m_limits.scan_requests_per_second));
-        return result.iterator->value;
+        auto limiter = adopt_own(*new Core::TokenBucketRateLimiter(
+            m_limits.scan_burst_capacity,
+            m_limits.scan_requests_per_second));
+        m_scan_limiters.set(client_id, move(limiter));
+        return *m_scan_limiters.find(client_id)->value;
     }
-    return it->value;
+    return *it->value;
 }
 
 Core::TokenBucketRateLimiter& ClientRateLimiter::get_policy_limiter(int client_id)
@@ -34,13 +34,13 @@ Core::TokenBucketRateLimiter& ClientRateLimiter::get_policy_limiter(int client_i
     auto it = m_policy_limiters.find(client_id);
     if (it == m_policy_limiters.end()) {
         // Create new rate limiter for this client
-        auto result = m_policy_limiters.set(client_id,
-            Core::TokenBucketRateLimiter(
-                m_limits.policy_burst_capacity,
-                m_limits.policy_queries_per_second));
-        return result.iterator->value;
+        auto limiter = adopt_own(*new Core::TokenBucketRateLimiter(
+            m_limits.policy_burst_capacity,
+            m_limits.policy_queries_per_second));
+        m_policy_limiters.set(client_id, move(limiter));
+        return *m_policy_limiters.find(client_id)->value;
     }
-    return it->value;
+    return *it->value;
 }
 
 ErrorOr<void> ClientRateLimiter::check_scan_request(int client_id)
@@ -138,13 +138,13 @@ void ClientRateLimiter::reset_client(int client_id)
     // Reset scan rate limiter
     auto scan_it = m_scan_limiters.find(client_id);
     if (scan_it != m_scan_limiters.end()) {
-        scan_it->value.reset();
+        scan_it->value->reset();
     }
 
     // Reset policy rate limiter
     auto policy_it = m_policy_limiters.find(client_id);
     if (policy_it != m_policy_limiters.end()) {
-        policy_it->value.reset();
+        policy_it->value->reset();
     }
 
     // Reset concurrent scans

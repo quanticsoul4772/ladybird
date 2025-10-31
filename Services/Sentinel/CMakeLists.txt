@@ -4,8 +4,10 @@ set(CMAKE_AUTOUIC OFF)
 
 set(SOURCES
     AuditLog.cpp
+    ClientRateLimiter.cpp
     DatabaseMigrations.cpp
     FlowInspector.cpp
+    GracefulDegradation.cpp
     HealthCheck.cpp
     InputValidator.cpp
     PolicyGraph.cpp
@@ -39,7 +41,7 @@ else()
     target_link_libraries(sentinelservice PRIVATE ${YARA_LIBRARY})
 endif()
 
-target_link_libraries(sentinelservice PRIVATE LibCore LibCrypto LibDatabase LibFileSystem LibIPC LibURL)
+target_link_libraries(sentinelservice PUBLIC AK LibCore LibCrypto LibDatabase LibFileSystem LibIPC LibURL)
 target_link_libraries(Sentinel PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestPolicyGraph PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestPhase3Integration PRIVATE sentinelservice LibCore LibMain LibFileSystem)

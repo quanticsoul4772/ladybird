@@ -18,6 +18,7 @@
 #include <LibWeb/StorageAPI/StorageEndpoint.h>
 #include <LibWebView/Forward.h>
 #include <LibWebView/StorageOperationError.h>
+#include <WebContent/FormMonitor.h>
 #include <WebContent/Forward.h>
 
 namespace WebContent {
@@ -143,6 +144,7 @@ private:
     virtual void page_did_request_accept_dialog() override;
     virtual void page_did_request_dismiss_dialog() override;
     virtual void page_did_receive_security_alert(ByteString const& alert_json, i32 request_id) override;
+    virtual void page_did_submit_form(Web::HTML::HTMLFormElement& form, String const& method, URL::URL const& action) override;
     virtual void page_did_change_favicon(Gfx::Bitmap const&) override;
     virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_webdriver(URL::URL const&) override;
     virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_cookiestore(URL::URL const&) override;
@@ -204,6 +206,8 @@ private:
     GC::Root<JS::GlobalObject> m_console_global_object;
 
     RefPtr<Core::Timer> m_paint_refresh_timer;
+
+    FormMonitor m_form_monitor;
 };
 
 }

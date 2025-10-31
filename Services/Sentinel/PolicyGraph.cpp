@@ -7,6 +7,7 @@
 #include "PolicyGraph.h"
 #include "DatabaseMigrations.h"
 #include "InputValidator.h"
+#include <AK/NonnullOwnPtr.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/RetryPolicy.h>
 #include <LibCore/StandardPaths.h>
@@ -168,7 +169,7 @@ void PolicyGraphCache::reset_metrics()
 
 // PolicyGraph implementation
 
-ErrorOr<PolicyGraph> PolicyGraph::create(ByteString const& db_directory)
+ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_directory)
 {
     // Initialize retry policy for database operations
     initialize_db_retry_policy();
@@ -362,10 +363,10 @@ ErrorOr<PolicyGraph> PolicyGraph::create(ByteString const& db_directory)
     statements.rollback_transaction = TRY(database->prepare_statement(
         "ROLLBACK TRANSACTION;"sv));
 
-    auto policy_graph = PolicyGraph { move(database), statements };
+    auto policy_graph = adopt_own(*new PolicyGraph(move(database), statements));
 
     // Cleanup old threats on initialization
-    auto cleanup_result = policy_graph.cleanup_old_threats();
+    auto cleanup_result = policy_graph->cleanup_old_threats();
     if (cleanup_result.is_error())
         dbgln("PolicyGraph: Warning - failed to cleanup old threats: {}", cleanup_result.error());
 

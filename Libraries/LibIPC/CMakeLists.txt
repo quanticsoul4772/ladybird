@@ -1,4 +1,6 @@
 set(SOURCES
+    BufferedIPCReader.cpp
+    BufferedIPCWriter.cpp
     Connection.cpp
     Decoder.cpp
     Encoder.cpp

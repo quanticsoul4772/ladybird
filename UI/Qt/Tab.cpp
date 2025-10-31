@@ -491,7 +491,7 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
                                 .arg(QString::fromUtf8(pg_result.error().string_literal().characters_without_null_termination())),
                             QMessageBox::Ok);
                     } else {
-                        auto& policy_graph = pg_result.value();
+                        auto& policy_graph = *pg_result.value();
                         auto policy_result = policy_graph.create_policy(policy);
 
                         if (policy_result.is_error()) {

@@ -291,9 +291,9 @@ TEST_CASE(unicode_strings)
 
 TEST_CASE(special_characters)
 {
-    StringView a = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~";
-    StringView b = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~";
-    StringView c = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~!";
+    StringView a = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~"sv;
+    StringView b = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~"sv;
+    StringView c = "!@#$%^&*()_+-=[]{}|;':\",./<>?`~!"sv;
 
     EXPECT(Crypto::ConstantTimeComparison::compare_strings(a, b));
     EXPECT(!Crypto::ConstantTimeComparison::compare_strings(a, c));

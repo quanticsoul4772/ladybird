@@ -8,6 +8,7 @@
 
 #include <AK/Error.h>
 #include <AK/HashMap.h>
+#include <AK/NonnullOwnPtr.h>
 #include <LibCore/RateLimiter.h>
 #include <LibThreading/Mutex.h>
 
@@ -81,8 +82,8 @@ private:
     ClientLimits m_limits;
 
     // Per-client rate limiters
-    HashMap<int, Core::TokenBucketRateLimiter> m_scan_limiters;
-    HashMap<int, Core::TokenBucketRateLimiter> m_policy_limiters;
+    HashMap<int, NonnullOwnPtr<Core::TokenBucketRateLimiter>> m_scan_limiters;
+    HashMap<int, NonnullOwnPtr<Core::TokenBucketRateLimiter>> m_policy_limiters;
 
     // Per-client concurrent scan tracking
     HashMap<int, size_t> m_concurrent_scans;
