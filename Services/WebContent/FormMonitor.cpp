@@ -9,8 +9,51 @@
 #include <AK/JsonValue.h>
 #include <AK/StringBuilder.h>
 #include <LibURL/URL.h>
+#include <Services/Sentinel/PolicyGraph.h>
 
 namespace WebContent {
+
+ErrorOr<NonnullOwnPtr<FormMonitor>> FormMonitor::create_with_policy_graph(ByteString const& db_directory)
+{
+    auto monitor = make<FormMonitor>();
+    monitor->m_policy_graph = TRY(Sentinel::PolicyGraph::create(db_directory));
+    TRY(monitor->load_relationships_from_database());
+    return monitor;
+}
+
+ErrorOr<void> FormMonitor::load_relationships_from_database()
+{
+    if (!m_policy_graph)
+        return {};
+
+    // Load all credential relationships from database
+    auto relationships = TRY(m_policy_graph->list_relationships({}));
+
+    dbgln("FormMonitor: Loading {} credential relationships from database", relationships.size());
+
+    for (auto const& rel : relationships) {
+        if (rel.relationship_type == "trusted"sv) {
+            // Add to in-memory cache for fast lookup
+            if (!m_trusted_relationships.contains(rel.form_origin)) {
+                m_trusted_relationships.set(rel.form_origin, HashTable<String> {});
+            }
+            auto& action_origins = m_trusted_relationships.get(rel.form_origin).value();
+            action_origins.set(rel.action_origin);
+        } else if (rel.relationship_type == "blocked"sv) {
+            // Add to in-memory cache for fast lookup
+            if (!m_blocked_submissions.contains(rel.form_origin)) {
+                m_blocked_submissions.set(rel.form_origin, HashTable<String> {});
+            }
+            auto& action_origins = m_blocked_submissions.get(rel.form_origin).value();
+            action_origins.set(rel.action_origin);
+        }
+    }
+
+    dbgln("FormMonitor: Loaded {} trusted and {} blocked relationships",
+          m_trusted_relationships.size(), m_blocked_submissions.size());
+
+    return {};
+}
 
 void FormMonitor::on_form_submit(FormSubmitEvent const& event)
 {
@@ -29,6 +72,28 @@ void FormMonitor::on_form_submit(FormSubmitEvent const& event)
     dbgln("  Action origin: {}", alert->action_origin);
     dbgln("  Severity: {}", alert->severity);
     dbgln("  Alert type: {}", alert->alert_type);
+
+    // Record alert in database if PolicyGraph is available
+    if (m_policy_graph) {
+        Sentinel::PolicyGraph::CredentialAlert db_alert;
+        db_alert.detected_at = alert->timestamp;
+        db_alert.form_origin = alert->form_origin;
+        db_alert.action_origin = alert->action_origin;
+        db_alert.alert_type = alert->alert_type;
+        db_alert.severity = alert->severity;
+        db_alert.has_password_field = alert->has_password_field;
+        db_alert.has_email_field = false; // TODO: track email fields
+        db_alert.uses_https = alert->uses_https;
+        db_alert.is_cross_origin = alert->is_cross_origin;
+        db_alert.alert_json = alert->to_json();
+
+        auto result = m_policy_graph->record_credential_alert(db_alert);
+        if (result.is_error()) {
+            dbgln("FormMonitor: Failed to record alert in database: {}", result.error());
+        } else {
+            dbgln("FormMonitor: Recorded alert {} in database", result.value());
+        }
+    }
 }
 
 bool FormMonitor::is_suspicious_submission(FormSubmitEvent const& event) const
@@ -197,17 +262,45 @@ void FormMonitor::learn_trusted_relationship(String const& form_origin, String c
     auto& action_origins = m_trusted_relationships.get(form_origin).value();
     action_origins.set(action_origin);
 
+    // Persist to database if PolicyGraph is available
+    if (m_policy_graph) {
+        Sentinel::PolicyGraph::CredentialRelationship relationship;
+        relationship.form_origin = form_origin;
+        relationship.action_origin = action_origin;
+        relationship.relationship_type = "trusted"_string;
+        relationship.created_at = UnixDateTime::now();
+        relationship.created_by = "user_decision"_string;
+        relationship.notes = "User clicked Trust in security alert"_string;
+
+        auto result = m_policy_graph->create_relationship(relationship);
+        if (result.is_error()) {
+            dbgln("FormMonitor: Failed to persist trusted relationship: {}", result.error());
+        } else {
+            dbgln("FormMonitor: Persisted trusted relationship with ID {}", result.value());
+        }
+    }
+
     dbgln("FormMonitor: Trusted relationship learned. Now have {} trusted origins for {}",
           action_origins.size(), form_origin);
 }
 
 bool FormMonitor::is_trusted_relationship(String const& form_origin, String const& action_origin) const
 {
+    // Check in-memory cache first
     auto it = m_trusted_relationships.find(form_origin);
-    if (it == m_trusted_relationships.end())
-        return false;
+    if (it != m_trusted_relationships.end() && it->value.contains(action_origin))
+        return true;
 
-    return it->value.contains(action_origin);
+    // Check database if PolicyGraph is available
+    if (m_policy_graph) {
+        auto result = m_policy_graph->has_relationship(form_origin, action_origin, "trusted"_string);
+        if (!result.is_error() && result.value()) {
+            dbgln("FormMonitor: Found trusted relationship in database but not in cache");
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void FormMonitor::block_submission(String const& form_origin, String const& action_origin)
@@ -223,17 +316,45 @@ void FormMonitor::block_submission(String const& form_origin, String const& acti
     auto& action_origins = m_blocked_submissions.get(form_origin).value();
     action_origins.set(action_origin);
 
+    // Persist to database if PolicyGraph is available
+    if (m_policy_graph) {
+        Sentinel::PolicyGraph::CredentialRelationship relationship;
+        relationship.form_origin = form_origin;
+        relationship.action_origin = action_origin;
+        relationship.relationship_type = "blocked"_string;
+        relationship.created_at = UnixDateTime::now();
+        relationship.created_by = "user_decision"_string;
+        relationship.notes = "User clicked Block in security alert"_string;
+
+        auto result = m_policy_graph->create_relationship(relationship);
+        if (result.is_error()) {
+            dbgln("FormMonitor: Failed to persist blocked relationship: {}", result.error());
+        } else {
+            dbgln("FormMonitor: Persisted blocked relationship with ID {}", result.value());
+        }
+    }
+
     dbgln("FormMonitor: Submission blocked. Now have {} blocked origins for {}",
           action_origins.size(), form_origin);
 }
 
 bool FormMonitor::is_blocked_submission(String const& form_origin, String const& action_origin) const
 {
+    // Check in-memory cache first
     auto it = m_blocked_submissions.find(form_origin);
-    if (it == m_blocked_submissions.end())
-        return false;
+    if (it != m_blocked_submissions.end() && it->value.contains(action_origin))
+        return true;
 
-    return it->value.contains(action_origin);
+    // Check database if PolicyGraph is available
+    if (m_policy_graph) {
+        auto result = m_policy_graph->has_relationship(form_origin, action_origin, "blocked"_string);
+        if (!result.is_error() && result.value()) {
+            dbgln("FormMonitor: Found blocked relationship in database but not in cache");
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void FormMonitor::grant_autofill_override(String const& form_origin, String const& action_origin)

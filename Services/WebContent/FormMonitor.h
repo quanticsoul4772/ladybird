@@ -8,10 +8,13 @@
 
 #include <AK/HashMap.h>
 #include <AK/HashTable.h>
+#include <AK/NonnullOwnPtr.h>
+#include <AK/OwnPtr.h>
 #include <AK/String.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
 #include <LibURL/URL.h>
+#include <Services/Sentinel/PolicyGraph.h>
 
 namespace WebContent {
 
@@ -57,8 +60,14 @@ public:
 
     FormMonitor() = default;
 
+    // Create FormMonitor with PolicyGraph for persistent storage
+    static ErrorOr<NonnullOwnPtr<FormMonitor>> create_with_policy_graph(ByteString const& db_directory);
+
     // Called when a form is submitted
     void on_form_submit(FormSubmitEvent const& event);
+
+    // Load trusted and blocked relationships from database
+    ErrorOr<void> load_relationships_from_database();
 
     // Check if form submission is suspicious
     bool is_suspicious_submission(FormSubmitEvent const& event) const;
@@ -106,6 +115,9 @@ private:
     // Store one-time autofill permissions (form_origin -> action_origin)
     // Cleared after first use to prevent persistent bypass of security checks
     HashMap<String, HashTable<String>> m_autofill_overrides;
+
+    // PolicyGraph for persistent credential relationship storage
+    OwnPtr<Sentinel::PolicyGraph> m_policy_graph;
 };
 
 }
