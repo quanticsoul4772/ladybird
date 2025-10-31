@@ -13,8 +13,10 @@ set(SOURCES
     Request.cpp
     RequestPipe.cpp
     Resolver.cpp
+    ScanQueue.cpp
     SecurityTap.cpp
     WebSocketImplCurl.cpp
+    YARAScanWorkerPool.cpp
 )
 
 set(GENERATED_SOURCES

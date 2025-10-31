@@ -5,166 +5,181 @@
  */
 
 #include "PolicyGraph.h"
+#include "DatabaseMigrations.h"
+#include "InputValidator.h"
 #include <AK/StringBuilder.h>
+#include <LibCore/RetryPolicy.h>
 #include <LibCore/StandardPaths.h>
 #include <LibCore/System.h>
+#include <LibCrypto/ConstantTimeComparison.h>
 #include <LibFileSystem/FileSystem.h>
 
 namespace Sentinel {
 
-// Security validation functions
+// Retry policy for database operations with exponential backoff
+// Max attempts: 3, Initial delay: 100ms, Max delay: 1 second, Backoff: 2x
+static Core::RetryPolicy s_db_retry_policy(
+    3,                                          // max_attempts
+    Duration::from_milliseconds(100),           // initial_delay
+    Duration::from_seconds(1),                  // max_delay
+    2.0,                                        // backoff_multiplier
+    0.1                                         // jitter_factor
+);
 
-static bool is_safe_url_pattern(StringView pattern)
+static void initialize_db_retry_policy()
 {
-    // Allow only: alphanumeric, /, -, _, ., *, %
-    for (auto ch : pattern) {
-        if (!isalnum(ch) && ch != '/' && ch != '-' && ch != '_' &&
-            ch != '.' && ch != '*' && ch != '%')
-            return false;
+    static bool initialized = false;
+    if (!initialized) {
+        s_db_retry_policy.set_retry_predicate(Core::RetryPolicy::database_retry_predicate());
+        initialized = true;
     }
-
-    // Limit length to prevent DoS
-    if (pattern.length() > 2048)
-        return false;
-
-    return true;
 }
+
+// Security validation functions using InputValidator framework
 
 static ErrorOr<void> validate_policy_inputs(PolicyGraph::Policy const& policy)
 {
-    // Validate rule_name
-    if (policy.rule_name.is_empty())
-        return Error::from_string_literal("Invalid policy: rule_name cannot be empty");
-
-    if (policy.rule_name.bytes().size() > 256)
-        return Error::from_string_literal("Invalid policy: rule_name too long (max 256 bytes)");
+    // Validate rule_name (non-empty, length, no control chars)
+    auto rule_name_result = InputValidator::validate_rule_name(policy.rule_name);
+    if (!rule_name_result.is_valid)
+        return InputValidator::to_error(rule_name_result);
 
     // Validate url_pattern if present
     if (policy.url_pattern.has_value()) {
         auto const& pattern = policy.url_pattern.value();
-        if (!pattern.is_empty() && !is_safe_url_pattern(pattern))
-            return Error::from_string_literal("Invalid policy: url_pattern contains unsafe characters");
+        if (!pattern.is_empty()) {
+            auto url_result = InputValidator::validate_url_pattern(pattern);
+            if (!url_result.is_valid)
+                return InputValidator::to_error(url_result);
+        }
     }
 
-    // Validate file_hash if present
+    // Validate file_hash if present (SHA256 = 64 hex chars)
     if (policy.file_hash.has_value()) {
         auto const& hash = policy.file_hash.value();
         if (!hash.is_empty()) {
-            // SHA256 hash should be 64 hex characters
-            if (hash.bytes().size() > 128)
-                return Error::from_string_literal("Invalid policy: file_hash too long (max 128 bytes)");
-
-            // Verify hex characters only
-            for (auto byte : hash.bytes()) {
-                if (!isxdigit(byte))
-                    return Error::from_string_literal("Invalid policy: file_hash must contain only hex characters");
-            }
+            auto hash_result = InputValidator::validate_sha256(hash);
+            if (!hash_result.is_valid)
+                return InputValidator::to_error(hash_result);
         }
     }
 
     // Validate mime_type if present
     if (policy.mime_type.has_value()) {
         auto const& mime = policy.mime_type.value();
-        if (!mime.is_empty() && mime.bytes().size() > 256)
-            return Error::from_string_literal("Invalid policy: mime_type too long (max 256 bytes)");
+        if (!mime.is_empty()) {
+            auto mime_result = InputValidator::validate_mime_type(mime);
+            if (!mime_result.is_valid)
+                return InputValidator::to_error(mime_result);
+        }
     }
 
-    // Validate created_by
-    if (policy.created_by.is_empty())
-        return Error::from_string_literal("Invalid policy: created_by cannot be empty");
+    // Validate created_by (non-empty, length)
+    auto created_by_result = InputValidator::validate_length(policy.created_by, 1, 256, "created_by"sv);
+    if (!created_by_result.is_valid)
+        return InputValidator::to_error(created_by_result);
 
-    if (policy.created_by.bytes().size() > 256)
-        return Error::from_string_literal("Invalid policy: created_by too long (max 256 bytes)");
+    auto created_by_control_result = InputValidator::validate_no_control_chars(policy.created_by, "created_by"sv);
+    if (!created_by_control_result.is_valid)
+        return InputValidator::to_error(created_by_control_result);
 
-    // Validate enforcement_action
-    if (policy.enforcement_action.bytes().size() > 256)
-        return Error::from_string_literal("Invalid policy: enforcement_action too long (max 256 bytes)");
+    // Validate enforcement_action (length, no control chars)
+    auto action_length_result = InputValidator::validate_length(policy.enforcement_action, 0, 256, "enforcement_action"sv);
+    if (!action_length_result.is_valid)
+        return InputValidator::to_error(action_length_result);
+
+    auto action_control_result = InputValidator::validate_no_control_chars(policy.enforcement_action, "enforcement_action"sv);
+    if (!action_control_result.is_valid)
+        return InputValidator::to_error(action_control_result);
+
+    // Validate action enum (allow, block, quarantine, etc.)
+    auto action_str = PolicyGraph::action_to_string(policy.action);
+    auto action_enum_result = InputValidator::validate_action(action_str);
+    if (!action_enum_result.is_valid)
+        return InputValidator::to_error(action_enum_result);
+
+    // Validate timestamps
+    auto created_at_ms = policy.created_at.milliseconds_since_epoch();
+    auto timestamp_result = InputValidator::validate_timestamp(created_at_ms);
+    if (!timestamp_result.is_valid)
+        return InputValidator::to_error(timestamp_result);
+
+    if (policy.expires_at.has_value()) {
+        auto expires_at_ms = policy.expires_at->milliseconds_since_epoch();
+        auto expiry_result = InputValidator::validate_expiry(expires_at_ms);
+        if (!expiry_result.is_valid)
+            return InputValidator::to_error(expiry_result);
+    }
+
+    if (policy.last_hit.has_value()) {
+        auto last_hit_ms = policy.last_hit->milliseconds_since_epoch();
+        // Last hit must be in the past (not future)
+        auto now_ms = UnixDateTime::now().milliseconds_since_epoch();
+        if (last_hit_ms > now_ms)
+            return Error::from_string_literal("Invalid policy: last_hit cannot be in the future");
+    }
+
+    // Validate hit_count is non-negative
+    if (policy.hit_count < 0)
+        return Error::from_string_literal("Invalid policy: hit_count cannot be negative");
 
     return {};
 }
 
-// PolicyGraphCache implementation
-
+// PolicyGraphCache implementation using O(1) LRU cache
 
 Optional<Optional<int>> PolicyGraphCache::get_cached(String const& key)
 {
-    auto it = m_cache.find(key);
-    if (it == m_cache.end()) {
-        m_cache_misses++;
+    auto cached_value = m_lru_cache.get(key);
+    if (!cached_value.has_value()) {
+        // Cache miss
         return {};
     }
 
-    // Cache hit
-    m_cache_hits++;
-
-    // Update LRU order
-    update_lru(key);
-
-    return it->value;
+    // Cache hit - return the Optional<int> value
+    return cached_value.value();
 }
 
 void PolicyGraphCache::cache_policy(String const& key, Optional<int> policy_id)
 {
-    // If cache is full, evict least recently used entry
-    if (m_cache.size() >= m_max_size && !m_cache.contains(key)) {
-        if (!m_lru_order.is_empty()) {
-            auto lru_key = m_lru_order.take_first();
-            m_cache.remove(lru_key);
-            m_cache_evictions++;
-        }
+    // Put into LRU cache - it handles eviction automatically
+    auto result = m_lru_cache.put(key, policy_id);
+    if (result.is_error()) {
+        dbgln("PolicyGraphCache: Failed to cache policy: {}", result.error());
     }
-
-    m_cache.set(key, policy_id);
-    update_lru(key);
 }
 
 void PolicyGraphCache::invalidate()
 {
-    m_cache.clear();
-    m_lru_order.clear();
-    m_cache_invalidations++;
+    m_lru_cache.invalidate();
 }
 
 PolicyGraphCache::CacheMetrics PolicyGraphCache::get_metrics() const
 {
-    return CacheMetrics {
-        .hits = m_cache_hits,
-        .misses = m_cache_misses,
-        .evictions = m_cache_evictions,
-        .invalidations = m_cache_invalidations,
-        .current_size = m_cache.size(),
-        .max_size = m_max_size
-    };
+    return m_lru_cache.get_metrics();
 }
 
 void PolicyGraphCache::reset_metrics()
 {
-    m_cache_hits = 0;
-    m_cache_misses = 0;
-    m_cache_evictions = 0;
-    m_cache_invalidations = 0;
-}
-
-void PolicyGraphCache::update_lru(String const& key)
-{
-    // Remove key from current position
-    m_lru_order.remove_all_matching([&](auto const& k) { return k == key; });
-
-    // Add to end (most recently used)
-    m_lru_order.append(key);
+    m_lru_cache.reset_metrics();
 }
 
 // PolicyGraph implementation
 
 ErrorOr<PolicyGraph> PolicyGraph::create(ByteString const& db_directory)
 {
+    // Initialize retry policy for database operations
+    initialize_db_retry_policy();
+
     // Ensure directory exists with restrictive permissions (owner only)
     // SECURITY: Policy database contains threat history and user decisions
     if (!FileSystem::exists(db_directory))
         TRY(Core::System::mkdir(db_directory, 0700));
 
-    // Create/open database
-    auto database = TRY(Database::Database::create(db_directory, "policy_graph"sv));
+    // Create/open database with retry logic for transient failures
+    auto database = TRY(s_db_retry_policy.execute([&]() -> ErrorOr<NonnullRefPtr<Database::Database>> {
+        return Database::Database::create(db_directory, "policy_graph"sv);
+    }));
 
     // Create policies table
     auto create_policies_table = TRY(database->prepare_statement(R"#(
@@ -231,6 +246,18 @@ ErrorOr<PolicyGraph> PolicyGraph::create(ByteString const& db_directory)
     auto create_threat_hash_index = TRY(database->prepare_statement(
         "CREATE INDEX IF NOT EXISTS idx_threat_history_file_hash ON threat_history(file_hash);"sv));
     database->execute_statement(create_threat_hash_index, {});
+
+    // Run database migrations to add performance indexes
+    // This will check schema version and apply any pending migrations
+    dbgln("PolicyGraph: Checking for database migrations");
+    auto migration_result = DatabaseMigrations::migrate(*database);
+    if (migration_result.is_error()) {
+        dbgln("PolicyGraph: Warning - migration failed: {}", migration_result.error());
+        // Continue anyway - migrations are optional optimizations
+        // The database will still work with just the basic indexes above
+    } else {
+        dbgln("PolicyGraph: Database migrations complete");
+    }
 
     // Prepare all statements
     Statements statements {};
@@ -312,7 +339,7 @@ ErrorOr<PolicyGraph> PolicyGraph::create(ByteString const& db_directory)
 
     // Utility statements
     statements.delete_expired_policies = TRY(database->prepare_statement(
-        "DELETE FROM policies WHERE expires_at IS NOT NULL AND expires_at <= ?;"sv));
+        "DELETE FROM policies WHERE expires_at IS NOT NULL AND expires_at != -1 AND expires_at <= ?;"sv));
 
     statements.count_policies = TRY(database->prepare_statement(
         "SELECT COUNT(*) FROM policies;"sv));
@@ -323,6 +350,16 @@ ErrorOr<PolicyGraph> PolicyGraph::create(ByteString const& db_directory)
     // Memory optimization statements
     statements.delete_old_threats = TRY(database->prepare_statement(
         "DELETE FROM threat_history WHERE detected_at < ?;"sv));
+
+    // Transaction support statements
+    statements.begin_transaction = TRY(database->prepare_statement(
+        "BEGIN IMMEDIATE TRANSACTION;"sv));
+
+    statements.commit_transaction = TRY(database->prepare_statement(
+        "COMMIT TRANSACTION;"sv));
+
+    statements.rollback_transaction = TRY(database->prepare_statement(
+        "ROLLBACK TRANSACTION;"sv));
 
     auto policy_graph = PolicyGraph { move(database), statements };
 
@@ -347,6 +384,36 @@ ErrorOr<i64> PolicyGraph::create_policy(Policy const& policy)
     // SECURITY: Validate all policy inputs before database insertion
     TRY(validate_policy_inputs(policy));
 
+    // Check for duplicate policy before INSERT to avoid constraint violations
+    // Check by (rule_name, url_pattern, file_hash) combination
+    auto existing_policies = TRY(list_policies());
+    for (auto const& existing : existing_policies) {
+        bool rule_name_match = existing.rule_name == policy.rule_name;
+        bool url_pattern_match = existing.url_pattern == policy.url_pattern;
+
+        // Use constant-time comparison for hash to prevent timing attacks
+        // Handle Optional<String> properly:
+        // - If both have values, unwrap and compare
+        // - If only one has value, they don't match
+        // - If neither has value, they match
+        bool file_hash_match = false;
+        if (existing.file_hash.has_value() && policy.file_hash.has_value()) {
+            // Both have values - use constant-time comparison
+            file_hash_match = Crypto::ConstantTimeComparison::compare_hashes(
+                existing.file_hash.value(),
+                policy.file_hash.value()
+            );
+        } else if (!existing.file_hash.has_value() && !policy.file_hash.has_value()) {
+            // Neither has value - consider them matching
+            file_hash_match = true;
+        }
+        // else: only one has value - file_hash_match remains false
+
+        if (rule_name_match && url_pattern_match && file_hash_match) {
+            return Error::from_string_literal("Policy with same rule_name, url_pattern, and file_hash already exists");
+        }
+    }
+
     // Convert action enum to string
     auto action_str = action_to_string(policy.action);
     auto match_type_str = match_type_to_string(policy.match_type);
@@ -357,6 +424,8 @@ ErrorOr<i64> PolicyGraph::create_policy(Policy const& policy)
         expires_ms = policy.expires_at->milliseconds_since_epoch();
 
     // Execute insert with validated data
+    // Note: execute_statement uses SQL_MUST internally which crashes on errors
+    // We can't catch SQLite errors here, but we can check if the operation succeeded
     m_database->execute_statement(
         m_statements.create_policy,
         {},
@@ -372,14 +441,21 @@ ErrorOr<i64> PolicyGraph::create_policy(Policy const& policy)
         expires_ms.has_value() ? expires_ms.value() : -1
     );
 
-    // Get last insert ID
+    // Get last insert ID - ISSUE-010 FIX: Check if callback was invoked
     i64 last_id = 0;
+    bool callback_invoked = false;
     m_database->execute_statement(
         m_statements.get_last_insert_id,
         [&](auto statement_id) {
             last_id = m_database->result_column<i64>(statement_id, 0);
+            callback_invoked = true;
         }
     );
+
+    // ISSUE-010 FIX: Verify callback was invoked and ID is valid
+    if (!callback_invoked || last_id == 0) {
+        return Error::from_string_literal("Failed to retrieve policy ID after insertion");
+    }
 
     // Invalidate cache since policies changed
     m_cache.invalidate();
@@ -539,7 +615,7 @@ ErrorOr<void> PolicyGraph::delete_policy(i64 policy_id)
 
 // Policy matching implementation
 
-String PolicyGraph::compute_cache_key(ThreatMetadata const& threat) const
+ErrorOr<String> PolicyGraph::compute_cache_key(ThreatMetadata const& threat) const
 {
     // Create cache key: hash(url + filename + mime_type + file_hash)
     // Using simple concatenation with separator for uniqueness
@@ -552,41 +628,52 @@ String PolicyGraph::compute_cache_key(ThreatMetadata const& threat) const
     builder.append('|');
     builder.append(threat.file_hash);
 
-    // Use the string's hash trait for a quick hash
-    auto input_string = MUST(builder.to_string());
+    // Use the string's hash trait for a quick hash - now with error propagation
+    auto input_string = TRY(builder.to_string());
     auto hash_value = Traits<String>::hash(input_string);
 
-    return MUST(String::formatted("{:x}", hash_value));
+    return TRY(String::formatted("{:x}", hash_value));
 }
 
 ErrorOr<Optional<PolicyGraph::Policy>> PolicyGraph::match_policy(ThreatMetadata const& threat)
 {
-    // Check cache first
-    auto cache_key = compute_cache_key(threat);
-    auto cached_result = m_cache.get_cached(cache_key);
-    if (cached_result.has_value()) {
-        // Cache hit
-        auto policy_id = cached_result.value();
-        if (!policy_id.has_value()) {
-            // Cached "no match"
-            return Optional<Policy> {};
-        }
+    // Try to generate cache key - if it fails, we skip caching but continue
+    Optional<String> cache_key;
+    auto cache_key_result = compute_cache_key(threat);
+    if (cache_key_result.is_error()) {
+        // Cache key generation failed - skip cache, go straight to database query
+        dbgln("PolicyGraph: Cache key generation failed: {}, falling back to database query",
+              cache_key_result.error());
+        // cache_key remains empty, so cache operations will be skipped
+    } else {
+        cache_key = cache_key_result.release_value();
 
-        // Cached policy ID - fetch and return policy
-        auto policy_result = get_policy(policy_id.value());
-        if (policy_result.is_error()) {
-            // Policy was deleted or invalid, invalidate cache entry
-            m_cache.cache_policy(cache_key, {});
-            // Fall through to normal query
-        } else {
-            // Update hit statistics
-            auto now = UnixDateTime::now().milliseconds_since_epoch();
-            m_database->execute_statement(m_statements.increment_hit_count, {}, now, policy_id.value());
-            return policy_result.value();
+        // Check cache if key is available
+        auto cached_result = m_cache.get_cached(cache_key.value());
+        if (cached_result.has_value()) {
+            // Cache hit
+            auto policy_id = cached_result.value();
+            if (!policy_id.has_value()) {
+                // Cached "no match"
+                return Optional<Policy> {};
+            }
+
+            // Cached policy ID - fetch and return policy
+            auto policy_result = get_policy(policy_id.value());
+            if (policy_result.is_error()) {
+                // Policy was deleted or invalid, invalidate cache entry
+                m_cache.cache_policy(cache_key.value(), {});
+                // Fall through to normal query
+            } else {
+                // Update hit statistics
+                auto now = UnixDateTime::now().milliseconds_since_epoch();
+                m_database->execute_statement(m_statements.increment_hit_count, {}, now, policy_id.value());
+                return policy_result.value();
+            }
         }
     }
 
-    // Cache miss - perform database query
+    // Cache miss or cache skipped - perform database query
     auto now = UnixDateTime::now().milliseconds_since_epoch();
 
     // Priority 1: Match by file hash (most specific)
@@ -637,8 +724,9 @@ ErrorOr<Optional<PolicyGraph::Policy>> PolicyGraph::match_policy(ThreatMetadata 
         if (match.has_value()) {
             // Update hit statistics
             m_database->execute_statement(m_statements.increment_hit_count, {}, now, match->id);
-            // Cache the match
-            m_cache.cache_policy(cache_key, match->id);
+            // Cache the match (only if cache key is available)
+            if (cache_key.has_value())
+                m_cache.cache_policy(cache_key.value(), match->id);
             return match;
         }
     }
@@ -690,8 +778,9 @@ ErrorOr<Optional<PolicyGraph::Policy>> PolicyGraph::match_policy(ThreatMetadata 
 
         if (match.has_value()) {
             m_database->execute_statement(m_statements.increment_hit_count, {}, now, match->id);
-            // Cache the match
-            m_cache.cache_policy(cache_key, match->id);
+            // Cache the match (only if cache key is available)
+            if (cache_key.has_value())
+                m_cache.cache_policy(cache_key.value(), match->id);
             return match;
         }
     }
@@ -743,14 +832,16 @@ ErrorOr<Optional<PolicyGraph::Policy>> PolicyGraph::match_policy(ThreatMetadata 
 
         if (match.has_value()) {
             m_database->execute_statement(m_statements.increment_hit_count, {}, now, match->id);
-            // Cache the match
-            m_cache.cache_policy(cache_key, match->id);
+            // Cache the match (only if cache key is available)
+            if (cache_key.has_value())
+                m_cache.cache_policy(cache_key.value(), match->id);
             return match;
         }
     }
 
-    // No matching policy found - cache the miss
-    m_cache.cache_policy(cache_key, {});
+    // No matching policy found - cache the miss (only if cache key is available)
+    if (cache_key.has_value())
+        m_cache.cache_policy(cache_key.value(), {});
     return Optional<Policy> {};
 }
 
@@ -1053,6 +1144,46 @@ bool PolicyGraph::is_database_healthy()
     }
 
     return true;
+}
+
+// Transaction support implementations
+
+ErrorOr<void> PolicyGraph::begin_transaction()
+{
+    dbgln("PolicyGraph: Beginning transaction");
+
+    // Execute BEGIN TRANSACTION
+    // Note: execute_statement uses SQL_MUST which crashes on error
+    // We rely on SQLite's transaction semantics for safety
+    m_database->execute_statement(m_statements.begin_transaction, {});
+
+    return {};
+}
+
+ErrorOr<void> PolicyGraph::commit_transaction()
+{
+    dbgln("PolicyGraph: Committing transaction");
+
+    // Execute COMMIT TRANSACTION
+    m_database->execute_statement(m_statements.commit_transaction, {});
+
+    // Invalidate cache since database state changed
+    m_cache.invalidate();
+
+    return {};
+}
+
+ErrorOr<void> PolicyGraph::rollback_transaction()
+{
+    dbgln("PolicyGraph: Rolling back transaction");
+
+    // Execute ROLLBACK TRANSACTION
+    m_database->execute_statement(m_statements.rollback_transaction, {});
+
+    // Invalidate cache since we're reverting changes
+    m_cache.invalidate();
+
+    return {};
 }
 
 }

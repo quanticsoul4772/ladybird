@@ -26,3 +26,6 @@ endif()
 if (ENABLE_CLANG_PLUGINS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang$")
     add_subdirectory(ClangPlugins)
 endif()
+
+# Sentinel tests
+add_subdirectory(Sentinel)

@@ -195,7 +195,7 @@ ErrorOr<NonnullRefPtr<WebDriverConnection>> WebDriverConnection::connect(Web::Pa
     // TODO: Mach IPC and Windows IPC
 
     dbgln_if(WEBDRIVER_DEBUG, "Trying to connect to {}", webdriver_ipc_path);
-    auto socket = TRY(Core::LocalSocket::connect(webdriver_ipc_path));
+    auto socket = TRY(Core::Socket::connect(webdriver_ipc_path));
 
     // Allow pop-ups, or otherwise /window/new won't be able to open a new tab.
     page_client.page().set_should_block_pop_ups(false);

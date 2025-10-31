@@ -1616,4 +1616,12 @@ Messages::RequestServer::GetQuarantineDirectoryResponse ConnectionFromClient::ge
     return dir_result.release_value().to_byte_string();
 }
 
+void ConnectionFromClient::credential_exfil_alert(ByteString alert_json)
+{
+    // This method will be fully implemented in Phase 6 (Milestone 0.2)
+    // For now, just log the alert for debugging
+    dbgln("ConnectionFromClient: Credential exfiltration alert received: {}", alert_json);
+    // TODO: Phase 6 - Forward to WebContent for user notification
+}
+
 }

@@ -43,6 +43,9 @@ private:
     // Quarantine manager (Phase 4 Day 24)
     void open_quarantine_manager();
 
+    // Metrics (Phase 5 Day 34)
+    void get_metrics();
+
     // PolicyGraph instance for security policy management
     Optional<Sentinel::PolicyGraph> m_policy_graph;
 };

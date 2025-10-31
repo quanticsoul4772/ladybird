@@ -13,70 +13,73 @@
 #include <AK/StringBuilder.h>
 #include <LibCore/Directory.h>
 #include <LibCore/File.h>
+#include <LibCore/RetryPolicy.h>
 #include <LibCore/StandardPaths.h>
 #include <LibCore/System.h>
 #include <LibFileSystem/FileSystem.h>
+#include <Services/Sentinel/InputValidator.h>
 #include <time.h>
 
 namespace RequestServer {
 
-// Validate quarantine ID format to prevent path traversal and injection attacks
-// Expected format: YYYYMMDD_HHMMSS_XXXXXX (21 characters)
-// Example: 20251030_143052_a3f5c2
+// Retry policy for file I/O operations with exponential backoff
+// Max attempts: 3, Initial delay: 200ms, Max delay: 5 seconds, Backoff: 2x
+static Core::RetryPolicy s_file_retry_policy(
+    3,                                          // max_attempts
+    Duration::from_milliseconds(200),           // initial_delay
+    Duration::from_seconds(5),                  // max_delay
+    2.0,                                        // backoff_multiplier
+    0.1                                         // jitter_factor
+);
+
+static void initialize_file_retry_policy()
+{
+    static bool initialized = false;
+    if (!initialized) {
+        s_file_retry_policy.set_retry_predicate(Core::RetryPolicy::file_io_retry_predicate());
+        initialized = true;
+    }
+}
+
+// Validate quarantine ID using centralized InputValidator
 static bool is_valid_quarantine_id(StringView id)
 {
-    // Must be exactly 21 characters: 8 digits + underscore + 6 digits + underscore + 6 hex chars
-    if (id.length() != 21)
-        return false;
-
-    // Validate character by character according to position
-    for (size_t i = 0; i < id.length(); ++i) {
-        char ch = id[i];
-
-        if (i < 8) {
-            // Positions 0-7: Date portion (YYYYMMDD) - must be digits
-            if (!isdigit(ch))
-                return false;
-        } else if (i == 8) {
-            // Position 8: First separator - must be underscore
-            if (ch != '_')
-                return false;
-        } else if (i >= 9 && i < 15) {
-            // Positions 9-14: Time portion (HHMMSS) - must be digits
-            if (!isdigit(ch))
-                return false;
-        } else if (i == 15) {
-            // Position 15: Second separator - must be underscore
-            if (ch != '_')
-                return false;
-        } else {
-            // Positions 16-20: Random portion (6 hex chars) - must be hex digits
-            if (!isxdigit(ch))
-                return false;
-        }
-    }
-
-    return true;
+    auto result = Sentinel::InputValidator::validate_quarantine_id(id);
+    return result.is_valid;
 }
 
 ErrorOr<void> Quarantine::initialize()
 {
+    // Initialize retry policy for file operations
+    initialize_file_retry_policy();
+
     // Get quarantine directory path
     auto quarantine_dir = TRY(get_quarantine_directory());
     auto quarantine_dir_byte_string = quarantine_dir.to_byte_string();
 
-    // Create directory if it doesn't exist
-    auto create_result = Core::Directory::create(quarantine_dir_byte_string, Core::Directory::CreateDirectories::Yes);
+    // Create directory if it doesn't exist - with retry logic for transient failures
+    auto create_result = s_file_retry_policy.execute([&]() -> ErrorOr<void> {
+        return Core::Directory::create(quarantine_dir_byte_string, Core::Directory::CreateDirectories::Yes);
+    });
     if (create_result.is_error()) {
         dbgln("Quarantine: Failed to create directory: {}", create_result.error());
         return Error::from_string_literal("Cannot create quarantine directory. Check disk space and permissions.");
     }
 
-    // Set restrictive permissions on directory (owner only: rwx------)
-    auto chmod_result = Core::System::chmod(quarantine_dir, 0700);
+    // Set restrictive permissions on directory (owner only: rwx------) - with retry
+    auto chmod_result = s_file_retry_policy.execute([&]() -> ErrorOr<void> {
+        return Core::System::chmod(quarantine_dir, 0700);
+    });
     if (chmod_result.is_error()) {
         dbgln("Quarantine: Failed to set permissions: {}", chmod_result.error());
         return Error::from_string_literal("Cannot set permissions on quarantine directory. Check file system permissions.");
+    }
+
+    // Clean up any orphaned files from previous failed quarantine operations
+    auto cleanup_result = cleanup_orphaned_files();
+    if (cleanup_result.is_error()) {
+        dbgln("Quarantine: Warning - Failed to cleanup orphaned files: {}", cleanup_result.error());
+        // Don't fail initialization if cleanup fails - log warning and continue
     }
 
     dbgln("Quarantine: Initialized directory at {}", quarantine_dir);
@@ -122,10 +125,180 @@ ErrorOr<String> Quarantine::generate_quarantine_id()
     return id_builder.to_string();
 }
 
+// Mark a quarantined file as orphaned by creating a .orphaned marker file
+// This allows later cleanup attempts to identify and remove orphaned files
+static ErrorOr<void> mark_as_orphaned(String const& quarantine_dir, String const& quarantine_id)
+{
+    // Build orphan marker file path
+    StringBuilder orphan_path_builder;
+    orphan_path_builder.append(quarantine_dir);
+    orphan_path_builder.append('/');
+    orphan_path_builder.append(quarantine_id);
+    orphan_path_builder.append(".orphaned"sv);
+    auto orphan_path = TRY(orphan_path_builder.to_string());
+
+    // Write marker file with timestamp
+    auto now = UnixDateTime::now();
+    time_t timestamp = now.seconds_since_epoch();
+    auto timestamp_str = ByteString::formatted("Orphaned at timestamp: {}\n", timestamp);
+
+    auto file = TRY(Core::File::open(orphan_path, Core::File::OpenMode::Write));
+    TRY(file->write_until_depleted(timestamp_str.bytes()));
+
+    dbgln("Quarantine: Marked {} as orphaned", quarantine_id);
+    return {};
+}
+
+// Attempt to remove a file with exponential backoff retry logic
+// Returns true if successful, false if all retries failed
+static bool remove_file_with_retry(String const& file_path, int max_attempts = 3)
+{
+    constexpr int initial_delay_ms = 100;
+
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
+        auto remove_result = FileSystem::remove(file_path, FileSystem::RecursionMode::Disallowed);
+        if (!remove_result.is_error()) {
+            if (attempt > 0) {
+                dbgln("Quarantine: Successfully removed {} on attempt {}", file_path, attempt + 1);
+            }
+            return true;
+        }
+
+        dbgln("Quarantine: Attempt {} to remove {} failed: {}", attempt + 1, file_path, remove_result.error());
+
+        // Don't sleep after last attempt
+        if (attempt < max_attempts - 1) {
+            // Exponential backoff: 100ms, 200ms, 400ms
+            int delay_ms = initial_delay_ms * (1 << attempt);
+            struct timespec sleep_time;
+            sleep_time.tv_sec = delay_ms / 1000;
+            sleep_time.tv_nsec = (delay_ms % 1000) * 1000000;
+            nanosleep(&sleep_time, nullptr);
+        }
+    }
+
+    dbgln("Quarantine: Failed to remove {} after {} attempts", file_path, max_attempts);
+    return false;
+}
+
+ErrorOr<void> Quarantine::cleanup_orphaned_files()
+{
+    auto quarantine_dir = TRY(get_quarantine_directory());
+    auto quarantine_dir_byte_string = quarantine_dir.to_byte_string();
+
+    // Check if directory exists
+    if (!FileSystem::exists(quarantine_dir_byte_string)) {
+        dbgln("Quarantine: Directory does not exist, no orphans to clean");
+        return {};
+    }
+
+    int orphans_found = 0;
+    int orphans_cleaned = 0;
+    int orphans_remaining = 0;
+
+    // Scan for .orphaned marker files
+    TRY(Core::Directory::for_each_entry(quarantine_dir_byte_string, Core::DirIterator::SkipParentAndBaseDir, [&](auto const& entry, auto const&) -> ErrorOr<IterationDecision> {
+        // Only process .orphaned marker files
+        if (!entry.name.ends_with(".orphaned"sv))
+            return IterationDecision::Continue;
+
+        orphans_found++;
+
+        // Extract quarantine ID (remove .orphaned extension)
+        auto quarantine_id_byte = entry.name.substring(0, entry.name.length() - 9);
+        auto quarantine_id_result = String::from_byte_string(quarantine_id_byte);
+
+        if (quarantine_id_result.is_error()) {
+            dbgln("Quarantine: Failed to convert orphan ID: {}", entry.name);
+            return IterationDecision::Continue;
+        }
+
+        auto quarantine_id = quarantine_id_result.release_value();
+        dbgln("Quarantine: Found orphaned file marker: {}", quarantine_id);
+
+        // Build paths for orphaned file and marker
+        StringBuilder bin_path_builder;
+        bin_path_builder.append(quarantine_dir);
+        bin_path_builder.append('/');
+        bin_path_builder.append(quarantine_id);
+        bin_path_builder.append(".bin"sv);
+        auto bin_path_result = bin_path_builder.to_string();
+
+        StringBuilder marker_path_builder;
+        marker_path_builder.append(quarantine_dir);
+        marker_path_builder.append('/');
+        marker_path_builder.append(quarantine_id);
+        marker_path_builder.append(".orphaned"sv);
+        auto marker_path_result = marker_path_builder.to_string();
+
+        if (bin_path_result.is_error() || marker_path_result.is_error()) {
+            dbgln("Quarantine: Failed to build paths for orphan cleanup");
+            return IterationDecision::Continue;
+        }
+
+        auto bin_path = bin_path_result.release_value();
+        auto marker_path = marker_path_result.release_value();
+
+        // Attempt to remove the orphaned .bin file (if it exists)
+        bool bin_removed = true;
+        if (FileSystem::exists(bin_path)) {
+            bin_removed = remove_file_with_retry(bin_path);
+        }
+
+        if (bin_removed) {
+            // Successfully removed .bin (or it didn't exist), now remove marker
+            bool marker_removed = remove_file_with_retry(marker_path);
+            if (marker_removed) {
+                orphans_cleaned++;
+                dbgln("Quarantine: Successfully cleaned up orphan {}", quarantine_id);
+            } else {
+                orphans_remaining++;
+                dbgln("Quarantine: Warning - Removed orphaned .bin but failed to remove marker: {}", quarantine_id);
+            }
+        } else {
+            orphans_remaining++;
+            dbgln("Quarantine: Warning - Failed to remove orphaned .bin file: {}", quarantine_id);
+            // Keep the marker so we can try again later
+        }
+
+        return IterationDecision::Continue;
+    }));
+
+    if (orphans_found > 0) {
+        dbgln("Quarantine: Orphan cleanup summary - Found: {}, Cleaned: {}, Remaining: {}",
+            orphans_found, orphans_cleaned, orphans_remaining);
+    }
+
+    return {};
+}
+
 ErrorOr<String> Quarantine::quarantine_file(
     String const& source_path,
     QuarantineMetadata const& metadata)
 {
+    // Validate metadata fields using InputValidator
+    auto filename_result = Sentinel::InputValidator::validate_length(
+        ByteString(metadata.filename).view(), 1, 255, "filename"sv);
+    if (!filename_result.is_valid)
+        return Error::from_string_view(filename_result.error_message);
+
+    auto url_result = Sentinel::InputValidator::validate_length(
+        ByteString(metadata.original_url).view(), 0, 2048, "original_url"sv);
+    if (!url_result.is_valid)
+        return Error::from_string_view(url_result.error_message);
+
+    // Validate SHA256 hash format
+    if (!metadata.sha256.is_empty()) {
+        auto hash_result = Sentinel::InputValidator::validate_sha256(
+            ByteString(metadata.sha256).view());
+        if (!hash_result.is_valid)
+            return Error::from_string_view(hash_result.error_message);
+    }
+
+    // Validate file size is positive
+    if (metadata.file_size == 0)
+        return Error::from_string_literal("Invalid metadata: file_size cannot be zero");
+
     // Ensure quarantine directory exists
     auto init_result = initialize();
     if (init_result.is_error()) {
@@ -182,11 +355,26 @@ ErrorOr<String> Quarantine::quarantine_file(
     auto metadata_result = write_metadata(quarantine_id, updated_metadata);
     if (metadata_result.is_error()) {
         dbgln("Quarantine: Failed to write metadata: {}", metadata_result.error());
-        // Clean up quarantined file if metadata write fails
-        auto cleanup = FileSystem::remove(dest_path, FileSystem::RecursionMode::Disallowed);
-        if (cleanup.is_error()) {
-            dbgln("Quarantine: Warning - failed to clean up quarantined file after metadata error");
+
+        // CRITICAL: Clean up quarantined file if metadata write fails
+        // Use retry logic with exponential backoff (3 attempts: 100ms, 200ms, 400ms)
+        bool cleanup_successful = remove_file_with_retry(dest_path);
+
+        if (!cleanup_successful) {
+            // CRITICAL: Cleanup failed after retries - mark file as orphaned
+            dbgln("Quarantine: CRITICAL - Failed to clean up quarantined file after metadata error");
+            dbgln("Quarantine: Orphaned file will be cleaned up on next initialization");
+
+            // Create orphan marker for future cleanup
+            auto mark_result = mark_as_orphaned(quarantine_dir, quarantine_id);
+            if (mark_result.is_error()) {
+                dbgln("Quarantine: CRITICAL - Failed to mark orphaned file: {}", mark_result.error());
+                return Error::from_string_literal("Cannot write quarantine metadata and cleanup failed. Orphaned file exists at quarantine directory. Manual cleanup may be required.");
+            }
+
+            return Error::from_string_literal("Cannot write quarantine metadata. Cleanup failed but file marked as orphaned for automatic recovery.");
         }
+
         return Error::from_string_literal("Cannot write quarantine metadata. The file was not quarantined.");
     }
 
@@ -415,10 +603,10 @@ static ErrorOr<String> validate_restore_destination(StringView dest_dir)
 static String sanitize_filename(StringView filename)
 {
     // First, extract just the basename (remove any path components)
-    // Handle both Unix (/) and Windows (\) path separators
+    // Handle both Unix and Windows path separators
     StringView basename = filename;
 
-    // Find the last occurrence of either / or \
+    // Find the last occurrence of either forward or back slash
     auto last_slash = basename.find_last('/');
     auto last_backslash = basename.find_last('\\');
 

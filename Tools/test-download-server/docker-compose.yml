@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  test-server:
+    build: .
+    container_name: sentinel-test-server
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge

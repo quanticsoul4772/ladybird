@@ -64,6 +64,9 @@ private:
     virtual Messages::RequestServer::DeleteQuarantineFileResponse delete_quarantine_file(ByteString quarantine_id) override;
     virtual Messages::RequestServer::GetQuarantineDirectoryResponse get_quarantine_directory() override;
 
+    // Credential exfiltration detection (Milestone 0.2 foundation - Phase 5 Day 35)
+    virtual void credential_exfil_alert(ByteString alert_json) override;
+
     virtual void ensure_connection(URL::URL url, ::RequestServer::CacheLevel cache_level) override;
 
     virtual void clear_cache() override;

@@ -13,7 +13,7 @@
 
 namespace IPC {
 
-TransportSocketWindows::TransportSocketWindows(NonnullOwnPtr<Core::LocalSocket> socket)
+TransportSocketWindows::TransportSocketWindows(NonnullOwnPtr<Core::Socket> socket)
     : m_socket(move(socket))
 {
 }

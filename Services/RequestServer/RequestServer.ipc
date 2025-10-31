@@ -59,4 +59,7 @@ endpoint RequestServer
     delete_quarantine_file(ByteString quarantine_id) => (bool success)
     get_quarantine_directory() => (ByteString directory_path)
 
+    // Credential exfiltration detection (Sentinel Phase 5 Day 35)
+    credential_exfil_alert(ByteString alert_json) =|
+
 }

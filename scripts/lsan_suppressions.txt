@@ -1,0 +1,21 @@
+# LeakSanitizer Suppressions
+# Add known library leaks here that are not Sentinel bugs
+#
+# Format: leak:function_name_pattern
+#
+# Example suppressions (uncomment if needed):
+#
+# SQLite allocations (if using static SQLite)
+# leak:sqlite3_*
+#
+# Qt framework allocations (if using Qt)
+# leak:QObject::*
+# leak:QString::*
+#
+# Standard library one-time allocations
+# leak:std::__once_callable
+#
+# YARA library allocations
+# leak:yr_*
+#
+# Add Sentinel-specific suppressions below as needed:

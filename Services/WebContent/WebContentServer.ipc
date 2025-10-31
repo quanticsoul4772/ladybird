@@ -145,6 +145,9 @@ endpoint WebContentServer
     // Security policy enforcement
     enforce_security_policy(i32 request_id, ByteString action) =|
 
+    // Form submission monitoring (Sentinel Phase 5 Day 35)
+    form_submission_detected(u64 page_id, String form_origin, String action_origin, bool has_password, bool has_email, bool uses_https) =|
+
     system_time_zone_changed() =|
     cookies_changed(Vector<Web::Cookie::Cookie> cookies) =|
 }

@@ -5,6 +5,7 @@ set(SOURCES
     ConnectionFromClient.cpp
     ConsoleGlobalEnvironmentExtensions.cpp
     DevToolsConsoleClient.cpp
+    FormMonitor.cpp
     PageClient.cpp
     PageHost.cpp
     WebContentConsoleClient.cpp
@@ -48,6 +49,7 @@ target_sources(webcontentservice PUBLIC FILE_SET server TYPE HEADERS
     BASE_DIRS ${LADYBIRD_SOURCE_DIR}/Services
     FILES ConnectionFromClient.h
           ConsoleGlobalEnvironmentExtensions.h
+          FormMonitor.h
           Forward.h
           PageHost.h
           WebContentConsoleClient.h
