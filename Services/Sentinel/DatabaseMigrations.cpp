@@ -187,6 +187,104 @@ ErrorOr<void> DatabaseMigrations::migrate_v1_to_v2(Database::Database& db)
     return {};
 }
 
+ErrorOr<void> DatabaseMigrations::migrate_v2_to_v3(Database::Database& db)
+{
+    dbgln("DatabaseMigrations: Migrating from v2 to v3 (adding Milestone 0.3 tables)");
+
+    // Add credential_relationships table
+    auto create_relationships_table = TRY(db.prepare_statement(R"#(
+        CREATE TABLE IF NOT EXISTS credential_relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            form_origin TEXT NOT NULL,
+            action_origin TEXT NOT NULL,
+            relationship_type TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            created_by TEXT NOT NULL,
+            last_used INTEGER,
+            use_count INTEGER DEFAULT 0,
+            expires_at INTEGER,
+            notes TEXT,
+            UNIQUE(form_origin, action_origin, relationship_type)
+        );
+    )#"_string));
+    db.execute_statement(create_relationships_table, {});
+    dbgln("DatabaseMigrations: Created table credential_relationships");
+
+    // Add indexes for credential_relationships
+    auto idx_rel_origins = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_relationships_origins ON credential_relationships(form_origin, action_origin);"_string));
+    db.execute_statement(idx_rel_origins, {});
+
+    auto idx_rel_type = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_relationships_type ON credential_relationships(relationship_type);"_string));
+    db.execute_statement(idx_rel_type, {});
+
+    dbgln("DatabaseMigrations: Created indexes for credential_relationships");
+
+    // Add credential_alerts table
+    auto create_alerts_table = TRY(db.prepare_statement(R"#(
+        CREATE TABLE IF NOT EXISTS credential_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            detected_at INTEGER NOT NULL,
+            form_origin TEXT NOT NULL,
+            action_origin TEXT NOT NULL,
+            alert_type TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            has_password_field INTEGER NOT NULL,
+            has_email_field INTEGER NOT NULL,
+            uses_https INTEGER NOT NULL,
+            is_cross_origin INTEGER NOT NULL,
+            user_action TEXT,
+            policy_id INTEGER,
+            alert_json TEXT,
+            FOREIGN KEY(policy_id) REFERENCES policies(id)
+        );
+    )#"_string));
+    db.execute_statement(create_alerts_table, {});
+    dbgln("DatabaseMigrations: Created table credential_alerts");
+
+    // Add indexes for credential_alerts
+    auto idx_alerts_time = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_alerts_time ON credential_alerts(detected_at);"_string));
+    db.execute_statement(idx_alerts_time, {});
+
+    auto idx_alerts_origins = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_alerts_origins ON credential_alerts(form_origin, action_origin);"_string));
+    db.execute_statement(idx_alerts_origins, {});
+
+    auto idx_alerts_type = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_alerts_type ON credential_alerts(alert_type);"_string));
+    db.execute_statement(idx_alerts_type, {});
+
+    dbgln("DatabaseMigrations: Created indexes for credential_alerts");
+
+    // Add policy_templates table
+    auto create_templates_table = TRY(db.prepare_statement(R"#(
+        CREATE TABLE IF NOT EXISTS policy_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL,
+            template_json TEXT NOT NULL,
+            is_builtin INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER
+        );
+    )#"_string));
+    db.execute_statement(create_templates_table, {});
+    dbgln("DatabaseMigrations: Created table policy_templates");
+
+    // Add index for policy_templates
+    auto idx_templates_category = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_templates_category ON policy_templates(category);"_string));
+    db.execute_statement(idx_templates_category, {});
+
+    dbgln("DatabaseMigrations: Created index for policy_templates");
+
+    dbgln("DatabaseMigrations: v2 to v3 migration complete - added Milestone 0.3 tables");
+    return {};
+}
+
 ErrorOr<void> DatabaseMigrations::migrate(Database::Database& db)
 {
     auto current_version = TRY(get_schema_version(db));
@@ -213,11 +311,10 @@ ErrorOr<void> DatabaseMigrations::migrate(Database::Database& db)
         TRY(set_schema_version(db, 2));
     }
 
-    // Future migrations would go here:
-    // if (current_version < 3) {
-    //     TRY(migrate_v2_to_v3(db));
-    //     TRY(set_schema_version(db, 3));
-    // }
+    if (current_version < 3) {
+        TRY(migrate_v2_to_v3(db));
+        TRY(set_schema_version(db, 3));
+    }
 
     dbgln("DatabaseMigrations: Migration complete");
     return {};

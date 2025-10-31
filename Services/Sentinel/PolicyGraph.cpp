@@ -249,6 +249,87 @@ ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_dir
         "CREATE INDEX IF NOT EXISTS idx_threat_history_file_hash ON threat_history(file_hash);"sv));
     database->execute_statement(create_threat_hash_index, {});
 
+    // Create credential_relationships table (Milestone 0.3)
+    auto create_relationships_table = TRY(database->prepare_statement(R"#(
+        CREATE TABLE IF NOT EXISTS credential_relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            form_origin TEXT NOT NULL,
+            action_origin TEXT NOT NULL,
+            relationship_type TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            created_by TEXT NOT NULL,
+            last_used INTEGER,
+            use_count INTEGER DEFAULT 0,
+            expires_at INTEGER,
+            notes TEXT,
+            UNIQUE(form_origin, action_origin, relationship_type)
+        );
+    )#"sv));
+    database->execute_statement(create_relationships_table, {});
+
+    // Create indexes on credential_relationships table
+    auto create_rel_origins_index = TRY(database->prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_relationships_origins ON credential_relationships(form_origin, action_origin);"sv));
+    database->execute_statement(create_rel_origins_index, {});
+
+    auto create_rel_type_index = TRY(database->prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_relationships_type ON credential_relationships(relationship_type);"sv));
+    database->execute_statement(create_rel_type_index, {});
+
+    // Create credential_alerts table (Milestone 0.3)
+    auto create_alerts_table = TRY(database->prepare_statement(R"#(
+        CREATE TABLE IF NOT EXISTS credential_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            detected_at INTEGER NOT NULL,
+            form_origin TEXT NOT NULL,
+            action_origin TEXT NOT NULL,
+            alert_type TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            has_password_field INTEGER NOT NULL,
+            has_email_field INTEGER NOT NULL,
+            uses_https INTEGER NOT NULL,
+            is_cross_origin INTEGER NOT NULL,
+            user_action TEXT,
+            policy_id INTEGER,
+            alert_json TEXT,
+            FOREIGN KEY(policy_id) REFERENCES policies(id)
+        );
+    )#"sv));
+    database->execute_statement(create_alerts_table, {});
+
+    // Create indexes on credential_alerts table
+    auto create_alerts_time_index = TRY(database->prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_alerts_time ON credential_alerts(detected_at);"sv));
+    database->execute_statement(create_alerts_time_index, {});
+
+    auto create_alerts_origins_index = TRY(database->prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_alerts_origins ON credential_alerts(form_origin, action_origin);"sv));
+    database->execute_statement(create_alerts_origins_index, {});
+
+    auto create_alerts_type_index = TRY(database->prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_alerts_type ON credential_alerts(alert_type);"sv));
+    database->execute_statement(create_alerts_type_index, {});
+
+    // Create policy_templates table (Milestone 0.3)
+    auto create_templates_table = TRY(database->prepare_statement(R"#(
+        CREATE TABLE IF NOT EXISTS policy_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL,
+            template_json TEXT NOT NULL,
+            is_builtin INTEGER DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER
+        );
+    )#"sv));
+    database->execute_statement(create_templates_table, {});
+
+    // Create index on policy_templates table
+    auto create_templates_category_index = TRY(database->prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_templates_category ON policy_templates(category);"sv));
+    database->execute_statement(create_templates_category_index, {});
+
     // Run database migrations to add performance indexes
     // This will check schema version and apply any pending migrations
     dbgln("PolicyGraph: Checking for database migrations");
