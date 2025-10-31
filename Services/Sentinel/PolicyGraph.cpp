@@ -7,6 +7,8 @@
 #include "PolicyGraph.h"
 #include "DatabaseMigrations.h"
 #include "InputValidator.h"
+#include <AK/JsonArray.h>
+#include <AK/JsonObject.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/RetryPolicy.h>
@@ -443,6 +445,81 @@ ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_dir
 
     statements.rollback_transaction = TRY(database->prepare_statement(
         "ROLLBACK TRANSACTION;"sv));
+
+    // Milestone 0.3: Credential Relationship statements
+    statements.create_relationship = TRY(database->prepare_statement(R"#(
+        INSERT INTO credential_relationships
+            (form_origin, action_origin, relationship_type, created_at, created_by,
+             last_used, use_count, expires_at, notes)
+        VALUES (?, ?, ?, ?, ?, NULL, 0, ?, ?);
+    )#"sv));
+
+    statements.get_relationship = TRY(database->prepare_statement(
+        "SELECT * FROM credential_relationships WHERE form_origin = ? AND action_origin = ? AND relationship_type = ?;"sv));
+
+    statements.list_relationships = TRY(database->prepare_statement(
+        "SELECT * FROM credential_relationships ORDER BY created_at DESC;"sv));
+
+    statements.list_relationships_filtered = TRY(database->prepare_statement(
+        "SELECT * FROM credential_relationships WHERE relationship_type = ? ORDER BY created_at DESC;"sv));
+
+    statements.update_relationship_usage = TRY(database->prepare_statement(
+        "UPDATE credential_relationships SET use_count = use_count + 1, last_used = ? WHERE id = ?;"sv));
+
+    statements.delete_relationship = TRY(database->prepare_statement(
+        "DELETE FROM credential_relationships WHERE id = ?;"sv));
+
+    statements.has_relationship = TRY(database->prepare_statement(
+        "SELECT COUNT(*) FROM credential_relationships WHERE form_origin = ? AND action_origin = ? AND relationship_type = ?;"sv));
+
+    // Milestone 0.3: Credential Alert statements
+    statements.record_credential_alert = TRY(database->prepare_statement(R"#(
+        INSERT INTO credential_alerts
+            (detected_at, form_origin, action_origin, alert_type, severity,
+             has_password_field, has_email_field, uses_https, is_cross_origin,
+             user_action, policy_id, alert_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    )#"sv));
+
+    statements.get_credential_alerts_all = TRY(database->prepare_statement(
+        "SELECT * FROM credential_alerts ORDER BY detected_at DESC;"sv));
+
+    statements.get_credential_alerts_since = TRY(database->prepare_statement(
+        "SELECT * FROM credential_alerts WHERE detected_at >= ? ORDER BY detected_at DESC;"sv));
+
+    statements.get_alerts_by_origin = TRY(database->prepare_statement(
+        "SELECT * FROM credential_alerts WHERE form_origin = ? OR action_origin = ? ORDER BY detected_at DESC;"sv));
+
+    statements.update_alert_action = TRY(database->prepare_statement(
+        "UPDATE credential_alerts SET user_action = ? WHERE id = ?;"sv));
+
+    // Milestone 0.3: Policy Template statements
+    statements.create_template = TRY(database->prepare_statement(R"#(
+        INSERT INTO policy_templates
+            (name, description, category, template_json, is_builtin, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL);
+    )#"sv));
+
+    statements.get_template = TRY(database->prepare_statement(
+        "SELECT * FROM policy_templates WHERE id = ?;"sv));
+
+    statements.get_template_by_name = TRY(database->prepare_statement(
+        "SELECT * FROM policy_templates WHERE name = ?;"sv));
+
+    statements.list_templates_all = TRY(database->prepare_statement(
+        "SELECT * FROM policy_templates ORDER BY created_at DESC;"sv));
+
+    statements.list_templates_filtered = TRY(database->prepare_statement(
+        "SELECT * FROM policy_templates WHERE category = ? ORDER BY created_at DESC;"sv));
+
+    statements.update_template = TRY(database->prepare_statement(R"#(
+        UPDATE policy_templates
+        SET name = ?, description = ?, category = ?, template_json = ?, updated_at = ?
+        WHERE id = ?;
+    )#"sv));
+
+    statements.delete_template = TRY(database->prepare_statement(
+        "DELETE FROM policy_templates WHERE id = ?;"sv));
 
     auto policy_graph = adopt_own(*new PolicyGraph(move(database), statements));
 
@@ -1265,6 +1342,603 @@ ErrorOr<void> PolicyGraph::rollback_transaction()
 
     // Invalidate cache since we're reverting changes
     m_cache.invalidate();
+
+    return {};
+}
+
+// Milestone 0.3: Credential Relationship Management
+
+ErrorOr<i64> PolicyGraph::create_relationship(CredentialRelationship const& relationship)
+{
+    m_database->execute_statement(
+        m_statements.create_relationship,
+        {},
+        relationship.form_origin,
+        relationship.action_origin,
+        relationship.relationship_type,
+        relationship.created_at.milliseconds_since_epoch(),
+        relationship.created_by,
+        relationship.expires_at.has_value() ? relationship.expires_at->milliseconds_since_epoch() : -1,
+        relationship.notes
+    );
+
+    i64 relationship_id = -1;
+    m_database->execute_statement(
+        m_statements.get_last_insert_id,
+        [&](auto statement_id) {
+            relationship_id = m_database->result_column<i64>(statement_id, 0);
+        }
+    );
+
+    dbgln("PolicyGraph: Created credential relationship {} ({} -> {})", relationship_id, relationship.form_origin, relationship.action_origin);
+    return relationship_id;
+}
+
+ErrorOr<PolicyGraph::CredentialRelationship> PolicyGraph::get_relationship(String const& form_origin, String const& action_origin, String const& type)
+{
+    CredentialRelationship relationship;
+    bool found = false;
+
+    m_database->execute_statement(
+        m_statements.get_relationship,
+        [&](auto stmt_id) {
+            found = true;
+            int col = 0;
+            relationship.id = m_database->result_column<i64>(stmt_id, col++);
+            relationship.form_origin = m_database->result_column<String>(stmt_id, col++);
+            relationship.action_origin = m_database->result_column<String>(stmt_id, col++);
+            relationship.relationship_type = m_database->result_column<String>(stmt_id, col++);
+            relationship.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+            relationship.created_by = m_database->result_column<String>(stmt_id, col++);
+
+            auto last_used_ms = m_database->result_column<i64>(stmt_id, col++);
+            if (last_used_ms > 0)
+                relationship.last_used = UnixDateTime::from_milliseconds_since_epoch(last_used_ms);
+
+            relationship.use_count = m_database->result_column<i64>(stmt_id, col++);
+
+            auto expires_ms = m_database->result_column<i64>(stmt_id, col++);
+            if (expires_ms > 0)
+                relationship.expires_at = UnixDateTime::from_milliseconds_since_epoch(expires_ms);
+
+            relationship.notes = m_database->result_column<String>(stmt_id, col++);
+        },
+        form_origin,
+        action_origin,
+        type
+    );
+
+    if (!found)
+        return Error::from_string_literal("Relationship not found");
+
+    return relationship;
+}
+
+ErrorOr<Vector<PolicyGraph::CredentialRelationship>> PolicyGraph::list_relationships(Optional<String> type_filter)
+{
+    Vector<CredentialRelationship> relationships;
+
+    auto statement_id = type_filter.has_value()
+        ? m_statements.list_relationships_filtered
+        : m_statements.list_relationships;
+
+    m_database->execute_statement(
+        statement_id,
+        [&](auto stmt_id) {
+            CredentialRelationship relationship;
+            int col = 0;
+            relationship.id = m_database->result_column<i64>(stmt_id, col++);
+            relationship.form_origin = m_database->result_column<String>(stmt_id, col++);
+            relationship.action_origin = m_database->result_column<String>(stmt_id, col++);
+            relationship.relationship_type = m_database->result_column<String>(stmt_id, col++);
+            relationship.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+            relationship.created_by = m_database->result_column<String>(stmt_id, col++);
+
+            auto last_used_ms = m_database->result_column<i64>(stmt_id, col++);
+            if (last_used_ms > 0)
+                relationship.last_used = UnixDateTime::from_milliseconds_since_epoch(last_used_ms);
+
+            relationship.use_count = m_database->result_column<i64>(stmt_id, col++);
+
+            auto expires_ms = m_database->result_column<i64>(stmt_id, col++);
+            if (expires_ms > 0)
+                relationship.expires_at = UnixDateTime::from_milliseconds_since_epoch(expires_ms);
+
+            relationship.notes = m_database->result_column<String>(stmt_id, col++);
+
+            relationships.append(move(relationship));
+        },
+        type_filter.has_value() ? type_filter.value() : ""_string
+    );
+
+    return relationships;
+}
+
+ErrorOr<void> PolicyGraph::update_relationship_usage(i64 relationship_id)
+{
+    auto now = UnixDateTime::now();
+
+    m_database->execute_statement(
+        m_statements.update_relationship_usage,
+        {},
+        now.milliseconds_since_epoch(),
+        relationship_id
+    );
+
+    return {};
+}
+
+ErrorOr<void> PolicyGraph::delete_relationship(i64 relationship_id)
+{
+    m_database->execute_statement(
+        m_statements.delete_relationship,
+        {},
+        relationship_id
+    );
+
+    dbgln("PolicyGraph: Deleted credential relationship {}", relationship_id);
+    return {};
+}
+
+ErrorOr<bool> PolicyGraph::has_relationship(String const& form_origin, String const& action_origin, String const& type)
+{
+    bool exists = false;
+
+    m_database->execute_statement(
+        m_statements.has_relationship,
+        [&](auto) {
+            exists = true;
+        },
+        form_origin,
+        action_origin,
+        type
+    );
+
+    return exists;
+}
+
+// Milestone 0.3: Credential Alert History
+
+ErrorOr<i64> PolicyGraph::record_credential_alert(CredentialAlert const& alert)
+{
+    m_database->execute_statement(
+        m_statements.record_credential_alert,
+        {},
+        alert.detected_at.milliseconds_since_epoch(),
+        alert.form_origin,
+        alert.action_origin,
+        alert.alert_type,
+        alert.severity,
+        alert.has_password_field ? 1 : 0,
+        alert.has_email_field ? 1 : 0,
+        alert.uses_https ? 1 : 0,
+        alert.is_cross_origin ? 1 : 0,
+        alert.user_action.has_value() ? alert.user_action.value() : ""_string,
+        alert.policy_id.has_value() ? alert.policy_id.value() : -1,
+        alert.alert_json
+    );
+
+    i64 alert_id = -1;
+    m_database->execute_statement(
+        m_statements.get_last_insert_id,
+        [&](auto statement_id) {
+            alert_id = m_database->result_column<i64>(statement_id, 0);
+        }
+    );
+
+    dbgln("PolicyGraph: Recorded credential alert {} ({} -> {})", alert_id, alert.form_origin, alert.action_origin);
+    return alert_id;
+}
+
+ErrorOr<Vector<PolicyGraph::CredentialAlert>> PolicyGraph::get_credential_alerts(Optional<UnixDateTime> since)
+{
+    Vector<CredentialAlert> alerts;
+
+    auto statement_id = since.has_value()
+        ? m_statements.get_credential_alerts_since
+        : m_statements.get_credential_alerts_all;
+
+    m_database->execute_statement(
+        statement_id,
+        [&](auto stmt_id) {
+            CredentialAlert alert;
+            int col = 0;
+            alert.id = m_database->result_column<i64>(stmt_id, col++);
+            alert.detected_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+            alert.form_origin = m_database->result_column<String>(stmt_id, col++);
+            alert.action_origin = m_database->result_column<String>(stmt_id, col++);
+            alert.alert_type = m_database->result_column<String>(stmt_id, col++);
+            alert.severity = m_database->result_column<String>(stmt_id, col++);
+            alert.has_password_field = m_database->result_column<i64>(stmt_id, col++) != 0;
+            alert.has_email_field = m_database->result_column<i64>(stmt_id, col++) != 0;
+            alert.uses_https = m_database->result_column<i64>(stmt_id, col++) != 0;
+            alert.is_cross_origin = m_database->result_column<i64>(stmt_id, col++) != 0;
+
+            auto user_action_str = m_database->result_column<String>(stmt_id, col++);
+            if (!user_action_str.is_empty())
+                alert.user_action = user_action_str;
+
+            auto policy_id = m_database->result_column<i64>(stmt_id, col++);
+            if (policy_id > 0)
+                alert.policy_id = policy_id;
+
+            alert.alert_json = m_database->result_column<String>(stmt_id, col++);
+
+            alerts.append(move(alert));
+        },
+        since.has_value() ? since->milliseconds_since_epoch() : 0
+    );
+
+    return alerts;
+}
+
+ErrorOr<Vector<PolicyGraph::CredentialAlert>> PolicyGraph::get_alerts_by_origin(String const& origin)
+{
+    Vector<CredentialAlert> alerts;
+
+    m_database->execute_statement(
+        m_statements.get_alerts_by_origin,
+        [&](auto stmt_id) {
+            CredentialAlert alert;
+            int col = 0;
+            alert.id = m_database->result_column<i64>(stmt_id, col++);
+            alert.detected_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+            alert.form_origin = m_database->result_column<String>(stmt_id, col++);
+            alert.action_origin = m_database->result_column<String>(stmt_id, col++);
+            alert.alert_type = m_database->result_column<String>(stmt_id, col++);
+            alert.severity = m_database->result_column<String>(stmt_id, col++);
+            alert.has_password_field = m_database->result_column<i64>(stmt_id, col++) != 0;
+            alert.has_email_field = m_database->result_column<i64>(stmt_id, col++) != 0;
+            alert.uses_https = m_database->result_column<i64>(stmt_id, col++) != 0;
+            alert.is_cross_origin = m_database->result_column<i64>(stmt_id, col++) != 0;
+
+            auto user_action_str = m_database->result_column<String>(stmt_id, col++);
+            if (!user_action_str.is_empty())
+                alert.user_action = user_action_str;
+
+            auto policy_id = m_database->result_column<i64>(stmt_id, col++);
+            if (policy_id > 0)
+                alert.policy_id = policy_id;
+
+            alert.alert_json = m_database->result_column<String>(stmt_id, col++);
+
+            alerts.append(move(alert));
+        },
+        origin
+    );
+
+    return alerts;
+}
+
+ErrorOr<void> PolicyGraph::update_alert_action(i64 alert_id, String const& user_action)
+{
+    m_database->execute_statement(
+        m_statements.update_alert_action,
+        {},
+        user_action,
+        alert_id
+    );
+
+    return {};
+}
+
+// Milestone 0.3: Policy Templates
+
+ErrorOr<i64> PolicyGraph::create_template(PolicyTemplate const& tmpl)
+{
+    m_database->execute_statement(
+        m_statements.create_template,
+        {},
+        tmpl.name,
+        tmpl.description,
+        tmpl.category,
+        tmpl.template_json,
+        tmpl.is_builtin ? 1 : 0,
+        tmpl.created_at.milliseconds_since_epoch(),
+        tmpl.updated_at.has_value() ? tmpl.updated_at->milliseconds_since_epoch() : -1
+    );
+
+    i64 template_id = -1;
+    m_database->execute_statement(
+        m_statements.get_last_insert_id,
+        [&](auto statement_id) {
+            template_id = m_database->result_column<i64>(statement_id, 0);
+        }
+    );
+
+    dbgln("PolicyGraph: Created template {} ({})", template_id, tmpl.name);
+    return template_id;
+}
+
+ErrorOr<PolicyGraph::PolicyTemplate> PolicyGraph::get_template(i64 template_id)
+{
+    PolicyTemplate tmpl;
+    bool found = false;
+
+    m_database->execute_statement(
+        m_statements.get_template,
+        [&](auto stmt_id) {
+            found = true;
+            int col = 0;
+            tmpl.id = m_database->result_column<i64>(stmt_id, col++);
+            tmpl.name = m_database->result_column<String>(stmt_id, col++);
+            tmpl.description = m_database->result_column<String>(stmt_id, col++);
+            tmpl.category = m_database->result_column<String>(stmt_id, col++);
+            tmpl.template_json = m_database->result_column<String>(stmt_id, col++);
+            tmpl.is_builtin = m_database->result_column<i64>(stmt_id, col++) != 0;
+            tmpl.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+
+            auto updated_ms = m_database->result_column<i64>(stmt_id, col++);
+            if (updated_ms > 0)
+                tmpl.updated_at = UnixDateTime::from_milliseconds_since_epoch(updated_ms);
+        },
+        template_id
+    );
+
+    if (!found)
+        return Error::from_string_literal("Template not found");
+
+    return tmpl;
+}
+
+ErrorOr<PolicyGraph::PolicyTemplate> PolicyGraph::get_template_by_name(String const& name)
+{
+    PolicyTemplate tmpl;
+    bool found = false;
+
+    m_database->execute_statement(
+        m_statements.get_template_by_name,
+        [&](auto stmt_id) {
+            found = true;
+            int col = 0;
+            tmpl.id = m_database->result_column<i64>(stmt_id, col++);
+            tmpl.name = m_database->result_column<String>(stmt_id, col++);
+            tmpl.description = m_database->result_column<String>(stmt_id, col++);
+            tmpl.category = m_database->result_column<String>(stmt_id, col++);
+            tmpl.template_json = m_database->result_column<String>(stmt_id, col++);
+            tmpl.is_builtin = m_database->result_column<i64>(stmt_id, col++) != 0;
+            tmpl.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+
+            auto updated_ms = m_database->result_column<i64>(stmt_id, col++);
+            if (updated_ms > 0)
+                tmpl.updated_at = UnixDateTime::from_milliseconds_since_epoch(updated_ms);
+        },
+        name
+    );
+
+    if (!found)
+        return Error::from_string_literal("Template not found");
+
+    return tmpl;
+}
+
+ErrorOr<Vector<PolicyGraph::PolicyTemplate>> PolicyGraph::list_templates(Optional<String> category_filter)
+{
+    Vector<PolicyTemplate> templates;
+
+    auto statement_id = category_filter.has_value()
+        ? m_statements.list_templates_filtered
+        : m_statements.list_templates_all;
+
+    m_database->execute_statement(
+        statement_id,
+        [&](auto stmt_id) {
+            PolicyTemplate tmpl;
+            int col = 0;
+            tmpl.id = m_database->result_column<i64>(stmt_id, col++);
+            tmpl.name = m_database->result_column<String>(stmt_id, col++);
+            tmpl.description = m_database->result_column<String>(stmt_id, col++);
+            tmpl.category = m_database->result_column<String>(stmt_id, col++);
+            tmpl.template_json = m_database->result_column<String>(stmt_id, col++);
+            tmpl.is_builtin = m_database->result_column<i64>(stmt_id, col++) != 0;
+            tmpl.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+
+            auto updated_ms = m_database->result_column<i64>(stmt_id, col++);
+            if (updated_ms > 0)
+                tmpl.updated_at = UnixDateTime::from_milliseconds_since_epoch(updated_ms);
+
+            templates.append(move(tmpl));
+        },
+        category_filter.has_value() ? category_filter.value() : ""_string
+    );
+
+    return templates;
+}
+
+ErrorOr<void> PolicyGraph::update_template(i64 template_id, PolicyTemplate const& tmpl)
+{
+    auto now = UnixDateTime::now();
+
+    m_database->execute_statement(
+        m_statements.update_template,
+        {},
+        tmpl.name,
+        tmpl.description,
+        tmpl.category,
+        tmpl.template_json,
+        now.milliseconds_since_epoch(),
+        template_id
+    );
+
+    dbgln("PolicyGraph: Updated template {}", template_id);
+    return {};
+}
+
+ErrorOr<void> PolicyGraph::delete_template(i64 template_id)
+{
+    m_database->execute_statement(
+        m_statements.delete_template,
+        {},
+        template_id
+    );
+
+    dbgln("PolicyGraph: Deleted template {}", template_id);
+    return {};
+}
+
+ErrorOr<PolicyGraph::Policy> PolicyGraph::instantiate_template(i64 template_id, HashMap<String, String> const& variables)
+{
+    auto tmpl = TRY(get_template(template_id));
+
+    auto template_json = tmpl.template_json;
+    for (auto const& [key, value] : variables) {
+        auto placeholder = MUST(String::formatted("{{{}}}", key));
+        template_json = MUST(template_json.replace(placeholder, value, ReplaceMode::All));
+    }
+
+    auto json = TRY(JsonValue::from_string(template_json));
+    if (!json.is_object())
+        return Error::from_string_literal("Invalid template JSON");
+
+    auto const& obj = json.as_object();
+
+    Policy policy;
+    policy.rule_name = obj.get_string("rule_name"sv).value_or("Instantiated Policy"_string);
+
+    if (obj.has_string("url_pattern"sv))
+        policy.url_pattern = obj.get_string("url_pattern"sv).value();
+
+    if (obj.has_string("file_hash"sv))
+        policy.file_hash = obj.get_string("file_hash"sv).value();
+
+    if (obj.has_string("mime_type"sv))
+        policy.mime_type = obj.get_string("mime_type"sv).value();
+
+    auto action_str = obj.get_string("action"sv).value_or("allow"_string);
+    policy.action = string_to_action(action_str);
+
+    auto match_type_str = obj.get_string("match_type"sv).value_or("download"_string);
+    policy.match_type = string_to_match_type(match_type_str);
+
+    policy.enforcement_action = obj.get_string("enforcement_action"sv).value_or(""_string);
+    policy.created_at = UnixDateTime::now();
+    policy.created_by = "template"_string;
+
+    return policy;
+}
+
+// Milestone 0.3: Import/Export
+
+ErrorOr<String> PolicyGraph::export_relationships_json()
+{
+    auto relationships = TRY(list_relationships({}));
+
+    JsonArray json_array;
+    for (auto const& rel : relationships) {
+        JsonObject obj;
+        obj.set("form_origin"sv, rel.form_origin);
+        obj.set("action_origin"sv, rel.action_origin);
+        obj.set("relationship_type"sv, rel.relationship_type);
+        obj.set("created_at"sv, rel.created_at.milliseconds_since_epoch());
+        obj.set("created_by"sv, rel.created_by);
+
+        if (rel.last_used.has_value())
+            obj.set("last_used"sv, rel.last_used->milliseconds_since_epoch());
+
+        obj.set("use_count"sv, rel.use_count);
+
+        if (rel.expires_at.has_value())
+            obj.set("expires_at"sv, rel.expires_at->milliseconds_since_epoch());
+
+        obj.set("notes"sv, rel.notes);
+
+        json_array.must_append(move(obj));
+    }
+
+    return JsonValue(json_array).serialized();
+}
+
+ErrorOr<void> PolicyGraph::import_relationships_json(String const& json)
+{
+    auto parsed = TRY(JsonValue::from_string(json));
+    if (!parsed.is_array())
+        return Error::from_string_literal("Invalid JSON: expected array");
+
+    auto const& array = parsed.as_array();
+    for (auto const& item : array.values()) {
+        if (!item.is_object())
+            continue;
+
+        auto const& obj = item.as_object();
+
+        CredentialRelationship rel;
+        rel.form_origin = obj.get_string("form_origin"sv).value_or(""_string);
+        rel.action_origin = obj.get_string("action_origin"sv).value_or(""_string);
+        rel.relationship_type = obj.get_string("relationship_type"sv).value_or(""_string);
+        rel.created_at = UnixDateTime::from_milliseconds_since_epoch(obj.get_i64("created_at"sv).value_or(0));
+        rel.created_by = obj.get_string("created_by"sv).value_or("import"_string);
+
+        if (obj.has_i64("last_used"sv))
+            rel.last_used = UnixDateTime::from_milliseconds_since_epoch(obj.get_i64("last_used"sv).value());
+
+        rel.use_count = obj.get_i64("use_count"sv).value_or(0);
+
+        if (obj.has_i64("expires_at"sv))
+            rel.expires_at = UnixDateTime::from_milliseconds_since_epoch(obj.get_i64("expires_at"sv).value());
+
+        rel.notes = obj.get_string("notes"sv).value_or(""_string);
+
+        auto existing = has_relationship(rel.form_origin, rel.action_origin, rel.relationship_type);
+        if (!existing.is_error() && !existing.value()) {
+            TRY(create_relationship(rel));
+        }
+    }
+
+    return {};
+}
+
+ErrorOr<String> PolicyGraph::export_templates_json()
+{
+    auto templates = TRY(list_templates({}));
+
+    JsonArray json_array;
+    for (auto const& tmpl : templates) {
+        JsonObject obj;
+        obj.set("name"sv, tmpl.name);
+        obj.set("description"sv, tmpl.description);
+        obj.set("category"sv, tmpl.category);
+        obj.set("template_json"sv, tmpl.template_json);
+        obj.set("is_builtin"sv, tmpl.is_builtin);
+        obj.set("created_at"sv, tmpl.created_at.milliseconds_since_epoch());
+
+        if (tmpl.updated_at.has_value())
+            obj.set("updated_at"sv, tmpl.updated_at->milliseconds_since_epoch());
+
+        json_array.must_append(move(obj));
+    }
+
+    return JsonValue(json_array).serialized();
+}
+
+ErrorOr<void> PolicyGraph::import_templates_json(String const& json)
+{
+    auto parsed = TRY(JsonValue::from_string(json));
+    if (!parsed.is_array())
+        return Error::from_string_literal("Invalid JSON: expected array");
+
+    auto const& array = parsed.as_array();
+    for (auto const& item : array.values()) {
+        if (!item.is_object())
+            continue;
+
+        auto const& obj = item.as_object();
+
+        PolicyTemplate tmpl;
+        tmpl.name = obj.get_string("name"sv).value_or(""_string);
+        tmpl.description = obj.get_string("description"sv).value_or(""_string);
+        tmpl.category = obj.get_string("category"sv).value_or(""_string);
+        tmpl.template_json = obj.get_string("template_json"sv).value_or("{}"_string);
+        tmpl.is_builtin = obj.get_bool("is_builtin"sv).value_or(false);
+        tmpl.created_at = UnixDateTime::from_milliseconds_since_epoch(obj.get_i64("created_at"sv).value_or(0));
+
+        if (obj.has_i64("updated_at"sv))
+            tmpl.updated_at = UnixDateTime::from_milliseconds_since_epoch(obj.get_i64("updated_at"sv).value());
+
+        auto existing = get_template_by_name(tmpl.name);
+        if (existing.is_error()) {
+            TRY(create_template(tmpl));
+        }
+    }
 
     return {};
 }
