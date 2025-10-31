@@ -99,6 +99,47 @@ public:
         String alert_json;
     };
 
+    // Milestone 0.3: Credential Protection Structures
+    struct CredentialRelationship {
+        i64 id { -1 };
+        String form_origin;
+        String action_origin;
+        String relationship_type;
+        UnixDateTime created_at;
+        String created_by;
+        Optional<UnixDateTime> last_used;
+        i64 use_count { 0 };
+        Optional<UnixDateTime> expires_at;
+        String notes;
+    };
+
+    struct CredentialAlert {
+        i64 id { -1 };
+        UnixDateTime detected_at;
+        String form_origin;
+        String action_origin;
+        String alert_type;
+        String severity;
+        bool has_password_field;
+        bool has_email_field;
+        bool uses_https;
+        bool is_cross_origin;
+        Optional<String> user_action;
+        Optional<i64> policy_id;
+        String alert_json;
+    };
+
+    struct PolicyTemplate {
+        i64 id { -1 };
+        String name;
+        String description;
+        String category;
+        String template_json;
+        bool is_builtin;
+        UnixDateTime created_at;
+        Optional<UnixDateTime> updated_at;
+    };
+
     static ErrorOr<NonnullOwnPtr<PolicyGraph>> create(ByteString const& db_directory);
 
     // Policy CRUD operations
@@ -151,6 +192,35 @@ public:
     static PolicyMatchType string_to_match_type(String const& type_str);
     static String match_type_to_string(PolicyMatchType type);
 
+    // Milestone 0.3: Credential Relationship Management
+    ErrorOr<i64> create_relationship(CredentialRelationship const& relationship);
+    ErrorOr<CredentialRelationship> get_relationship(String const& form_origin, String const& action_origin, String const& type);
+    ErrorOr<Vector<CredentialRelationship>> list_relationships(Optional<String> type_filter);
+    ErrorOr<void> update_relationship_usage(i64 relationship_id);
+    ErrorOr<void> delete_relationship(i64 relationship_id);
+    ErrorOr<bool> has_relationship(String const& form_origin, String const& action_origin, String const& type);
+
+    // Milestone 0.3: Credential Alert History
+    ErrorOr<i64> record_credential_alert(CredentialAlert const& alert);
+    ErrorOr<Vector<CredentialAlert>> get_credential_alerts(Optional<UnixDateTime> since);
+    ErrorOr<Vector<CredentialAlert>> get_alerts_by_origin(String const& origin);
+    ErrorOr<void> update_alert_action(i64 alert_id, String const& user_action);
+
+    // Milestone 0.3: Policy Templates
+    ErrorOr<i64> create_template(PolicyTemplate const& tmpl);
+    ErrorOr<PolicyTemplate> get_template(i64 template_id);
+    ErrorOr<PolicyTemplate> get_template_by_name(String const& name);
+    ErrorOr<Vector<PolicyTemplate>> list_templates(Optional<String> category_filter);
+    ErrorOr<void> update_template(i64 template_id, PolicyTemplate const& tmpl);
+    ErrorOr<void> delete_template(i64 template_id);
+    ErrorOr<Policy> instantiate_template(i64 template_id, HashMap<String, String> const& variables);
+
+    // Milestone 0.3: Import/Export
+    ErrorOr<String> export_relationships_json();
+    ErrorOr<void> import_relationships_json(String const& json);
+    ErrorOr<String> export_templates_json();
+    ErrorOr<void> import_templates_json(String const& json);
+
 private:
     struct Statements {
         // Policy CRUD
@@ -186,6 +256,31 @@ private:
         Database::StatementID begin_transaction { 0 };
         Database::StatementID commit_transaction { 0 };
         Database::StatementID rollback_transaction { 0 };
+
+        // Milestone 0.3: Credential Relationships
+        Database::StatementID create_relationship { 0 };
+        Database::StatementID get_relationship { 0 };
+        Database::StatementID list_relationships { 0 };
+        Database::StatementID list_relationships_filtered { 0 };
+        Database::StatementID update_relationship_usage { 0 };
+        Database::StatementID delete_relationship { 0 };
+        Database::StatementID has_relationship { 0 };
+
+        // Milestone 0.3: Credential Alerts
+        Database::StatementID record_credential_alert { 0 };
+        Database::StatementID get_credential_alerts_all { 0 };
+        Database::StatementID get_credential_alerts_since { 0 };
+        Database::StatementID get_alerts_by_origin { 0 };
+        Database::StatementID update_alert_action { 0 };
+
+        // Milestone 0.3: Policy Templates
+        Database::StatementID create_template { 0 };
+        Database::StatementID get_template { 0 };
+        Database::StatementID get_template_by_name { 0 };
+        Database::StatementID list_templates_all { 0 };
+        Database::StatementID list_templates_filtered { 0 };
+        Database::StatementID update_template { 0 };
+        Database::StatementID delete_template { 0 };
     };
 
     PolicyGraph(NonnullRefPtr<Database::Database>, Statements);
