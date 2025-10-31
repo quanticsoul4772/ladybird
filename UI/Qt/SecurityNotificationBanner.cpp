@@ -231,15 +231,15 @@ QIcon SecurityNotificationBanner::icon_for_type(NotificationType type) const
 {
     switch (type) {
     case NotificationType::Block:
-        return load_icon_from_uri("resource://icons/16x16/close.png"sv);
+        return load_icon_from_uri("resource://icons/16x16/error.png"sv);
     case NotificationType::Quarantine:
-        return load_icon_from_uri("resource://icons/16x16/warning.png"sv);
+        return load_icon_from_uri("resource://icons/16x16/spoof.png"sv);
     case NotificationType::PolicyCreated:
-        return load_icon_from_uri("resource://icons/16x16/checkmark.png"sv);
+        return load_icon_from_uri("resource://icons/16x16/settings.png"sv);
     case NotificationType::RuleUpdated:
-        return load_icon_from_uri("resource://icons/16x16/app-settings.png"sv);
+        return load_icon_from_uri("resource://icons/16x16/settings.png"sv);
     default:
-        return load_icon_from_uri("resource://icons/16x16/app-browser.png"sv);
+        return load_icon_from_uri("resource://icons/16x16/download.png"sv);
     }
 }
 

@@ -39,6 +39,7 @@ if (LAGOM_TOOLS_ONLY)
 endif()
 
 set(SOURCES
+    CircuitBreaker.cpp
     ConfigFile.cpp
     ElapsedTimer.cpp
     EventLoop.cpp
@@ -47,9 +48,11 @@ set(SOURCES
     MappedFile.cpp
     MimeData.cpp
     Notifier.cpp
+    RateLimiter.cpp
     Resource.cpp
     ResourceImplementation.cpp
     ResourceImplementationFile.cpp
+    RetryPolicy.cpp
     SystemServerTakeover.cpp
     ThreadEventQueue.cpp
     Timer.cpp

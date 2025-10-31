@@ -5,12 +5,19 @@
  */
 
 #include "SentinelServer.h"
+#include "InputValidator.h"
+#include "PolicyGraph.h"
 #include <AK/Base64.h>
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonParser.h>
 #include <AK/JsonValue.h>
 #include <LibCore/File.h>
+#include <LibCore/System.h>
+#include <LibFileSystem/FileSystem.h>
+#include <LibIPC/BufferedIPCReader.h>
+#include <LibIPC/BufferedIPCWriter.h>
+#include <sys/stat.h>
 #include <yara.h>
 
 // Undefine YARA macros that conflict with AK classes
@@ -90,8 +97,21 @@ ErrorOr<NonnullOwnPtr<SentinelServer>> SentinelServer::create()
     // Initialize YARA rules
     TRY(initialize_yara());
 
+    // Remove stale socket file if it exists (from previous unclean shutdown)
+    auto socket_path = "/tmp/sentinel.sock"sv;
+    if (FileSystem::exists(socket_path)) {
+        // Socket exists - try to remove it
+        auto remove_result = FileSystem::remove(socket_path, FileSystem::RecursionMode::Disallowed);
+        if (remove_result.is_error()) {
+            dbgln("Sentinel: Warning: Could not remove stale socket: {}", remove_result.error());
+            // Continue anyway - maybe we can still bind
+        } else {
+            dbgln("Sentinel: Removed stale socket file");
+        }
+    }
+
     auto server = Core::LocalServer::construct();
-    if (!server->listen("/tmp/sentinel.sock"sv))
+    if (!server->listen(socket_path))
         return Error::from_string_literal("Failed to listen on /tmp/sentinel.sock");
 
     auto sentinel_server = adopt_own(*new SentinelServer(move(server)));
@@ -101,37 +121,77 @@ ErrorOr<NonnullOwnPtr<SentinelServer>> SentinelServer::create()
 SentinelServer::SentinelServer(NonnullRefPtr<Core::LocalServer> server)
     : m_server(move(server))
 {
-    m_server->on_accept = [this](NonnullOwnPtr<Core::LocalSocket> client_socket) {
+    m_server->on_accept = [this](NonnullOwnPtr<Core::Socket> client_socket) {
         handle_client(move(client_socket));
     };
 }
 
-void SentinelServer::handle_client(NonnullOwnPtr<Core::LocalSocket> socket)
+int SentinelServer::get_client_id(Core::Socket const* socket)
+{
+    auto it = m_socket_to_client_id.find(socket);
+    if (it != m_socket_to_client_id.end())
+        return it->value;
+
+    // Assign new client ID
+    int client_id = m_next_client_id++;
+    m_socket_to_client_id.set(socket, client_id);
+    dbgln("Sentinel: Assigned client ID {} to socket", client_id);
+    return client_id;
+}
+
+void SentinelServer::handle_client(NonnullOwnPtr<Core::Socket> socket)
 {
     dbgln("Sentinel: Client connected");
 
-    socket->on_ready_to_read = [this, sock = socket.ptr()]() {
-        auto buffer_result = ByteBuffer::create_uninitialized(4096);
-        if (buffer_result.is_error()) {
-            dbgln("Sentinel: Failed to allocate buffer");
+    // Create a buffered reader for this client
+    auto* socket_ptr = socket.ptr();
+    m_client_readers.set(socket_ptr, IPC::BufferedIPCReader {});
+
+    socket->on_ready_to_read = [this, sock = socket_ptr]() {
+        // Get the buffered reader for this client
+        auto reader_it = m_client_readers.find(sock);
+        if (reader_it == m_client_readers.end()) {
+            dbgln("Sentinel: ERROR: No reader found for client socket");
             return;
         }
 
-        auto buffer = buffer_result.release_value();
-        auto read_result = sock->read_some(buffer);
+        auto& reader = reader_it->value;
 
-        if (read_result.is_error()) {
-            dbgln("Sentinel: Read error: {}", read_result.error());
+        // Try to read a complete message (handles partial reads internally)
+        auto message_result = reader.read_complete_message(*sock);
+
+        if (message_result.is_error()) {
+            dbgln("Sentinel: Read error: {}", message_result.error());
+            // Clean up reader on error
+            m_client_readers.remove(sock);
             return;
         }
 
-        auto bytes_read = read_result.value();
-        if (bytes_read.is_empty()) {
-            dbgln("Sentinel: Client disconnected");
+        auto message_buffer = message_result.release_value();
+
+        // Convert message to String with UTF-8 validation
+        auto message_string_result = String::from_utf8(StringView(
+            reinterpret_cast<char const*>(message_buffer.data()),
+            message_buffer.size()));
+
+        if (message_string_result.is_error()) {
+            dbgln("Sentinel: Invalid UTF-8 in message, sending error response");
+
+            // Send error response using BufferedIPCWriter
+            IPC::BufferedIPCWriter writer;
+            JsonObject error_response;
+            error_response.set("status"sv, "error"sv);
+            error_response.set("error"sv, "Invalid UTF-8 encoding in message"sv);
+            auto error_json = error_response.serialized();
+
+            auto write_result = writer.write_message(*sock, error_json.bytes_as_string_view());
+            if (write_result.is_error()) {
+                dbgln("Sentinel: Failed to send error response: {}", write_result.error());
+            }
             return;
         }
 
-        String message = MUST(String::from_utf8(StringView(reinterpret_cast<char const*>(bytes_read.data()), bytes_read.size())));
+        auto message = message_string_result.release_value();
         auto process_result = process_message(*sock, message);
 
         if (process_result.is_error()) {
@@ -142,8 +202,11 @@ void SentinelServer::handle_client(NonnullOwnPtr<Core::LocalSocket> socket)
     m_clients.append(move(socket));
 }
 
-ErrorOr<void> SentinelServer::process_message(Core::LocalSocket& socket, String const& message)
+ErrorOr<void> SentinelServer::process_message(Core::Socket& socket, String const& message)
 {
+    // Get client ID for rate limiting
+    int client_id = get_client_id(&socket);
+
     // Parse JSON message
     auto json_result = JsonValue::from_string(message);
     if (json_result.is_error())
@@ -162,41 +225,175 @@ ErrorOr<void> SentinelServer::process_message(Core::LocalSocket& socket, String 
     auto request_id = obj.get_string("request_id"sv);
     response.set("request_id"sv, request_id.has_value() ? JsonValue(request_id.value()) : JsonValue("unknown"sv));
 
+    // Health check endpoints
+    if (action.value() == "health"sv) {
+        auto report_result = m_health_check.check_all_components();
+        if (report_result.is_error()) {
+            response.set("status"sv, "error"sv);
+            response.set("error"sv, MUST(String::formatted("Health check failed: {}", report_result.error())));
+        } else {
+            response.set("status"sv, "success"sv);
+            response.set("health"sv, report_result.value().to_json());
+        }
+
+        auto response_str = response.serialized();
+        IPC::BufferedIPCWriter writer;
+        TRY(writer.write_message(socket, response_str.bytes_as_string_view()));
+        return {};
+    }
+
+    if (action.value() == "health_live"sv) {
+        auto liveness = m_health_check.check_liveness();
+        response.set("status"sv, "success"sv);
+        response.set("liveness"sv, liveness.to_json());
+
+        auto response_str = response.serialized();
+        IPC::BufferedIPCWriter writer;
+        TRY(writer.write_message(socket, response_str.bytes_as_string_view()));
+        return {};
+    }
+
+    if (action.value() == "health_ready"sv) {
+        auto readiness = m_health_check.check_readiness();
+        response.set("status"sv, "success"sv);
+        response.set("readiness"sv, readiness.to_json());
+
+        auto response_str = response.serialized();
+        IPC::BufferedIPCWriter writer;
+        TRY(writer.write_message(socket, response_str.bytes_as_string_view()));
+        return {};
+    }
+
+    if (action.value() == "metrics"sv) {
+        auto metrics_str = m_health_check.get_metrics_prometheus_format();
+        response.set("status"sv, "success"sv);
+        response.set("metrics"sv, metrics_str);
+
+        auto response_str = response.serialized();
+        IPC::BufferedIPCWriter writer;
+        TRY(writer.write_message(socket, response_str.bytes_as_string_view()));
+        return {};
+    }
+
     if (action.value() == "scan_file"sv) {
+        // SECURITY: Rate limiting check for scan requests
+        auto rate_check = m_rate_limiter.check_scan_request(client_id);
+        if (rate_check.is_error()) {
+            dbgln("Sentinel: Rate limit exceeded for client {} (scan_file)", client_id);
+            response.set("status"sv, "error"sv);
+            response.set("error"sv, "Rate limit exceeded. Too many scan requests. Please try again later."sv);
+            auto response_str = response.serialized();
+            IPC::BufferedIPCWriter writer;
+            TRY(writer.write_message(socket, response_str.bytes_as_string_view()));
+            return {};
+        }
+
+        // SECURITY: Check concurrent scan limit
+        auto concurrent_check = m_rate_limiter.check_concurrent_scans(client_id);
+        if (concurrent_check.is_error()) {
+            dbgln("Sentinel: Concurrent scan limit exceeded for client {}", client_id);
+            response.set("status"sv, "error"sv);
+            response.set("error"sv, "Concurrent scan limit exceeded. Please wait for ongoing scans to complete."sv);
+            auto response_str = response.serialized();
+            IPC::BufferedIPCWriter writer;
+            TRY(writer.write_message(socket, response_str.bytes_as_string_view()));
+            return {};
+        }
+
         auto file_path = obj.get_string("file_path"sv);
         if (!file_path.has_value()) {
+            m_rate_limiter.release_scan_slot(client_id); // Release slot on early exit
             response.set("status"sv, "error"sv);
             response.set("error"sv, "Missing 'file_path' field"sv);
         } else {
-            // Convert String to ByteString for scan_file
-            auto result = scan_file(ByteString(file_path.value().bytes_as_string_view()));
-            if (result.is_error()) {
+            // Validate file_path using InputValidator
+            auto validation_result = InputValidator::validate_file_path(file_path.value());
+            if (!validation_result.is_valid) {
+                m_rate_limiter.release_scan_slot(client_id); // Release slot on early exit
                 response.set("status"sv, "error"sv);
-                response.set("error"sv, result.error().string_literal());
+                response.set("error"sv, validation_result.error_message);
             } else {
-                response.set("status"sv, "success"sv);
-                response.set("result"sv, MUST(String::from_utf8(StringView(result.value()))));
-            }
-        }
-    } else if (action.value() == "scan_content"sv) {
-        auto content = obj.get_string("content"sv);
-        if (!content.has_value()) {
-            response.set("status"sv, "error"sv);
-            response.set("error"sv, "Missing 'content' field"sv);
-        } else {
-            // Decode base64 content before scanning
-            auto decoded_result = decode_base64(content.value().bytes_as_string_view());
-            if (decoded_result.is_error()) {
-                response.set("status"sv, "error"sv);
-                response.set("error"sv, "Failed to decode base64 content"sv);
-            } else {
-                auto result = scan_content(decoded_result.value().bytes());
+                // Convert String to ByteString for scan_file
+                auto result = scan_file(ByteString(file_path.value().bytes_as_string_view()));
+                m_rate_limiter.release_scan_slot(client_id); // Release slot after scan completes
+
                 if (result.is_error()) {
                     response.set("status"sv, "error"sv);
                     response.set("error"sv, result.error().string_literal());
                 } else {
-                    response.set("status"sv, "success"sv);
-                    response.set("result"sv, MUST(String::from_utf8(StringView(result.value()))));
+                    // Convert scan result to UTF-8 string - handle errors gracefully
+                    auto result_string = String::from_utf8(StringView(result.value()));
+                    if (result_string.is_error()) {
+                        response.set("status"sv, "error"sv);
+                        response.set("error"sv, "Scan result contains invalid UTF-8"sv);
+                    } else {
+                        response.set("status"sv, "success"sv);
+                        response.set("result"sv, result_string.release_value());
+                    }
+                }
+            }
+        }
+    } else if (action.value() == "scan_content"sv) {
+        // SECURITY: Rate limiting check for scan requests
+        auto rate_check = m_rate_limiter.check_scan_request(client_id);
+        if (rate_check.is_error()) {
+            dbgln("Sentinel: Rate limit exceeded for client {} (scan_content)", client_id);
+            response.set("status"sv, "error"sv);
+            response.set("error"sv, "Rate limit exceeded. Too many scan requests. Please try again later."sv);
+            auto response_str = response.serialized();
+            IPC::BufferedIPCWriter writer;
+            TRY(writer.write_message(socket, response_str.bytes_as_string_view()));
+            return {};
+        }
+
+        // SECURITY: Check concurrent scan limit
+        auto concurrent_check = m_rate_limiter.check_concurrent_scans(client_id);
+        if (concurrent_check.is_error()) {
+            dbgln("Sentinel: Concurrent scan limit exceeded for client {}", client_id);
+            response.set("status"sv, "error"sv);
+            response.set("error"sv, "Concurrent scan limit exceeded. Please wait for ongoing scans to complete."sv);
+            auto response_str = response.serialized();
+            IPC::BufferedIPCWriter writer;
+            TRY(writer.write_message(socket, response_str.bytes_as_string_view()));
+            return {};
+        }
+        auto content = obj.get_string("content"sv);
+        if (!content.has_value()) {
+            m_rate_limiter.release_scan_slot(client_id); // Release slot on early exit
+            response.set("status"sv, "error"sv);
+            response.set("error"sv, "Missing 'content' field"sv);
+        } else {
+            // Validate content length before decoding (prevent DoS via huge base64)
+            constexpr size_t MAX_BASE64_SIZE = 300 * 1024 * 1024; // 300MB base64 (~200MB decoded)
+            if (content.value().bytes().size() > MAX_BASE64_SIZE) {
+                m_rate_limiter.release_scan_slot(client_id); // Release slot on early exit
+                response.set("status"sv, "error"sv);
+                response.set("error"sv, "Content too large for scanning (max 200MB after decode)"sv);
+            } else {
+                // Decode base64 content before scanning
+                auto decoded_result = decode_base64(content.value().bytes_as_string_view());
+                if (decoded_result.is_error()) {
+                    m_rate_limiter.release_scan_slot(client_id); // Release slot on early exit
+                    response.set("status"sv, "error"sv);
+                    response.set("error"sv, "Failed to decode base64 content"sv);
+                } else {
+                    auto result = scan_content(decoded_result.value().bytes());
+                    m_rate_limiter.release_scan_slot(client_id); // Release slot after scan completes
+
+                    if (result.is_error()) {
+                        response.set("status"sv, "error"sv);
+                        response.set("error"sv, result.error().string_literal());
+                    } else {
+                        // Convert scan result to UTF-8 string - handle errors gracefully
+                        auto result_string = String::from_utf8(StringView(result.value()));
+                        if (result_string.is_error()) {
+                            response.set("status"sv, "error"sv);
+                            response.set("error"sv, "Scan result contains invalid UTF-8"sv);
+                        } else {
+                            response.set("status"sv, "success"sv);
+                            response.set("result"sv, result_string.release_value());
+                        }
+                    }
                 }
             }
         }
@@ -206,15 +403,66 @@ ErrorOr<void> SentinelServer::process_message(Core::LocalSocket& socket, String 
     }
 
     auto response_str = response.serialized();
-    TRY(socket.write_until_depleted(response_str.bytes()));
+
+    // Use BufferedIPCWriter to send response with proper framing
+    IPC::BufferedIPCWriter writer;
+    TRY(writer.write_message(socket, response_str.bytes_as_string_view()));
 
     return {};
 }
 
+static ErrorOr<ByteString> validate_scan_path(StringView file_path)
+{
+    // Resolve canonical path to prevent directory traversal
+    auto canonical = TRY(FileSystem::real_path(file_path));
+
+    // Check for directory traversal attempts in canonical path
+    if (canonical.contains(".."sv))
+        return Error::from_string_literal("Path traversal detected");
+
+    // Whitelist allowed directories - only scan files in user-accessible locations
+    Vector<StringView> allowed_prefixes = {
+        "/home"sv,      // User home directories
+        "/tmp"sv,       // Temporary downloads
+        "/var/tmp"sv,   // Alternative temp directory
+    };
+
+    bool allowed = false;
+    for (auto& prefix : allowed_prefixes) {
+        if (canonical.view().starts_with(prefix)) {
+            allowed = true;
+            break;
+        }
+    }
+
+    if (!allowed)
+        return Error::from_string_literal("File path not in allowed directory");
+
+    // Check file is not a symlink (prevent symlink attacks)
+    auto stat_result = TRY(Core::System::lstat(canonical));
+    if (S_ISLNK(stat_result.st_mode))
+        return Error::from_string_literal("Cannot scan symlinks");
+
+    // Check file is a regular file (prevent scanning device files, pipes, etc.)
+    if (!S_ISREG(stat_result.st_mode))
+        return Error::from_string_literal("Can only scan regular files");
+
+    return canonical;
+}
+
 ErrorOr<ByteString> SentinelServer::scan_file(ByteString const& file_path)
 {
-    // Read file content
-    auto file = TRY(Core::File::open(file_path, Core::File::OpenMode::Read));
+    // Validate and canonicalize the file path for security
+    auto validated_path = TRY(validate_scan_path(file_path));
+
+    // Check file size before reading to prevent memory exhaustion
+    auto stat_result = TRY(Core::System::stat(validated_path));
+    constexpr size_t MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB
+    if (static_cast<size_t>(stat_result.st_size) > MAX_FILE_SIZE)
+        return Error::from_string_literal("File too large to scan");
+
+    // Read file content using validated path
+    auto file = TRY(Core::File::open(validated_path, Core::File::OpenMode::Read));
     auto content = TRY(file->read_until_eof());
 
     return scan_content(content.bytes());
@@ -359,6 +607,48 @@ ErrorOr<ByteString> SentinelServer::scan_content(ReadonlyBytes content)
 
     auto json_string = result_obj.serialized();
     return ByteString(json_string.bytes_as_string_view());
+}
+
+void SentinelServer::initialize_health_checks(PolicyGraph* policy_graph)
+{
+    dbgln("Sentinel: Initializing health check system");
+
+    // Register database health check
+    if (policy_graph) {
+        m_health_check.register_check("database"_string, [policy_graph]() -> ErrorOr<HealthCheck::ComponentHealth> {
+            return HealthCheck::check_database_health(policy_graph);
+        });
+    }
+
+    // Register YARA health check
+    m_health_check.register_check("yara"_string, []() -> ErrorOr<HealthCheck::ComponentHealth> {
+        return HealthCheck::check_yara_health();
+    });
+
+    // Register quarantine health check
+    m_health_check.register_check("quarantine"_string, []() -> ErrorOr<HealthCheck::ComponentHealth> {
+        return HealthCheck::check_quarantine_health();
+    });
+
+    // Register disk space health check
+    m_health_check.register_check("disk"_string, []() -> ErrorOr<HealthCheck::ComponentHealth> {
+        return HealthCheck::check_disk_space();
+    });
+
+    // Register memory health check
+    m_health_check.register_check("memory"_string, []() -> ErrorOr<HealthCheck::ComponentHealth> {
+        return HealthCheck::check_memory_usage();
+    });
+
+    // Register IPC health check
+    m_health_check.register_check("ipc"_string, [this]() -> ErrorOr<HealthCheck::ComponentHealth> {
+        return HealthCheck::check_ipc_health(active_connection_count());
+    });
+
+    // Start periodic health checks every 30 seconds
+    m_health_check.start_periodic_checks(Duration::from_seconds(30));
+
+    dbgln("Sentinel: Health check system initialized with {} components", m_health_check.get_metrics().get("sentinel_registered_components"_string).value_or(0));
 }
 
 }

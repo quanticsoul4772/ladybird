@@ -1201,6 +1201,9 @@ void Request::quarantine_download()
     auto quarantine_id = quarantine_result.release_value();
     dbgln("Request::quarantine_download: Successfully quarantined file with ID: {}", quarantine_id);
 
+    // Set CURL result code as OK before completing (download was interrupted but successful)
+    m_curl_result_code = CURLE_OK;
+
     // Transition to Complete state
     transition_to_state(State::Complete);
 }

@@ -8,20 +8,25 @@
 
 #include <AK/Error.h>
 #include <AK/HashMap.h>
+#include <AK/NonnullOwnPtr.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
+#include <LibCore/CircuitBreaker.h>
 #include <LibDatabase/Database.h>
+#include "LRUCache.h"
 
 namespace Sentinel {
 
-// LRU cache for policy query optimization
+// Policy cache wrapper using O(1) LRU cache
 class PolicyGraphCache {
 public:
+    using CacheMetrics = LRUCache<String, Optional<int>>::CacheMetrics;
+
     PolicyGraphCache(size_t max_size = 1000)
-        : m_max_size(max_size)
+        : m_lru_cache(max_size)
     {
     }
 
@@ -29,12 +34,11 @@ public:
     void cache_policy(String const& key, Optional<int> policy_id);
     void invalidate();
 
-private:
-    void update_lru(String const& key);
+    CacheMetrics get_metrics() const;
+    void reset_metrics();
 
-    HashMap<String, Optional<int>> m_cache;
-    Vector<String> m_lru_order;
-    size_t m_max_size;
+private:
+    LRUCache<String, Optional<int>> m_lru_cache;
 };
 
 class PolicyGraph {
@@ -42,7 +46,16 @@ public:
     enum class PolicyAction {
         Allow,
         Block,
-        Quarantine
+        Quarantine,
+        BlockAutofill,    // NEW: Prevent autofill for forms
+        WarnUser          // NEW: Show warning, allow if confirmed
+    };
+
+    enum class PolicyMatchType {
+        DownloadOriginFileType,  // Existing: Download from origin with file type
+        FormActionMismatch,      // NEW: Form posts to different origin
+        InsecureCredentialPost,  // NEW: Password sent over HTTP
+        ThirdPartyFormPost       // NEW: Form posts to third-party
     };
 
     struct Policy {
@@ -52,6 +65,8 @@ public:
         Optional<String> file_hash;
         Optional<String> mime_type;
         PolicyAction action;
+        PolicyMatchType match_type { PolicyMatchType::DownloadOriginFileType };
+        String enforcement_action;  // Additional action details (e.g., "block_autofill", "warn_user")
         UnixDateTime created_at;
         String created_by;
         Optional<UnixDateTime> expires_at;
@@ -84,7 +99,7 @@ public:
         String alert_json;
     };
 
-    static ErrorOr<PolicyGraph> create(ByteString const& db_directory);
+    static ErrorOr<NonnullOwnPtr<PolicyGraph>> create(ByteString const& db_directory);
 
     // Policy CRUD operations
     ErrorOr<i64> create_policy(Policy const& policy);
@@ -112,6 +127,29 @@ public:
     // Memory optimization
     ErrorOr<void> cleanup_old_threats(u64 days_to_keep = 30);
     ErrorOr<void> vacuum_database();
+
+    // Database health and error recovery
+    ErrorOr<void> verify_database_integrity();
+    bool is_database_healthy();
+
+    // Transaction support for atomicity
+    ErrorOr<void> begin_transaction();
+    ErrorOr<void> commit_transaction();
+    ErrorOr<void> rollback_transaction();
+
+    // Cache metrics
+    PolicyGraphCache::CacheMetrics get_cache_metrics() const { return m_cache.get_metrics(); }
+    void reset_cache_metrics() { m_cache.reset_metrics(); }
+
+    // Circuit breaker metrics
+    Core::CircuitBreaker::Metrics get_circuit_breaker_metrics() const { return m_circuit_breaker.get_metrics(); }
+    void reset_circuit_breaker() { m_circuit_breaker.reset(); }
+
+    // Conversion utilities (public for testing)
+    static PolicyAction string_to_action(String const& action_str);
+    static String action_to_string(PolicyAction action);
+    static PolicyMatchType string_to_match_type(String const& type_str);
+    static String match_type_to_string(PolicyMatchType type);
 
 private:
     struct Statements {
@@ -143,18 +181,25 @@ private:
 
         // Memory optimization
         Database::StatementID delete_old_threats { 0 };
+
+        // Transaction support
+        Database::StatementID begin_transaction { 0 };
+        Database::StatementID commit_transaction { 0 };
+        Database::StatementID rollback_transaction { 0 };
     };
 
     PolicyGraph(NonnullRefPtr<Database::Database>, Statements);
 
-    String compute_cache_key(ThreatMetadata const& threat) const;
-
-    static PolicyAction string_to_action(String const& action_str);
-    static String action_to_string(PolicyAction action);
+    ErrorOr<String> compute_cache_key(ThreatMetadata const& threat) const;
 
     NonnullRefPtr<Database::Database> m_database;
     Statements m_statements;
     PolicyGraphCache m_cache;
+    bool m_database_healthy { true };
+
+    // Circuit breaker for database operations
+    // Prevents cascade failures when database is unavailable
+    mutable Core::CircuitBreaker m_circuit_breaker { Core::CircuitBreakerPresets::database("PolicyGraph::Database"sv) };
 };
 
 }

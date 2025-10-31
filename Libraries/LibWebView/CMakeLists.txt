@@ -18,6 +18,7 @@ set(SOURCES
     ProcessHandle.cpp
     ProcessManager.cpp
     SearchEngine.cpp
+    SentinelConfig.cpp
     Settings.cpp
     SiteIsolation.cpp
     SourceHighlighter.cpp

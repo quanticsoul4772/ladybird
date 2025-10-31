@@ -3,6 +3,7 @@ set(TEST_SOURCES
     TestASN1.cpp
     TestBigFraction.cpp
     TestBigInteger.cpp
+    TestConstantTimeComparison.cpp
     TestCurves.cpp
     TestEd25519.cpp
     TestEd448.cpp

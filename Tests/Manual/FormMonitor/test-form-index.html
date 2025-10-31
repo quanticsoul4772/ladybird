@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FormMonitor Test Suite</title>
+    <style>
+        body { font-family: sans-serif; max-width: 800px; margin: 50px auto; }
+        .test { border: 1px solid #ccc; padding: 20px; margin: 20px 0; }
+        .expected { color: #666; font-style: italic; }
+        a { color: blue; text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <h1>FormMonitor Test Suite - Day 36</h1>
+    <p>Test files for verifying form submission monitoring and credential exfiltration detection.</p>
+
+    <div class="test">
+        <h2>Test 1: Same-Origin Form (Legitimate)</h2>
+        <p class="expected">Expected: No alert (legitimate same-origin submission)</p>
+        <p><a href="test-form-sameorigin.html">Open Test 1</a></p>
+    </div>
+
+    <div class="test">
+        <h2>Test 2: Cross-Origin Form (Suspicious)</h2>
+        <p class="expected">Expected: Alert triggered (cross-origin credential exfiltration)</p>
+        <p><a href="test-form-crossorigin.html">Open Test 2</a></p>
+    </div>
+
+    <div class="test">
+        <h2>Test 3: Insecure HTTP Form (Suspicious)</h2>
+        <p class="expected">Expected: Alert triggered (insecure credential submission)</p>
+        <p><a href="test-form-insecure.html">Open Test 3</a></p>
+    </div>
+
+    <div class="test">
+        <h2>Test 4: Field Type Detection</h2>
+        <p class="expected">Expected: Verify all field types are correctly detected</p>
+        <p><a href="test-form-fieldtypes.html">Open Test 4</a></p>
+    </div>
+
+    <h2>How to Test</h2>
+    <ol>
+        <li>Run Ladybird from terminal to see debug output</li>
+        <li>Open each test file</li>
+        <li>Fill out and submit the form</li>
+        <li>Check terminal for FormMonitor debug messages</li>
+        <li>Look for: <code>FormMonitor: Detected suspicious form submission from ...</code></li>
+    </ol>
+</body>
+</html>

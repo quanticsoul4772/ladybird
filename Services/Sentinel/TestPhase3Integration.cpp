@@ -53,6 +53,7 @@ static void test_block_policy_enforcement(PolicyGraph& pg)
         .file_hash = String::from_utf8_without_validation(EICAR_HASH.bytes()),
         .mime_type = {},
         .action = PolicyGraph::PolicyAction::Block,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "integration_test"_string,
         .expires_at = {},
@@ -162,6 +163,7 @@ static void test_policy_matching_priority(PolicyGraph& pg)
         .file_hash = "priority_test_hash_123"_string,
         .mime_type = {},
         .action = PolicyGraph::PolicyAction::Block,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "integration_test"_string,
         .expires_at = {},
@@ -174,6 +176,7 @@ static void test_policy_matching_priority(PolicyGraph& pg)
         .file_hash = {},
         .mime_type = {},
         .action = PolicyGraph::PolicyAction::Quarantine,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "integration_test"_string,
         .expires_at = {},
@@ -186,6 +189,7 @@ static void test_policy_matching_priority(PolicyGraph& pg)
         .file_hash = {},
         .mime_type = {},
         .action = PolicyGraph::PolicyAction::Allow,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "integration_test"_string,
         .expires_at = {},
@@ -294,6 +298,7 @@ static void test_quarantine_workflow(PolicyGraph& pg)
         .file_hash = "suspicious_file_hash_999"_string,
         .mime_type = {},
         .action = PolicyGraph::PolicyAction::Quarantine,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "integration_test"_string,
         .expires_at = {},
@@ -384,6 +389,7 @@ static void test_policy_crud_operations(PolicyGraph& pg)
         .file_hash = {},
         .mime_type = "application/pdf"_string,
         .action = PolicyGraph::PolicyAction::Allow,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "integration_test"_string,
         .expires_at = {},
@@ -570,7 +576,7 @@ int main()
         return 1;
     }
 
-    auto pg = pg_result.release_value();
+    auto& pg = *pg_result.value();
     printf("✅ PolicyGraph initialized at %s\n", db_path.characters_without_null_termination());
 
     // Run all integration tests

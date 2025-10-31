@@ -50,6 +50,9 @@ public:
     // Permanently delete a quarantined file
     static ErrorOr<void> delete_file(String const& quarantine_id);
 
+    // Clean up orphaned files (files without metadata due to failed quarantine operations)
+    static ErrorOr<void> cleanup_orphaned_files();
+
 private:
     // Generate unique quarantine ID (timestamp + random suffix)
     static ErrorOr<String> generate_quarantine_id();

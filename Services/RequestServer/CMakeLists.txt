@@ -13,8 +13,10 @@ set(SOURCES
     Request.cpp
     RequestPipe.cpp
     Resolver.cpp
+    ScanQueue.cpp
     SecurityTap.cpp
     WebSocketImplCurl.cpp
+    YARAScanWorkerPool.cpp
 )
 
 set(GENERATED_SOURCES
@@ -45,7 +47,7 @@ target_include_directories(requestserverservice PRIVATE ${LADYBIRD_SOURCE_DIR}/S
 
 target_link_libraries(RequestServer PRIVATE requestserverservice)
 target_link_libraries(TestSecurityTap PRIVATE requestserverservice)
-target_link_libraries(requestserverservice PUBLIC LibCore LibDatabase LibDNS LibCrypto LibFileSystem LibIPC LibMain LibTLS LibWebSocket LibURL LibTextCodec LibThreading CURL::libcurl)
+target_link_libraries(requestserverservice PUBLIC LibCore LibDatabase LibDNS LibCrypto LibFileSystem LibIPC LibMain LibTLS LibWebSocket LibURL LibTextCodec LibThreading CURL::libcurl sentinelservice)
 target_link_libraries(requestserverservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
 
 if (WIN32)

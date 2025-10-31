@@ -19,6 +19,7 @@ static void test_create_policy(PolicyGraph& pg)
         .file_hash = "abc123"_string,
         .mime_type = {},    // No MIME type filter
         .action = PolicyGraph::PolicyAction::Block,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "test_user"_string,
         .expires_at = {},   // No expiration
@@ -69,6 +70,7 @@ static void test_match_policy_by_hash(PolicyGraph& pg)
         .file_hash = "hash123456"_string,
         .mime_type = {},    // No MIME type filter
         .action = PolicyGraph::PolicyAction::Quarantine,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "test"_string,
         .expires_at = {},   // No expiration
@@ -120,6 +122,7 @@ static void test_match_policy_by_url(PolicyGraph& pg)
         .file_hash = {},  // No hash filter
         .mime_type = {},  // No MIME type filter
         .action = PolicyGraph::PolicyAction::Block,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "test"_string,
         .expires_at = {},  // No expiration
@@ -170,6 +173,7 @@ static void test_match_policy_by_rule(PolicyGraph& pg)
         .file_hash = {},    // No hash filter
         .mime_type = {},    // No MIME type filter
         .action = PolicyGraph::PolicyAction::Quarantine,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "test"_string,
         .expires_at = {},  // No expiration
@@ -287,7 +291,7 @@ int main()
         return 1;
     }
 
-    auto pg = pg_result.release_value();
+    auto& pg = *pg_result.value();
     printf("✅ PolicyGraph initialized at %s\n", db_path.characters_without_null_termination());
 
     // Run all tests

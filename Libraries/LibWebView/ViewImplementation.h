@@ -188,6 +188,8 @@ public:
     Function<void()> on_request_accept_dialog;
     Function<void()> on_request_dismiss_dialog;
     Function<void(ByteString const& alert_json, i32 request_id)> on_security_alert;
+    Function<void(String const& alert_type, String const& severity, String const& form_origin, String const& action_origin, bool uses_https, bool has_password_field, bool is_cross_origin, String const& description)> on_credential_exfiltration_alert;
+    Function<void(String const& form_origin, String const& action_origin, bool is_cross_origin, String const& reason)> on_autofill_blocked;
     Function<void(JsonObject)> on_received_dom_tree;
     Function<void(DOMNodeProperties)> on_received_dom_node_properties;
     Function<void(JsonObject)> on_received_accessibility_tree;

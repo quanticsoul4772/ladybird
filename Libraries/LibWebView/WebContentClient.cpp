@@ -651,6 +651,40 @@ void WebContentClient::did_receive_security_alert(u64 page_id, ByteString alert_
     }
 }
 
+void WebContentClient::did_detect_credential_exfiltration(u64 page_id, String alert_type, String severity, String form_origin, String action_origin, bool uses_https, bool has_password_field, bool is_cross_origin, String description)
+{
+    dbgln("WebContentClient: Credential exfiltration detected on page {}", page_id);
+    dbgln("  Alert type: {}", alert_type);
+    dbgln("  Severity: {}", severity);
+    dbgln("  Form origin: {}", form_origin);
+    dbgln("  Action origin: {}", action_origin);
+    dbgln("  Uses HTTPS: {}", uses_https);
+    dbgln("  Has password: {}", has_password_field);
+    dbgln("  Cross-origin: {}", is_cross_origin);
+    dbgln("  Description: {}", description);
+
+    // Forward to the view's callback to show SecurityAlertDialog
+    if (auto view = view_for_page_id(page_id); view.has_value()) {
+        if (view->on_credential_exfiltration_alert)
+            view->on_credential_exfiltration_alert(alert_type, severity, form_origin, action_origin, uses_https, has_password_field, is_cross_origin, description);
+    }
+}
+
+void WebContentClient::did_block_autofill(u64 page_id, String form_origin, String action_origin, bool is_cross_origin, String reason)
+{
+    dbgln("WebContentClient: Autofill blocked on page {}", page_id);
+    dbgln("  Form origin: {}", form_origin);
+    dbgln("  Action origin: {}", action_origin);
+    dbgln("  Cross-origin: {}", is_cross_origin);
+    dbgln("  Reason: {}", reason);
+
+    // Forward to the view's callback to show autofill blocked notification
+    if (auto view = view_for_page_id(page_id); view.has_value()) {
+        if (view->on_autofill_blocked)
+            view->on_autofill_blocked(form_origin, action_origin, is_cross_origin, reason);
+    }
+}
+
 void WebContentClient::did_change_favicon(u64 page_id, Gfx::ShareableBitmap favicon)
 {
     if (!favicon.is_valid()) {
