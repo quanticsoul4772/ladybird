@@ -97,9 +97,9 @@ Initial release of Sentinel malware protection system.
 
 ## Milestone 0.3 - Enhanced Credential Protection (In Progress)
 
-Phases 1-3 complete. Database schema, PolicyGraph API, and FormMonitor integration implemented.
+Phases 1-4 complete. Database schema, PolicyGraph API, FormMonitor integration, and import/export UI implemented.
 
-### Completed Features (Phases 1-3)
+### Completed Features (Phases 1-4)
 
 - Database schema for credential relationships and alerts
 - PolicyGraph API extensions (21 new methods)
@@ -107,16 +107,20 @@ Phases 1-3 complete. Database schema, PolicyGraph API, and FormMonitor integrati
 - Credential alert history tracking
 - FormMonitor-PolicyGraph integration with hybrid cache strategy
 - Relationship persistence across browser restarts
+- Import/export UI for backing up and restoring trusted relationships
+- JSON-based credential relationship export with browser download
+- File picker-based import with validation
 
 ### Implementation Documentation
 
 - Services/Sentinel/PolicyGraph.h: API extensions for Milestone 0.3
 - Services/Sentinel/DatabaseMigrations.cpp: Schema v2 to v3 migration
 - Services/WebContent/FormMonitor.h/cpp: PolicyGraph integration
+- Base/res/ladybird/about-pages/security.html: Import/export UI
+- Libraries/LibWebView/WebUI/SecurityUI.h/cpp: Import/export handlers
 - docs/MILESTONE_0.3_PLAN.md: Complete implementation plan
 
-### Remaining Features (Phases 4-6)
+### Remaining Features (Phases 5-6)
 
-- Import/export functionality for trust lists (Phase 4)
 - Policy templates for credential protection (Phase 5)
 - Basic form anomaly detection (Phase 6, optional)
