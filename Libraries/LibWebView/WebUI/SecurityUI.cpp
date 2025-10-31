@@ -17,11 +17,17 @@ namespace WebView {
 void SecurityUI::register_interfaces()
 {
     // Initialize PolicyGraph with Ladybird data directory
-    auto data_directory = ByteString::formatted("{}/Ladybird", Core::StandardPaths::user_data_directory());
+    auto data_directory = ByteString::formatted("{}/Ladybird/PolicyGraph", Core::StandardPaths::user_data_directory());
     auto pg_result = Sentinel::PolicyGraph::create(data_directory);
 
     if (pg_result.is_error()) {
         dbgln("SecurityUI: Failed to initialize PolicyGraph: {}", pg_result.error());
+        dbgln("SecurityUI: The about:security page will have limited functionality");
+        // Send error notification to UI
+        JsonObject error;
+        error.set("error"sv, JsonValue { ByteString::formatted("Database initialization failed: {}", pg_result.error()) });
+        error.set("message"sv, JsonValue { "The security policy database could not be loaded. Some features may not work."sv });
+        async_send_message("databaseError"sv, error);
     } else {
         m_policy_graph = pg_result.release_value();
         dbgln("SecurityUI: PolicyGraph initialized successfully");
@@ -70,6 +76,10 @@ void SecurityUI::register_interfaces()
 
     register_interface("openQuarantineManager"sv, [this](auto const&) {
         open_quarantine_manager();
+    });
+
+    register_interface("getMetrics"sv, [this](auto const&) {
+        get_metrics();
     });
 }
 
@@ -146,24 +156,43 @@ void SecurityUI::load_statistics()
         stats.set("threatsQuarantined"sv, JsonValue { 0 });
         stats.set("threatsToday"sv, JsonValue { 0 });
     } else {
-        // Total threats detected
-        auto total_threats = static_cast<i64>(threat_count_result.value());
+        // Get all threats to analyze by action_taken
+        auto threats_result = m_policy_graph->get_threat_history({});
 
-        // Get threats from today for the threatsToday stat
-        auto now = UnixDateTime::now();
-        auto yesterday = UnixDateTime::from_seconds_since_epoch(now.seconds_since_epoch() - 86400);
-        auto threats_today_result = m_policy_graph->get_threat_history(yesterday); // Last 24 hours
-        i64 threats_today = 0;
+        if (threats_result.is_error()) {
+            stats.set("threatsBlocked"sv, JsonValue { 0 });
+            stats.set("threatsQuarantined"sv, JsonValue { 0 });
+            stats.set("threatsToday"sv, JsonValue { 0 });
+        } else {
+            auto threats = threats_result.release_value();
 
-        if (!threats_today_result.is_error()) {
-            threats_today = static_cast<i64>(threats_today_result.value().size());
+            // Count threats by action_taken
+            size_t blocked_count = 0;
+            size_t quarantined_count = 0;
+            size_t threats_today_count = 0;
+
+            // Calculate yesterday's timestamp for "today" filtering
+            auto now = UnixDateTime::now();
+            auto yesterday = UnixDateTime::from_seconds_since_epoch(now.seconds_since_epoch() - 86400);
+
+            for (auto const& threat : threats) {
+                // Count by action
+                if (threat.action_taken == "block"sv) {
+                    blocked_count++;
+                } else if (threat.action_taken == "quarantine"sv) {
+                    quarantined_count++;
+                }
+
+                // Count threats from last 24 hours
+                if (threat.detected_at >= yesterday) {
+                    threats_today_count++;
+                }
+            }
+
+            stats.set("threatsBlocked"sv, JsonValue { static_cast<i64>(blocked_count) });
+            stats.set("threatsQuarantined"sv, JsonValue { static_cast<i64>(quarantined_count) });
+            stats.set("threatsToday"sv, JsonValue { static_cast<i64>(threats_today_count) });
         }
-
-        // For simplicity, we'll set threatsBlocked to total threats
-        // In a real implementation, we'd filter by action_taken
-        stats.set("threatsBlocked"sv, JsonValue { total_threats });
-        stats.set("threatsQuarantined"sv, JsonValue { 0 }); // Not currently tracking quarantined separately
-        stats.set("threatsToday"sv, JsonValue { threats_today });
     }
 
     async_send_message("statisticsLoaded"sv, stats);
@@ -222,6 +251,12 @@ void SecurityUI::load_policies()
             break;
         case Sentinel::PolicyGraph::PolicyAction::Quarantine:
             action_str = "Quarantine"sv;
+            break;
+        case Sentinel::PolicyGraph::PolicyAction::BlockAutofill:
+            action_str = "BlockAutofill"sv;
+            break;
+        case Sentinel::PolicyGraph::PolicyAction::WarnUser:
+            action_str = "WarnUser"sv;
             break;
         }
         policy_obj.set("action"sv, JsonValue { action_str });
@@ -314,6 +349,12 @@ void SecurityUI::get_policy(JsonValue const& data)
     case Sentinel::PolicyGraph::PolicyAction::Quarantine:
         action_str = "Quarantine"sv;
         break;
+    case Sentinel::PolicyGraph::PolicyAction::BlockAutofill:
+        action_str = "BlockAutofill"sv;
+        break;
+    case Sentinel::PolicyGraph::PolicyAction::WarnUser:
+        action_str = "WarnUser"sv;
+        break;
     }
     policy_obj.set("action"sv, JsonValue { action_str });
 
@@ -401,6 +442,8 @@ void SecurityUI::create_policy(JsonValue const& data)
         .file_hash = move(file_hash),
         .mime_type = move(mime_type),
         .action = action,
+        .match_type = Sentinel::PolicyGraph::PolicyMatchType::DownloadOriginFileType,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(),
         .created_by = "UI"_string,
         .expires_at = {},
@@ -503,6 +546,8 @@ void SecurityUI::update_policy(JsonValue const& data)
         .file_hash = move(file_hash),
         .mime_type = move(mime_type),
         .action = action,
+        .match_type = Sentinel::PolicyGraph::PolicyMatchType::DownloadOriginFileType,
+        .enforcement_action = ""_string,
         .created_at = UnixDateTime::now(), // This will be ignored by update
         .created_by = "UI"_string,
         .expires_at = {},
@@ -860,6 +905,8 @@ void SecurityUI::create_policy_from_template(JsonValue const& data)
             .file_hash = move(file_hash),
             .mime_type = move(mime_type),
             .action = action,
+            .match_type = Sentinel::PolicyGraph::PolicyMatchType::DownloadOriginFileType,
+            .enforcement_action = ""_string,
             .created_at = UnixDateTime::now(),
             .created_by = "Template"_string,
             .expires_at = {},
@@ -906,6 +953,80 @@ void SecurityUI::open_quarantine_manager()
     // Send a message to the application to open the quarantine dialog
     // The Qt/application layer will handle creating and showing the dialog
     Application::the().on_quarantine_manager_requested();
+}
+
+void SecurityUI::get_metrics()
+{
+    JsonObject metrics;
+
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized, returning empty metrics");
+        metrics.set("error"sv, JsonValue { "PolicyGraph not initialized"sv });
+        async_send_message("metricsLoaded"sv, metrics);
+        return;
+    }
+
+    // Get policy count
+    auto policy_count_result = m_policy_graph->get_policy_count();
+    if (!policy_count_result.is_error()) {
+        metrics.set("totalPolicies"sv, JsonValue { static_cast<i64>(policy_count_result.value()) });
+    } else {
+        metrics.set("totalPolicies"sv, JsonValue { 0 });
+    }
+
+    // Get threat count
+    auto threat_count_result = m_policy_graph->get_threat_count();
+    if (!threat_count_result.is_error()) {
+        metrics.set("totalThreats"sv, JsonValue { static_cast<i64>(threat_count_result.value()) });
+    } else {
+        metrics.set("totalThreats"sv, JsonValue { 0 });
+    }
+
+    // Get detailed threat breakdown
+    auto threats_result = m_policy_graph->get_threat_history({});
+    if (!threats_result.is_error()) {
+        auto threats = threats_result.release_value();
+
+        size_t blocked_count = 0;
+        size_t quarantined_count = 0;
+        size_t allowed_count = 0;
+
+        for (auto const& threat : threats) {
+            if (threat.action_taken == "block"sv) {
+                blocked_count++;
+            } else if (threat.action_taken == "quarantine"sv) {
+                quarantined_count++;
+            } else if (threat.action_taken == "allow"sv) {
+                allowed_count++;
+            }
+        }
+
+        metrics.set("threatsBlocked"sv, JsonValue { static_cast<i64>(blocked_count) });
+        metrics.set("threatsQuarantined"sv, JsonValue { static_cast<i64>(quarantined_count) });
+        metrics.set("threatsAllowed"sv, JsonValue { static_cast<i64>(allowed_count) });
+
+        // Get last threat timestamp
+        i64 last_threat_timestamp = 0;
+        for (auto const& threat : threats) {
+            auto timestamp = threat.detected_at.milliseconds_since_epoch();
+            if (timestamp > last_threat_timestamp) {
+                last_threat_timestamp = timestamp;
+            }
+        }
+        metrics.set("lastThreatTime"sv, JsonValue { last_threat_timestamp });
+    } else {
+        metrics.set("threatsBlocked"sv, JsonValue { 0 });
+        metrics.set("threatsQuarantined"sv, JsonValue { 0 });
+        metrics.set("threatsAllowed"sv, JsonValue { 0 });
+        metrics.set("lastThreatTime"sv, JsonValue { 0 });
+    }
+
+    // Note: For full metrics including cache stats and performance data,
+    // we would need to integrate with SentinelMetrics from the Sentinel daemon
+    // This provides database-level metrics as a starting point
+    metrics.set("metricsVersion"sv, JsonValue { 1 });
+
+    async_send_message("metricsLoaded"sv, metrics);
 }
 
 }

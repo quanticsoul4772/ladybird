@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "ScanSizeConfig.h"
 #include <AK/Error.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/Optional.h>
@@ -13,10 +14,13 @@
 
 namespace RequestServer {
 
+// Forward declaration
+class YARAScanWorkerPool;
+
 class SecurityTap {
 public:
     static ErrorOr<NonnullOwnPtr<SecurityTap>> create();
-    ~SecurityTap() = default;
+    ~SecurityTap();
 
     struct DownloadMetadata {
         ByteString url;
@@ -49,15 +53,64 @@ public:
     // Compute SHA256 hash of content
     static ErrorOr<ByteString> compute_sha256(ReadonlyBytes data);
 
+    // Check if connection to Sentinel is still alive
+    bool is_connected() const;
+
+    // Attempt to reconnect to Sentinel
+    ErrorOr<void> reconnect();
+
+    // Set scan size configuration
+    void set_scan_size_config(ScanSizeConfig const& config) { m_scan_size_config = config; }
+    ScanSizeConfig const& scan_size_config() const { return m_scan_size_config; }
+
+    // Get scan telemetry
+    ScanTelemetry const& telemetry() const { return m_telemetry; }
+    void reset_telemetry() { m_telemetry.reset(); }
+
+    // Get worker pool telemetry (for async scans)
+    struct WorkerPoolTelemetry {
+        size_t total_scans_completed;
+        size_t total_scans_failed;
+        size_t current_queue_depth;
+        size_t active_workers;
+        double avg_scan_time_ms;
+    };
+    Optional<WorkerPoolTelemetry> get_worker_pool_telemetry() const;
+
 private:
-    SecurityTap(NonnullOwnPtr<Core::LocalSocket> socket);
+    SecurityTap(NonnullOwnPtr<Core::Socket> socket);
 
     ErrorOr<ByteString> send_scan_request(
         DownloadMetadata const& metadata,
         ReadonlyBytes content
     );
 
-    NonnullOwnPtr<Core::LocalSocket> m_sentinel_socket;
+    // Size-based scanning methods
+    ErrorOr<ScanResult> scan_with_size_limits(
+        DownloadMetadata const& metadata,
+        ReadonlyBytes content
+    );
+
+    ErrorOr<ScanResult> scan_small_file(
+        DownloadMetadata const& metadata,
+        ReadonlyBytes content
+    );
+
+    ErrorOr<ScanResult> scan_medium_file_streaming(
+        DownloadMetadata const& metadata,
+        ReadonlyBytes content
+    );
+
+    ErrorOr<ScanResult> scan_large_file_partial(
+        DownloadMetadata const& metadata,
+        ReadonlyBytes content
+    );
+
+    NonnullOwnPtr<Core::Socket> m_sentinel_socket;
+    bool m_connection_failed { false };
+    ScanSizeConfig m_scan_size_config { ScanSizeConfig::create_default() };
+    ScanTelemetry m_telemetry;
+    OwnPtr<YARAScanWorkerPool> m_worker_pool;
 };
 
 }

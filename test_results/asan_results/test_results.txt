@@ -1,0 +1,40 @@
+test_backend.log:✅ PolicyGraph initialized at /tmp/sentinel_backend_test
+test_backend.log:✅ PASSED: PolicyGraph CRUD Operations
+test_backend.log:  ✓ Exact hash match (priority 1): Policy ID 4
+test_backend.log:  ✓ URL pattern match (priority 2): Policy ID 5
+test_backend.log:  ✓ Rule name match (priority 3): Policy ID 6
+test_backend.log:  ✓ No match scenario: Correctly returned no policy
+test_backend.log:✅ PASSED: Policy Matching Accuracy
+test_backend.log:✅ PASSED: Cache Effectiveness
+test_backend.log:✅ PASSED: Threat History and Statistics
+test_backend.log:❌ FAILED: Verify Active Exists - Active policy was incorrectly removed
+test_backend.log:❌ Some tests FAILED
+test_download_vetting.log:✅ PolicyGraph initialized at /tmp/sentinel_download_test
+test_download_vetting.log:✅ PASSED: EICAR Detection and Policy Creation
+test_download_vetting.log:✅ PASSED: Clean File Download (No Alert)
+test_download_vetting.log:  ✓ Block action enforced: Download prevented
+test_download_vetting.log:  ✓ Quarantine action enforced: File isolated
+test_download_vetting.log:  ✓ Allow action enforced: Download permitted
+test_download_vetting.log:✅ PASSED: Policy Enforcement Actions
+test_download_vetting.log:✅ PASSED: Rate Limiting Simulation
+test_download_vetting.log:✅ PASSED: Threat History Tracking
+test_download_vetting.log:✅ All Download Vetting Tests PASSED!
+test_phase3_integration.log:✅ PolicyGraph initialized at /tmp/sentinel_phase3_test
+test_phase3_integration.log:✅ PASSED: Block Policy Enforcement
+test_phase3_integration.log:  ✓ Priority 1: Hash policy matched (ID=2, Action=Block)
+test_phase3_integration.log:  ✓ Priority 2: URL pattern policy matched (ID=3, Action=Quarantine)
+test_phase3_integration.log:  ✓ Priority 3: Rule name policy matched (ID=4, Action=Allow)
+test_phase3_integration.log:✅ PASSED: Policy Matching Priority
+test_phase3_integration.log:✅ PASSED: Quarantine Workflow
+test_phase3_integration.log:✅ PASSED: Policy CRUD Operations
+test_phase3_integration.log:✅ PASSED: Threat History
+test_phase3_integration.log:✅ All tests PASSED!
+test_policy_graph.log:✅ PolicyGraph initialized at /tmp/sentinel_test
+test_policy_graph.log:✅ PASSED: Created policy with ID 9
+test_policy_graph.log:✅ PASSED: Found 9 policies
+test_policy_graph.log:✅ PASSED: Matched policy ID 2 by hash
+test_policy_graph.log:✅ PASSED: Matched policy ID 3 by URL pattern
+test_policy_graph.log:✅ PASSED: Matched policy ID 4 by rule name
+test_policy_graph.log:✅ PASSED: Recorded threat to history
+test_policy_graph.log:✅ PASSED: Retrieved 3 threat records
+test_policy_graph.log:✅ PASSED: Statistics retrieved

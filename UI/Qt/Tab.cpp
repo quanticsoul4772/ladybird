@@ -474,6 +474,7 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
                         .file_hash = file_hash,
                         .mime_type = {},
                         .action = action,
+                        .enforcement_action = ""_string,
                         .created_at = UnixDateTime::now(),
                         .created_by = "UI"_string,
                         .expires_at = {},
@@ -481,7 +482,7 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
                     };
 
                     // Get PolicyGraph instance and create policy using proper data directory
-                    auto data_dir = MUST(String::formatted("{}/Ladybird", Core::StandardPaths::user_data_directory()));
+                    auto data_dir = MUST(String::formatted("{}/Ladybird/PolicyGraph", Core::StandardPaths::user_data_directory()));
                     auto pg_result = Sentinel::PolicyGraph::create(data_dir.to_byte_string());
                     if (pg_result.is_error()) {
                         dbgln("Failed to access PolicyGraph: {}", pg_result.error());

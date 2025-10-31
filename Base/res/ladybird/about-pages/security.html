@@ -101,6 +101,52 @@
                 display: none !important;
             }
 
+            .help-box {
+                background-color: rgba(59, 130, 246, 0.1);
+                border: 2px solid #3b82f6;
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 20px;
+            }
+
+            .help-box h3 {
+                color: #3b82f6;
+                margin: 0 0 12px 0;
+                font-size: 18px;
+                font-weight: 600;
+            }
+
+            .help-box p {
+                margin: 0 0 12px 0;
+                line-height: 1.6;
+            }
+
+            .help-box code {
+                background-color: rgba(0, 0, 0, 0.1);
+                padding: 3px 8px;
+                border-radius: 4px;
+                font-family: monospace;
+                font-size: 13px;
+            }
+
+            .help-box ol {
+                margin: 12px 0;
+                padding-left: 24px;
+            }
+
+            .help-box li {
+                margin: 8px 0;
+                line-height: 1.6;
+            }
+
+            .help-box .note {
+                margin-top: 16px;
+                padding-top: 16px;
+                border-top: 1px solid rgba(59, 130, 246, 0.3);
+                font-size: 14px;
+                opacity: 0.9;
+            }
+
             .integration-notice {
                 background-color: var(--violet-100);
                 color: white;
@@ -430,6 +476,23 @@
             </div>
         </div>
 
+        <!-- Help Box (shown when disconnected) -->
+        <div id="sentinel-help-box" class="help-box hidden">
+            <h3>🔧 Sentinel Security Service Status</h3>
+            <p>The Sentinel daemon automatically starts when Ladybird launches. If you're seeing a disconnected status, this usually means:</p>
+            <ul>
+                <li><strong>First launch:</strong> Sentinel is still initializing (wait a few seconds and refresh)</li>
+                <li><strong>Startup issue:</strong> Check the console output for error messages</li>
+                <li><strong>Manual restart needed:</strong> If Sentinel crashed, restart Ladybird to auto-start it</li>
+            </ul>
+            <div class="note">
+                <strong>Auto-Start:</strong> Sentinel now starts automatically - no manual terminal commands needed! The daemon runs in the background and communicates via <code>/tmp/sentinel.sock</code>.
+            </div>
+            <div class="note" style="border-top: none; padding-top: 8px;">
+                <strong>Tip:</strong> Use the command-line tool to check status: <code>./Build/release/bin/sentinel-cli status</code>
+            </div>
+        </div>
+
         <!-- Statistics Dashboard -->
         <div class="card">
             <div class="card-header">Security Statistics</div>
@@ -617,14 +680,19 @@
                 const connectionStatus = document.getElementById('sentinel-connection-status');
                 const scanningStatus = document.getElementById('scanning-status');
                 const lastScanTime = document.getElementById('last-scan-time');
+                const helpBox = document.getElementById('sentinel-help-box');
 
                 // Update connection status
                 if (status.connected) {
                     connectionStatus.className = 'status-indicator status-connected';
                     connectionStatus.innerHTML = '<span class="status-dot"></span><span>Connected</span>';
+                    // Hide help box when connected
+                    helpBox.classList.add('hidden');
                 } else {
                     connectionStatus.className = 'status-indicator status-disconnected';
                     connectionStatus.innerHTML = '<span class="status-dot"></span><span>Disconnected</span>';
+                    // Show help box when disconnected
+                    helpBox.classList.remove('hidden');
                 }
 
                 // Update scanning status

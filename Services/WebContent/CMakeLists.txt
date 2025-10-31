@@ -5,6 +5,7 @@ set(SOURCES
     ConnectionFromClient.cpp
     ConsoleGlobalEnvironmentExtensions.cpp
     DevToolsConsoleClient.cpp
+    FormMonitor.cpp
     PageClient.cpp
     PageHost.cpp
     WebContentConsoleClient.cpp
@@ -40,7 +41,9 @@ target_link_libraries(WebContent PRIVATE webcontentservice LibURL)
 
 if(WIN32)
     find_package(unofficial-angle REQUIRED CONFIG)
-    target_link_libraries(WebContent PRIVATE LibTextCodec unofficial::angle::libGLESv2)
+    find_package(SQLite3 REQUIRED)
+    target_link_libraries(WebContent PRIVATE LibMedia LibTextCodec SQLite::SQLite3 unofficial::angle::libGLESv2)
+    lagom_windows_bin(WebContent)
 endif()
 
 
@@ -48,6 +51,7 @@ target_sources(webcontentservice PUBLIC FILE_SET server TYPE HEADERS
     BASE_DIRS ${LADYBIRD_SOURCE_DIR}/Services
     FILES ConnectionFromClient.h
           ConsoleGlobalEnvironmentExtensions.h
+          FormMonitor.h
           Forward.h
           PageHost.h
           WebContentConsoleClient.h

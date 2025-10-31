@@ -1497,4 +1497,17 @@ void ConnectionFromClient::enforce_security_policy(i32 request_id, ByteString ac
     dbgln("WebContent: Enforced security policy for request {} with action '{}'", request_id, action);
 }
 
+void ConnectionFromClient::form_submission_detected(u64 page_id, String form_origin, String action_origin, bool has_password, bool has_email, bool uses_https)
+{
+    dbgln("WebContent: Form submission detected on page {}", page_id);
+    dbgln("  Form origin: {}", form_origin);
+    dbgln("  Action origin: {}", action_origin);
+    dbgln("  Has password: {}", has_password);
+    dbgln("  Has email: {}", has_email);
+    dbgln("  Uses HTTPS: {}", uses_https);
+
+    // TODO: Send form submission alert to Sentinel via IPC for monitoring
+    // This would typically call into a Sentinel connection to report the form submission
+}
+
 }
