@@ -9,6 +9,7 @@
 # Uncomment when methods are implemented.
 
 set(TEST_SOURCES
+    # TestFlowInspector.cpp  # Moved to Services/Sentinel/CMakeLists.txt
     # TestGracefulDegradation.cpp
     # TestHealthCheck.cpp
 )

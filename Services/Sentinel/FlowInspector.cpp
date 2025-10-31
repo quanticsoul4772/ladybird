@@ -5,11 +5,24 @@
  */
 
 #include "FlowInspector.h"
+#include "PolicyGraph.h"
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
 #include <AK/StringBuilder.h>
 
 namespace Sentinel {
+
+FlowInspector::FlowInspector(PolicyGraph* policy_graph)
+    : m_policy_graph(policy_graph)
+{
+    // Load existing trusted relationships from database if policy_graph exists
+    if (m_policy_graph) {
+        auto result = load_trusted_relationships();
+        if (result.is_error()) {
+            dbgln("FlowInspector: Failed to load trusted relationships: {}", result.error());
+        }
+    }
+}
 
 ErrorOr<Optional<FlowInspector::CredentialAlert>> FlowInspector::analyze_form_submission(FormSubmissionEvent const& event)
 {
@@ -37,69 +50,84 @@ ErrorOr<Optional<FlowInspector::CredentialAlert>> FlowInspector::analyze_form_su
     return alert;
 }
 
+Vector<FlowInspector::DetectionRule> FlowInspector::create_detection_rules() const
+{
+    Vector<DetectionRule> rules;
+
+    // Rule 1: Insecure credential post (Critical severity)
+    rules.append({
+        .name = MUST(String::from_utf8("insecure_credential_post"sv)),
+        .type = AlertType::InsecureCredentialPost,
+        .severity = AlertSeverity::Critical,
+        .predicate = [](FormSubmissionEvent const& e) {
+            return e.has_password_field && !e.uses_https;
+        }
+    });
+
+    // Rule 2: Cross-origin credential exfiltration (High severity)
+    rules.append({
+        .name = MUST(String::from_utf8("cross_origin_credential_post"sv)),
+        .type = AlertType::CredentialExfiltration,
+        .severity = AlertSeverity::High,
+        .predicate = [](FormSubmissionEvent const& e) {
+            return e.is_cross_origin && e.has_password_field && e.uses_https;
+        }
+    });
+
+    // Rule 3: Third-party form post with email (Medium severity)
+    rules.append({
+        .name = MUST(String::from_utf8("third_party_form_post"sv)),
+        .type = AlertType::ThirdPartyFormPost,
+        .severity = AlertSeverity::Medium,
+        .predicate = [](FormSubmissionEvent const& e) {
+            return e.is_cross_origin && e.has_email_field && !e.has_password_field;
+        }
+    });
+
+    // Rule 4: Form action mismatch (Low severity)
+    rules.append({
+        .name = MUST(String::from_utf8("form_action_mismatch"sv)),
+        .type = AlertType::FormActionMismatch,
+        .severity = AlertSeverity::Low,
+        .predicate = [](FormSubmissionEvent const& e) {
+            return e.is_cross_origin && !e.has_password_field && !e.has_email_field;
+        }
+    });
+
+    return rules;
+}
+
 Optional<FlowInspector::CredentialAlert> FlowInspector::generate_alert(FormSubmissionEvent const& event) const
 {
-    // Only alert if there are password or email fields
-    if (!event.has_password_field && !event.has_email_field)
+    // Only alert if there are password or email fields, or cross-origin
+    if (!event.has_password_field && !event.has_email_field && !event.is_cross_origin)
         return {};
 
-    CredentialAlert alert;
-    alert.timestamp = UnixDateTime::now();
-    alert.form_origin = event.form_origin;
-    alert.action_origin = event.action_origin;
-    alert.uses_https = event.uses_https;
-    alert.has_password_field = event.has_password_field;
-    alert.is_cross_origin = event.is_cross_origin;
+    // Get detection rules
+    auto rules = create_detection_rules();
 
-    // Determine alert type
-    alert.alert_type = determine_alert_type(event);
+    // Find first matching rule
+    for (auto const& rule : rules) {
+        if (rule.predicate(event)) {
+            CredentialAlert alert;
+            alert.timestamp = UnixDateTime::now();
+            alert.form_origin = event.form_origin;
+            alert.action_origin = event.action_origin;
+            alert.uses_https = event.uses_https;
+            alert.has_password_field = event.has_password_field;
+            alert.is_cross_origin = event.is_cross_origin;
+            alert.alert_type = rule.type;
+            alert.severity = rule.severity;
+            alert.description = generate_description(alert);
 
-    // Determine severity
-    alert.severity = determine_severity(event);
+            return alert;
+        }
+    }
 
-    // Generate description
-    alert.description = generate_description(alert);
-
-    return alert;
+    return {};
 }
 
-FlowInspector::AlertType FlowInspector::determine_alert_type(FormSubmissionEvent const& event) const
-{
-    // Priority order: Insecure credential > Credential exfiltration > Third-party > Form mismatch
-
-    if (event.has_password_field && !event.uses_https)
-        return AlertType::InsecureCredentialPost;
-
-    if (event.is_cross_origin && event.has_password_field)
-        return AlertType::CredentialExfiltration;
-
-    if (event.is_cross_origin && event.has_email_field)
-        return AlertType::ThirdPartyFormPost;
-
-    if (event.is_cross_origin)
-        return AlertType::FormActionMismatch;
-
-    // Default (should not reach here due to earlier checks)
-    return AlertType::FormActionMismatch;
-}
-
-FlowInspector::AlertSeverity FlowInspector::determine_severity(FormSubmissionEvent const& event) const
-{
-    // Critical: Password sent over HTTP
-    if (event.has_password_field && !event.uses_https)
-        return AlertSeverity::Critical;
-
-    // High: Password sent cross-origin
-    if (event.is_cross_origin && event.has_password_field)
-        return AlertSeverity::High;
-
-    // Medium: Email or other credentials sent cross-origin
-    if (event.is_cross_origin && event.has_email_field)
-        return AlertSeverity::Medium;
-
-    // Low: Cross-origin form submission without sensitive fields
-    return AlertSeverity::Low;
-}
+// Removed old if-else detection methods - now using rule-based system in generate_alert()
 
 String FlowInspector::generate_description(CredentialAlert const& alert) const
 {
@@ -146,16 +174,30 @@ ErrorOr<void> FlowInspector::learn_trusted_relationship(String const& form_origi
     for (auto& rel : relationships) {
         if (rel.action_origin == action_origin) {
             rel.submission_count++;
+            // Calculate confidence: increases with submission count, capped at 1.0
+            // Formula: min(1.0, submission_count / 10.0)
+            // 1 submission = 0.1, 10 submissions = 1.0
+            rel.confidence_score = min(1.0, static_cast<double>(rel.submission_count) / 10.0);
             found = true;
             break;
         }
     }
 
     if (!found) {
+        // Initial confidence for new relationship
+        relationship.confidence_score = 0.1; // Start at 10%
         relationships.append(relationship);
     }
 
     dbgln("FlowInspector: Learned trusted relationship: {} -> {}", form_origin, action_origin);
+
+    // Persist to database if PolicyGraph is available
+    if (m_policy_graph) {
+        auto persist_result = persist_trusted_relationship(relationship);
+        if (persist_result.is_error()) {
+            dbgln("FlowInspector: Failed to persist trusted relationship: {}", persist_result.error());
+        }
+    }
 
     return {};
 }
@@ -243,6 +285,89 @@ String FlowInspector::severity_to_string(AlertSeverity severity)
         return MUST(String::from_utf8("critical"sv));
     }
     VERIFY_NOT_REACHED();
+}
+
+ErrorOr<void> FlowInspector::persist_trusted_relationship(TrustedFormRelationship const& relationship)
+{
+    if (!m_policy_graph)
+        return Error::from_string_literal("PolicyGraph not available");
+
+    // Create a policy to represent this trusted relationship
+    PolicyGraph::Policy policy;
+    policy.rule_name = MUST(String::formatted("trusted_form_{}_{}", relationship.form_origin, relationship.action_origin));
+    policy.url_pattern = relationship.form_origin;
+    policy.action = PolicyGraph::PolicyAction::Allow;
+    policy.match_type = PolicyGraph::PolicyMatchType::FormActionMismatch;
+    policy.enforcement_action = MUST(String::formatted("allow_form_post_to:{}", relationship.action_origin));
+    policy.created_at = relationship.learned_at;
+    policy.created_by = "FlowInspector"_string;
+    policy.hit_count = relationship.submission_count;
+
+    TRY(m_policy_graph->create_policy(policy));
+
+    dbgln("FlowInspector: Persisted trusted relationship to PolicyGraph");
+    return {};
+}
+
+ErrorOr<void> FlowInspector::load_trusted_relationships()
+{
+    if (!m_policy_graph)
+        return Error::from_string_literal("PolicyGraph not available");
+
+    // Query all FormActionMismatch policies from database
+    auto policies = TRY(m_policy_graph->list_policies());
+
+    for (auto const& policy : policies) {
+        if (policy.match_type != PolicyGraph::PolicyMatchType::FormActionMismatch)
+            continue;
+        if (policy.action != PolicyGraph::PolicyAction::Allow)
+            continue;
+
+        // Parse the enforcement_action to extract action_origin
+        // Format: "allow_form_post_to:<action_origin>"
+        if (!policy.enforcement_action.starts_with_bytes("allow_form_post_to:"sv))
+            continue;
+
+        auto action_origin = MUST(policy.enforcement_action.substring_from_byte_offset(19)); // Skip "allow_form_post_to:"
+
+        TrustedFormRelationship relationship;
+        relationship.form_origin = policy.url_pattern.value_or(String {});
+        relationship.action_origin = action_origin;
+        relationship.learned_at = policy.created_at;
+        relationship.submission_count = static_cast<u64>(policy.hit_count);
+        // Calculate confidence from submission count
+        relationship.confidence_score = min(1.0, static_cast<double>(relationship.submission_count) / 10.0);
+
+        // Store in memory
+        if (!m_trusted_relationships.contains(relationship.form_origin)) {
+            m_trusted_relationships.set(relationship.form_origin, Vector<TrustedFormRelationship> {});
+        }
+        m_trusted_relationships.get(relationship.form_origin).value().append(relationship);
+    }
+
+    dbgln("FlowInspector: Loaded {} trusted relationships from PolicyGraph", m_trusted_relationships.size());
+    return {};
+}
+
+bool FlowInspector::should_auto_trust(String const& form_origin, String const& action_origin) const
+{
+    auto confidence = get_relationship_confidence(form_origin, action_origin);
+    return confidence >= 0.8; // Auto-trust if confidence >= 80%
+}
+
+double FlowInspector::get_relationship_confidence(String const& form_origin, String const& action_origin) const
+{
+    auto it = m_trusted_relationships.find(form_origin);
+    if (it == m_trusted_relationships.end())
+        return 0.0;
+
+    auto const& relationships = it->value;
+    for (auto const& rel : relationships) {
+        if (rel.action_origin == action_origin)
+            return rel.confidence_score;
+    }
+
+    return 0.0;
 }
 
 }
