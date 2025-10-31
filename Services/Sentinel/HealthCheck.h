@@ -110,9 +110,10 @@ public:
     static ErrorOr<ComponentHealth> check_memory_usage();
     static ErrorOr<ComponentHealth> check_ipc_health(size_t active_connections);
 
-private:
     // Convert Status to string
     static StringView status_to_string(Status status);
+
+private:
     static Status worst_status(Status a, Status b);
 
     // Component health checks

@@ -29,7 +29,7 @@ void SecurityUI::register_interfaces()
         error.set("message"sv, JsonValue { "The security policy database could not be loaded. Some features may not work."sv });
         async_send_message("databaseError"sv, error);
     } else {
-        m_policy_graph = pg_result.release_value();
+        m_policy_graph = move(pg_result);
         dbgln("SecurityUI: PolicyGraph initialized successfully");
     }
 
@@ -105,7 +105,7 @@ void SecurityUI::handle_sentinel_status(bool connected, bool scanning_enabled)
     i64 last_scan_timestamp = 0;
     if (m_policy_graph.has_value()) {
         // Get the most recent threat from history
-        auto threats_result = m_policy_graph->get_threat_history({}); // All threats (empty Optional)
+        auto threats_result = m_policy_graph->value().get_threat_history({}); // All threats (empty Optional)
         if (!threats_result.is_error()) {
             auto threats = threats_result.release_value();
             if (!threats.is_empty()) {
@@ -140,8 +140,8 @@ void SecurityUI::load_statistics()
     }
 
     // Query PolicyGraph for statistics
-    auto policy_count_result = m_policy_graph->get_policy_count();
-    auto threat_count_result = m_policy_graph->get_threat_count();
+    auto policy_count_result = m_policy_graph->value().get_policy_count();
+    auto threat_count_result = m_policy_graph->value().get_threat_count();
 
     if (policy_count_result.is_error()) {
         dbgln("SecurityUI: Failed to get policy count: {}", policy_count_result.error());
@@ -157,7 +157,7 @@ void SecurityUI::load_statistics()
         stats.set("threatsToday"sv, JsonValue { 0 });
     } else {
         // Get all threats to analyze by action_taken
-        auto threats_result = m_policy_graph->get_threat_history({});
+        auto threats_result = m_policy_graph->value().get_threat_history({});
 
         if (threats_result.is_error()) {
             stats.set("threatsBlocked"sv, JsonValue { 0 });
@@ -211,7 +211,7 @@ void SecurityUI::load_policies()
     }
 
     // Query PolicyGraph for all policies
-    auto policies_result = m_policy_graph->list_policies();
+    auto policies_result = m_policy_graph->value().list_policies();
 
     if (policies_result.is_error()) {
         dbgln("SecurityUI: Failed to list policies: {}", policies_result.error());
@@ -310,7 +310,7 @@ void SecurityUI::get_policy(JsonValue const& data)
     }
 
     // Retrieve policy from PolicyGraph
-    auto policy_result = m_policy_graph->get_policy(policy_id_value.value());
+    auto policy_result = m_policy_graph->value().get_policy(policy_id_value.value());
 
     if (policy_result.is_error()) {
         JsonObject error;
@@ -452,7 +452,7 @@ void SecurityUI::create_policy(JsonValue const& data)
     };
 
     // Create policy in PolicyGraph
-    auto policy_id_result = m_policy_graph->create_policy(policy);
+    auto policy_id_result = m_policy_graph->value().create_policy(policy);
 
     if (policy_id_result.is_error()) {
         JsonObject error;
@@ -556,7 +556,7 @@ void SecurityUI::update_policy(JsonValue const& data)
     };
 
     // Update policy in PolicyGraph
-    auto update_result = m_policy_graph->update_policy(policy_id_value.value(), policy);
+    auto update_result = m_policy_graph->value().update_policy(policy_id_value.value(), policy);
 
     if (update_result.is_error()) {
         JsonObject error;
@@ -599,7 +599,7 @@ void SecurityUI::delete_policy(JsonValue const& data)
     }
 
     // Delete policy from PolicyGraph
-    auto delete_result = m_policy_graph->delete_policy(policy_id_value.value());
+    auto delete_result = m_policy_graph->value().delete_policy(policy_id_value.value());
 
     if (delete_result.is_error()) {
         JsonObject error;
@@ -638,7 +638,7 @@ void SecurityUI::load_threat_history(JsonValue const& data)
     }
 
     // Query PolicyGraph for threat history
-    auto threats_result = m_policy_graph->get_threat_history(since);
+    auto threats_result = m_policy_graph->value().get_threat_history(since);
 
     if (threats_result.is_error()) {
         dbgln("SecurityUI: Failed to get threat history: {}", threats_result.error());
@@ -914,7 +914,7 @@ void SecurityUI::create_policy_from_template(JsonValue const& data)
             .last_hit = {}
         };
 
-        auto policy_id_result = m_policy_graph->create_policy(policy);
+        auto policy_id_result = m_policy_graph->value().create_policy(policy);
         if (!policy_id_result.is_error()) {
             created_policy_ids.append(policy_id_result.value());
         } else {
@@ -967,7 +967,7 @@ void SecurityUI::get_metrics()
     }
 
     // Get policy count
-    auto policy_count_result = m_policy_graph->get_policy_count();
+    auto policy_count_result = m_policy_graph->value().get_policy_count();
     if (!policy_count_result.is_error()) {
         metrics.set("totalPolicies"sv, JsonValue { static_cast<i64>(policy_count_result.value()) });
     } else {
@@ -975,7 +975,7 @@ void SecurityUI::get_metrics()
     }
 
     // Get threat count
-    auto threat_count_result = m_policy_graph->get_threat_count();
+    auto threat_count_result = m_policy_graph->value().get_threat_count();
     if (!threat_count_result.is_error()) {
         metrics.set("totalThreats"sv, JsonValue { static_cast<i64>(threat_count_result.value()) });
     } else {
@@ -983,7 +983,7 @@ void SecurityUI::get_metrics()
     }
 
     // Get detailed threat breakdown
-    auto threats_result = m_policy_graph->get_threat_history({});
+    auto threats_result = m_policy_graph->value().get_threat_history({});
     if (!threats_result.is_error()) {
         auto threats = threats_result.release_value();
 

@@ -117,7 +117,7 @@ ErrorOr<void> YARAScanWorkerPool::enqueue_scan(
 
     // Create scan request
     ScanRequest request {
-        .request_id = String::formatted("scan_{}", metadata.sha256),
+        .request_id = MUST(String::formatted("scan_{}", metadata.sha256)),
         .content = move(content),
         .callback = move(callback),
         .enqueued_time = UnixDateTime::now(),
@@ -212,7 +212,11 @@ void YARAScanWorkerPool::execute_scan(ScanRequest& request)
     // Perform the actual YARA scan using SecurityTap
     // This is the blocking operation that runs in the worker thread
     SecurityTap::DownloadMetadata metadata {
+        .url = "async-scan"_string.to_byte_string(),
+        .filename = request.request_id.to_byte_string(),
+        .mime_type = "application/octet-stream"_string.to_byte_string(),
         .sha256 = request.request_id.to_byte_string(),
+        .size_bytes = request.content.size(),
     };
 
     auto scan_result = m_security_tap->inspect_download(metadata, request.content.bytes());
@@ -250,7 +254,7 @@ void YARAScanWorkerPool::execute_scan(ScanRequest& request)
 
 void YARAScanWorkerPool::schedule_callback(
     SecurityTap::ScanCallback callback,
-    ErrorOr<ScanResult> result)
+    ErrorOr<SecurityTap::ScanResult> result)
 {
     // Schedule callback execution on the main event loop thread
     // This ensures callbacks are executed on the IPC thread, not worker threads

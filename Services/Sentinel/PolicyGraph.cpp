@@ -16,6 +16,8 @@
 
 namespace Sentinel {
 
+using AK::Duration;
+
 // Retry policy for database operations with exponential backoff
 // Max attempts: 3, Initial delay: 100ms, Max delay: 1 second, Backoff: 2x
 static Core::RetryPolicy s_db_retry_policy(
@@ -176,10 +178,9 @@ ErrorOr<PolicyGraph> PolicyGraph::create(ByteString const& db_directory)
     if (!FileSystem::exists(db_directory))
         TRY(Core::System::mkdir(db_directory, 0700));
 
-    // Create/open database with retry logic for transient failures
-    auto database = TRY(s_db_retry_policy.execute([&]() -> ErrorOr<NonnullRefPtr<Database::Database>> {
-        return Database::Database::create(db_directory, "policy_graph"sv);
-    }));
+    // Create/open database
+    // FIXME: Re-add retry logic once RetryPolicy template is fixed
+    auto database = TRY(Database::Database::create(db_directory, "policy_graph"sv));
 
     // Create policies table
     auto create_policies_table = TRY(database->prepare_statement(R"#(

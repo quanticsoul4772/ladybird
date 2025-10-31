@@ -22,6 +22,8 @@
 
 namespace RequestServer {
 
+using AK::Duration;
+
 // Retry policy for file I/O operations with exponential backoff
 // Max attempts: 3, Initial delay: 200ms, Max delay: 5 seconds, Backoff: 2x
 static Core::RetryPolicy s_file_retry_policy(
@@ -59,7 +61,8 @@ ErrorOr<void> Quarantine::initialize()
 
     // Create directory if it doesn't exist - with retry logic for transient failures
     auto create_result = s_file_retry_policy.execute([&]() -> ErrorOr<void> {
-        return Core::Directory::create(quarantine_dir_byte_string, Core::Directory::CreateDirectories::Yes);
+        (void)TRY(Core::Directory::create(quarantine_dir_byte_string, Core::Directory::CreateDirectories::Yes));
+        return {};
     });
     if (create_result.is_error()) {
         dbgln("Quarantine: Failed to create directory: {}", create_result.error());
@@ -277,22 +280,25 @@ ErrorOr<String> Quarantine::quarantine_file(
     QuarantineMetadata const& metadata)
 {
     // Validate metadata fields using InputValidator
+    auto filename_bs = ByteString(metadata.filename);
     auto filename_result = Sentinel::InputValidator::validate_length(
-        ByteString(metadata.filename).view(), 1, 255, "filename"sv);
+        filename_bs.view(), 1, 255, "filename"sv);
     if (!filename_result.is_valid)
-        return Error::from_string_view(filename_result.error_message);
+        return Error::from_string_literal("Invalid filename length");
 
+    auto url_bs = ByteString(metadata.original_url);
     auto url_result = Sentinel::InputValidator::validate_length(
-        ByteString(metadata.original_url).view(), 0, 2048, "original_url"sv);
+        url_bs.view(), 0, 2048, "original_url"sv);
     if (!url_result.is_valid)
-        return Error::from_string_view(url_result.error_message);
+        return Error::from_string_literal("Invalid URL length");
 
     // Validate SHA256 hash format
     if (!metadata.sha256.is_empty()) {
+        auto sha256_bs = ByteString(metadata.sha256);
         auto hash_result = Sentinel::InputValidator::validate_sha256(
-            ByteString(metadata.sha256).view());
+            sha256_bs.view());
         if (!hash_result.is_valid)
-            return Error::from_string_view(hash_result.error_message);
+            return Error::from_string_literal("Invalid SHA256 hash format");
     }
 
     // Validate file size is positive
