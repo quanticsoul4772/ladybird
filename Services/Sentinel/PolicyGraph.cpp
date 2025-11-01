@@ -524,6 +524,30 @@ ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_dir
     statements.delete_template = TRY(database->prepare_statement(
         "DELETE FROM policy_templates WHERE id = ?;"sv));
 
+    // Milestone 0.4 Phase 6: Network Behavior Policy statements
+    statements.create_network_behavior_policy = TRY(database->prepare_statement(R"#(
+        INSERT INTO network_behavior_policies
+            (domain, policy, threat_type, confidence, created_at, updated_at, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(domain, threat_type) DO UPDATE SET
+            policy = excluded.policy,
+            confidence = excluded.confidence,
+            updated_at = excluded.updated_at,
+            notes = excluded.notes;
+    )#"sv));
+
+    statements.get_network_behavior_policy = TRY(database->prepare_statement(
+        "SELECT * FROM network_behavior_policies WHERE domain = ? AND threat_type = ?;"sv));
+
+    statements.get_all_network_behavior_policies = TRY(database->prepare_statement(
+        "SELECT * FROM network_behavior_policies ORDER BY created_at DESC;"sv));
+
+    statements.update_network_behavior_policy = TRY(database->prepare_statement(
+        "UPDATE network_behavior_policies SET policy = ?, notes = ?, updated_at = ? WHERE id = ?;"sv));
+
+    statements.delete_network_behavior_policy = TRY(database->prepare_statement(
+        "DELETE FROM network_behavior_policies WHERE id = ?;"sv));
+
     auto policy_graph = adopt_own(*new PolicyGraph(move(database), statements));
 
     // Cleanup old threats on initialization
@@ -1999,6 +2023,145 @@ ErrorOr<void> PolicyGraph::import_templates_json(String const& json)
         }
     }
 
+    return {};
+}
+
+// Milestone 0.4 Phase 6: Network Behavior Policy Management
+
+ErrorOr<i64> PolicyGraph::create_network_behavior_policy(String const& domain, String const& policy, String const& threat_type, i32 confidence, String const& notes)
+{
+    // Validate inputs
+    if (domain.is_empty())
+        return Error::from_string_literal("Domain cannot be empty");
+    if (policy.is_empty())
+        return Error::from_string_literal("Policy cannot be empty");
+    if (threat_type.is_empty())
+        return Error::from_string_literal("Threat type cannot be empty");
+
+    // Validate policy value
+    if (policy != "allow"sv && policy != "block"sv && policy != "monitor"sv)
+        return Error::from_string_literal("Policy must be 'allow', 'block', or 'monitor'");
+
+    // Validate confidence range (0-1000, scaled from 0.0-1.0)
+    if (confidence < 0 || confidence > 1000)
+        return Error::from_string_literal("Confidence must be between 0 and 1000");
+
+    auto now = UnixDateTime::now();
+
+    // Use UPSERT to insert or update existing policy
+    m_database->execute_statement(
+        m_statements.create_network_behavior_policy,
+        {},
+        domain,
+        policy,
+        threat_type,
+        confidence,
+        now.milliseconds_since_epoch(),
+        now.milliseconds_since_epoch(),
+        notes
+    );
+
+    // Get the ID of the inserted/updated row
+    i64 policy_id = -1;
+    bool callback_invoked = false;
+    m_database->execute_statement(
+        m_statements.get_last_insert_id,
+        [&](auto statement_id) {
+            policy_id = m_database->result_column<i64>(statement_id, 0);
+            callback_invoked = true;
+        }
+    );
+
+    if (!callback_invoked || policy_id == 0) {
+        return Error::from_string_literal("Failed to retrieve network behavior policy ID after insertion");
+    }
+
+    dbgln("PolicyGraph: Created/updated network behavior policy {} ({} -> {} for {})", policy_id, domain, policy, threat_type);
+    return policy_id;
+}
+
+ErrorOr<Optional<PolicyGraph::NetworkBehaviorPolicy>> PolicyGraph::get_network_behavior_policy(String const& domain, String const& threat_type)
+{
+    Optional<NetworkBehaviorPolicy> result;
+
+    m_database->execute_statement(
+        m_statements.get_network_behavior_policy,
+        [&](auto stmt_id) {
+            NetworkBehaviorPolicy nb_policy;
+            int col = 0;
+            nb_policy.id = m_database->result_column<i64>(stmt_id, col++);
+            nb_policy.domain = m_database->result_column<String>(stmt_id, col++);
+            nb_policy.policy = m_database->result_column<String>(stmt_id, col++);
+            nb_policy.threat_type = m_database->result_column<String>(stmt_id, col++);
+            nb_policy.confidence = m_database->result_column<i32>(stmt_id, col++);
+            nb_policy.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+            nb_policy.updated_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+            nb_policy.notes = m_database->result_column<String>(stmt_id, col++);
+
+            result = nb_policy;
+        },
+        domain,
+        threat_type
+    );
+
+    return result;
+}
+
+ErrorOr<Vector<PolicyGraph::NetworkBehaviorPolicy>> PolicyGraph::get_all_network_behavior_policies()
+{
+    Vector<NetworkBehaviorPolicy> policies;
+
+    m_database->execute_statement(
+        m_statements.get_all_network_behavior_policies,
+        [&](auto stmt_id) {
+            NetworkBehaviorPolicy nb_policy;
+            int col = 0;
+            nb_policy.id = m_database->result_column<i64>(stmt_id, col++);
+            nb_policy.domain = m_database->result_column<String>(stmt_id, col++);
+            nb_policy.policy = m_database->result_column<String>(stmt_id, col++);
+            nb_policy.threat_type = m_database->result_column<String>(stmt_id, col++);
+            nb_policy.confidence = m_database->result_column<i32>(stmt_id, col++);
+            nb_policy.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+            nb_policy.updated_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+            nb_policy.notes = m_database->result_column<String>(stmt_id, col++);
+
+            policies.append(move(nb_policy));
+        }
+    );
+
+    return policies;
+}
+
+ErrorOr<void> PolicyGraph::update_network_behavior_policy(i64 policy_id, String const& new_policy, String const& notes)
+{
+    // Validate policy value
+    if (new_policy != "allow"sv && new_policy != "block"sv && new_policy != "monitor"sv)
+        return Error::from_string_literal("Policy must be 'allow', 'block', or 'monitor'");
+
+    auto now = UnixDateTime::now();
+
+    m_database->execute_statement(
+        m_statements.update_network_behavior_policy,
+        {},
+        new_policy,
+        notes,
+        now.milliseconds_since_epoch(),
+        policy_id
+    );
+
+    dbgln("PolicyGraph: Updated network behavior policy {} to {}", policy_id, new_policy);
+    return {};
+}
+
+ErrorOr<void> PolicyGraph::delete_network_behavior_policy(i64 policy_id)
+{
+    m_database->execute_statement(
+        m_statements.delete_network_behavior_policy,
+        {},
+        policy_id
+    );
+
+    dbgln("PolicyGraph: Deleted network behavior policy {}", policy_id);
     return {};
 }
 

@@ -10,6 +10,11 @@ endpoint RequestClient
     headers_became_available(i32 request_id, HTTP::HeaderMap response_headers, Optional<u32> status_code, Optional<String> reason_phrase) =|
     security_alert(i32 request_id, u64 page_id, ByteString alert_json) =|
 
+    // Network behavioral analysis alerts (Phase 6: Network Behavioral Analysis)
+    // Sent when TrafficMonitor detects suspicious network patterns: DGA domains, C2 beaconing, data exfiltration, DNS tunneling
+    // JSON: {alert_id, page_id, domain, threat_type, risk_level, score, confidence, indicators[], explanation, detected_at, timestamp_unix}
+    traffic_alert_detected(u64 page_id, ByteString alert_json) =|
+
     // Websocket API
     // FIXME: See if this can be merged with the regular APIs
     websocket_connected(i64 websocket_id) =|

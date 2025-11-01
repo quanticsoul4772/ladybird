@@ -275,6 +275,112 @@ static void test_policy_statistics(PolicyGraph& pg)
     printf("  Total threats: %lu\n", threat_count.release_value());
 }
 
+static void test_network_behavior_policies(PolicyGraph& pg)
+{
+    printf("\n=== Test: Network Behavior Policies (Milestone 0.4 Phase 6) ===\n");
+
+    // Test 1: Create a network behavior policy
+    auto create_result = pg.create_network_behavior_policy(
+        "suspicious-domain.com"_string,
+        "block"_string,
+        "dga"_string,
+        850,  // 0.85 * 1000
+        "Detected DGA pattern"_string
+    );
+
+    if (create_result.is_error()) {
+        printf("❌ FAILED: Could not create network behavior policy: %s\n",
+               create_result.error().string_literal().characters_without_null_termination());
+        return;
+    }
+
+    auto policy_id = create_result.release_value();
+    printf("✅ PASSED: Created network behavior policy with ID %ld\n", policy_id);
+
+    // Test 2: Retrieve the policy
+    auto get_result = pg.get_network_behavior_policy("suspicious-domain.com"_string, "dga"_string);
+    if (get_result.is_error()) {
+        printf("❌ FAILED: Could not retrieve network behavior policy\n");
+        return;
+    }
+
+    auto policy_opt = get_result.release_value();
+    if (!policy_opt.has_value()) {
+        printf("❌ FAILED: Policy not found\n");
+        return;
+    }
+
+    auto const& policy = policy_opt.value();
+    printf("✅ PASSED: Retrieved policy - Domain: %s, Policy: %s, Threat: %s, Confidence: %d/1000 (%.2f)\n",
+           policy.domain.bytes_as_string_view().characters_without_null_termination(),
+           policy.policy.bytes_as_string_view().characters_without_null_termination(),
+           policy.threat_type.bytes_as_string_view().characters_without_null_termination(),
+           policy.confidence,
+           policy.confidence / 1000.0f);
+
+    // Test 3: Update the policy
+    auto update_result = pg.update_network_behavior_policy(policy_id, "monitor"_string, "Changed to monitoring mode"_string);
+    if (update_result.is_error()) {
+        printf("❌ FAILED: Could not update network behavior policy\n");
+        return;
+    }
+    printf("✅ PASSED: Updated policy to 'monitor'\n");
+
+    // Test 4: Create another policy for different threat type
+    auto create_result2 = pg.create_network_behavior_policy(
+        "c2-server.net"_string,
+        "block"_string,
+        "c2_beaconing"_string,
+        920,  // 0.92 * 1000
+        "Beaconing pattern detected"_string
+    );
+
+    if (create_result2.is_error()) {
+        printf("❌ FAILED: Could not create second network behavior policy\n");
+        return;
+    }
+    printf("✅ PASSED: Created second policy (C2 beaconing)\n");
+
+    // Test 5: List all policies
+    auto list_result = pg.get_all_network_behavior_policies();
+    if (list_result.is_error()) {
+        printf("❌ FAILED: Could not list network behavior policies\n");
+        return;
+    }
+
+    auto policies = list_result.release_value();
+    printf("✅ PASSED: Listed %zu network behavior policies:\n", policies.size());
+    for (auto const& p : policies) {
+        printf("  - ID: %ld, Domain: %s, Policy: %s, Threat: %s, Confidence: %d/1000\n",
+               p.id,
+               p.domain.bytes_as_string_view().characters_without_null_termination(),
+               p.policy.bytes_as_string_view().characters_without_null_termination(),
+               p.threat_type.bytes_as_string_view().characters_without_null_termination(),
+               p.confidence);
+    }
+
+    // Test 6: Delete a policy
+    auto delete_result = pg.delete_network_behavior_policy(policy_id);
+    if (delete_result.is_error()) {
+        printf("❌ FAILED: Could not delete network behavior policy\n");
+        return;
+    }
+    printf("✅ PASSED: Deleted network behavior policy %ld\n", policy_id);
+
+    // Test 7: Verify deletion
+    auto verify_result = pg.get_network_behavior_policy("suspicious-domain.com"_string, "dga"_string);
+    if (verify_result.is_error()) {
+        printf("❌ FAILED: Error verifying deletion\n");
+        return;
+    }
+
+    if (verify_result.value().has_value()) {
+        printf("❌ FAILED: Policy still exists after deletion\n");
+        return;
+    }
+    printf("✅ PASSED: Verified policy deletion\n");
+}
+
 int main()
 {
     printf("====================================\n");
@@ -303,6 +409,7 @@ int main()
     test_record_threat(pg);
     test_get_threat_history(pg);
     test_policy_statistics(pg);
+    test_network_behavior_policies(pg);
 
     printf("\n====================================\n");
     printf("  All Tests Complete!\n");

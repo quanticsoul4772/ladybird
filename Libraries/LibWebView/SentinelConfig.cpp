@@ -88,6 +88,12 @@ SentinelConfig SentinelConfig::create_default()
         .log_clean_scans = false,
         .buffer_size = 100
     };
+    config.network_monitoring = NetworkMonitoringConfig {
+        .enabled = true,
+        .dga_threshold = 0.6f,
+        .beaconing_threshold = 0.7f,
+        .exfiltration_threshold = 0.6f
+    };
     return config;
 }
 
@@ -133,6 +139,14 @@ String SentinelConfig::to_json() const
     audit_log_json.set("log_clean_scans"sv, audit_log.log_clean_scans);
     audit_log_json.set("buffer_size"sv, static_cast<u64>(audit_log.buffer_size));
     json.set("audit_log"sv, audit_log_json);
+
+    // Network monitoring config
+    JsonObject network_monitoring_json;
+    network_monitoring_json.set("enabled"sv, network_monitoring.enabled);
+    network_monitoring_json.set("dga_threshold"sv, static_cast<double>(network_monitoring.dga_threshold));
+    network_monitoring_json.set("beaconing_threshold"sv, static_cast<double>(network_monitoring.beaconing_threshold));
+    network_monitoring_json.set("exfiltration_threshold"sv, static_cast<double>(network_monitoring.exfiltration_threshold));
+    json.set("network_monitoring"sv, network_monitoring_json);
 
     return json.serialized();
 }
@@ -231,6 +245,28 @@ ErrorOr<SentinelConfig> SentinelConfig::from_json(String const& json_string)
         config.audit_log.max_files = 10;
         config.audit_log.log_clean_scans = false;
         config.audit_log.buffer_size = 100;
+    }
+
+    // Load network monitoring config
+    auto network_monitoring_opt = obj.get_object("network_monitoring"sv);
+    if (network_monitoring_opt.has_value()) {
+        auto const& nm = network_monitoring_opt.value();
+        config.network_monitoring.enabled = nm.get_bool("enabled"sv).value_or(true);
+
+        auto dga_threshold = nm.get_double_with_precision_loss("dga_threshold"sv).value_or(0.6);
+        config.network_monitoring.dga_threshold = static_cast<float>(dga_threshold);
+
+        auto beaconing_threshold = nm.get_double_with_precision_loss("beaconing_threshold"sv).value_or(0.7);
+        config.network_monitoring.beaconing_threshold = static_cast<float>(beaconing_threshold);
+
+        auto exfiltration_threshold = nm.get_double_with_precision_loss("exfiltration_threshold"sv).value_or(0.6);
+        config.network_monitoring.exfiltration_threshold = static_cast<float>(exfiltration_threshold);
+    } else {
+        // Use defaults if not present
+        config.network_monitoring.enabled = true;
+        config.network_monitoring.dga_threshold = 0.6f;
+        config.network_monitoring.beaconing_threshold = 0.7f;
+        config.network_monitoring.exfiltration_threshold = 0.6f;
     }
 
     return config;

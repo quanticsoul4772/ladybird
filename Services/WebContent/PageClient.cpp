@@ -28,6 +28,7 @@
 #include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Layout/Viewport.h>
 #include <LibWeb/Painting/PaintableBox.h>
+#include <LibWebView/SentinelConfig.h>
 #include <LibWebView/SiteIsolation.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/DevToolsConsoleClient.h>
@@ -79,6 +80,35 @@ PageClient::PageClient(PageHost& owner, u64 id)
     } else {
         m_fingerprinting_detector = detector_result.release_value();
         dbgln("Fingerprinting detector initialized successfully");
+    }
+
+    // Initialize FormMonitor with PolicyGraph for persistent credential protection
+    // Check for test environment database path override
+    auto db_path_env = getenv("LADYBIRD_SENTINEL_DB");
+    ByteString db_path;
+    if (db_path_env) {
+        db_path = ByteString(db_path_env);
+        dbgln("Using test database path from environment: {}", db_path);
+    } else {
+        // Use default database path
+        // TODO: Use SentinelConfig::default_database_path() when linking issue is resolved
+        auto home = getenv("HOME");
+        if (home) {
+            db_path = ByteString::formatted("{}/.local/share/Ladybird/PolicyGraph/policies.db", home);
+        } else {
+            db_path = "/tmp/sentinel/policies.db"sv;  // Fallback
+        }
+    }
+
+    auto monitor_result = FormMonitor::create_with_policy_graph(db_path);
+    if (monitor_result.is_error()) {
+        dbgln("Warning: Failed to create FormMonitor with PolicyGraph: {}", monitor_result.error());
+        dbgln("FormMonitor will use in-memory storage only");
+        // Fallback: Create FormMonitor without PolicyGraph
+        m_form_monitor = make<FormMonitor>();
+    } else {
+        m_form_monitor = monitor_result.release_value();
+        dbgln("FormMonitor initialized successfully with database at {}", db_path);
     }
 
     // FIXME: This removes the decimal part, so the refresh interval will actually be higher than the maximum FPS.
@@ -323,6 +353,8 @@ void PageClient::page_did_middle_click_link(URL::URL const& url, ByteString cons
 
 void PageClient::page_did_start_loading(URL::URL const& url, bool is_redirect)
 {
+    // Reset user interaction tracking on navigation (detect auto-submit after page load)
+    m_page->set_has_had_user_interaction(false);
     client().async_did_start_loading(m_id, url, is_redirect);
 }
 
@@ -495,6 +527,11 @@ void PageClient::page_did_receive_security_alert(ByteString const& alert_json, i
     client().async_did_receive_security_alert(m_id, alert_json, request_id);
 }
 
+void PageClient::page_did_detect_traffic_alert(ByteString const& alert_json)
+{
+    client().async_did_detect_traffic_alert(m_id, alert_json);
+}
+
 void PageClient::page_did_call_fingerprinting_api(StringView technique, StringView api_name) const
 {
     if (!m_fingerprinting_detector)
@@ -588,6 +625,8 @@ void PageClient::page_did_submit_form(Web::HTML::HTMLFormElement& form, String c
     event.action_url = action;
     event.method = method;
     event.timestamp = UnixDateTime::now();
+    // Track if user has interacted with the page (to detect auto-submit attacks)
+    event.had_user_interaction = m_page->has_had_user_interaction();
 
     // Extract form fields and types from DOM by traversing the subtree
     form.root().for_each_in_subtree([&](auto& node) {
@@ -641,15 +680,20 @@ void PageClient::page_did_submit_form(Web::HTML::HTMLFormElement& form, String c
             event.has_email_field = true;
     }
 
-    // Notify FormMonitor about the submission
-    m_form_monitor.on_form_submit(event);
+    // Notify FormMonitor about the submission (if initialized)
+    if (!m_form_monitor) {
+        dbgln("FormMonitor: Not initialized, skipping form submission analysis");
+        return;
+    }
+
+    m_form_monitor->on_form_submit(event);
 
     // Check if submission is suspicious
-    if (m_form_monitor.is_suspicious_submission(event)) {
-        auto alert = m_form_monitor.analyze_submission(event);
+    if (m_form_monitor->is_suspicious_submission(event)) {
+        auto alert = m_form_monitor->analyze_submission(event);
         if (alert.has_value()) {
             // Check if this submission has been blocked by user
-            if (m_form_monitor.is_blocked_submission(alert->form_origin, alert->action_origin)) {
+            if (m_form_monitor->is_blocked_submission(alert->form_origin, alert->action_origin)) {
                 dbgln("FormMonitor: BLOCKED submission from {} to {} (user previously blocked this)",
                       alert->form_origin, alert->action_origin);
                 // NOTE: Form has already been submitted by the browser at this point.
@@ -697,24 +741,30 @@ void PageClient::page_did_submit_form(Web::HTML::HTMLFormElement& form, String c
 // Determines if autofill should be blocked for a given form→action URL pair
 bool PageClient::should_block_autofill(URL::URL const& form_url, URL::URL const& action_url) const
 {
+    // If FormMonitor is not initialized, allow autofill (fail open for usability)
+    if (!m_form_monitor) {
+        dbgln("PageClient: FormMonitor not initialized, allowing autofill");
+        return false;
+    }
+
     // Extract origins using FormMonitor's origin extraction logic
-    auto form_origin = m_form_monitor.extract_origin(form_url);
-    auto action_origin = m_form_monitor.extract_origin(action_url);
+    auto form_origin = m_form_monitor->extract_origin(form_url);
+    auto action_origin = m_form_monitor->extract_origin(action_url);
 
     // Check if this submission is blocked by user
-    if (m_form_monitor.is_blocked_submission(form_origin, action_origin)) {
+    if (m_form_monitor->is_blocked_submission(form_origin, action_origin)) {
         dbgln("PageClient: Blocking autofill for user-blocked form {} -> {}", form_origin, action_origin);
         return true;
     }
 
     // Check if this is a trusted relationship - allow autofill
-    if (m_form_monitor.is_trusted_relationship(form_origin, action_origin)) {
+    if (m_form_monitor->is_trusted_relationship(form_origin, action_origin)) {
         dbgln("PageClient: Allowing autofill for trusted form {} -> {}", form_origin, action_origin);
         return false;
     }
 
     // Check for cross-origin submission - block autofill as a security measure
-    if (m_form_monitor.is_cross_origin_submission(form_url, action_url)) {
+    if (m_form_monitor->is_cross_origin_submission(form_url, action_url)) {
         dbgln("PageClient: Blocking autofill for cross-origin form {} -> {}", form_origin, action_origin);
         return true;
     }

@@ -20,6 +20,7 @@
 #include <RequestServer/Request.h>
 #include <RequestServer/RequestClientEndpoint.h>
 #include <RequestServer/RequestServerEndpoint.h>
+#include <RequestServer/TrafficMonitor.h>
 #include <RequestServer/URLSecurityAnalyzer.h>
 
 namespace RequestServer {
@@ -38,6 +39,9 @@ public:
     [[nodiscard]] RefPtr<IPC::NetworkIdentity> get_or_create_network_identity_for_page(u64 page_id);
 
     void request_complete(Badge<Request>, int request_id);
+
+    // Traffic monitoring integration (Phase 6 Milestone 0.4)
+    void record_traffic(Badge<Request>, URL::URL const& url, u64 bytes_sent, u64 bytes_received);
 
 private:
     explicit ConnectionFromClient(NonnullOwnPtr<IPC::Transport>);
@@ -166,6 +170,9 @@ private:
 
     // URL security analyzer for phishing detection (Phase 5 Milestone 0.4)
     OwnPtr<URLSecurityAnalyzer> m_url_security_analyzer;
+
+    // Traffic monitor for network behavioral analysis (Phase 6 Milestone 0.4)
+    OwnPtr<TrafficMonitor> m_traffic_monitor;
 
     // Gateway arrays (in priority order)
     static constexpr StringView s_ipfs_gateways[] = {

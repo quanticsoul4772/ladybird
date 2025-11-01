@@ -16,7 +16,7 @@ namespace Sentinel {
 // Database schema version tracking and migrations
 class DatabaseMigrations {
 public:
-    static constexpr int CURRENT_SCHEMA_VERSION = 3;
+    static constexpr int CURRENT_SCHEMA_VERSION = 4;
 
     // Check if database needs migration
     static ErrorOr<bool> needs_migration(Database::Database& db);
@@ -38,6 +38,7 @@ private:
     static ErrorOr<void> migrate_v0_to_v1(Database::Database& db);
     static ErrorOr<void> migrate_v1_to_v2(Database::Database& db);
     static ErrorOr<void> migrate_v2_to_v3(Database::Database& db);
+    static ErrorOr<void> migrate_v3_to_v4(Database::Database& db);
 
     // Set schema version in database
     static ErrorOr<void> set_schema_version(Database::Database& db, int version);

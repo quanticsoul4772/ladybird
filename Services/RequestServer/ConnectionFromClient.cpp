@@ -23,6 +23,7 @@
 #include <LibRequests/WebSocket.h>
 #include <LibWebSocket/ConnectionInfo.h>
 #include <LibWebSocket/Message.h>
+#include <LibWebView/SentinelConfig.h>
 #include <RequestServer/CURL.h>
 #include <RequestServer/Cache/DiskCache.h>
 #include <RequestServer/ConnectionFromClient.h>
@@ -81,6 +82,25 @@ ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transpo
         m_url_security_analyzer = url_analyzer_result.release_value();
         dbgln("URL security analyzer initialized successfully");
     }
+
+    // Initialize TrafficMonitor for network behavioral analysis
+    // FIXME: Re-enable SentinelConfig loading once symbol export is fixed
+    // For now, default to enabled to allow testing
+    bool network_monitoring_enabled = true;
+
+    if (network_monitoring_enabled) {
+        // If this fails, we continue without traffic monitoring rather than crashing
+        auto traffic_monitor_result = TrafficMonitor::create();
+        if (traffic_monitor_result.is_error()) {
+            dbgln("Warning: Failed to create TrafficMonitor: {}", traffic_monitor_result.error());
+            dbgln("Network behavioral analysis will be disabled for this connection");
+        } else {
+            m_traffic_monitor = traffic_monitor_result.release_value();
+            dbgln("TrafficMonitor initialized successfully");
+        }
+    } else {
+        dbgln("Network behavioral monitoring disabled by user preference");
+    }
 }
 
 ConnectionFromClient::~ConnectionFromClient()
@@ -97,6 +117,69 @@ void ConnectionFromClient::request_complete(Badge<Request>, int request_id)
         if (auto self = weak_self.strong_ref())
             self->m_active_requests.remove(request_id);
     });
+}
+
+void ConnectionFromClient::record_traffic(Badge<Request>, URL::URL const& url, u64 bytes_sent, u64 bytes_received)
+{
+    // TrafficMonitor integration for network behavioral analysis
+    if (!m_traffic_monitor)
+        return;
+
+    // Extract domain from URL
+    auto domain = url.serialized_host().to_byte_string();
+    if (domain.is_empty())
+        return;
+
+    // Record the request
+    auto record_result = m_traffic_monitor->record_request(domain, bytes_sent, bytes_received);
+    if (record_result.is_error()) {
+        dbgln("TrafficMonitor: Failed to record request for {}: {}", domain, record_result.error());
+        return;
+    }
+
+    // Analyze the pattern and check for alerts
+    auto alert_result = m_traffic_monitor->analyze_pattern(domain);
+    if (alert_result.is_error()) {
+        dbgln("TrafficMonitor: Failed to analyze pattern for {}: {}", domain, alert_result.error());
+        return;
+    }
+
+    // If an alert was generated, log it (IPC dispatch will be added in parallel task)
+    if (alert_result.value().has_value()) {
+        auto const& alert = alert_result.value().value();
+
+        // Determine threat type string
+        ByteString threat_type;
+        switch (alert.type) {
+        case TrafficAlert::Type::DGA:
+            threat_type = "DGA (Domain Generation Algorithm)";
+            break;
+        case TrafficAlert::Type::Beaconing:
+            threat_type = "Beaconing (C2 Communication)";
+            break;
+        case TrafficAlert::Type::Exfiltration:
+            threat_type = "Data Exfiltration";
+            break;
+        case TrafficAlert::Type::DNSTunneling:
+            threat_type = "DNS Tunneling";
+            break;
+        case TrafficAlert::Type::Combined:
+            threat_type = "Combined Threats";
+            break;
+        }
+
+        dbgln("TrafficMonitor: Alert detected for {} - Type: {}, Severity: {:.2f}",
+              alert.domain, threat_type, alert.severity);
+        dbgln("TrafficMonitor: Explanation: {}", alert.explanation);
+
+        // Log indicators
+        for (auto const& indicator : alert.indicators) {
+            dbgln("TrafficMonitor: - {}", indicator);
+        }
+
+        // TODO: Send IPC alert to WebContent for user notification
+        // This will be implemented in a parallel task
+    }
 }
 
 void ConnectionFromClient::die()

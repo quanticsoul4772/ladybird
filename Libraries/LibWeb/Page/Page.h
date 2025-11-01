@@ -230,6 +230,11 @@ public:
     bool listen_for_dom_mutations() const { return m_listen_for_dom_mutations; }
     void set_listen_for_dom_mutations(bool listen_for_dom_mutations) { m_listen_for_dom_mutations = listen_for_dom_mutations; }
 
+    // User interaction tracking for security features (e.g., detecting auto-submit attacks)
+    bool has_had_user_interaction() const { return m_has_had_user_interaction; }
+    void set_has_had_user_interaction(bool value) { m_has_had_user_interaction = value; }
+    void record_user_interaction() { m_has_had_user_interaction = true; }
+
 private:
     explicit Page(GC::Ref<PageClient>);
     virtual void visit_edges(Visitor&) override;
@@ -310,6 +315,10 @@ private:
     URL::URL m_last_find_in_page_url;
 
     bool m_listen_for_dom_mutations { false };
+
+    // Track if user has interacted with the page (mouse, keyboard, etc.)
+    // Used for security features like detecting programmatic form submissions
+    bool m_has_had_user_interaction { false };
 };
 
 enum class DisplayListPlayerType {
@@ -369,6 +378,7 @@ public:
     virtual void page_did_request_accept_dialog() { }
     virtual void page_did_request_dismiss_dialog() { }
     virtual void page_did_receive_security_alert(ByteString const& alert_json, i32 request_id) { (void)alert_json; (void)request_id; }
+    virtual void page_did_detect_traffic_alert(ByteString const& alert_json) { (void)alert_json; }
     virtual void page_did_call_fingerprinting_api([[maybe_unused]] StringView technique, [[maybe_unused]] StringView api_name) const { }
     virtual void page_did_submit_form([[maybe_unused]] HTML::HTMLFormElement& form, [[maybe_unused]] String const& method, [[maybe_unused]] URL::URL const& action) { }
     virtual bool should_block_autofill([[maybe_unused]] URL::URL const& form_url, [[maybe_unused]] URL::URL const& action_url) const { return false; }

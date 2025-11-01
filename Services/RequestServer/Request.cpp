@@ -555,6 +555,9 @@ void Request::handle_complete_state()
             size_t bytes_received = m_bytes_transferred_to_client;
 
             m_network_identity->log_response(m_url, static_cast<u16>(status_code), bytes_sent, bytes_received);
+
+            // Record traffic for behavioral analysis (Phase 6 Milestone 0.4)
+            m_client.record_traffic({}, m_url, bytes_sent, bytes_received);
         }
 
         // Sentinel SecurityTap integration - inspect downloads for threats

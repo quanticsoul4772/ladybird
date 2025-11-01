@@ -62,6 +62,15 @@ private:
     void export_policy_templates();
     void import_policy_templates(JsonValue const&);
 
+    // Network Monitoring (Milestone 0.4 Phase 6)
+    void get_network_monitoring_stats();
+    void get_traffic_alerts();
+    void get_network_behavior_policies();
+    void delete_network_behavior_policy(JsonValue const&);
+    void clear_traffic_alerts();
+    void export_network_behavior_policies();
+    void import_network_behavior_policies(JsonValue const&);
+
     // PolicyGraph instance for security policy management
     Optional<ErrorOr<NonnullOwnPtr<Sentinel::PolicyGraph>>> m_policy_graph;
 };

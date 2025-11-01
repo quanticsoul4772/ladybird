@@ -198,4 +198,26 @@ void RequestClient::websocket_certificate_requested(i64 websocket_id)
         maybe_connection.value()->did_request_certificates({});
 }
 
+void RequestClient::traffic_alert_detected(u64 page_id, ByteString alert_json)
+{
+    dbgln("RequestClient: Network traffic alert detected for page {}", page_id);
+
+    // Parse the alert JSON for logging
+    auto json_result = JsonValue::from_string(alert_json);
+    if (!json_result.is_error() && json_result.value().is_object()) {
+        auto alert_obj = json_result.value().as_object();
+        auto threat_type = alert_obj.get_string("threat_type"sv).value_or("Unknown"_string);
+        auto risk_level = alert_obj.get_string("risk_level"sv).value_or("Unknown"_string);
+        auto domain = alert_obj.get_string("domain"sv).value_or("Unknown"_string);
+        auto score = alert_obj.get_double_with_precision_loss("score"sv).value_or(0.0);
+
+        dbgln("  Threat Type: {}, Risk Level: {}, Domain: {}, Score: {}", threat_type, risk_level, domain, score);
+    }
+
+    // Invoke the callback to route to WebContent/PageClient
+    if (on_traffic_alert) {
+        on_traffic_alert(page_id, alert_json);
+    }
+}
+
 }

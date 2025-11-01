@@ -557,6 +557,83 @@
                 padding: 8px 16px;
                 font-size: 13px;
             }
+
+            /* Network Monitoring Styles (Milestone 0.4 Phase 6) */
+            .badge {
+                display: inline-block;
+                padding: 4px 12px;
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: 600;
+            }
+
+            .badge.threat-DGA {
+                background-color: rgba(255, 107, 107, 0.2);
+                color: #ff6b6b;
+            }
+
+            .badge.threat-Beaconing {
+                background-color: rgba(255, 159, 28, 0.2);
+                color: #ff9f1c;
+            }
+
+            .badge.threat-Exfiltration {
+                background-color: rgba(203, 45, 111, 0.2);
+                color: #cb2d6f;
+            }
+
+            .badge.threat-DNSTunneling {
+                background-color: rgba(156, 39, 176, 0.2);
+                color: #9c27b0;
+            }
+
+            .badge.threat-Combined {
+                background-color: rgba(239, 68, 68, 0.2);
+                color: #ef4444;
+            }
+
+            .badge.risk-Low {
+                background-color: rgba(76, 175, 80, 0.2);
+                color: #4caf50;
+            }
+
+            .badge.risk-Medium {
+                background-color: rgba(255, 152, 0, 0.2);
+                color: #ff9800;
+            }
+
+            .badge.risk-High {
+                background-color: rgba(244, 67, 54, 0.2);
+                color: #f44336;
+            }
+
+            .badge.risk-Critical {
+                background-color: rgba(156, 39, 176, 0.2);
+                color: #9c27b0;
+            }
+
+            .badge.policy-allow {
+                background-color: rgba(76, 175, 80, 0.2);
+                color: #4caf50;
+            }
+
+            .badge.policy-block {
+                background-color: rgba(244, 67, 54, 0.2);
+                color: #f44336;
+            }
+
+            .badge.policy-monitor {
+                background-color: rgba(33, 150, 243, 0.2);
+                color: #2196f3;
+            }
+
+            .status-dot.enabled {
+                background-color: #22c55e;
+            }
+
+            .status-dot.disabled {
+                background-color: #ef4444;
+            }
         </style>
     </head>
     <body>
@@ -717,6 +794,87 @@
                             </button>
                         </p>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Network Monitoring (Milestone 0.4 Phase 6) -->
+        <div class="card">
+            <div class="card-header">Network Behavioral Analysis</div>
+            <div class="card-body">
+                <div class="status-indicator" id="network-monitoring-status">
+                    <span class="status-dot enabled"></span>
+                    <span>Network Monitoring: Enabled</span>
+                </div>
+                <p style="margin-top: 12px; font-size: 14px; opacity: 0.8;">
+                    Monitors network traffic for suspicious patterns including DGA domains, C2 beaconing, data exfiltration, and DNS tunneling.
+                </p>
+
+                <div class="stats-grid" style="margin-top: 20px;">
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-requests-monitored">0</div>
+                        <div class="stat-label">Requests Monitored</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-network-alerts">0</div>
+                        <div class="stat-label">Alerts Generated</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-domains-analyzed">0</div>
+                        <div class="stat-label">Domains Analyzed</div>
+                    </div>
+                </div>
+
+                <h3 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px; font-weight: 600;">Recent Traffic Alerts</h3>
+                <div id="network-alerts-container">
+                    <table id="network-alerts-table" class="hidden" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="text-align: left; border-bottom: 2px solid var(--stat-border);">
+                                <th style="padding: 12px 8px;">Timestamp</th>
+                                <th style="padding: 12px 8px;">Domain</th>
+                                <th style="padding: 12px 8px;">Threat Type</th>
+                                <th style="padding: 12px 8px;">Risk Level</th>
+                                <th style="padding: 12px 8px;">Confidence</th>
+                                <th style="padding: 12px 8px;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="network-alerts-tbody">
+                        </tbody>
+                    </table>
+                    <div id="network-alerts-empty" class="empty-message">
+                        No traffic alerts yet. Ladybird is monitoring your network connections for suspicious behavior.
+                    </div>
+                </div>
+                <button id="clear-network-alerts-btn" class="button button-secondary" style="margin-top: 12px; display: none;">
+                    Clear Alert History
+                </button>
+
+                <h3 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px; font-weight: 600;">Network Behavior Policies</h3>
+                <div id="network-policies-container">
+                    <table id="network-policies-table" class="hidden" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="text-align: left; border-bottom: 2px solid var(--stat-border);">
+                                <th style="padding: 12px 8px;">Domain</th>
+                                <th style="padding: 12px 8px;">Policy</th>
+                                <th style="padding: 12px 8px;">Threat Type</th>
+                                <th style="padding: 12px 8px;">Created</th>
+                                <th style="padding: 12px 8px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="network-policies-tbody">
+                        </tbody>
+                    </table>
+                    <div id="network-policies-empty" class="empty-message">
+                        No network behavior policies yet. Policies are created when you select "Remember this decision" in traffic alerts.
+                    </div>
+                </div>
+                <div style="display: flex; gap: 12px; margin-top: 16px;">
+                    <button class="button button-secondary" onclick="exportNetworkPolicies()">
+                        Export Policies
+                    </button>
+                    <button class="button button-secondary" onclick="importNetworkPolicies()">
+                        Import Policies
+                    </button>
                 </div>
             </div>
         </div>
@@ -1830,6 +1988,296 @@
             // Make education modal functions available globally
             window.showCredentialEducationModal = showCredentialEducationModal;
             window.closeCredentialEducationModal = closeCredentialEducationModal;
+
+            // Network Monitoring Functions (Milestone 0.4 Phase 6)
+
+            function loadNetworkMonitoringData() {
+                ladybird.sendMessage("getNetworkMonitoringStats", {});
+                ladybird.sendMessage("getTrafficAlerts", {});
+                ladybird.sendMessage("getNetworkBehaviorPolicies", {});
+            }
+
+            function renderNetworkMonitoringStats(data) {
+                document.getElementById('stat-requests-monitored').textContent = data.requestsMonitored || 0;
+                document.getElementById('stat-network-alerts').textContent = data.alertsGenerated || 0;
+                document.getElementById('stat-domains-analyzed').textContent = data.domainsAnalyzed || 0;
+            }
+
+            function renderTrafficAlerts(data) {
+                const table = document.getElementById('network-alerts-table');
+                const tbody = document.getElementById('network-alerts-tbody');
+                const emptyMsg = document.getElementById('network-alerts-empty');
+                const clearBtn = document.getElementById('clear-network-alerts-btn');
+
+                if (!data.alerts || data.alerts.length === 0) {
+                    table.classList.add('hidden');
+                    emptyMsg.classList.remove('hidden');
+                    clearBtn.style.display = 'none';
+                    return;
+                }
+
+                table.classList.remove('hidden');
+                emptyMsg.classList.add('hidden');
+                clearBtn.style.display = 'inline-block';
+
+                tbody.innerHTML = '';
+
+                data.alerts.forEach(alert => {
+                    const row = document.createElement('tr');
+                    row.style.borderBottom = '1px solid var(--stat-border)';
+
+                    // Timestamp
+                    const timeCell = document.createElement('td');
+                    timeCell.style.padding = '12px 8px';
+                    timeCell.style.fontSize = '13px';
+                    const date = new Date(alert.timestamp);
+                    timeCell.textContent = date.toLocaleString();
+                    row.appendChild(timeCell);
+
+                    // Domain
+                    const domainCell = document.createElement('td');
+                    domainCell.style.padding = '12px 8px';
+                    domainCell.style.fontSize = '13px';
+                    domainCell.style.fontFamily = 'monospace';
+                    domainCell.textContent = alert.domain;
+                    row.appendChild(domainCell);
+
+                    // Threat Type
+                    const typeCell = document.createElement('td');
+                    typeCell.style.padding = '12px 8px';
+                    const typeBadge = document.createElement('span');
+                    typeBadge.className = `badge threat-${alert.threatType}`;
+                    typeBadge.textContent = formatThreatType(alert.threatType);
+                    typeCell.appendChild(typeBadge);
+                    row.appendChild(typeCell);
+
+                    // Risk Level
+                    const riskCell = document.createElement('td');
+                    riskCell.style.padding = '12px 8px';
+                    const riskBadge = document.createElement('span');
+                    riskBadge.className = `badge risk-${alert.riskLevel}`;
+                    riskBadge.textContent = alert.riskLevel;
+                    riskCell.appendChild(riskBadge);
+                    row.appendChild(riskCell);
+
+                    // Confidence
+                    const confidenceCell = document.createElement('td');
+                    confidenceCell.style.padding = '12px 8px';
+                    confidenceCell.style.fontSize = '13px';
+                    confidenceCell.textContent = `${Math.round(alert.confidence * 100)}%`;
+                    row.appendChild(confidenceCell);
+
+                    // Action
+                    const actionCell = document.createElement('td');
+                    actionCell.style.padding = '12px 8px';
+                    actionCell.style.fontSize = '13px';
+                    actionCell.textContent = alert.action || 'Monitored';
+                    row.appendChild(actionCell);
+
+                    tbody.appendChild(row);
+                });
+            }
+
+            function renderNetworkBehaviorPolicies(data) {
+                const table = document.getElementById('network-policies-table');
+                const tbody = document.getElementById('network-policies-tbody');
+                const emptyMsg = document.getElementById('network-policies-empty');
+
+                if (!data.policies || data.policies.length === 0) {
+                    table.classList.add('hidden');
+                    emptyMsg.classList.remove('hidden');
+                    return;
+                }
+
+                table.classList.remove('hidden');
+                emptyMsg.classList.add('hidden');
+
+                tbody.innerHTML = '';
+
+                data.policies.forEach(policy => {
+                    const row = document.createElement('tr');
+                    row.style.borderBottom = '1px solid var(--stat-border)';
+
+                    // Domain
+                    const domainCell = document.createElement('td');
+                    domainCell.style.padding = '12px 8px';
+                    domainCell.style.fontSize = '13px';
+                    domainCell.style.fontFamily = 'monospace';
+                    domainCell.textContent = policy.domain;
+                    row.appendChild(domainCell);
+
+                    // Policy
+                    const policyCell = document.createElement('td');
+                    policyCell.style.padding = '12px 8px';
+                    const policyBadge = document.createElement('span');
+                    policyBadge.className = `badge policy-${policy.policy}`;
+                    policyBadge.textContent = policy.policy.charAt(0).toUpperCase() + policy.policy.slice(1);
+                    policyCell.appendChild(policyBadge);
+                    row.appendChild(policyCell);
+
+                    // Threat Type
+                    const typeCell = document.createElement('td');
+                    typeCell.style.padding = '12px 8px';
+                    typeCell.style.fontSize = '13px';
+                    typeCell.textContent = formatThreatType(policy.threatType);
+                    row.appendChild(typeCell);
+
+                    // Created
+                    const createdCell = document.createElement('td');
+                    createdCell.style.padding = '12px 8px';
+                    createdCell.style.fontSize = '13px';
+                    const date = new Date(policy.createdAt);
+                    createdCell.textContent = date.toLocaleDateString();
+                    row.appendChild(createdCell);
+
+                    // Actions
+                    const actionsCell = document.createElement('td');
+                    actionsCell.style.padding = '12px 8px';
+
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'button button-secondary';
+                    deleteBtn.style.padding = '6px 12px';
+                    deleteBtn.style.fontSize = '13px';
+                    deleteBtn.textContent = 'Delete';
+                    deleteBtn.onclick = () => deleteNetworkBehaviorPolicy(policy.id, policy.domain);
+
+                    actionsCell.appendChild(deleteBtn);
+                    row.appendChild(actionsCell);
+
+                    tbody.appendChild(row);
+                });
+            }
+
+            function formatThreatType(threatType) {
+                const types = {
+                    'DGA': 'DGA Domain',
+                    'Beaconing': 'C2 Beaconing',
+                    'Exfiltration': 'Data Exfiltration',
+                    'DNSTunneling': 'DNS Tunneling',
+                    'Combined': 'Multiple Threats',
+                    'dga': 'DGA Domain',
+                    'c2_beaconing': 'C2 Beaconing',
+                    'exfiltration': 'Data Exfiltration',
+                    'dns_tunneling': 'DNS Tunneling'
+                };
+                return types[threatType] || threatType;
+            }
+
+            function deleteNetworkBehaviorPolicy(policyId, domain) {
+                if (!confirm(`Delete network behavior policy for "${domain}"?\n\nThis domain will be monitored again with default behavior.`)) {
+                    return;
+                }
+
+                ladybird.sendMessage("deleteNetworkBehaviorPolicy", {
+                    policyId: policyId
+                });
+            }
+
+            function clearNetworkAlerts() {
+                if (!confirm('Clear all traffic alert history?\n\nThis action cannot be undone.')) {
+                    return;
+                }
+
+                ladybird.sendMessage("clearTrafficAlerts", {});
+            }
+
+            function exportNetworkPolicies() {
+                ladybird.sendMessage("exportNetworkBehaviorPolicies", {});
+            }
+
+            function importNetworkPolicies() {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.json';
+
+                input.onchange = (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        try {
+                            const json = event.target.result;
+                            JSON.parse(json); // Validate
+                            ladybird.sendMessage("importNetworkBehaviorPolicies", { json: json });
+                        } catch (error) {
+                            alert('Invalid JSON file: ' + error.message);
+                        }
+                    };
+                    reader.readAsText(file);
+                };
+
+                input.click();
+            }
+
+            // Make network monitoring functions available globally
+            window.deleteNetworkBehaviorPolicy = deleteNetworkBehaviorPolicy;
+            window.clearNetworkAlerts = clearNetworkAlerts;
+            window.exportNetworkPolicies = exportNetworkPolicies;
+            window.importNetworkPolicies = importNetworkPolicies;
+
+            // Add event listeners for network monitoring
+            document.addEventListener("WebUILoaded", () => {
+                loadNetworkMonitoringData();
+
+                // Setup clear alerts button
+                const clearAlertsBtn = document.getElementById('clear-network-alerts-btn');
+                if (clearAlertsBtn) {
+                    clearAlertsBtn.addEventListener('click', clearNetworkAlerts);
+                }
+
+                // Refresh network monitoring data every 10 seconds
+                setInterval(() => {
+                    loadNetworkMonitoringData();
+                }, 10000);
+            });
+
+            // Handle network monitoring message responses
+            document.addEventListener("WebUIMessage", event => {
+                const { name, data } = event.detail;
+
+                if (name === "networkMonitoringStatsLoaded") {
+                    renderNetworkMonitoringStats(data);
+                } else if (name === "trafficAlertsLoaded") {
+                    renderTrafficAlerts(data);
+                } else if (name === "networkBehaviorPoliciesLoaded") {
+                    renderNetworkBehaviorPolicies(data);
+                } else if (name === "networkBehaviorPolicyDeleted") {
+                    if (data.error) {
+                        alert('Failed to delete policy: ' + data.error);
+                    } else {
+                        loadNetworkMonitoringData();
+                    }
+                } else if (name === "trafficAlertsCleared") {
+                    if (data.error) {
+                        alert('Failed to clear alerts: ' + data.error);
+                    } else {
+                        loadNetworkMonitoringData();
+                    }
+                } else if (name === "networkPoliciesExported") {
+                    if (data.error) {
+                        alert('Failed to export policies: ' + data.error);
+                    } else {
+                        const blob = new Blob([data.json], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `network-policies-${new Date().toISOString().split('T')[0]}.json`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        alert('Network policies exported successfully!');
+                    }
+                } else if (name === "networkPoliciesImported") {
+                    if (data.error) {
+                        alert('Failed to import policies: ' + data.error);
+                    } else {
+                        alert(`Successfully imported ${data.count} network behavior policies!`);
+                        loadNetworkMonitoringData();
+                    }
+                }
+            });
         </script>
     </body>
 </html>

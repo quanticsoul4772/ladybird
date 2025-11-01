@@ -50,6 +50,13 @@ struct AuditLogConfig {
     size_t buffer_size { 100 };                   // Flush after 100 events
 };
 
+struct NetworkMonitoringConfig {
+    bool enabled { true };                         // Default: enabled (opt-out for privacy)
+    float dga_threshold { 0.6f };                  // DGA detection threshold
+    float beaconing_threshold { 0.7f };            // C2 beaconing detection threshold
+    float exfiltration_threshold { 0.6f };         // Data exfiltration detection threshold
+};
+
 struct SentinelConfig {
     bool enabled { true };
     String yara_rules_path;
@@ -61,6 +68,7 @@ struct SentinelConfig {
     NotificationConfig notifications;
     ScanSizeConfig scan_size;
     AuditLogConfig audit_log;
+    NetworkMonitoringConfig network_monitoring;
 
     // Default paths
     static ErrorOr<String> default_yara_rules_path();

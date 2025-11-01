@@ -143,6 +143,18 @@ public:
         Optional<UnixDateTime> updated_at;
     };
 
+    // Milestone 0.4 Phase 6: Network Behavior Policies
+    struct NetworkBehaviorPolicy {
+        i64 id { -1 };
+        String domain;
+        String policy;       // "allow", "block", "monitor"
+        String threat_type;  // "dga", "c2_beaconing", "exfiltration", "dns_tunneling"
+        i32 confidence;      // 0-1000 (scaled from 0.0-1.0, multiply by 1000)
+        UnixDateTime created_at;
+        UnixDateTime updated_at;
+        String notes;
+    };
+
     static ErrorOr<NonnullOwnPtr<PolicyGraph>> create(ByteString const& db_directory);
 
     // Policy CRUD operations
@@ -225,6 +237,13 @@ public:
     ErrorOr<String> export_templates_json();
     ErrorOr<void> import_templates_json(String const& json);
 
+    // Milestone 0.4 Phase 6: Network Behavior Policy Management
+    ErrorOr<i64> create_network_behavior_policy(String const& domain, String const& policy, String const& threat_type, i32 confidence, String const& notes = ""_string);
+    ErrorOr<Optional<NetworkBehaviorPolicy>> get_network_behavior_policy(String const& domain, String const& threat_type);
+    ErrorOr<Vector<NetworkBehaviorPolicy>> get_all_network_behavior_policies();
+    ErrorOr<void> update_network_behavior_policy(i64 policy_id, String const& new_policy, String const& notes = ""_string);
+    ErrorOr<void> delete_network_behavior_policy(i64 policy_id);
+
 private:
     struct Statements {
         // Policy CRUD
@@ -285,6 +304,13 @@ private:
         Database::StatementID list_templates_filtered { 0 };
         Database::StatementID update_template { 0 };
         Database::StatementID delete_template { 0 };
+
+        // Milestone 0.4 Phase 6: Network Behavior Policies
+        Database::StatementID create_network_behavior_policy { 0 };
+        Database::StatementID get_network_behavior_policy { 0 };
+        Database::StatementID get_all_network_behavior_policies { 0 };
+        Database::StatementID update_network_behavior_policy { 0 };
+        Database::StatementID delete_network_behavior_policy { 0 };
     };
 
     PolicyGraph(NonnullRefPtr<Database::Database>, Statements);

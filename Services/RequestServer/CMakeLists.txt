@@ -15,6 +15,7 @@ set(SOURCES
     Resolver.cpp
     ScanQueue.cpp
     SecurityTap.cpp
+    TrafficMonitor.cpp
     URLSecurityAnalyzer.cpp
     WebSocketImplCurl.cpp
     YARAScanWorkerPool.cpp
@@ -42,12 +43,14 @@ find_package(CURL REQUIRED)
 
 add_executable(RequestServer main.cpp)
 add_executable(TestSecurityTap TestSecurityTap.cpp)
+add_executable(TestTrafficMonitor TestTrafficMonitor.cpp)
 
 target_include_directories(requestserverservice PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../..)
 target_include_directories(requestserverservice PRIVATE ${LADYBIRD_SOURCE_DIR}/Services/)
 
 target_link_libraries(RequestServer PRIVATE requestserverservice)
 target_link_libraries(TestSecurityTap PRIVATE requestserverservice)
+target_link_libraries(TestTrafficMonitor PRIVATE requestserverservice)
 target_link_libraries(requestserverservice PUBLIC LibCore LibDatabase LibDNS LibCrypto LibFileSystem LibIPC LibMain LibTLS LibWebSocket LibURL LibTextCodec LibThreading CURL::libcurl sentinelservice)
 target_link_libraries(requestserverservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
 
@@ -63,7 +66,6 @@ if (HAIKU)
     # Haiku has networking related functions in the network library
     target_link_libraries(RequestServer PRIVATE network)
 endif()
-if (ANDROID)
-    # We need s_ladybird_resource_root from LibWebView
-    target_link_libraries(requestserverservice PUBLIC LibWebView)
-endif()
+
+# We need LibWebView for SentinelConfig and other features
+target_link_libraries(requestserverservice PUBLIC LibWebView)

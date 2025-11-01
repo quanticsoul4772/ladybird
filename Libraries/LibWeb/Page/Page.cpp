@@ -206,6 +206,8 @@ EventResult Page::handle_mouseup(DevicePixelPoint position, DevicePixelPoint scr
 
 EventResult Page::handle_mousedown(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers)
 {
+    // Record user interaction for security features (e.g., detecting auto-submit attacks)
+    record_user_interaction();
     return top_level_traversable()->event_handler().handle_mousedown(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers);
 }
 
@@ -241,6 +243,8 @@ EventResult Page::handle_pinch_event(DevicePixelPoint position, double scale)
 
 EventResult Page::handle_keydown(UIEvents::KeyCode key, unsigned modifiers, u32 code_point, bool repeat)
 {
+    // Record user interaction for security features (e.g., detecting auto-submit attacks)
+    record_user_interaction();
     return focused_navigable().event_handler().handle_keydown(key, modifiers, code_point, repeat);
 }
 

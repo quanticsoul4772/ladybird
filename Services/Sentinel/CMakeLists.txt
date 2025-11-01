@@ -5,8 +5,10 @@ set(CMAKE_AUTOUIC OFF)
 set(SOURCES
     AuditLog.cpp
     BloomFilter.cpp
+    C2Detector.cpp
     ClientRateLimiter.cpp
     DatabaseMigrations.cpp
+    DNSAnalyzer.cpp
     FederatedLearning.cpp
     FingerprintingDetector.cpp
     FlowInspector.cpp
@@ -65,6 +67,9 @@ add_executable(TestFlowInspector TestFlowInspector.cpp)
 add_executable(TestMalwareML TestMalwareML.cpp)
 add_executable(TestPhishingURLAnalyzer TestPhishingURLAnalyzer.cpp)
 add_executable(TestFingerprintingDetector TestFingerprintingDetector.cpp)
+add_executable(TestC2Detector TestC2Detector.cpp)
+add_executable(TestDNSAnalyzer TestDNSAnalyzer.cpp)
+add_executable(BenchmarkC2Detector BenchmarkC2Detector.cpp)
 add_executable(sentinel-cli ../../Tools/sentinel-cli.cpp)
 
 target_include_directories(sentinelservice PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../..)
@@ -97,6 +102,9 @@ target_link_libraries(TestFlowInspector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestMalwareML PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestPhishingURLAnalyzer PRIVATE sentinelservice LibCore LibMain LibURL)
 target_link_libraries(TestFingerprintingDetector PRIVATE sentinelservice LibCore LibMain)
+target_link_libraries(TestC2Detector PRIVATE sentinelservice LibCore LibMain)
+target_link_libraries(TestDNSAnalyzer PRIVATE sentinelservice LibCore LibMain)
+target_link_libraries(BenchmarkC2Detector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(sentinel-cli PRIVATE sentinelservice LibCore LibMain LibFileSystem requestserverservice)
 
 # Use proper test infrastructure for LibTest-based tests

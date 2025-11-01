@@ -120,6 +120,35 @@ void SecurityUI::register_interfaces()
     register_interface("importPolicyTemplates"sv, [this](auto const& data) {
         import_policy_templates(data);
     });
+
+    // Milestone 0.4 Phase 6: Network Monitoring
+    register_interface("getNetworkMonitoringStats"sv, [this](auto const&) {
+        get_network_monitoring_stats();
+    });
+
+    register_interface("getTrafficAlerts"sv, [this](auto const&) {
+        get_traffic_alerts();
+    });
+
+    register_interface("getNetworkBehaviorPolicies"sv, [this](auto const&) {
+        get_network_behavior_policies();
+    });
+
+    register_interface("deleteNetworkBehaviorPolicy"sv, [this](auto const& data) {
+        delete_network_behavior_policy(data);
+    });
+
+    register_interface("clearTrafficAlerts"sv, [this](auto const&) {
+        clear_traffic_alerts();
+    });
+
+    register_interface("exportNetworkBehaviorPolicies"sv, [this](auto const&) {
+        export_network_behavior_policies();
+    });
+
+    register_interface("importNetworkBehaviorPolicies"sv, [this](auto const& data) {
+        import_network_behavior_policies(data);
+    });
 }
 
 void SecurityUI::get_system_status()
@@ -1354,6 +1383,293 @@ void SecurityUI::import_policy_templates(JsonValue const& data)
     }
 
     async_send_message("templateImported"sv, response);
+}
+
+// Milestone 0.4 Phase 6: Network Monitoring Implementation
+
+void SecurityUI::get_network_monitoring_stats()
+{
+    JsonObject stats;
+
+    // NOTE: This is a stub implementation for Phase 6
+    // The actual network monitoring data lives in RequestServer's TrafficMonitor
+    // and is not directly accessible from the UI process yet.
+    // Future implementation will need to query RequestServer via IPC for real-time data.
+
+    // For now, we return zero stats to demonstrate the UI integration
+    stats.set("requestsMonitored"sv, JsonValue { 0 });
+    stats.set("alertsGenerated"sv, JsonValue { 0 });
+    stats.set("domainsAnalyzed"sv, JsonValue { 0 });
+
+    // TODO (Phase 6+): Implement real data fetching:
+    // 1. Add IPC message to RequestServer to query TrafficMonitor state
+    // 2. Aggregate data from all RequestServer processes
+    // 3. Return real statistics
+
+    async_send_message("networkMonitoringStatsLoaded"sv, stats);
+}
+
+void SecurityUI::get_traffic_alerts()
+{
+    JsonObject response;
+    JsonArray alerts_array;
+
+    // NOTE: This is a stub implementation for Phase 6
+    // Traffic alerts from TrafficMonitor are not yet persisted to PolicyGraph
+    // Future implementation will store alerts in PolicyGraph for history
+
+    // For now, return empty alerts array
+    response.set("alerts"sv, JsonValue { alerts_array });
+
+    // TODO (Phase 6+): Implement real alert history:
+    // 1. Store TrafficMonitor alerts in PolicyGraph when generated
+    // 2. Query PolicyGraph for alert history
+    // 3. Return last 100 alerts sorted by timestamp descending
+
+    async_send_message("trafficAlertsLoaded"sv, response);
+}
+
+void SecurityUI::get_network_behavior_policies()
+{
+    JsonObject response;
+    JsonArray policies_array;
+
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized for network behavior policies");
+        response.set("policies"sv, JsonValue { policies_array });
+        async_send_message("networkBehaviorPoliciesLoaded"sv, response);
+        return;
+    }
+
+    // Query PolicyGraph for network behavior policies
+    auto policies_result = m_policy_graph->value()->get_all_network_behavior_policies();
+
+    if (policies_result.is_error()) {
+        dbgln("SecurityUI: Failed to get network behavior policies: {}", policies_result.error());
+        response.set("policies"sv, JsonValue { policies_array });
+        async_send_message("networkBehaviorPoliciesLoaded"sv, response);
+        return;
+    }
+
+    // Convert policies to JSON
+    auto policies = policies_result.release_value();
+    for (auto const& policy : policies) {
+        JsonObject policy_obj;
+        policy_obj.set("id"sv, JsonValue { policy.id });
+        policy_obj.set("domain"sv, JsonValue { policy.domain });
+        policy_obj.set("policy"sv, JsonValue { policy.policy });
+        policy_obj.set("threatType"sv, JsonValue { policy.threat_type });
+        policy_obj.set("confidence"sv, JsonValue { policy.confidence });
+        policy_obj.set("createdAt"sv, JsonValue { policy.created_at.milliseconds_since_epoch() });
+        policy_obj.set("updatedAt"sv, JsonValue { policy.updated_at.milliseconds_since_epoch() });
+        policy_obj.set("notes"sv, JsonValue { policy.notes });
+
+        policies_array.must_append(policy_obj);
+    }
+
+    response.set("policies"sv, JsonValue { policies_array });
+    async_send_message("networkBehaviorPoliciesLoaded"sv, response);
+}
+
+void SecurityUI::delete_network_behavior_policy(JsonValue const& data)
+{
+    JsonObject response;
+
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized for delete network behavior policy");
+        response.set("error"sv, JsonValue { "PolicyGraph not initialized"_string });
+        async_send_message("networkBehaviorPolicyDeleted"sv, response);
+        return;
+    }
+
+    if (!data.is_object()) {
+        dbgln("SecurityUI: Invalid data for delete network behavior policy");
+        response.set("error"sv, JsonValue { "Invalid request data"_string });
+        async_send_message("networkBehaviorPolicyDeleted"sv, response);
+        return;
+    }
+
+    auto const& data_obj = data.as_object();
+    auto policy_id_opt = data_obj.get_integer<i64>("policyId"sv);
+    if (!policy_id_opt.has_value()) {
+        dbgln("SecurityUI: Missing policyId for delete");
+        response.set("error"sv, JsonValue { "Missing policyId"_string });
+        async_send_message("networkBehaviorPolicyDeleted"sv, response);
+        return;
+    }
+
+    auto policy_id = policy_id_opt.value();
+
+    // Delete the policy
+    auto delete_result = m_policy_graph->value()->delete_network_behavior_policy(policy_id);
+    if (delete_result.is_error()) {
+        dbgln("SecurityUI: Failed to delete network behavior policy {}: {}", policy_id, delete_result.error());
+        response.set("error"sv, JsonValue { "Failed to delete policy"_string });
+    } else {
+        dbgln("SecurityUI: Successfully deleted network behavior policy {}", policy_id);
+        response.set("success"sv, JsonValue { true });
+    }
+
+    async_send_message("networkBehaviorPolicyDeleted"sv, response);
+}
+
+void SecurityUI::clear_traffic_alerts()
+{
+    JsonObject response;
+
+    // NOTE: This is a stub implementation for Phase 6
+    // Traffic alerts are not yet persisted, so there's nothing to clear
+
+    // For now, just return success
+    response.set("success"sv, JsonValue { true });
+
+    // TODO (Phase 6+): Implement real alert clearing:
+    // 1. Add a method to PolicyGraph to delete all traffic alerts
+    // 2. Call that method here
+
+    async_send_message("trafficAlertsCleared"sv, response);
+}
+
+void SecurityUI::export_network_behavior_policies()
+{
+    JsonObject response;
+
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized for export network behavior policies");
+        response.set("error"sv, JsonValue { "PolicyGraph not initialized"_string });
+        async_send_message("networkPoliciesExported"sv, response);
+        return;
+    }
+
+    // Get all network behavior policies
+    auto policies_result = m_policy_graph->value()->get_all_network_behavior_policies();
+    if (policies_result.is_error()) {
+        dbgln("SecurityUI: Failed to get network behavior policies for export: {}", policies_result.error());
+        response.set("error"sv, JsonValue { "Failed to export policies"_string });
+        async_send_message("networkPoliciesExported"sv, response);
+        return;
+    }
+
+    auto policies = policies_result.release_value();
+
+    // Build JSON export structure
+    JsonObject export_obj;
+    export_obj.set("version"sv, JsonValue { 1 });
+    export_obj.set("exported_at"sv, JsonValue { UnixDateTime::now().milliseconds_since_epoch() });
+
+    JsonArray policies_array;
+    for (auto const& policy : policies) {
+        JsonObject policy_obj;
+        policy_obj.set("domain"sv, JsonValue { policy.domain });
+        policy_obj.set("policy"sv, JsonValue { policy.policy });
+        policy_obj.set("threat_type"sv, JsonValue { policy.threat_type });
+        policy_obj.set("confidence"sv, JsonValue { policy.confidence });
+        policy_obj.set("notes"sv, JsonValue { policy.notes });
+
+        policies_array.must_append(policy_obj);
+    }
+
+    export_obj.set("policies"sv, JsonValue { policies_array });
+
+    dbgln("SecurityUI: Successfully exported {} network behavior policies", policies.size());
+    response.set("json"sv, JsonValue { export_obj.serialized() });
+
+    async_send_message("networkPoliciesExported"sv, response);
+}
+
+void SecurityUI::import_network_behavior_policies(JsonValue const& data)
+{
+    JsonObject response;
+
+    if (!m_policy_graph.has_value()) {
+        dbgln("SecurityUI: PolicyGraph not initialized for import network behavior policies");
+        response.set("error"sv, JsonValue { "PolicyGraph not initialized"_string });
+        async_send_message("networkPoliciesImported"sv, response);
+        return;
+    }
+
+    if (!data.is_object()) {
+        dbgln("SecurityUI: Invalid data for import network behavior policies");
+        response.set("error"sv, JsonValue { "Invalid request data"_string });
+        async_send_message("networkPoliciesImported"sv, response);
+        return;
+    }
+
+    auto const& data_obj = data.as_object();
+    auto json_str = data_obj.get_string("json"sv);
+    if (!json_str.has_value()) {
+        dbgln("SecurityUI: Missing JSON data for import");
+        response.set("error"sv, JsonValue { "Missing JSON data"_string });
+        async_send_message("networkPoliciesImported"sv, response);
+        return;
+    }
+
+    // Parse the JSON
+    auto json_result = JsonValue::from_string(json_str.value());
+    if (json_result.is_error()) {
+        dbgln("SecurityUI: Failed to parse import JSON: {}", json_result.error());
+        response.set("error"sv, JsonValue { "Failed to parse JSON"_string });
+        async_send_message("networkPoliciesImported"sv, response);
+        return;
+    }
+
+    auto import_json = json_result.release_value();
+    if (!import_json.is_object()) {
+        dbgln("SecurityUI: Import JSON is not an object");
+        response.set("error"sv, JsonValue { "Invalid JSON structure"_string });
+        async_send_message("networkPoliciesImported"sv, response);
+        return;
+    }
+
+    auto const& import_obj = import_json.as_object();
+    auto policies_json = import_obj.get_array("policies"sv);
+    if (!policies_json.has_value()) {
+        dbgln("SecurityUI: Missing policies array in import JSON");
+        response.set("error"sv, JsonValue { "Missing policies array"_string });
+        async_send_message("networkPoliciesImported"sv, response);
+        return;
+    }
+
+    // Import each policy
+    size_t imported_count = 0;
+    for (auto const& policy_value : policies_json.value().values()) {
+        if (!policy_value.is_object()) {
+            continue;
+        }
+
+        auto const& policy_obj = policy_value.as_object();
+
+        auto domain = policy_obj.get_string("domain"sv);
+        auto policy = policy_obj.get_string("policy"sv);
+        auto threat_type = policy_obj.get_string("threat_type"sv);
+        auto confidence = policy_obj.get_integer<i32>("confidence"sv);
+        auto notes = policy_obj.get_string("notes"sv);
+
+        if (!domain.has_value() || !policy.has_value() || !threat_type.has_value() || !confidence.has_value()) {
+            dbgln("SecurityUI: Skipping policy with missing fields");
+            continue;
+        }
+
+        // Create the policy
+        auto create_result = m_policy_graph->value()->create_network_behavior_policy(
+            domain.value(),
+            policy.value(),
+            threat_type.value(),
+            confidence.value(),
+            notes.value_or(""_string)
+        );
+
+        if (!create_result.is_error()) {
+            imported_count++;
+        } else {
+            dbgln("SecurityUI: Failed to import network behavior policy for {}: {}", domain.value(), create_result.error());
+        }
+    }
+
+    dbgln("SecurityUI: Successfully imported {} network behavior policies", imported_count);
+    response.set("count"sv, JsonValue { static_cast<i64>(imported_count) });
+
+    async_send_message("networkPoliciesImported"sv, response);
 }
 
 }

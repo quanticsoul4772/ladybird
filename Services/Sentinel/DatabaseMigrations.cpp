@@ -285,6 +285,46 @@ ErrorOr<void> DatabaseMigrations::migrate_v2_to_v3(Database::Database& db)
     return {};
 }
 
+ErrorOr<void> DatabaseMigrations::migrate_v3_to_v4(Database::Database& db)
+{
+    dbgln("DatabaseMigrations: Migrating from v3 to v4 (adding network behavior policies)");
+
+    // Add network_behavior_policies table for Milestone 0.4 Phase 6
+    auto create_network_behavior_table = TRY(db.prepare_statement(R"#(
+        CREATE TABLE IF NOT EXISTS network_behavior_policies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            domain TEXT NOT NULL,
+            policy TEXT NOT NULL CHECK(policy IN ('allow', 'block', 'monitor')),
+            threat_type TEXT NOT NULL,
+            confidence INTEGER,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            notes TEXT,
+            UNIQUE(domain, threat_type)
+        );
+    )#"_string));
+    db.execute_statement(create_network_behavior_table, {});
+    dbgln("DatabaseMigrations: Created table network_behavior_policies");
+
+    // Add indexes for network_behavior_policies
+    auto idx_nb_domain = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_network_behavior_domain ON network_behavior_policies(domain);"_string));
+    db.execute_statement(idx_nb_domain, {});
+
+    auto idx_nb_policy = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_network_behavior_policy ON network_behavior_policies(policy);"_string));
+    db.execute_statement(idx_nb_policy, {});
+
+    auto idx_nb_threat_type = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_network_behavior_threat_type ON network_behavior_policies(threat_type);"_string));
+    db.execute_statement(idx_nb_threat_type, {});
+
+    dbgln("DatabaseMigrations: Created indexes for network_behavior_policies");
+
+    dbgln("DatabaseMigrations: v3 to v4 migration complete - added network behavior policies");
+    return {};
+}
+
 ErrorOr<void> DatabaseMigrations::migrate(Database::Database& db)
 {
     auto current_version = TRY(get_schema_version(db));
@@ -314,6 +354,11 @@ ErrorOr<void> DatabaseMigrations::migrate(Database::Database& db)
     if (current_version < 3) {
         TRY(migrate_v2_to_v3(db));
         TRY(set_schema_version(db, 3));
+    }
+
+    if (current_version < 4) {
+        TRY(migrate_v3_to_v4(db));
+        TRY(set_schema_version(db, 4));
     }
 
     dbgln("DatabaseMigrations: Migration complete");

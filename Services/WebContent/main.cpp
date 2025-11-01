@@ -35,6 +35,7 @@
 #include <LibWebView/Utilities.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/PageClient.h>
+#include <WebContent/PageHost.h>
 #include <WebContent/WebDriverConnection.h>
 
 #if defined(AK_OS_MACOS)
@@ -45,8 +46,8 @@
 
 static ErrorOr<void> load_content_filters(StringView config_path);
 
-static ErrorOr<void> initialize_resource_loader(GC::Heap&, int request_server_socket);
-static ErrorOr<void> reinitialize_resource_loader(IPC::File const& image_decoder_socket);
+static ErrorOr<void> initialize_resource_loader(GC::Heap&, int request_server_socket, WebContent::ConnectionFromClient* webcontent_client);
+static ErrorOr<void> reinitialize_resource_loader(IPC::File const& image_decoder_socket, WebContent::ConnectionFromClient* webcontent_client);
 
 static ErrorOr<void> initialize_image_decoder(int image_decoder_socket);
 static ErrorOr<void> reinitialize_image_decoder(IPC::File const& image_decoder_socket);
@@ -184,7 +185,12 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     if (collect_garbage_on_every_allocation)
         Web::Bindings::main_thread_vm().heap().set_should_collect_on_every_allocation(true);
 
-    TRY(initialize_resource_loader(Web::Bindings::main_thread_vm().heap(), request_server_socket));
+    // TODO: Mach IPC
+
+    auto webcontent_socket = TRY(Core::take_over_socket_from_system_server("WebContent"sv));
+    auto webcontent_client = WebContent::ConnectionFromClient::construct(make<IPC::Transport>(move(webcontent_socket)));
+
+    TRY(initialize_resource_loader(Web::Bindings::main_thread_vm().heap(), request_server_socket, webcontent_client.ptr()));
 
     if (log_all_js_exceptions) {
         JS::set_log_all_js_exceptions(true);
@@ -198,13 +204,8 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     if (maybe_content_filter_error.is_error())
         dbgln("Failed to load content filters: {}", maybe_content_filter_error.error());
 
-    // TODO: Mach IPC
-
-    auto webcontent_socket = TRY(Core::take_over_socket_from_system_server("WebContent"sv));
-    auto webcontent_client = WebContent::ConnectionFromClient::construct(make<IPC::Transport>(move(webcontent_socket)));
-
-    webcontent_client->on_request_server_connection = [&](auto const& socket_file) {
-        if (auto result = reinitialize_resource_loader(socket_file); result.is_error())
+    webcontent_client->on_request_server_connection = [&, wc_ptr = webcontent_client.ptr()](auto const& socket_file) {
+        if (auto result = reinitialize_resource_loader(socket_file, wc_ptr); result.is_error())
             dbgln("Failed to reinitialize resource loader: {}", result.error());
     };
     webcontent_client->on_image_decoder_connection = [&](auto const& socket_file) {
@@ -239,7 +240,7 @@ static ErrorOr<void> load_content_filters(StringView config_path)
     return {};
 }
 
-ErrorOr<void> initialize_resource_loader(GC::Heap& heap, int request_server_socket)
+ErrorOr<void> initialize_resource_loader(GC::Heap& heap, int request_server_socket, WebContent::ConnectionFromClient* webcontent_client)
 {
     // TODO: Mach IPC
     auto socket = TRY(Core::LocalSocket::adopt_fd(request_server_socket));
@@ -251,17 +252,42 @@ ErrorOr<void> initialize_resource_loader(GC::Heap& heap, int request_server_sock
     request_client->transport().set_peer_pid(response->peer_pid());
 #endif
 
+    // Set up traffic alert callback to route to WebContent PageClient
+    if (webcontent_client) {
+        request_client->on_traffic_alert = [wc_ptr = webcontent_client](u64 page_id, ByteString alert_json) {
+            // Find the page and dispatch the alert
+            if (auto page = wc_ptr->page_host().page(page_id); page.has_value()) {
+                page->page().client().page_did_detect_traffic_alert(alert_json);
+            } else {
+                dbgln("Traffic alert received for non-existent page {}", page_id);
+            }
+        };
+    }
+
     Web::ResourceLoader::initialize(heap, move(request_client));
     return {};
 }
 
-ErrorOr<void> reinitialize_resource_loader(IPC::File const& request_server_socket)
+ErrorOr<void> reinitialize_resource_loader(IPC::File const& request_server_socket, WebContent::ConnectionFromClient* webcontent_client)
 {
     // TODO: Mach IPC
     auto socket = TRY(Core::LocalSocket::adopt_fd(request_server_socket.take_fd()));
     TRY(socket->set_blocking(true));
 
     auto request_client = TRY(try_make_ref_counted<Requests::RequestClient>(make<IPC::Transport>(move(socket))));
+
+    // Set up traffic alert callback to route to WebContent PageClient
+    if (webcontent_client) {
+        request_client->on_traffic_alert = [wc_ptr = webcontent_client](u64 page_id, ByteString alert_json) {
+            // Find the page and dispatch the alert
+            if (auto page = wc_ptr->page_host().page(page_id); page.has_value()) {
+                page->page().client().page_did_detect_traffic_alert(alert_json);
+            } else {
+                dbgln("Traffic alert received for non-existent page {}", page_id);
+            }
+        };
+    }
+
     Web::ResourceLoader::the().set_client(move(request_client));
 
     return {};

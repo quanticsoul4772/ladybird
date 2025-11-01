@@ -40,6 +40,7 @@ public:
     bool set_certificate(Badge<Request>, Request&, ByteString, ByteString);
 
     Function<void()> on_request_server_died;
+    Function<void(u64 page_id, ByteString alert_json)> on_traffic_alert;
 
 private:
     virtual void die() override;
@@ -57,6 +58,7 @@ private:
     virtual void websocket_ready_state_changed(i64 websocket_id, u32 ready_state) override;
     virtual void websocket_subprotocol(i64 websocket_id, ByteString subprotocol) override;
     virtual void websocket_certificate_requested(i64 websocket_id) override;
+    virtual void traffic_alert_detected(u64 page_id, ByteString alert_json) override;
 
     HashMap<i32, RefPtr<Request>> m_requests;
     HashMap<i64, NonnullRefPtr<WebSocket>> m_websockets;
