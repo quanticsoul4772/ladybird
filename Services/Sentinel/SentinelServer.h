@@ -8,6 +8,7 @@
 
 #include "ClientRateLimiter.h"
 #include "HealthCheck.h"
+#include "MalwareML.h"
 #include <AK/Error.h>
 #include <AK/HashMap.h>
 #include <AK/NonnullOwnPtr.h>
@@ -75,6 +76,9 @@ private:
     // Circuit breaker for YARA scanning operations
     // Prevents cascade failures when YARA scanner crashes or hangs
     mutable Core::CircuitBreaker m_yara_circuit_breaker { Core::CircuitBreakerPresets::yara_scanner("SentinelServer::YARA"sv) };
+
+    // ML-based malware detection (Milestone 0.4)
+    OwnPtr<MalwareMLDetector> m_ml_detector;
 };
 
 }

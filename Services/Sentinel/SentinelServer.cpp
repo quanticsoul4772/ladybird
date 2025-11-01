@@ -6,6 +6,7 @@
 
 #include "SentinelServer.h"
 #include "InputValidator.h"
+#include "MalwareML.h"
 #include "PolicyGraph.h"
 #include <AK/Base64.h>
 #include <AK/JsonArray.h>
@@ -115,6 +116,20 @@ ErrorOr<NonnullOwnPtr<SentinelServer>> SentinelServer::create()
         return Error::from_string_literal("Failed to listen on /tmp/sentinel.sock");
 
     auto sentinel_server = adopt_own(*new SentinelServer(move(server)));
+
+    // Initialize ML-based malware detection (Milestone 0.4)
+    // For now, use a dummy model path - will be replaced with actual model later
+    auto ml_detector_result = MalwareMLDetector::create("/tmp/dummy_model.tflite");
+    if (ml_detector_result.is_error()) {
+        dbgln("Sentinel: Warning: Failed to initialize ML detector: {}", ml_detector_result.error());
+        dbgln("Sentinel: Continuing with YARA-only scanning");
+        // Continue without ML detection - graceful degradation
+    } else {
+        sentinel_server->m_ml_detector = ml_detector_result.release_value();
+        dbgln("Sentinel: ML-based malware detection initialized (version {})",
+            sentinel_server->m_ml_detector->model_version());
+    }
+
     return sentinel_server;
 }
 
@@ -557,20 +572,54 @@ ErrorOr<ByteString> SentinelServer::scan_content(ReadonlyBytes content)
             offset += chunk_size - OVERLAP_SIZE;
         }
 
-        if (match_data.rule_names.is_empty())
+        bool yara_threat = !match_data.rule_names.is_empty();
+
+        // Run ML-based malware detection on full content (Milestone 0.4)
+        // For large files, we analyze the full content for ML to avoid false negatives
+        bool ml_threat = false;
+        Optional<MalwareMLDetector::Prediction> ml_prediction;
+
+        if (m_ml_detector) {
+            ByteBuffer content_buffer;
+            auto buffer_result = content_buffer.try_append(content);
+            if (!buffer_result.is_error()) {
+                auto prediction_result = m_ml_detector->analyze_file(content_buffer);
+                if (!prediction_result.is_error()) {
+                    ml_prediction = prediction_result.release_value();
+                    ml_threat = ml_prediction->malware_probability > 0.5f;
+                } else {
+                    dbgln("Sentinel: ML analysis failed (streaming): {}", prediction_result.error());
+                }
+            }
+        }
+
+        bool threat_detected = yara_threat || ml_threat;
+
+        if (!threat_detected)
             return ByteString("clean"sv);
 
         // Format matches as detailed JSON response
         JsonObject result_obj;
         result_obj.set("threat_detected"sv, true);
 
-        JsonArray matched_rules_array;
-        for (auto const& rule_detail : match_data.rule_details) {
-            matched_rules_array.must_append(rule_detail);
+        // YARA results
+        if (yara_threat) {
+            JsonArray matched_rules_array;
+            for (auto const& rule_detail : match_data.rule_details) {
+                matched_rules_array.must_append(rule_detail);
+            }
+            result_obj.set("matched_rules"sv, move(matched_rules_array));
+            result_obj.set("match_count"sv, static_cast<i64>(match_data.rule_names.size()));
         }
 
-        result_obj.set("matched_rules"sv, move(matched_rules_array));
-        result_obj.set("match_count"sv, static_cast<i64>(match_data.rule_names.size()));
+        // ML results
+        if (ml_prediction.has_value()) {
+            JsonObject ml_obj;
+            ml_obj.set("malware_probability"sv, static_cast<double>(ml_prediction->malware_probability));
+            ml_obj.set("confidence"sv, static_cast<double>(ml_prediction->confidence));
+            ml_obj.set("explanation"sv, ml_prediction->explanation.bytes_as_string_view());
+            result_obj.set("ml_prediction"sv, move(ml_obj));
+        }
 
         auto json_string = result_obj.serialized();
         return ByteString(json_string.bytes_as_string_view());
@@ -590,20 +639,55 @@ ErrorOr<ByteString> SentinelServer::scan_content(ReadonlyBytes content)
     if (result != ERROR_SUCCESS)
         return Error::from_string_literal("YARA scan failed");
 
-    if (match_data.rule_names.is_empty())
+    bool yara_threat = !match_data.rule_names.is_empty();
+
+    // Run ML-based malware detection (Milestone 0.4)
+    bool ml_threat = false;
+    Optional<MalwareMLDetector::Prediction> ml_prediction;
+
+    if (m_ml_detector) {
+        ByteBuffer content_buffer;
+        // Try to create ByteBuffer from content - if it fails, skip ML analysis
+        auto buffer_result = content_buffer.try_append(content);
+        if (!buffer_result.is_error()) {
+            auto prediction_result = m_ml_detector->analyze_file(content_buffer);
+            if (!prediction_result.is_error()) {
+                ml_prediction = prediction_result.release_value();
+                ml_threat = ml_prediction->malware_probability > 0.5f;
+            } else {
+                dbgln("Sentinel: ML analysis failed: {}", prediction_result.error());
+            }
+        }
+    }
+
+    // Combine YARA and ML results
+    bool threat_detected = yara_threat || ml_threat;
+
+    if (!threat_detected)
         return ByteString("clean"sv);
 
     // Format matches as detailed JSON response
     JsonObject result_obj;
     result_obj.set("threat_detected"sv, true);
 
-    JsonArray matched_rules_array;
-    for (auto const& rule_detail : match_data.rule_details) {
-        matched_rules_array.must_append(rule_detail);
+    // YARA results
+    if (yara_threat) {
+        JsonArray matched_rules_array;
+        for (auto const& rule_detail : match_data.rule_details) {
+            matched_rules_array.must_append(rule_detail);
+        }
+        result_obj.set("matched_rules"sv, move(matched_rules_array));
+        result_obj.set("match_count"sv, static_cast<i64>(match_data.rule_names.size()));
     }
 
-    result_obj.set("matched_rules"sv, move(matched_rules_array));
-    result_obj.set("match_count"sv, static_cast<i64>(match_data.rule_names.size()));
+    // ML results
+    if (ml_prediction.has_value()) {
+        JsonObject ml_obj;
+        ml_obj.set("malware_probability"sv, static_cast<double>(ml_prediction->malware_probability));
+        ml_obj.set("confidence"sv, static_cast<double>(ml_prediction->confidence));
+        ml_obj.set("explanation"sv, ml_prediction->explanation.bytes_as_string_view());
+        result_obj.set("ml_prediction"sv, move(ml_obj));
+    }
 
     auto json_string = result_obj.serialized();
     return ByteString(json_string.bytes_as_string_view());
