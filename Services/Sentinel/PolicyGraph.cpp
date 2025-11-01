@@ -1725,31 +1725,53 @@ ErrorOr<Vector<PolicyGraph::PolicyTemplate>> PolicyGraph::list_templates(Optiona
 {
     Vector<PolicyTemplate> templates;
 
-    auto statement_id = category_filter.has_value()
-        ? m_statements.list_templates_filtered
-        : m_statements.list_templates_all;
+    // Execute appropriate query based on whether filter is provided
+    if (category_filter.has_value()) {
+        // Filtered query expects 1 parameter (category)
+        m_database->execute_statement(
+            m_statements.list_templates_filtered,
+            [&](auto statement_id) {
+                PolicyTemplate tmpl;
+                int col = 0;
+                tmpl.id = m_database->result_column<i64>(statement_id, col++);
+                tmpl.name = m_database->result_column<String>(statement_id, col++);
+                tmpl.description = m_database->result_column<String>(statement_id, col++);
+                tmpl.category = m_database->result_column<String>(statement_id, col++);
+                tmpl.template_json = m_database->result_column<String>(statement_id, col++);
+                tmpl.is_builtin = m_database->result_column<i64>(statement_id, col++) != 0;
+                tmpl.created_at = m_database->result_column<UnixDateTime>(statement_id, col++);
 
-    m_database->execute_statement(
-        statement_id,
-        [&](auto stmt_id) {
-            PolicyTemplate tmpl;
-            int col = 0;
-            tmpl.id = m_database->result_column<i64>(stmt_id, col++);
-            tmpl.name = m_database->result_column<String>(stmt_id, col++);
-            tmpl.description = m_database->result_column<String>(stmt_id, col++);
-            tmpl.category = m_database->result_column<String>(stmt_id, col++);
-            tmpl.template_json = m_database->result_column<String>(stmt_id, col++);
-            tmpl.is_builtin = m_database->result_column<i64>(stmt_id, col++) != 0;
-            tmpl.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+                auto updated_ms = m_database->result_column<i64>(statement_id, col++);
+                if (updated_ms > 0)
+                    tmpl.updated_at = UnixDateTime::from_milliseconds_since_epoch(updated_ms);
 
-            auto updated_ms = m_database->result_column<i64>(stmt_id, col++);
-            if (updated_ms > 0)
-                tmpl.updated_at = UnixDateTime::from_milliseconds_since_epoch(updated_ms);
+                templates.append(move(tmpl));
+            },
+            category_filter.value()
+        );
+    } else {
+        // Non-filtered query expects 0 parameters
+        m_database->execute_statement(
+            m_statements.list_templates_all,
+            [&](auto statement_id) {
+                PolicyTemplate tmpl;
+                int col = 0;
+                tmpl.id = m_database->result_column<i64>(statement_id, col++);
+                tmpl.name = m_database->result_column<String>(statement_id, col++);
+                tmpl.description = m_database->result_column<String>(statement_id, col++);
+                tmpl.category = m_database->result_column<String>(statement_id, col++);
+                tmpl.template_json = m_database->result_column<String>(statement_id, col++);
+                tmpl.is_builtin = m_database->result_column<i64>(statement_id, col++) != 0;
+                tmpl.created_at = m_database->result_column<UnixDateTime>(statement_id, col++);
 
-            templates.append(move(tmpl));
-        },
-        category_filter.has_value() ? category_filter.value() : ""_string
-    );
+                auto updated_ms = m_database->result_column<i64>(statement_id, col++);
+                if (updated_ms > 0)
+                    tmpl.updated_at = UnixDateTime::from_milliseconds_since_epoch(updated_ms);
+
+                templates.append(move(tmpl));
+            }
+        );
+    }
 
     return templates;
 }

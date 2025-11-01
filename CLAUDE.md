@@ -7,7 +7,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a **personal learning fork** of Ladybird Browser with experimental privacy and security features. Not production-ready or intended for upstream contribution.
 
 Fork-specific features:
-- **Sentinel Service** (`Services/Sentinel/`): YARA-based malware detection for downloads
+- **Sentinel Service** (`Services/Sentinel/`): Multi-layered security system
+  - YARA-based malware detection with ML enhancement (TensorFlow Lite)
+  - Real-time credential exfiltration detection (FormMonitor)
+  - Browser fingerprinting detection and scoring
+  - Phishing URL analysis (URLSecurityAnalyzer)
+  - PolicyGraph database for security policies and trusted relationships
 - **Network Privacy**: Tor integration, IPFS/IPNS support, ENS resolution
 - **Enhanced IPC Security**: Rate limiting, SafeMath, ValidatedDecoder (experimental)
 
@@ -93,6 +98,30 @@ ninja -C Build/release lint-shell-scripts
 ./Tests/LibWeb/add_libweb_test.py my-test Screenshot # Screenshot test
 ```
 
+### Testing Fork Features
+```bash
+# Sentinel component tests
+./Build/release/bin/TestFingerprintingDetector  # Fingerprinting detection
+./Build/release/bin/TestPolicyGraph              # Policy database
+
+# Test fingerprinting detection in browser
+# 1. Run Ladybird
+./Build/release/bin/Ladybird
+# 2. Load test page
+file:///home/rbsmith4/ladybird/test_canvas_fingerprinting.html
+
+# Test with real fingerprinting sites
+# - https://browserleaks.com/canvas
+# - https://amiunique.org/fingerprint
+# - https://coveryourtracks.eff.org/
+
+# Credential protection tests
+./Meta/ladybird.py run test-web -- -f Text/input/credential-protection-*.html
+
+# Enable debug logging
+WEBCONTENT_DEBUG=1 LIBWEB_DEBUG=1 ./Build/release/bin/Ladybird
+```
+
 ## Code Architecture
 
 ### Multi-Process Design
@@ -103,15 +132,20 @@ Ladybird uses a **sandboxed multi-process architecture**:
 UI Process (Browser)
 ├── WebContent Process (per tab, sandboxed)
 │   ├── LibWeb (HTML/CSS rendering)
-│   └── LibJS (JavaScript execution)
+│   ├── LibJS (JavaScript execution)
+│   ├── FormMonitor (credential exfiltration detection) [Fork]
+│   └── FingerprintingDetector (browser fingerprinting detection) [Fork]
 ├── RequestServer Process (per WebContent)
 │   ├── HTTP/HTTPS requests
 │   ├── Fork: Tor/IPFS/VPN support
-│   └── Fork: SecurityTap integration
+│   ├── Fork: SecurityTap (YARA malware scanning)
+│   └── Fork: URLSecurityAnalyzer (phishing detection)
 ├── ImageDecoder Process (per image, sandboxed)
 ├── Sentinel Service (standalone daemon) [Fork]
-│   ├── YARA rule engine
+│   ├── YARA rule engine + ML (TensorFlow Lite)
 │   ├── PolicyGraph SQLite database
+│   ├── PhishingURLAnalyzer
+│   ├── FormAnomalyDetector
 │   └── Unix socket IPC (/tmp/sentinel.sock)
 ├── WebDriver Process (browser automation)
 └── WebWorker Process (Web Workers)
@@ -151,9 +185,19 @@ Located in `Libraries/`:
 - `LibWebView/` - Bridge between UI and WebContent
 
 **Fork Enhancements**:
+- `Services/Sentinel/` - Security detection components:
+  - `PolicyGraph.{h,cpp}` - Security policy database (SQLite)
+  - `FingerprintingDetector.{h,cpp}` - Browser fingerprinting detection
+  - `PhishingURLAnalyzer.{h,cpp}` - Phishing URL analysis
+  - `FormAnomalyDetector.{h,cpp}` - Anomalous form behavior detection
+  - `MalwareML.{h,cpp}` - ML-based malware detection (TensorFlow Lite)
+- `Services/RequestServer/SecurityTap.{h,cpp}` - YARA integration for downloads
+- `Services/RequestServer/URLSecurityAnalyzer.{h,cpp}` - Real-time phishing detection
+- `Services/WebContent/FormMonitor.{h,cpp}` - Credential exfiltration detection
+- `Services/WebContent/PageClient.{h,cpp}` - Fingerprinting detector integration
+- `Libraries/LibWeb/HTML/HTMLCanvasElement.cpp` - Canvas fingerprinting hooks
+- `Libraries/LibWeb/HTML/CanvasRenderingContext2D.cpp` - Canvas API monitoring
 - `LibWebView/SentinelConfig.h` - Sentinel configuration
-- `Services/RequestServer/SecurityTap.h` - YARA integration
-- `Services/Sentinel/PolicyGraph.h` - Security policy database
 
 ## Coding Style
 
@@ -272,6 +316,83 @@ Examples:
 
 Write in imperative mood: "Add feature" not "Added feature" or "Adds feature".
 
+## Fork-Specific Architecture Patterns
+
+### Security Detection Pattern
+
+All fork security features follow a consistent pattern:
+
+```cpp
+// 1. Detector in Services/Sentinel/ (core logic, no LibWeb dependencies)
+class FingerprintingDetector {
+    static ErrorOr<NonnullOwnPtr<FingerprintingDetector>> create();
+    void record_api_call(FingerprintingTechnique, StringView api_name, bool had_user_interaction);
+    FingerprintingScore calculate_score() const;
+};
+
+// 2. Integration in WebContent/PageClient (owns detector instance)
+class PageClient {
+    OwnPtr<Sentinel::FingerprintingDetector> m_fingerprinting_detector;
+    void notify_fingerprinting_api_call(/* params */);
+};
+
+// 3. Hooks in LibWeb (call into detector)
+// Libraries/LibWeb/HTML/HTMLCanvasElement.cpp
+ErrorOr<String> HTMLCanvasElement::to_data_url(/* params */) {
+    // ... existing implementation ...
+
+    // Hook: Record fingerprinting API call
+    if (auto* page = document().page())
+        page->notify_fingerprinting_api_call(/* params */);
+
+    return result;
+}
+```
+
+### PolicyGraph Integration Pattern
+
+Security decisions use PolicyGraph for persistent storage:
+
+```cpp
+// 1. Check existing policy
+auto result = m_policy_graph->evaluate_policy(domain, resource);
+if (result.has_value()) {
+    // Use cached decision
+    return result.value();
+}
+
+// 2. Detect threat
+auto score = detector->calculate_score();
+if (score.is_aggressive()) {
+    // 3. Alert user (via IPC to UI)
+    send_security_alert(/* params */);
+
+    // 4. User decision stored in PolicyGraph
+    m_policy_graph->create_policy(domain, resource, user_choice);
+}
+```
+
+### Graceful Degradation
+
+All fork features implement graceful degradation:
+
+```cpp
+// Always use TRY and handle failures
+auto detector = TRY(FingerprintingDetector::create());
+
+// Check for null before use
+if (m_fingerprinting_detector) {
+    m_fingerprinting_detector->record_api_call(/* params */);
+}
+
+// Never fail core browser functionality
+// If security feature fails, log and continue
+if (auto result = detector->analyze(); result.is_error()) {
+    dbgln("Warning: Fingerprinting detection failed: {}", result.error());
+    // Continue normal page operation
+}
+```
+
 ## Important Development Notes
 
 ### Web Standards Implementation
@@ -320,7 +441,22 @@ Located in `Documentation/`:
 Fork-specific docs in `docs/`:
 - `FORK.md` - Fork overview
 - `FEATURES.md` - Detailed feature documentation
-- `SENTINEL_*.md` - Sentinel system documentation
+- `CHANGELOG.md` - Sentinel development changelog
+- **Sentinel System**:
+  - `SENTINEL_ARCHITECTURE.md` - System architecture
+  - `SENTINEL_SETUP_GUIDE.md` - Installation guide
+  - `SENTINEL_USER_GUIDE.md` - End-user documentation
+  - `SENTINEL_POLICY_GUIDE.md` - Policy management
+  - `SENTINEL_YARA_RULES.md` - Rule documentation
+- **Security Features**:
+  - `USER_GUIDE_CREDENTIAL_PROTECTION.md` - Credential protection guide
+  - `FINGERPRINTING_DETECTION_ARCHITECTURE.md` - Fingerprinting detection docs
+  - `PHISHING_DETECTION_ARCHITECTURE.md` - Phishing detection docs
+  - `TENSORFLOW_LITE_INTEGRATION.md` - ML malware detection docs
+- **Development**:
+  - `MILESTONE_0.3_PLAN.md` - Credential protection milestone
+  - `MILESTONE_0.4_PLAN.md` - Advanced detection milestone
+  - `MILESTONE_0.4_TECHNICAL_SPECS.md` - Technical specifications
 
 ## Entry Points
 
@@ -333,3 +469,40 @@ Key entry point files:
 - WebDriver: `Services/WebDriver/main.cpp`
 
 All use `ladybird_main(Main::Arguments arguments)` instead of standard `main()`.
+
+## Sentinel Development Milestones
+
+This fork follows a structured development plan:
+
+### Milestone 0.1 - Malware Scanning (Complete)
+- YARA-based malware detection for downloads
+- SecurityTap integration with RequestServer
+- PolicyGraph SQLite database
+- Quarantine system and security alerts
+
+### Milestone 0.2 - Credential Protection (Complete)
+- FormMonitor for cross-origin credential submissions
+- Trusted form relationship management
+- Password autofill protection
+- User education and security tips
+
+### Milestone 0.3 - Enhanced Credential Protection (Complete)
+- Phase 1-6: Database schema, API, FormMonitor integration
+- Import/export UI for credential relationships
+- Policy template system
+- Form anomaly detection
+
+### Milestone 0.4 - Advanced Detection (In Progress)
+- **Phase 1**: ML-based malware detection (TensorFlow Lite) ✅
+- **Phase 4**: Browser fingerprinting detection ✅
+- **Phase 5**: Phishing URL analysis ✅
+- Pending: WebGL/Audio/Navigator fingerprinting hooks
+- Pending: User alerts and policy UI integration
+
+When working on Sentinel features:
+1. Core detection logic goes in `Services/Sentinel/` (no LibWeb dependencies)
+2. Integration hooks go in `Services/WebContent/` or `Services/RequestServer/`
+3. LibWeb hooks are minimal - just call into PageClient
+4. All features must gracefully degrade if initialization fails
+5. Unit tests in `Services/Sentinel/Test*.cpp`
+6. Browser tests in `Tests/LibWeb/Text/input/`

@@ -74,62 +74,9 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     // Initialize SecurityTap for Sentinel integration
     auto security_tap = RequestServer::SecurityTap::create();
     if (security_tap.is_error()) {
-        // Sentinel not available - try to auto-start it
         dbgln("RequestServer: SecurityTap initialization failed: {}", security_tap.error());
-        dbgln("RequestServer: Attempting to auto-start Sentinel daemon...");
-
-        // Try to find and start Sentinel binary
-        // Get the directory containing the current executable
-        auto exe_path_result = Core::System::current_executable_path();
-        if (exe_path_result.is_error()) {
-            dbgln("RequestServer: Failed to get current executable path: {}", exe_path_result.error());
-            dbgln("RequestServer: Continuing without Sentinel security scanning");
-        } else {
-            auto exe_path = exe_path_result.release_value();
-            auto exe_dir = LexicalPath::dirname(exe_path);
-
-            // Look in the same directory as RequestServer (libexec)
-            auto sentinel_path = ByteString::formatted("{}/Sentinel", exe_dir);
-
-            // Alternative: check in bin directory (one level up from libexec)
-            if (!FileSystem::exists(sentinel_path)) {
-                sentinel_path = ByteString::formatted("{}/../bin/Sentinel", exe_dir);
-            }
-
-            if (FileSystem::exists(sentinel_path)) {
-            dbgln("RequestServer: Found Sentinel at: {}", sentinel_path);
-
-            // Spawn Sentinel as a detached background process
-            auto spawn_result = Core::Process::spawn({
-                .executable = sentinel_path,
-                .search_for_executable_in_path = false,
-                .arguments = Vector<ByteString> { "Sentinel"sv }
-            });
-
-            if (!spawn_result.is_error()) {
-                dbgln("RequestServer: Sentinel daemon started successfully (PID: {})", spawn_result.value().pid());
-
-                // Wait briefly for Sentinel to initialize its socket
-                usleep(500000); // 500ms
-
-                // Retry SecurityTap connection
-                security_tap = RequestServer::SecurityTap::create();
-                if (!security_tap.is_error()) {
-                    RequestServer::g_security_tap = security_tap.release_value().leak_ptr();
-                    dbgln("RequestServer: SecurityTap connected to auto-started Sentinel");
-                } else {
-                    dbgln("RequestServer: Failed to connect to Sentinel after auto-start: {}", security_tap.error());
-                    dbgln("RequestServer: Continuing without Sentinel security scanning");
-                }
-            } else {
-                dbgln("RequestServer: Failed to start Sentinel: {}", spawn_result.error());
-                dbgln("RequestServer: Continuing without Sentinel security scanning");
-            }
-            } else {
-                dbgln("RequestServer: Sentinel binary not found at expected locations");
-                dbgln("RequestServer: Continuing without Sentinel security scanning");
-            }
-        }
+        dbgln("RequestServer: Continuing without Sentinel security scanning");
+        RequestServer::g_security_tap = nullptr;
     } else {
         RequestServer::g_security_tap = security_tap.release_value().leak_ptr();
         dbgln("RequestServer: SecurityTap initialized successfully");

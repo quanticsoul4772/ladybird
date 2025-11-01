@@ -167,10 +167,15 @@ void ConnectionFromClient::update_screen_rects(u64 page_id, Vector<Web::DevicePi
 
 void ConnectionFromClient::load_url(u64 page_id, URL::URL url)
 {
-    auto page = this->page(page_id);
-    if (!page.has_value())
-        return;
+    dbgln("WebContent::load_url: page_id={}, url={}", page_id, url);
 
+    auto page = this->page(page_id);
+    if (!page.has_value()) {
+        dbgln("WebContent::load_url: ERROR - page_id {} not found!", page_id);
+        return;
+    }
+
+    dbgln("WebContent::load_url: calling page->page().load()");
     page->page().load(url);
 }
 

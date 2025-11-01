@@ -98,8 +98,9 @@ u64 ViewImplementation::page_id() const
 
 void ViewImplementation::create_new_process_for_cross_site_navigation(URL::URL const& url)
 {
-    if (m_client_state.client)
-        client().async_close_server();
+    // Simply replace the old client with a new one
+    // The old WebContent process will be cleaned up automatically
+    m_client_state.client = nullptr;
 
     initialize_client();
     VERIFY(m_client_state.client);
