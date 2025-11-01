@@ -1,0 +1,33 @@
+{
+  "name": "ladybird-playwright-tests",
+  "version": "1.0.0",
+  "description": "End-to-end tests for Ladybird browser with Sentinel security features",
+  "scripts": {
+    "test": "playwright test",
+    "test:p0": "playwright test --grep @p0",
+    "test:p1": "playwright test --grep '@p0|@p1'",
+    "test:p2": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "report": "playwright show-report",
+    "codegen": "playwright codegen"
+  },
+  "keywords": [
+    "playwright",
+    "e2e",
+    "browser-testing",
+    "ladybird",
+    "sentinel",
+    "security"
+  ],
+  "author": "rbsmith4",
+  "license": "BSD-2-Clause",
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
