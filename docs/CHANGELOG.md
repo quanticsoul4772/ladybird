@@ -1,5 +1,91 @@
 # Sentinel Changelog
 
+## Milestone 0.4 Phase 2 & 3 - ML Malware Detection & Federated Intelligence (2025-11-01)
+
+Complete implementation of ML infrastructure and federated threat sharing.
+
+### Phase 2: ML Malware Detection
+
+**Features**:
+- TensorFlow Lite integration with automatic fallback to heuristic mode
+- ML stub (simulated 6→16→2 neural network) for testing without TFLite
+- Shannon entropy calculation for packed malware detection
+- PE structure analysis (header anomalies, import table, code-to-data ratio)
+- Suspicious string detection (URLs, IPs, registry keys, API calls)
+- Prediction with confidence scoring and threat categories
+
+**Components**:
+- `Services/Sentinel/MalwareML.{h,cpp}`: Core ML detector with 6-feature extraction
+- `Services/Sentinel/CMakeLists.txt`: TFLite detection with USE_ML_STUB fallback
+- `docs/TENSORFLOW_LITE_INTEGRATION.md`: Integration guide for production deployment
+
+**Testing**:
+- ✅ Complete - All 6/6 tests passing
+- ML stub weight initialization fixed
+- Heuristic detection fully operational as fallback to TensorFlow Lite
+
+### Phase 3: Federated Threat Intelligence
+
+**Features**:
+- Bloom filter for 100M threat hashes (143 MB, 10 hash functions)
+- IPFS threat feed synchronization (mock + real IPFS daemon support)
+- Federated learning with differential privacy (ε=0.1, Laplace/Gaussian noise)
+- Privacy-preserving gradient aggregation with k-anonymity (min 100 participants)
+- Gradient clipping for bounded sensitivity (L2 norm ≤ 1.0)
+- ThreatFeed integration with category-based scoring
+
+**Components**:
+- `Services/Sentinel/BloomFilter.{h,cpp}`: Space-efficient threat hash storage
+- `Services/Sentinel/ThreatFeed.{h,cpp}`: Threat management with bloom filter
+- `Services/Sentinel/IPFSThreatSync.{h,cpp}`: IPFS-based decentralized threat sharing
+- `Services/Sentinel/FederatedLearning.{h,cpp}`: Privacy-preserving ML aggregation
+
+**Testing**:
+- ✅ TestBloomFilter: 10/10 tests passed
+  - Basic operations, serialization, merging
+  - False positive rate validation (< 5%)
+  - Stress test with 10,000 items
+  - Federated learning gradient privatization
+  - IPFS mock threat synchronization
+
+**Privacy Guarantees**:
+- Differential privacy with ε=0.1 (strong privacy)
+- K-anonymity with minimum 100 participants
+- Gradient clipping to prevent information leakage
+- Local training only, shared gradients not raw data
+
+## Milestone 0.4 Phase 4 - Browser Fingerprinting Detection (2025-11-01)
+
+LibWeb integration complete for browser fingerprinting detection.
+
+### Features
+
+- WebGL fingerprinting detection (12 hooks)
+- AudioContext fingerprinting detection (4 hooks)
+- Navigator property enumeration tracking (6 high-priority properties)
+- IPC alert dispatch with JSON payload
+- Real-time aggressiveness scoring (0.0-1.0)
+- Multi-technique detection (Canvas + WebGL + Audio + Navigator)
+
+### Components
+
+- Libraries/LibWeb/WebGL: getParameter, getSupportedExtensions, getExtension hooks
+- Libraries/LibWeb/WebAudio: createOscillator, createAnalyser, data extraction hooks
+- Libraries/LibWeb/HTML: Navigator property getters (userAgent, platform, hardwareConcurrency, language, plugins, mimeTypes)
+- Services/WebContent/PageClient: IPC alert dispatcher with JSON format
+- Services/Sentinel/FingerprintingDetector: Already complete (Milestone 0.4 Phase 4 core)
+
+### Testing
+
+- 10/10 unit tests passing (TestFingerprintingDetector)
+- Zero compilation warnings or errors
+- All hooks follow established Canvas pattern
+
+### Documentation
+
+- FINGERPRINTING_DETECTION_ARCHITECTURE.md: Updated to Production-Ready
+- MILESTONE_0.4_PLAN.md: Phase 4 marked complete
+
 ## Milestone 0.2 - Credential Protection (2025-10-31)
 
 Added real-time credential exfiltration detection and protection.
