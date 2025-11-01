@@ -1,0 +1,303 @@
+# Bad Commit Message Examples (Anti-Patterns)
+
+## ❌ No Category Prefix
+
+Fix memory leak
+
+✅ Should be:
+LibJS: Fix memory leak in running_execution_context()
+
+---
+
+## ❌ Non-Imperative Mood
+
+LibWeb: Added CSS grid support
+
+✅ Should be:
+LibWeb: Add CSS grid support
+
+---
+
+## ❌ Past Tense
+
+Sentinel: Fixed fingerprinting detector crash
+
+✅ Should be:
+Sentinel: Fix fingerprinting detector crash
+
+---
+
+## ❌ Gerund Form (-ing)
+
+LibWeb: Adding canvas API support
+
+✅ Should be:
+LibWeb: Add canvas API support
+
+---
+
+## ❌ Too Vague
+
+Fix bug
+
+✅ Should be:
+LibJS: Fix off-by-one error in array iteration
+
+---
+
+## ❌ First Line Too Long
+
+LibWeb: Implement the complete constraint validation API for HTML input elements including all validity states and error messages
+
+✅ Should be (72 chars max):
+LibWeb: Implement HTMLInputElement constraint validation API
+
+---
+
+## ❌ Period at End of First Line
+
+LibWeb: Add CSS grid support.
+
+✅ Should be:
+LibWeb: Add CSS grid support
+
+---
+
+## ❌ Lowercase First Letter
+
+LibWeb: add CSS grid support
+
+✅ Should be:
+LibWeb: Add CSS grid support
+
+---
+
+## ❌ No Description
+
+fix
+
+✅ Should be:
+LibWeb: Fix crash when parsing invalid CSS
+
+---
+
+## ❌ Wrong Category
+
+HTML: Add CSS grid support
+
+✅ Should be (it's in LibWeb, not just HTML):
+LibWeb: Add CSS grid support
+
+---
+
+## ❌ Multiple Changes in One Commit
+
+LibWeb: Add grid support, fix flexbox bug, update documentation
+
+✅ Should be (separate commits):
+Commit 1: LibWeb: Add CSS grid support
+Commit 2: LibWeb: Fix flexbox alignment bug
+Commit 3: docs: Update CSS implementation status
+
+---
+
+## ❌ Explaining WHAT Instead of WHY
+
+LibWeb: Changed variable name from x to element_count
+
+✅ Should be:
+LibWeb: Use descriptive variable names in layout algorithm
+
+Variable names like 'x' and 'i' were making the complex
+layout algorithm difficult to understand. Renamed to
+semantic names matching the spec terminology.
+
+---
+
+## ❌ No Spec Link for Web Standards
+
+LibWeb: Implement constraint validation
+
+✅ Should be:
+LibWeb: Implement HTMLInputElement constraint validation
+
+Implements the constraint validation API from HTML spec:
+https://html.spec.whatwg.org/multipage/form-control-infrastructure.html
+
+---
+
+## ❌ Commit Message in Body
+
+git commit -m "LibWeb: Add canvas API" -m "This commit adds canvas API"
+
+✅ Should be:
+LibWeb: Add canvas API
+
+Implements CanvasRenderingContext2D from HTML spec.
+Includes all basic drawing operations.
+
+---
+
+## ❌ Personal Attribution
+
+LibWeb: Add CSS grid (by John Doe)
+
+✅ Should be (git tracks authorship automatically):
+LibWeb: Add CSS grid support
+
+---
+
+## ❌ Emoji in Commit Message
+
+✨ LibWeb: Add CSS grid support 🎉
+
+✅ Should be (professional commits only):
+LibWeb: Add CSS grid support
+
+---
+
+## ❌ Merge Commit Without Context
+
+Merge branch 'feature/my-feature'
+
+✅ Should be:
+Merge feature/css-grid-implementation
+
+Implements CSS grid layout engine with full spec compliance.
+Includes layout algorithms, computed values, and painting.
+
+---
+
+## ❌ "Fix" Without Saying What Was Broken
+
+Fix it
+
+✅ Should be:
+LibJS: Fix use-after-free in garbage collector
+
+The GC was accessing freed memory during weak reference cleanup.
+
+---
+
+## ❌ WIP Commit in Main Branch
+
+WIP: working on canvas
+
+✅ Should be (never push WIP to main):
+LibWeb: Add initial canvas API implementation
+
+---
+
+## ❌ Debug/Temp Commit Messages
+
+asdf
+test
+debug
+temp
+aaa
+
+✅ Should be:
+Never commit with debug messages. Use proper descriptions.
+
+---
+
+## ❌ Inconsistent Category Names
+
+libweb: Add CSS grid   (lowercase)
+Libweb: Add flexbox    (wrong case)
+
+✅ Should be (consistent CamelCase):
+LibWeb: Add CSS grid support
+LibWeb: Add flexbox layout support
+
+---
+
+## ❌ Generic "Update" Without Details
+
+Update file
+
+✅ Should be:
+LibWeb: Implement CSS cascade algorithm
+
+Updated StyleResolver to properly handle cascade layers
+and @import order per CSS Cascade spec.
+
+---
+
+## ❌ Combining Unrelated Changes
+
+LibWeb: Add canvas API and fix unrelated memory leak in parser
+
+✅ Should be (separate commits):
+Commit 1: LibWeb: Add canvas API
+Commit 2: LibWeb: Fix memory leak in CSS parser
+
+---
+
+## ❌ Referencing Code Lines
+
+Fix bug on line 42
+
+✅ Should be:
+LibJS: Fix array bounds check in element access
+
+The bounds check was comparing unsigned values incorrectly,
+causing out-of-bounds access for negative indices.
+
+---
+
+## ❌ Missing Context for "Fix"
+
+Fix crash
+
+✅ Should be:
+LibWeb: Fix crash when rendering empty flex containers
+
+The flex layout algorithm assumed at least one child,
+causing null pointer dereference for empty containers.
+
+---
+
+## ❌ Abbreviations Without Explanation
+
+LibWeb: Add GC for DOM nodes
+
+✅ Should be (spell out on first use):
+LibWeb: Add garbage collection for DOM nodes
+
+Implements generational garbage collector to automatically
+reclaim unused DOM nodes and prevent memory leaks.
+
+---
+
+## ❌ Code Review Comments as Commit Messages
+
+Address review feedback
+Fix nits
+Apply suggestions
+
+✅ Should be (squash into original commit):
+Use git commit --amend or git rebase -i to incorporate
+feedback into the original commit with proper message.
+
+---
+
+## ❌ Version/Date in Commit Message
+
+LibWeb: Add CSS grid (v1.2.3, 2024-11-01)
+
+✅ Should be (git tracks dates/versions):
+LibWeb: Add CSS grid support
+
+---
+
+## ❌ External References Without Context
+
+See #123
+
+✅ Should be:
+LibWeb: Fix input validation bug
+
+The email input type was not properly validating TLDs.
+
+Fixes #123

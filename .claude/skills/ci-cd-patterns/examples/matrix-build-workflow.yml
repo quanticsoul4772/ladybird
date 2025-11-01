@@ -1,0 +1,193 @@
+# Matrix Build Workflow for Ladybird
+# Tests multiple OS, compiler, and configuration combinations
+
+name: Matrix Build
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix-build:
+    name: ${{ matrix.os }} / ${{ matrix.compiler.name }} / ${{ matrix.preset }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false  # Continue other jobs if one fails
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-22.04
+          - macos-15
+          - macos-14
+
+        compiler:
+          - name: GCC 14
+            cc: gcc-14
+            cxx: g++-14
+            os_filter: ubuntu
+          - name: GCC 13
+            cc: gcc-13
+            cxx: g++-13
+            os_filter: ubuntu
+          - name: Clang 20
+            cc: clang-20
+            cxx: clang++-20
+            os_filter: ubuntu
+          - name: Clang 19
+            cc: clang-19
+            cxx: clang++-19
+            os_filter: ubuntu
+          - name: Apple Clang
+            cc: clang
+            cxx: clang++
+            os_filter: macos
+
+        preset:
+          - Release
+          - Debug
+
+        # Exclude invalid combinations
+        exclude:
+          # GCC only on Linux
+          - os: macos-15
+            compiler:
+              name: GCC 14
+          - os: macos-15
+            compiler:
+              name: GCC 13
+          - os: macos-14
+            compiler:
+              name: GCC 14
+          - os: macos-14
+            compiler:
+              name: GCC 13
+
+          # Clang 19/20 only on Ubuntu 24.04
+          - os: ubuntu-22.04
+            compiler:
+              name: Clang 20
+          - os: ubuntu-22.04
+            compiler:
+              name: Clang 19
+
+          # Apple Clang only on macOS
+          - os: ubuntu-24.04
+            compiler:
+              name: Apple Clang
+          - os: ubuntu-22.04
+            compiler:
+              name: Apple Clang
+
+        # Add special configurations
+        include:
+          # Sanitizer builds (primary safety check)
+          - os: ubuntu-24.04
+            compiler:
+              name: Clang 20
+              cc: clang-20
+              cxx: clang++-20
+            preset: Sanitizer
+
+          # Fuzzer build
+          - os: ubuntu-24.04
+            compiler:
+              name: Clang 20
+              cc: clang-20
+              cxx: clang++-20
+            preset: Fuzzers
+
+          # Distribution build (static linking)
+          - os: ubuntu-24.04
+            compiler:
+              name: GCC 14
+              cc: gcc-14
+              cxx: g++-14
+            preset: Distribution
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Install Dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            ccache \
+            ${{ matrix.compiler.cc }} \
+            ${{ matrix.compiler.cxx }}
+
+      - name: Install Dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake ninja ccache pkg-config
+
+      - name: Set up vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git Build/vcpkg
+          ./Build/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ${{ runner.os }}-${{ matrix.compiler.name }}-${{ matrix.preset }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.compiler.name }}-${{ matrix.preset }}-
+            ${{ runner.os }}-${{ matrix.compiler.name }}-
+
+      - name: Restore vcpkg Cache
+        uses: actions/cache@v4
+        with:
+          path: Build/caches/vcpkg-binary-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Configure ccache
+        run: |
+          ccache --set-config=max_size=2G
+          ccache --set-config=compression=true
+          ccache --zero-stats
+
+      - name: Configure Build
+        env:
+          CC: ${{ matrix.compiler.cc }}
+          CXX: ${{ matrix.compiler.cxx }}
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
+          VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/Build/caches/vcpkg-binary-cache,readwrite"
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: cmake --build Build --parallel $(nproc 2>/dev/null || sysctl -n hw.ncpu)
+
+      - name: ccache Statistics
+        run: ccache --show-stats
+
+      - name: Run Tests
+        if: matrix.preset != 'Fuzzers'
+        run: ctest --preset ${{ matrix.preset }} --output-on-failure
+
+      - name: Upload Build Artifacts
+        if: matrix.preset == 'Distribution'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ladybird-${{ runner.os }}-${{ matrix.compiler.name }}
+          path: |
+            Build/distribution/bin/Ladybird
+            Build/distribution/bin/WebContent
+            Build/distribution/bin/RequestServer
+          retention-days: 7

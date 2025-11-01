@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<link rel="match" href="ref-test-reference.html" />
+<head>
+<style>
+    /* Ref test for CSS box-shadow */
+    /* Spec: https://www.w3.org/TR/css-backgrounds-3/#box-shadow */
+
+    .box {
+        width: 100px;
+        height: 100px;
+        background: white;
+        margin: 50px;
+
+        /* Complex shadow using box-shadow property */
+        box-shadow: 10px 10px 20px rgba(0, 0, 0, 0.5);
+    }
+</style>
+</head>
+<body>
+    <div class="box"></div>
+</body>
+
+<!--
+This ref test compares the visual rendering of box-shadow
+against a reference page that achieves the same visual effect
+using a simpler technique (or validates the shadow renders correctly).
+
+The reference page (ref-test-reference.html) should render
+identically to this page.
+
+To run:
+./Meta/ladybird.py run test-web -f Ref/input/ref-test-example.html
+-->

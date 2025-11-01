@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<head>
+<style>
+    /* Layout test for CSS Flexbox */
+    /* Spec: https://www.w3.org/TR/css-flexbox-1/ */
+
+    .container {
+        display: flex;
+        width: 400px;
+        height: 200px;
+        border: 2px solid black;
+        gap: 10px;
+    }
+
+    .item {
+        flex: 1;
+        background: lightblue;
+        border: 1px solid blue;
+    }
+
+    .item:nth-child(2) {
+        flex: 2; /* Second item is twice as wide */
+    }
+</style>
+</head>
+<body>
+    <div class="container">
+        <div class="item">Item 1</div>
+        <div class="item">Item 2 (flex: 2)</div>
+        <div class="item">Item 3</div>
+    </div>
+</body>
+
+<!--
+This layout test will generate a layout tree dump showing:
+- Container with display: flex
+- Items with flex values
+- Calculated sizes based on flex distribution
+- Gap spacing between items
+
+To rebaseline:
+./Meta/ladybird.py run test-web --rebaseline -f Layout/input/layout-test-example.html
+
+Expected layout tree (approximate):
+Viewport <html>
+  BlockContainer <body>
+    BlockContainer <div.container> flex-container(row)
+      BlockContainer <div.item> flex-item flex:1
+      BlockContainer <div.item> flex-item flex:2
+      BlockContainer <div.item> flex-item flex:1
+-->

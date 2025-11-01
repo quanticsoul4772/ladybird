@@ -8,6 +8,7 @@
 /cpp-implement     # C++ implementation across all libraries
 /fuzzer            # Fuzzing infrastructure & crash analysis
 /networking        # Network stack, Tor integration
+/performance       # Profiling, optimization, benchmarking
 /reviewer          # Code review & quality assurance
 /tester            # Test strategy & implementation
 /docs              # Documentation creation

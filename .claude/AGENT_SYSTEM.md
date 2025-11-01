@@ -37,6 +37,7 @@ These are already configured in your Claude Desktop and available:
 | `/cpp-implement` | C++ Developer | Implementing features in LibWeb, LibJS, LibCore, etc. |
 | `/fuzzer` | Fuzzing Specialist | Creating fuzz targets, analyzing crashes, automated testing |
 | `/networking` | Network Engineer | Network stack, Tor integration, per-tab privacy features |
+| `/performance` | Performance Engineer | Profiling, optimization, benchmarking, regression detection |
 | `/reviewer` | Code Reviewer | Code quality review, security audit, architectural consistency |
 | `/tester` | Test Engineer | Test strategy, test implementation, QA |
 | `/docs` | Documentation Specialist | API docs, architecture docs, user guides |

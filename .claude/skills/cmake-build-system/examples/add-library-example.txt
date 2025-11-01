@@ -1,0 +1,171 @@
+# Example: Adding a New Library to Ladybird
+
+# File: Libraries/LibMyFeature/CMakeLists.txt
+
+# List all source files (.cpp files)
+# Organize by subdirectory if needed
+set(SOURCES
+    MyFeature.cpp
+    FeatureConfig.cpp
+    FeatureRegistry.cpp
+    Parser/Tokenizer.cpp
+    Parser/Parser.cpp
+    Runtime/Executor.cpp
+    Runtime/Context.cpp
+)
+
+# Optional: If you have code generation (IPC, IDL, etc.)
+set(GENERATED_SOURCES
+    GeneratedEnums.cpp
+    GeneratedEnums.h
+)
+
+# Create the library target
+# Syntax: ladybird_lib(TargetName linkname [EXPLICIT_SYMBOL_EXPORT])
+# - TargetName: CMake target name (e.g., LibMyFeature)
+# - linkname: Short name for linking (e.g., myfeature)
+# - EXPLICIT_SYMBOL_EXPORT: Add if library exports symbols (shared lib)
+ladybird_lib(LibMyFeature myfeature)
+
+# Alternative for simple static library:
+# add_library(LibMyFeature STATIC ${SOURCES})
+
+# Link dependencies
+# PUBLIC: Dependencies used in public headers (visible to consumers)
+# PRIVATE: Dependencies used only in .cpp files (not visible to consumers)
+target_link_libraries(LibMyFeature
+    PUBLIC
+        AK              # Application Kit (data structures)
+        LibCore         # Core OS abstraction
+    PRIVATE
+        LibCrypto       # Cryptography (internal use only)
+        LibFileSystem   # File operations (internal use only)
+        LibTextCodec    # Text encoding (internal use only)
+)
+
+# Optional: Additional include directories
+# Usually not needed if following standard structure
+target_include_directories(LibMyFeature
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}      # Library headers
+    PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}      # Generated files
+)
+
+# Optional: Compile definitions
+target_compile_definitions(LibMyFeature
+    PRIVATE
+        MYFEATURE_VERSION="1.0.0"
+        MYFEATURE_DEBUG=$<CONFIG:Debug>
+)
+
+# Optional: Platform-specific configuration
+if (APPLE)
+    target_compile_definitions(LibMyFeature PRIVATE MYFEATURE_MACOS=1)
+    target_sources(LibMyFeature PRIVATE Platform/macOS.mm)
+elseif (WIN32)
+    target_compile_definitions(LibMyFeature PRIVATE MYFEATURE_WINDOWS=1)
+    target_sources(LibMyFeature PRIVATE Platform/Windows.cpp)
+elseif (UNIX)
+    target_compile_definitions(LibMyFeature PRIVATE MYFEATURE_UNIX=1)
+    target_sources(LibMyFeature PRIVATE Platform/Unix.cpp)
+endif()
+
+# Optional: Find and link external dependencies
+find_package(SomePackage REQUIRED)
+target_link_libraries(LibMyFeature PRIVATE SomePackage::SomePackage)
+
+# Or using pkg-config:
+find_package(PkgConfig)
+pkg_check_modules(somelib REQUIRED IMPORTED_TARGET somelib)
+target_link_libraries(LibMyFeature PRIVATE PkgConfig::somelib)
+
+# Optional: Custom external library (not in vcpkg)
+find_library(CUSTOM_LIBRARY
+    NAMES customlib libcustom
+    PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+)
+find_path(CUSTOM_INCLUDE_DIR
+    custom.h
+    PATHS /usr/include /usr/local/include
+)
+
+if(NOT CUSTOM_LIBRARY)
+    message(WARNING "CustomLib not found. Some features will be disabled.")
+    target_compile_definitions(LibMyFeature PRIVATE MYFEATURE_NO_CUSTOM=1)
+else()
+    message(STATUS "Found CustomLib: ${CUSTOM_LIBRARY}")
+    target_include_directories(LibMyFeature PRIVATE ${CUSTOM_INCLUDE_DIR})
+    target_link_libraries(LibMyFeature PRIVATE ${CUSTOM_LIBRARY})
+    target_compile_definitions(LibMyFeature PRIVATE MYFEATURE_HAS_CUSTOM=1)
+endif()
+
+# Optional: Code generation
+if (DEFINED GENERATED_SOURCES)
+    # Mark sources as generated
+    ladybird_generated_sources(LibMyFeature)
+
+    # Example: Generate enum definitions from JSON
+    invoke_cpp_generator(
+        "GeneratedEnums.cpp"
+        Lagom::GenerateEnums
+        "${CMAKE_CURRENT_SOURCE_DIR}/Enums.json"
+        "GeneratedEnums.h"
+        "GeneratedEnums.cpp"
+        arguments -j "${CMAKE_CURRENT_SOURCE_DIR}/Enums.json"
+    )
+endif()
+
+# Optional: IPC endpoint compilation
+# compile_ipc(MyFeature.ipc MyFeatureEndpoint.h)
+
+# Optional: Test executable
+add_executable(TestMyFeature TestMyFeature.cpp)
+target_link_libraries(TestMyFeature PRIVATE LibMyFeature LibCore LibMain)
+
+# Optional: Install headers (for Lagom standalone use)
+if (ENABLE_INSTALL_HEADERS)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/LibMyFeature
+        FILES_MATCHING PATTERN "*.h"
+    )
+endif()
+
+# ============================================================
+# File Structure
+# ============================================================
+# Libraries/LibMyFeature/
+# ├── CMakeLists.txt (this file)
+# ├── MyFeature.h
+# ├── MyFeature.cpp
+# ├── FeatureConfig.h
+# ├── FeatureConfig.cpp
+# ├── FeatureRegistry.h
+# ├── FeatureRegistry.cpp
+# ├── Forward.h (forward declarations)
+# ├── Parser/
+# │   ├── Tokenizer.h
+# │   ├── Tokenizer.cpp
+# │   ├── Parser.h
+# │   └── Parser.cpp
+# ├── Runtime/
+# │   ├── Executor.h
+# │   ├── Executor.cpp
+# │   ├── Context.h
+# │   └── Context.cpp
+# ├── Platform/
+# │   ├── macOS.mm (macOS specific)
+# │   ├── Windows.cpp (Windows specific)
+# │   └── Unix.cpp (Unix specific)
+# ├── Enums.json (code generation input)
+# └── TestMyFeature.cpp (test executable)
+
+# ============================================================
+# To Use This Library
+# ============================================================
+# In other CMakeLists.txt files:
+#
+# target_link_libraries(YourTarget PRIVATE LibMyFeature)
+#
+# In C++ code:
+# #include <LibMyFeature/MyFeature.h>

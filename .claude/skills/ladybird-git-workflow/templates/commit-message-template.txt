@@ -1,0 +1,49 @@
+# Commit Message Template
+#
+# Install this template with:
+#   git config --local commit.template .claude/skills/ladybird-git-workflow/templates/commit-message-template.txt
+#
+# Format:
+# Category: Brief imperative description (max 72 chars)
+#
+# Optional detailed explanation.
+# Wrap at 72 characters.
+#
+# - Bullet points are fine
+# - Explain WHY, not WHAT
+#
+# For web standards, include spec link:
+# https://html.spec.whatwg.org/multipage/...
+#
+# Reference issues:
+# Fixes #123
+# Related to #456
+#
+# ─────────────────────────────────────────────────────── 72 chars ──────┤
+# Example commits:
+#
+# LibWeb: Add CSS grid support
+#
+# Implements CSS grid layout from CSS Grid Layout Module Level 1:
+# https://www.w3.org/TR/css-grid-1/
+#
+# Added:
+# - Grid container layout algorithm
+# - Grid item placement
+# - Track sizing and auto-placement
+#
+# Tests: Tests/LibWeb/Layout/css-grid.html
+#
+# ────────────────────────────────────────────────────────────────────────
+#
+# Common categories:
+#   LibWeb, LibJS, LibGfx, LibCore, AK
+#   RequestServer, WebContent, ImageDecoder
+#   UI/Qt, UI/AppKit
+#   Meta, Tests, docs
+#   Sentinel (fork-specific)
+#
+# Imperative mood:
+#   Add, Fix, Remove, Update, Implement, Refactor
+#   NOT: Added, Fixed, Adding, Fixing
+#

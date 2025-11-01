@@ -1,0 +1,323 @@
+# Release Automation Workflow for Ladybird
+# Triggered on version tags (v*.*.*) to create releases
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Matches v1.0.0, v2.1.3, etc.
+
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., 1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release?'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
+
+jobs:
+  # Build release artifacts for all platforms
+  build-release:
+    name: Build ${{ matrix.os }} Release
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: Linux
+            runner: ubuntu-24.04
+            arch: x86_64
+            artifact_name: Ladybird-Linux-x86_64
+
+          # macOS arm64 (Apple Silicon)
+          - os: macOS
+            runner: macos-15
+            arch: arm64
+            artifact_name: Ladybird-macOS-arm64
+
+          # macOS x86_64 (Intel)
+          - os: macOS
+            runner: macos-14
+            arch: x86_64
+            artifact_name: Ladybird-macOS-x86_64
+
+          # Windows x86_64
+          - os: Windows
+            runner: windows-latest
+            arch: x86_64
+            artifact_name: Ladybird-Windows-x86_64
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Need full history for version info
+
+      - name: Install Dependencies (Linux)
+        if: matrix.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-14 \
+            g++-14 \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libgl1-mesa-dev \
+            libpulse-dev \
+            rpm \
+            dpkg-dev
+
+      - name: Install Dependencies (macOS)
+        if: matrix.os == 'macOS'
+        run: |
+          brew install cmake ninja pkg-config
+
+      - name: Install Dependencies (Windows)
+        if: matrix.os == 'Windows'
+        run: |
+          choco install cmake ninja
+
+      - name: Set up vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git Build/vcpkg
+          ${{ matrix.os == 'Windows' && './Build/vcpkg/bootstrap-vcpkg.bat' || './Build/vcpkg/bootstrap-vcpkg.sh' }}
+
+      - name: Restore vcpkg Cache
+        uses: actions/cache@v4
+        with:
+          path: Build/caches/vcpkg-binary-cache
+          key: vcpkg-release-${{ matrix.os }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Get Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Configure Build (Linux/macOS)
+        if: matrix.os != 'Windows'
+        env:
+          CC: ${{ matrix.os == 'Linux' && 'gcc-14' || 'clang' }}
+          CXX: ${{ matrix.os == 'Linux' && 'g++-14' || 'clang++' }}
+          VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/Build/caches/vcpkg-binary-cache,readwrite"
+        run: |
+          cmake --preset Distribution \
+            -DLADYBIRD_VERSION="${{ steps.version.outputs.version }}"
+
+      - name: Configure Build (Windows)
+        if: matrix.os == 'Windows'
+        env:
+          VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/Build/caches/vcpkg-binary-cache,readwrite"
+        run: |
+          cmake --preset Windows_CI `
+            -DLADYBIRD_VERSION="${{ steps.version.outputs.version }}"
+
+      - name: Build
+        run: cmake --build Build --config Release --parallel
+
+      - name: Run Smoke Tests
+        run: |
+          ctest --test-dir Build \
+            -R "^(TestAK|TestLibCore)$" \
+            --output-on-failure
+
+      - name: Package (Linux)
+        if: matrix.os == 'Linux'
+        run: |
+          cd Build/distribution
+          cpack -G "TGZ;DEB;RPM"
+
+          # Create AppImage
+          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --executable bin/Ladybird \
+            --desktop-file ../../Meta/Ladybird.desktop \
+            --icon-file ../../Meta/ladybird.png \
+            --output appimage
+
+      - name: Package (macOS)
+        if: matrix.os == 'macOS'
+        run: |
+          cd Build/distribution
+          cpack -G "TGZ;DragNDrop"
+
+          # Sign the app bundle (if certificates available)
+          if [ -n "${{ secrets.MACOS_CERTIFICATE }}" ]; then
+            codesign --deep --force --verify --verbose \
+              --sign "${{ secrets.MACOS_SIGNING_IDENTITY }}" \
+              Ladybird.app
+          fi
+
+      - name: Package (Windows)
+        if: matrix.os == 'Windows'
+        run: |
+          cd Build/release
+          cpack -G "ZIP;NSIS"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            Build/distribution/*.tar.gz
+            Build/distribution/*.deb
+            Build/distribution/*.rpm
+            Build/distribution/*.AppImage
+            Build/distribution/*.dmg
+            Build/release/*.zip
+            Build/release/*.exe
+          retention-days: 90
+
+  # Create GitHub release
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: build-release
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Get Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=v${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Generate Release Notes
+        run: |
+          # Extract changelog for this version
+          if [ -f CHANGELOG.md ]; then
+            awk '/^## \[${{ steps.version.outputs.version }}\]/, /^## \[/ {
+              if (/^## \[/ && !found) { found=1; next }
+              if (/^## \[/ && found) exit
+              if (found) print
+            }' CHANGELOG.md > release-notes.md
+          else
+            echo "# Ladybird ${{ steps.version.outputs.version }}" > release-notes.md
+            echo "" >> release-notes.md
+            echo "## Changes" >> release-notes.md
+            git log --oneline $(git describe --tags --abbrev=0 HEAD^)..HEAD >> release-notes.md
+          fi
+
+          # Add download instructions
+          cat >> release-notes.md <<'EOF'
+
+          ## Installation
+
+          ### Linux
+          - **DEB Package**: Download `.deb` and run `sudo dpkg -i Ladybird-*.deb`
+          - **RPM Package**: Download `.rpm` and run `sudo rpm -i Ladybird-*.rpm`
+          - **AppImage**: Download `.AppImage`, make executable, and run
+
+          ### macOS
+          - Download `.dmg`, open, and drag Ladybird to Applications
+
+          ### Windows
+          - Download `.exe` installer and run
+
+          ## Verification
+          All artifacts are signed and can be verified using our public key.
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Ladybird ${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ inputs.prerelease || false }}
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+            artifacts/**/*.AppImage
+            artifacts/**/*.dmg
+            artifacts/**/*.zip
+            artifacts/**/*.exe
+
+      - name: Update Latest Tag
+        if: ${{ !inputs.prerelease }}
+        run: |
+          git tag -f latest
+          git push origin latest --force
+
+  # Publish to package registries
+  publish-packages:
+    name: Publish to Package Registries
+    runs-on: ubuntu-latest
+    needs: create-release
+    if: ${{ !inputs.prerelease }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Download Linux Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Ladybird-Linux-x86_64
+          path: packages/
+
+      - name: Publish to Homebrew
+        if: github.event_name == 'push'  # Only on tag push
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_TOKEN }}
+        run: |
+          brew tap ladybird/tap
+          brew bump-formula-pr ladybird \
+            --url=https://github.com/${{ github.repository }}/archive/${{ github.ref_name }}.tar.gz
+
+      - name: Publish to Flathub
+        if: github.event_name == 'push'
+        run: |
+          # Update Flathub manifest and submit PR
+          # This requires separate Flathub repository setup
+          echo "Flathub publishing requires manual PR to flathub/org.ladybird.Ladybird"
+
+      - name: Notify Package Maintainers
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: context.repo.owner,
+              repo: 'package-maintainers',
+              event_type: 'new-release',
+              client_payload: {
+                version: '${{ steps.version.outputs.version }}',
+                tag: '${{ steps.version.outputs.tag }}'
+              }
+            });

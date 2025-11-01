@@ -1,0 +1,292 @@
+=================================================================
+# VALGRIND MEMCHECK OUTPUT EXAMPLE
+=================================================================
+
+==42185== Memcheck, a memory error detector
+==42185== Copyright (C) 2002-2022, and GNU GPL'd, by Julian Seward et al.
+==42185== Using Valgrind-3.19.0 and LibVEX; rerun with -h for copyright info
+==42185== Command: ./Build/release/bin/Ladybird
+==42185==
+
+
+# ========================================================================
+# EXAMPLE 1: Invalid Read (Use-After-Free)
+# ========================================================================
+
+==42185== Invalid read of size 8
+# ↑ Reading 8 bytes from invalid memory
+
+==42185==    at 0x4E89AB: Web::DOM::Node::parent() const (Node.cpp:142)
+==42185==    by 0x4E8BCD: Web::DOM::Element::remove() (Element.cpp:89)
+==42185==    by 0x4E9DEF: Web::HTML::HTMLElement::click() (HTMLElement.cpp:45)
+# ↑ Stack trace showing where the invalid read happened
+
+==42185==  Address 0x1234abcd is 8 bytes inside a block of size 64 free'd
+# ↑ Address is inside freed memory block
+
+==42185==    at 0x4C2EDEB: operator delete(void*) (vg_replace_malloc.c:595)
+# ↑ Where memory was freed
+
+==42185==    by 0x4E89EF: Web::DOM::Node::~Node() (Node.cpp:67)
+==42185==    by 0x4E8ABC: Web::DOM::Element::~Element() (Element.cpp:45)
+==42185==    by 0x4E8DEF: Web::DOM::Document::remove_from_tree(Web::DOM::Node&) (Document.cpp:234)
+# ↑ Call chain that freed the memory
+
+==42185==  Block was alloc'd at
+# ↑ Where memory was originally allocated
+
+==42185==    at 0x4C2DB8F: operator new(unsigned long) (vg_replace_malloc.c:344)
+==42185==    by 0x4E8456: Web::DOM::Node::create() (Node.cpp:23)
+==42185==    by 0x4E9567: Web::HTML::HTMLParser::create_element_for(Web::HTML::Token const&) (HTMLParser.cpp:456)
+==42185==    by 0x4E9678: Web::HTML::HTMLParser::run() (HTMLParser.cpp:123)
+
+
+# ========================================================================
+# EXAMPLE 2: Invalid Write (Buffer Overflow)
+# ========================================================================
+
+==42185== Invalid write of size 4
+# ↑ Writing 4 bytes beyond valid memory
+
+==42185==    at 0x4E89AB: Web::CSS::Parser::parse_selector() (Parser.cpp:234)
+==42185==    by 0x4E8BCD: Web::CSS::Parser::parse_rule() (Parser.cpp:156)
+
+==42185==  Address 0x1234abc0 is 0 bytes after a block of size 48 alloc'd
+# ↑ Writing exactly at end of buffer (off-by-one)
+
+==42185==    at 0x4C2DB8F: malloc (vg_replace_malloc.c:309)
+==42185==    by 0x4E8456: Web::CSS::Parser::parse_selector() (Parser.cpp:225)
+
+
+# ========================================================================
+# EXAMPLE 3: Conditional Jump on Uninitialized Value
+# ========================================================================
+
+==42185== Conditional jump or move depends on uninitialised value(s)
+# ↑ Branch decision based on uninitialized memory
+
+==42185==    at 0x4E89AB: Web::CSS::Parser::parse_color() (Parser.cpp:567)
+==42185==    by 0x4E8BCD: Web::CSS::StyleProperties::set_property() (StyleProperties.cpp:89)
+
+==42185==  Uninitialised value was created by a stack allocation
+# ↑ Uninitialized local variable
+
+==42185==    at 0x4E8900: Web::CSS::Parser::parse_color() (Parser.cpp:560)
+
+
+# ========================================================================
+# EXAMPLE 4: Syscall with Invalid Argument
+# ========================================================================
+
+==42185== Syscall param write(buf) points to uninitialised byte(s)
+# ↑ Passing uninitialized memory to write() syscall
+
+==42185==    at 0x5123456: write (write.c:26)
+==42185==    by 0x4E89AB: IPC::Connection::send_message(IPC::Message const&) (Connection.cpp:89)
+
+==42185==  Address 0x1234abc8 is 8 bytes inside a block of size 128 alloc'd
+==42185==    at 0x4C2DB8F: malloc (vg_replace_malloc.c:309)
+==42185==    by 0x4E8456: IPC::Message::create() (Message.cpp:23)
+
+==42185==  Uninitialised value was created by a heap allocation
+==42185==    at 0x4C2DB8F: malloc (vg_replace_malloc.c:309)
+==42185==    by 0x4E8456: IPC::Message::create() (Message.cpp:23)
+
+
+# ========================================================================
+# EXAMPLE 5: Memory Leak Detection
+# ========================================================================
+
+==42185==
+==42185== HEAP SUMMARY:
+==42185==     in use at exit: 2,048 bytes in 32 blocks
+# ↑ Total leaked memory at program exit
+
+==42185==   total heap usage: 1,234 allocs, 1,202 frees, 256,000 bytes allocated
+# ↑ Overall statistics (32 allocations not freed)
+
+==42185==
+==42185== 128 bytes in 2 blocks are definitely lost in loss record 1 of 10
+# ↑ "definitely lost" = clear leak, no pointers to it
+
+==42185==    at 0x4C2DB8F: operator new(unsigned long) (vg_replace_malloc.c:344)
+==42185==    by 0x4E8456: Web::ResourceLoader::create() (ResourceLoader.cpp:45)
+==42185==    by 0x4E9567: Web::Document::load_resource(URL::URL const&) (Document.cpp:156)
+# ↑ Stack trace showing where leaked memory was allocated
+
+==42185==
+==42185== 256 bytes in 4 blocks are indirectly lost in loss record 2 of 10
+# ↑ "indirectly lost" = reachable from "definitely lost" blocks
+
+==42185==    at 0x4C2DB8F: malloc (vg_replace_malloc.c:309)
+==42185==    by 0x4E8456: AK::Vector<char>::ensure_capacity(unsigned long) (Vector.h:123)
+==42185==    by 0x4E9567: Web::ResourceLoader::ResourceLoader() (ResourceLoader.cpp:23)
+
+==42185==
+==42185== 512 bytes in 8 blocks are possibly lost in loss record 3 of 10
+# ↑ "possibly lost" = pointer to interior of block (may not be leak)
+
+==42185==    at 0x4C2DB8F: malloc (vg_replace_malloc.c:309)
+==42185==    by 0x4E8456: QString::QString(char const*) (qstring.cpp:234)
+
+==42185==
+==42185== 1,152 bytes in 18 blocks are still reachable in loss record 4 of 10
+# ↑ "still reachable" = global/static variables (usually not a problem)
+
+==42185==    at 0x4C2DB8F: malloc (vg_replace_malloc.c:309)
+==42185==    by 0x4E8456: QApplication::QApplication(int&, char**) (qapplication.cpp:567)
+
+==42185==
+==42185== LEAK SUMMARY:
+==42185==    definitely lost: 128 bytes in 2 blocks
+# ↑ CRITICAL: These are real leaks
+
+==42185==    indirectly lost: 256 bytes in 4 blocks
+# ↑ CRITICAL: Caused by "definitely lost"
+
+==42185==      possibly lost: 512 bytes in 8 blocks
+# ↑ INVESTIGATE: May or may not be leaks
+
+==42185==    still reachable: 1,152 bytes in 18 blocks
+# ↑ OK: Global variables, usually fine
+
+==42185==         suppressed: 0 bytes in 0 blocks
+
+==42185==
+==42185== For details of all suppressions in effect, run with: --show-leak-kinds=all --verbose
+
+
+# ========================================================================
+# RUNNING VALGRIND EFFECTIVELY
+# ========================================================================
+
+# Basic memcheck:
+valgrind --leak-check=full ./Build/release/bin/Ladybird
+
+# Detailed tracking:
+valgrind \
+    --leak-check=full \
+    --show-leak-kinds=all \
+    --track-origins=yes \
+    --verbose \
+    --log-file=valgrind.log \
+    ./Build/release/bin/Ladybird
+
+# With suppressions:
+valgrind \
+    --leak-check=full \
+    --suppressions=valgrind.supp \
+    ./Build/release/bin/Ladybird
+
+# XML output (for tools):
+valgrind \
+    --leak-check=full \
+    --xml=yes \
+    --xml-file=valgrind.xml \
+    ./Build/release/bin/Ladybird
+
+
+# ========================================================================
+# INTERPRETING LEAK TYPES
+# ========================================================================
+
+1. DEFINITELY LOST:
+   - Memory allocated but no pointers to it
+   - CRITICAL: Must fix
+   - Example: `auto* p = new Foo(); /* never deleted */`
+
+2. INDIRECTLY LOST:
+   - Reachable from "definitely lost" blocks
+   - CRITICAL: Fix the "definitely lost" leak first
+   - Example: Leaked object contains other objects
+
+3. POSSIBLY LOST:
+   - Pointer to middle of allocation
+   - INVESTIGATE: May be false positive
+   - Example: `auto* p = new char[100]; p += 10; /* lose original pointer */`
+
+4. STILL REACHABLE:
+   - Global/static variables
+   - OK: Usually intentional (caches, singletons)
+   - Example: `static HashMap<String, Value> s_cache;`
+
+5. SUPPRESSED:
+   - Matched suppression rules
+   - Document why suppressed
+
+
+# ========================================================================
+# VALGRIND OPTIONS REFERENCE
+# ========================================================================
+
+# Leak detection:
+--leak-check=no|summary|full       # Level of leak detection
+--show-leak-kinds=all|definite|... # Which leak types to show
+--track-origins=yes                # Track uninitialized values to allocation
+--leak-resolution=low|med|high     # Stack trace detail for leaks
+
+# Performance:
+--num-callers=12                   # Stack trace depth (default 12)
+--trace-children=yes               # Trace child processes
+
+# Output:
+--log-file=filename                # Log to file
+--xml=yes --xml-file=filename      # XML output
+--verbose                          # Detailed output
+--quiet                            # Less output
+
+# Error handling:
+--error-limit=no                   # Don't stop after 1000 errors
+--suppressions=file                # Suppression file
+--gen-suppressions=all             # Generate suppression rules
+
+
+# ========================================================================
+# EXAMPLE SUPPRESSION FILE (valgrind.supp)
+# ========================================================================
+
+{
+   Qt_QApplication_leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:malloc
+   fun:_ZN12QApplicationC1ERiPPci
+}
+
+{
+   Fontconfig_leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:malloc
+   obj:/usr/lib/x86_64-linux-gnu/libfontconfig.so.1.12.0
+}
+
+{
+   OpenGL_driver_leak
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:calloc
+   obj:/usr/lib/x86_64-linux-gnu/libGL.so.1.7.0
+}
+
+
+# ========================================================================
+# COMPARING ASAN VS VALGRIND
+# ========================================================================
+
+| Feature              | ASAN                  | Valgrind              |
+|----------------------|-----------------------|-----------------------|
+| Performance overhead | ~2x                   | ~10-50x               |
+| Detection scope      | Heap, stack, globals  | Heap only             |
+| Build requirements   | Rebuild with -fsanitize | No rebuild needed    |
+| Use-after-free       | Yes                   | Yes                   |
+| Buffer overflows     | Yes                   | Yes                   |
+| Uninitialized memory | No (use MSAN)         | Yes                   |
+| Memory leaks         | Yes (LeakSanitizer)   | Yes                   |
+| Accuracy             | Very high             | Some false positives  |
+| Integration          | CI-friendly           | Too slow for CI       |
+
+RECOMMENDATION:
+- Use ASAN for development and CI (fast, accurate)
+- Use Valgrind for deep investigation (detailed leak info, no rebuild)
+- Use both when debugging difficult issues

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<head>
+<style>
+    /* Reference page for ref-test-example.html */
+    /* Should render identically but using simpler techniques */
+
+    .box {
+        width: 100px;
+        height: 100px;
+        background: white;
+        margin: 50px;
+        position: relative;
+    }
+
+    /* Simulate shadow using absolute positioned div */
+    .box::after {
+        content: "";
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        width: 100px;
+        height: 100px;
+        background: rgba(0, 0, 0, 0.3);
+        filter: blur(10px);
+        z-index: -1;
+    }
+</style>
+</head>
+<body>
+    <div class="box"></div>
+</body>
+
+<!--
+This is a reference page that should render identically to
+ref-test-example.html, but using a different CSS technique.
+
+The test passes if the screenshots are identical.
+-->

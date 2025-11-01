@@ -1,0 +1,32 @@
+{
+  "auto_discover": true,
+  "skill_paths": [
+    ".claude/skills",
+    "~/.claude/skills"
+  ],
+  "enabled_skills": [
+    "ladybird-cpp-patterns",
+    "libjs-patterns",
+    "ipc-security",
+    "fuzzing-workflow",
+    "multi-process-architecture",
+    "tor-integration",
+    "memory-safety-debugging"
+  ],
+  "skill_priority": {
+    "ipc-security": 10,
+    "ladybird-cpp-patterns": 9,
+    "memory-safety-debugging": 8,
+    "libjs-patterns": 7,
+    "multi-process-architecture": 6,
+    "tor-integration": 5,
+    "fuzzing-workflow": 4
+  },
+  "description": "Skills configuration for Ladybird browser development",
+  "notes": [
+    "Skills are automatically discovered from .claude/skills/",
+    "Each skill should have a SKILL.md file with YAML frontmatter",
+    "Higher priority skills are preferred when multiple skills match",
+    "Security-focused skills (ipc-security) have highest priority"
+  ]
+}

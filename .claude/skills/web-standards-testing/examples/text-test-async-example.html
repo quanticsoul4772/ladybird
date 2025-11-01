@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<script src="include.js"></script>
+<script>
+    // Async Text test
+    // Tests asynchronous operations (microtasks, promises)
+    // Spec: https://html.spec.whatwg.org/multipage/webappapis.html#microtask-queue
+
+    asyncTest(async (done) => {
+        println("Testing microtask execution order");
+
+        const executionOrder = [];
+
+        // Synchronous code
+        executionOrder.push("sync");
+
+        // Microtask
+        queueMicrotask(() => {
+            executionOrder.push("microtask");
+        });
+
+        // Promise (also microtask)
+        Promise.resolve().then(() => {
+            executionOrder.push("promise");
+        });
+
+        // Timeout (macrotask)
+        setTimeout(() => {
+            executionOrder.push("timeout");
+
+            // Print results
+            println(`Execution order: ${executionOrder.join(", ")}`);
+            println(`Total tasks: ${executionOrder.length}`);
+
+            // Expected: sync, microtask, promise, timeout
+            done();
+        }, 0);
+
+        executionOrder.push("sync-end");
+    });
+</script>

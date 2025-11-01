@@ -1,0 +1,65 @@
+# Basic CI Workflow for Ladybird
+# Simple build and test on push/PR events
+
+name: Basic CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+# Cancel previous runs on new push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            ccache \
+            pkg-config \
+            libgl1-mesa-dev \
+            libpulse-dev
+
+      - name: Set up vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git Build/vcpkg
+          ./Build/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Configure Build
+        env:
+          CC: gcc-14
+          CXX: g++-14
+          VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
+        run: cmake --preset Release
+
+      - name: Build Ladybird
+        run: cmake --build Build --parallel $(nproc)
+
+      - name: Run Unit Tests
+        run: ctest --preset Release --output-on-failure
+
+      - name: Run LibWeb Tests
+        run: ./Meta/ladybird.py run test-web -- --timeout 300
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: Build/test-results/
+          retention-days: 7
