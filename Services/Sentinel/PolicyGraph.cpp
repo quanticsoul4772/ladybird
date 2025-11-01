@@ -1644,8 +1644,7 @@ ErrorOr<i64> PolicyGraph::create_template(PolicyTemplate const& tmpl)
         tmpl.category,
         tmpl.template_json,
         tmpl.is_builtin ? 1 : 0,
-        tmpl.created_at.milliseconds_since_epoch(),
-        tmpl.updated_at.has_value() ? tmpl.updated_at->milliseconds_since_epoch() : -1
+        tmpl.created_at.milliseconds_since_epoch()
     );
 
     i64 template_id = -1;
