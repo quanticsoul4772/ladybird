@@ -10,6 +10,7 @@ set(SOURCES
     GracefulDegradation.cpp
     HealthCheck.cpp
     InputValidator.cpp
+    MalwareML.cpp
     PolicyGraph.cpp
     PolicyTemplates.cpp
     SentinelMetrics.cpp
@@ -24,6 +25,7 @@ add_executable(TestPhase3Integration TestPhase3Integration.cpp)
 add_executable(TestBackend TestBackend.cpp)
 add_executable(TestDownloadVetting TestDownloadVetting.cpp)
 add_executable(TestFlowInspector TestFlowInspector.cpp)
+add_executable(TestMalwareML TestMalwareML.cpp)
 add_executable(sentinel-cli ../../Tools/sentinel-cli.cpp)
 
 target_include_directories(sentinelservice PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../..)
@@ -50,6 +52,7 @@ target_link_libraries(TestPhase3Integration PRIVATE sentinelservice LibCore LibM
 target_link_libraries(TestBackend PRIVATE sentinelservice LibCore LibMain LibFileSystem)
 target_link_libraries(TestDownloadVetting PRIVATE sentinelservice LibCore LibMain LibFileSystem LibCrypto)
 target_link_libraries(TestFlowInspector PRIVATE sentinelservice LibCore LibMain)
+target_link_libraries(TestMalwareML PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(sentinel-cli PRIVATE sentinelservice LibCore LibMain LibFileSystem requestserverservice)
 
 # Install targets
