@@ -15,6 +15,7 @@ set(SOURCES
     Resolver.cpp
     ScanQueue.cpp
     SecurityTap.cpp
+    URLSecurityAnalyzer.cpp
     WebSocketImplCurl.cpp
     YARAScanWorkerPool.cpp
 )
