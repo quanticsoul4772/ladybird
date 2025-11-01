@@ -9,10 +9,12 @@
 #include <AK/ByteBuffer.h>
 #include <AK/Error.h>
 #include <AK/Function.h>
+#include <AK/NonnullOwnPtr.h>
 #include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
+#include <LibThreading/ConditionVariable.h>
 #include <LibThreading/Mutex.h>
 #include <Services/RequestServer/SecurityTap.h>
 
@@ -30,8 +32,8 @@ struct ScanRequest {
 // Thread-safe queue for scan requests with priority ordering
 class ScanQueue {
 public:
-    ScanQueue() = default;
-    ~ScanQueue() = default;
+    ScanQueue();
+    ~ScanQueue();
 
     // Enqueue a scan request (thread-safe)
     // Returns error if queue is full
@@ -56,6 +58,7 @@ public:
 
 private:
     mutable Threading::Mutex m_mutex;
+    NonnullOwnPtr<Threading::ConditionVariable> m_condition_variable;
     Vector<ScanRequest> m_queue;
     bool m_shutting_down { false };
 };

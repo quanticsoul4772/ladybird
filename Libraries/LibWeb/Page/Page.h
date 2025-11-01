@@ -369,6 +369,7 @@ public:
     virtual void page_did_request_accept_dialog() { }
     virtual void page_did_request_dismiss_dialog() { }
     virtual void page_did_receive_security_alert(ByteString const& alert_json, i32 request_id) { (void)alert_json; (void)request_id; }
+    virtual void page_did_call_fingerprinting_api([[maybe_unused]] StringView technique, [[maybe_unused]] StringView api_name) const { }
     virtual void page_did_submit_form([[maybe_unused]] HTML::HTMLFormElement& form, [[maybe_unused]] String const& method, [[maybe_unused]] URL::URL const& action) { }
     virtual bool should_block_autofill([[maybe_unused]] URL::URL const& form_url, [[maybe_unused]] URL::URL const& action_url) const { return false; }
     virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_webdriver(URL::URL const&) { return {}; }

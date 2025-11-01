@@ -9,6 +9,16 @@
 
 namespace RequestServer {
 
+ScanQueue::ScanQueue()
+    : m_condition_variable(make<Threading::ConditionVariable>(m_mutex))
+{
+}
+
+ScanQueue::~ScanQueue()
+{
+    // ConditionVariable cleanup is automatic via RAII
+}
+
 ErrorOr<void> ScanQueue::enqueue(ScanRequest request)
 {
     Threading::MutexLocker locker(m_mutex);
@@ -32,6 +42,9 @@ ErrorOr<void> ScanQueue::enqueue(ScanRequest request)
         return a.priority < b.priority;
     });
 
+    // Signal waiting worker threads that work is available
+    m_condition_variable->signal();
+
     return {};
 }
 
@@ -39,15 +52,11 @@ Optional<ScanRequest> ScanQueue::dequeue()
 {
     Threading::MutexLocker locker(m_mutex);
 
-    // Wait for a request or shutdown signal
-    // NOTE: This is a simple spin-wait implementation
-    // A production implementation would use condition variables
-    while (m_queue.is_empty() && !m_shutting_down) {
-        locker.unlock();
-        // Sleep briefly to avoid busy-waiting
-        usleep(1000); // 1ms
-        locker.lock();
-    }
+    // Wait until queue has items or we're shutting down
+    // This blocks efficiently using a condition variable instead of spinning
+    m_condition_variable->wait_while([this] {
+        return m_queue.is_empty() && !m_shutting_down;
+    });
 
     // If shutting down and queue is empty, return nothing
     if (m_shutting_down && m_queue.is_empty()) {
@@ -71,6 +80,8 @@ void ScanQueue::shutdown()
 {
     Threading::MutexLocker locker(m_mutex);
     m_shutting_down = true;
+    // Wake all waiting threads so they can exit
+    m_condition_variable->broadcast();
 }
 
 bool ScanQueue::is_shutting_down() const

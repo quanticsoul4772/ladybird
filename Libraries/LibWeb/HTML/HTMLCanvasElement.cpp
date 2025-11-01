@@ -290,6 +290,9 @@ Gfx::IntSize HTMLCanvasElement::bitmap_size_for_canvas(size_t minimum_width, siz
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-todataurl
 String HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    document().page().client().page_did_call_fingerprinting_api("canvas"sv, "toDataURL"sv);
+
     // It is possible the canvas doesn't have a associated bitmap so create one
     allocate_painting_surface_if_needed();
     auto surface = this->surface();
@@ -331,6 +334,9 @@ String HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-toblob
 WebIDL::ExceptionOr<void> HTMLCanvasElement::to_blob(GC::Ref<WebIDL::CallbackType> callback, StringView type, JS::Value js_quality)
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    document().page().client().page_did_call_fingerprinting_api("canvas"sv, "toBlob"sv);
+
     // FIXME: 1. If this canvas element's bitmap's origin-clean flag is set to false, then throw a "SecurityError" DOMException.
 
     // 2. Let result be null.

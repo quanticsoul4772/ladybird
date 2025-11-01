@@ -500,9 +500,12 @@ static int yara_callback([[maybe_unused]] YR_SCAN_CONTEXT* context, int message,
         JsonObject rule_obj;
         rule_obj.set("rule_name"sv, JsonValue(ByteString(rule->identifier)));
 
-        // Get metadata
+        // Get metadata with safety limit to prevent infinite loops
         YR_META* meta = rule->metas;
-        while (!META_IS_LAST_IN_RULE(meta)) {
+        constexpr int MAX_METADATA_ENTRIES = 100; // Safety limit
+        int meta_count = 0;
+
+        while (!META_IS_LAST_IN_RULE(meta) && meta_count < MAX_METADATA_ENTRIES) {
             if (meta->type == META_TYPE_STRING) {
                 if (strcmp(meta->identifier, "description") == 0)
                     rule_obj.set("description"sv, JsonValue(ByteString(meta->string)));
@@ -512,9 +515,11 @@ static int yara_callback([[maybe_unused]] YR_SCAN_CONTEXT* context, int message,
                     rule_obj.set("author"sv, JsonValue(ByteString(meta->string)));
             }
             meta++;
+            meta_count++;
         }
-        // Handle the last metadata entry
-        if (meta->type == META_TYPE_STRING) {
+
+        // Handle the last metadata entry (only if we didn't hit the safety limit)
+        if (meta_count < MAX_METADATA_ENTRIES && meta->type == META_TYPE_STRING) {
             if (strcmp(meta->identifier, "description") == 0)
                 rule_obj.set("description"sv, JsonValue(ByteString(meta->string)));
             else if (strcmp(meta->identifier, "severity") == 0)

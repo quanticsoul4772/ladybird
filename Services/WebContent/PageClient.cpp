@@ -71,6 +71,16 @@ PageClient::PageClient(PageHost& owner, u64 id)
 {
     setup_palette();
 
+    // Initialize fingerprinting detector for privacy protection
+    auto detector_result = Sentinel::FingerprintingDetector::create();
+    if (detector_result.is_error()) {
+        dbgln("Warning: Failed to create FingerprintingDetector: {}", detector_result.error());
+        dbgln("Fingerprinting detection will be disabled for this page");
+    } else {
+        m_fingerprinting_detector = detector_result.release_value();
+        dbgln("Fingerprinting detector initialized successfully");
+    }
+
     // FIXME: This removes the decimal part, so the refresh interval will actually be higher than the maximum FPS.
     //        For example, 60 FPS = 1000ms / 60 = 16.6666...ms, but it will become 16ms, making the interval equivalent
     //        to 62.5 FPS.
@@ -483,6 +493,49 @@ void PageClient::page_did_request_dismiss_dialog()
 void PageClient::page_did_receive_security_alert(ByteString const& alert_json, i32 request_id)
 {
     client().async_did_receive_security_alert(m_id, alert_json, request_id);
+}
+
+void PageClient::page_did_call_fingerprinting_api(StringView technique, StringView api_name) const
+{
+    if (!m_fingerprinting_detector)
+        return;
+
+    // Map technique string to enum
+    using FingerprintingTechnique = Sentinel::FingerprintingDetector::FingerprintingTechnique;
+    FingerprintingTechnique tech_enum;
+
+    if (technique == "canvas"sv)
+        tech_enum = FingerprintingTechnique::Canvas;
+    else if (technique == "webgl"sv)
+        tech_enum = FingerprintingTechnique::WebGL;
+    else if (technique == "audio"sv)
+        tech_enum = FingerprintingTechnique::AudioContext;
+    else if (technique == "navigator"sv)
+        tech_enum = FingerprintingTechnique::NavigatorEnumeration;
+    else if (technique == "fonts"sv)
+        tech_enum = FingerprintingTechnique::FontEnumeration;
+    else if (technique == "screen"sv)
+        tech_enum = FingerprintingTechnique::ScreenProperties;
+    else
+        return; // Unknown technique
+
+    // Record the API call
+    m_fingerprinting_detector->record_api_call(tech_enum, api_name, false /* FIXME: track user interaction */);
+
+    // Check if aggressive fingerprinting detected
+    if (m_fingerprinting_detector->is_aggressive_fingerprinting()) {
+        auto score = m_fingerprinting_detector->calculate_score();
+        dbgln("⚠️ Aggressive fingerprinting detected! Score: {:.2f}, Confidence: {:.2f}",
+            score.aggressiveness_score, score.confidence);
+        dbgln("    Techniques: {} (canvas={}, webgl={}, audio={}, navigator={}, fonts={})",
+            score.techniques_used,
+            score.uses_canvas, score.uses_webgl, score.uses_audio,
+            score.uses_navigator, score.uses_fonts);
+        dbgln("    Explanation: {}", score.explanation);
+
+        // FIXME: Send IPC alert to UI
+        // client().async_did_detect_fingerprinting(m_id, score_json);
+    }
 }
 
 void PageClient::page_did_submit_form(Web::HTML::HTMLFormElement& form, String const& method, URL::URL const& action)

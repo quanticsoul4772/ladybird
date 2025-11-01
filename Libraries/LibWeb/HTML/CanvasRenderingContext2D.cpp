@@ -501,6 +501,9 @@ WebIDL::ExceptionOr<GC::Ref<ImageData>> CanvasRenderingContext2D::create_image_d
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-getimagedata
 WebIDL::ExceptionOr<GC::Ptr<ImageData>> CanvasRenderingContext2D::get_image_data(int x, int y, int width, int height, Optional<ImageDataSettings> const& settings) const
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    canvas_element().document().page().client().page_did_call_fingerprinting_api("canvas"sv, "getImageData"sv);
+
     // 1. If either the sw or sh arguments are zero, then throw an "IndexSizeError" DOMException.
     if (width == 0 || height == 0)
         return WebIDL::IndexSizeError::create(realm(), "Width and height must not be zero"_utf16);
