@@ -8,6 +8,7 @@
 #include "InputValidator.h"
 #include "MalwareML.h"
 #include "PolicyGraph.h"
+#include "ThreatFeed.h"
 #include <AK/Base64.h>
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
@@ -128,6 +129,28 @@ ErrorOr<NonnullOwnPtr<SentinelServer>> SentinelServer::create()
         sentinel_server->m_ml_detector = ml_detector_result.release_value();
         dbgln("Sentinel: ML-based malware detection initialized (version {})",
             sentinel_server->m_ml_detector->model_version());
+    }
+
+    // Initialize federated threat intelligence (Milestone 0.4 Phase 3)
+    auto threat_feed_result = ThreatFeed::create();
+    if (threat_feed_result.is_error()) {
+        dbgln("Sentinel: Warning: Failed to initialize threat feed: {}", threat_feed_result.error());
+        dbgln("Sentinel: Continuing without federated threat intelligence");
+        // Continue without threat feed - graceful degradation
+    } else {
+        sentinel_server->m_threat_feed = threat_feed_result.release_value();
+
+        // Start auto-sync if enabled
+        if (sentinel_server->m_threat_feed->is_auto_sync_enabled()) {
+            auto sync_result = sentinel_server->m_threat_feed->sync_from_peers();
+            if (sync_result.is_error()) {
+                dbgln("Sentinel: Initial threat sync failed: {}", sync_result.error());
+            }
+        }
+
+        auto stats = sentinel_server->m_threat_feed->get_statistics();
+        dbgln("Sentinel: Threat feed initialized with {} threats, FPR={}%",
+            stats.total_threats, stats.false_positive_rate * 100);
     }
 
     return sentinel_server;
@@ -538,6 +561,15 @@ ErrorOr<ByteString> SentinelServer::scan_content(ReadonlyBytes content)
     if (!s_yara_rules)
         return Error::from_string_literal("YARA rules not initialized");
 
+    // Check bloom filter first for quick threat detection (Milestone 0.4 Phase 3)
+    bool bloom_filter_hit = false;
+    if (m_threat_feed) {
+        bloom_filter_hit = m_threat_feed->probably_malicious(content);
+        if (bloom_filter_hit) {
+            dbgln("Sentinel: Bloom filter hit - file hash matches known threat");
+        }
+    }
+
     // For large files (> 10MB), use streaming scan to reduce memory pressure
     constexpr size_t STREAMING_THRESHOLD = 10 * 1024 * 1024; // 10MB
     constexpr size_t CHUNK_SIZE = 1 * 1024 * 1024; // 1MB chunks
@@ -598,7 +630,7 @@ ErrorOr<ByteString> SentinelServer::scan_content(ReadonlyBytes content)
             }
         }
 
-        bool threat_detected = yara_threat || ml_threat;
+        bool threat_detected = yara_threat || ml_threat || bloom_filter_hit;
 
         if (!threat_detected)
             return ByteString("clean"sv);
@@ -624,6 +656,12 @@ ErrorOr<ByteString> SentinelServer::scan_content(ReadonlyBytes content)
             ml_obj.set("confidence"sv, static_cast<double>(ml_prediction->confidence));
             ml_obj.set("explanation"sv, ml_prediction->explanation.bytes_as_string_view());
             result_obj.set("ml_prediction"sv, move(ml_obj));
+        }
+
+        // Bloom filter results
+        if (bloom_filter_hit) {
+            result_obj.set("bloom_filter_hit"sv, true);
+            result_obj.set("known_threat"sv, "File hash matches federated threat database"sv);
         }
 
         auto json_string = result_obj.serialized();
@@ -665,8 +703,8 @@ ErrorOr<ByteString> SentinelServer::scan_content(ReadonlyBytes content)
         }
     }
 
-    // Combine YARA and ML results
-    bool threat_detected = yara_threat || ml_threat;
+    // Combine YARA, ML, and bloom filter results
+    bool threat_detected = yara_threat || ml_threat || bloom_filter_hit;
 
     if (!threat_detected)
         return ByteString("clean"sv);
@@ -692,6 +730,12 @@ ErrorOr<ByteString> SentinelServer::scan_content(ReadonlyBytes content)
         ml_obj.set("confidence"sv, static_cast<double>(ml_prediction->confidence));
         ml_obj.set("explanation"sv, ml_prediction->explanation.bytes_as_string_view());
         result_obj.set("ml_prediction"sv, move(ml_obj));
+    }
+
+    // Bloom filter results
+    if (bloom_filter_hit) {
+        result_obj.set("bloom_filter_hit"sv, true);
+        result_obj.set("known_threat"sv, "File hash matches federated threat database"sv);
     }
 
     auto json_string = result_obj.serialized();

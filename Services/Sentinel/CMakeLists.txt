@@ -4,22 +4,57 @@ set(CMAKE_AUTOUIC OFF)
 
 set(SOURCES
     AuditLog.cpp
+    BloomFilter.cpp
     ClientRateLimiter.cpp
     DatabaseMigrations.cpp
+    FederatedLearning.cpp
     FingerprintingDetector.cpp
     FlowInspector.cpp
     GracefulDegradation.cpp
     HealthCheck.cpp
     InputValidator.cpp
+    IPFSThreatSync.cpp
     MalwareML.cpp
     PhishingURLAnalyzer.cpp
     PolicyGraph.cpp
     PolicyTemplates.cpp
     SentinelMetrics.cpp
     SentinelServer.cpp
+    ThreatFeed.cpp
 )
 
 add_library(sentinelservice STATIC ${SOURCES})
+
+# TensorFlow Lite Integration (Optional)
+# Note: TFLite is not in vcpkg, so we check for manual installation
+find_library(TFLITE_LIBRARY NAMES tensorflowlite tensorflow-lite
+    PATHS
+        /usr/local/lib
+        /usr/lib
+        ~/tensorflow/build
+        ${CMAKE_CURRENT_SOURCE_DIR}/tensorflow-lite
+    NO_DEFAULT_PATH)
+
+find_path(TFLITE_INCLUDE_DIR tensorflow/lite/interpreter.h
+    PATHS
+        /usr/local/include
+        /usr/include
+        ~/tensorflow
+        ${CMAKE_CURRENT_SOURCE_DIR}/tensorflow-lite
+    NO_DEFAULT_PATH)
+
+if(TFLITE_LIBRARY AND TFLITE_INCLUDE_DIR)
+    message(STATUS "Found TensorFlow Lite: ${TFLITE_LIBRARY}")
+    message(STATUS "TensorFlow Lite include: ${TFLITE_INCLUDE_DIR}")
+    target_include_directories(sentinelservice PRIVATE ${TFLITE_INCLUDE_DIR})
+    target_link_libraries(sentinelservice PRIVATE ${TFLITE_LIBRARY})
+    target_compile_definitions(sentinelservice PRIVATE ENABLE_TFLITE)
+else()
+    message(STATUS "TensorFlow Lite not found. Using heuristic-based malware detection.")
+    message(STATUS "To enable ML inference, install TensorFlow Lite and rebuild.")
+    # Define stub mode for simplified ML implementation
+    target_compile_definitions(sentinelservice PRIVATE USE_ML_STUB)
+endif()
 
 add_executable(Sentinel main.cpp)
 add_executable(TestPolicyGraph TestPolicyGraph.cpp)
@@ -63,6 +98,9 @@ target_link_libraries(TestMalwareML PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestPhishingURLAnalyzer PRIVATE sentinelservice LibCore LibMain LibURL)
 target_link_libraries(TestFingerprintingDetector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(sentinel-cli PRIVATE sentinelservice LibCore LibMain LibFileSystem requestserverservice)
+
+# Use proper test infrastructure for LibTest-based tests
+ladybird_test(TestBloomFilter.cpp Sentinel LIBS sentinelservice LibDatabase LibFileSystem)
 
 # Install targets
 install(TARGETS Sentinel sentinel-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

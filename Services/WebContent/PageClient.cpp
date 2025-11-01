@@ -533,8 +533,50 @@ void PageClient::page_did_call_fingerprinting_api(StringView technique, StringVi
             score.uses_navigator, score.uses_fonts);
         dbgln("    Explanation: {}", score.explanation);
 
-        // FIXME: Send IPC alert to UI
-        // client().async_did_detect_fingerprinting(m_id, score_json);
+        // Send IPC alert to UI (Milestone 0.4 Phase 4)
+        auto alert_json = ByteString::formatted(R"({{
+"type": "fingerprinting_detected",
+"aggressiveness_score": {:.2f},
+"confidence": {:.2f},
+"techniques_used": {},
+"uses_canvas": {},
+"uses_webgl": {},
+"uses_audio": {},
+"uses_navigator": {},
+"uses_fonts": {},
+"uses_screen": {},
+"total_api_calls": {},
+"rapid_fire_detected": {},
+"no_user_interaction": {},
+"canvas_calls": {},
+"webgl_calls": {},
+"audio_calls": {},
+"navigator_calls": {},
+"font_calls": {},
+"screen_calls": {},
+"explanation": "{}"
+}})",
+            score.aggressiveness_score,
+            score.confidence,
+            score.techniques_used,
+            score.uses_canvas ? "true" : "false",
+            score.uses_webgl ? "true" : "false",
+            score.uses_audio ? "true" : "false",
+            score.uses_navigator ? "true" : "false",
+            score.uses_fonts ? "true" : "false",
+            score.uses_screen ? "true" : "false",
+            score.total_api_calls,
+            score.rapid_fire_detected ? "true" : "false",
+            score.no_user_interaction ? "true" : "false",
+            score.canvas_calls,
+            score.webgl_calls,
+            score.audio_calls,
+            score.navigator_calls,
+            score.font_calls,
+            score.screen_calls,
+            score.explanation);
+
+        client().async_did_receive_security_alert(m_id, alert_json, -1 /* no associated request_id */);
     }
 }
 

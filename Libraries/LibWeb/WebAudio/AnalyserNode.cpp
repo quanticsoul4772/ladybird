@@ -12,6 +12,8 @@
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/AnalyserNodePrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/HTML/Window.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/WebAudio/AnalyserNode.h>
 #include <LibWeb/WebIDL/Buffers.h>
 #include <LibWeb/WebIDL/DOMException.h>
@@ -137,6 +139,9 @@ Vector<f32> AnalyserNode::current_frequency_data()
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-getfloatfrequencydata
 WebIDL::ExceptionOr<void> AnalyserNode::get_float_frequency_data(GC::Root<WebIDL::BufferSource> const& array)
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    auto const& window = as<HTML::Window>(HTML::relevant_global_object(*this));
+    window.associated_document().page().client().page_did_call_fingerprinting_api("audio"sv, "getFloatFrequencyData"sv);
 
     // Write the current frequency data into array. If array has fewer elements than the frequencyBinCount,
     // the excess elements will be dropped. If array has more elements than the frequencyBinCount, the
@@ -164,6 +169,10 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_float_frequency_data(GC::Root<WebIDL
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-getbytefrequencydata
 WebIDL::ExceptionOr<void> AnalyserNode::get_byte_frequency_data(GC::Root<WebIDL::BufferSource> const& array)
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    auto const& window = as<HTML::Window>(HTML::relevant_global_object(*this));
+    window.associated_document().page().client().page_did_call_fingerprinting_api("audio"sv, "getByteFrequencyData"sv);
+
     // FIXME: If another call to getByteFrequencyData() or getFloatFrequencyData() occurs within the same render
     // quantum as a previous call, the current frequency data is not updated with the same data. Instead,
     // the previously computed data is returned.

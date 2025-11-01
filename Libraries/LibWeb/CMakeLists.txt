@@ -586,7 +586,9 @@ set(SOURCES
     HTML/NavigationTransition.cpp
     HTML/Navigator.cpp
     HTML/NavigatorBeacon.cpp
+    HTML/NavigatorConcurrentHardware.cpp
     HTML/NavigatorID.cpp
+    HTML/NavigatorLanguage.cpp
     HTML/Numbers.cpp
     HTML/OffscreenCanvas.cpp
     HTML/OffscreenCanvasRenderingContext2D.cpp

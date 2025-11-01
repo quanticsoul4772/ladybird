@@ -7,8 +7,11 @@
 
 #include <AK/ByteString.h>
 #include <LibWeb/HTML/NavigatorID.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/Loader/UserAgent.h>
+#include <LibWeb/Page/Page.h>
 
 namespace Web::HTML {
 
@@ -52,6 +55,10 @@ String NavigatorIDMixin::app_version() const
 // https://html.spec.whatwg.org/multipage/system-state.html#dom-navigator-platform
 String NavigatorIDMixin::platform() const
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    auto const& window = as<HTML::Window>(HTML::current_principal_global_object());
+    window.page().client().page_did_call_fingerprinting_api("navigator"sv, "platform"sv);
+
     // Must return a string representing the platform on which the browser is executing (e.g. "MacIntel", "Win32",
     // "Linux x86_64", "Linux armv81") or, for privacy and compatibility, a string that is commonly returned on another
     // platform.
@@ -85,6 +92,10 @@ String NavigatorIDMixin::product_sub() const
 // https://html.spec.whatwg.org/multipage/system-state.html#dom-navigator-useragent
 String NavigatorIDMixin::user_agent() const
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    auto const& window = as<HTML::Window>(HTML::current_principal_global_object());
+    window.page().client().page_did_call_fingerprinting_api("navigator"sv, "userAgent"sv);
+
     // Must return the default `User-Agent` value.
     return ResourceLoader::the().user_agent();
 }

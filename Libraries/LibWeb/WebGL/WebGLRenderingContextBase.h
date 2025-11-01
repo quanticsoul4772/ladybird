@@ -31,6 +31,7 @@ public:
     virtual void visit_edges(JS::Cell::Visitor&) = 0;
     virtual OpenGLContext& context() = 0;
     virtual bool ext_texture_filter_anisotropic_extension_enabled() const = 0;
+    virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const = 0;
 
     template<typename T>
     static ErrorOr<Span<T>> get_offset_span(Span<T> src_span, WebIDL::UnsignedLongLong src_offset, WebIDL::UnsignedLong src_length_override = 0)

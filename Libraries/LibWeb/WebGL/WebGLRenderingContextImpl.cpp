@@ -15,6 +15,9 @@ extern "C" {
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/DataView.h>
 #include <LibJS/Runtime/TypedArray.h>
+#include <LibWeb/DOM/Document.h>
+#include <LibWeb/HTML/HTMLCanvasElement.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLActiveInfo.h>
 #include <LibWeb/WebGL/WebGLBuffer.h>
@@ -1318,6 +1321,8 @@ JS::Value WebGLRenderingContextImpl::get_parameter(WebIDL::UnsignedLong pname)
         return JS::Value(m_renderbuffer_binding);
     }
     case GL_RENDERER: {
+        // Track potential fingerprinting (Milestone 0.4 Phase 4)
+        canvas_for_binding()->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getParameter"sv);
         auto result = reinterpret_cast<char const*>(glGetString(GL_RENDERER));
         return JS::PrimitiveString::create(m_realm->vm(), ByteString { result });
     }
@@ -1366,6 +1371,8 @@ JS::Value WebGLRenderingContextImpl::get_parameter(WebIDL::UnsignedLong pname)
         return JS::Value(result == GL_TRUE);
     }
     case GL_SHADING_LANGUAGE_VERSION: {
+        // Track potential fingerprinting (Milestone 0.4 Phase 4)
+        canvas_for_binding()->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getParameter"sv);
         auto result = reinterpret_cast<char const*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
         return JS::PrimitiveString::create(m_realm->vm(), ByteString { result });
     }
@@ -1475,10 +1482,14 @@ JS::Value WebGLRenderingContextImpl::get_parameter(WebIDL::UnsignedLong pname)
         return JS::Value(result);
     }
     case GL_VENDOR: {
+        // Track potential fingerprinting (Milestone 0.4 Phase 4)
+        canvas_for_binding()->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getParameter"sv);
         auto result = reinterpret_cast<char const*>(glGetString(GL_VENDOR));
         return JS::PrimitiveString::create(m_realm->vm(), ByteString { result });
     }
     case GL_VERSION: {
+        // Track potential fingerprinting (Milestone 0.4 Phase 4)
+        canvas_for_binding()->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getParameter"sv);
         auto result = reinterpret_cast<char const*>(glGetString(GL_VERSION));
         return JS::PrimitiveString::create(m_realm->vm(), ByteString { result });
     }

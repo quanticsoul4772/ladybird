@@ -34,7 +34,7 @@ public:
     void present() override;
     void needs_to_present() override;
 
-    GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const;
+    virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const override;
 
     bool is_context_lost() const;
     Optional<WebGLContextAttributes> get_context_attributes();

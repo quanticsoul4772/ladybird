@@ -9,9 +9,11 @@
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/WebGLRenderingContextPrototype.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Infra/Strings.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/WebGL/EventNames.h>
 #include <LibWeb/WebGL/Extensions/ANGLEInstancedArrays.h>
@@ -173,11 +175,15 @@ void WebGLRenderingContext::allocate_painting_surface_if_needed()
 
 Optional<Vector<String>> WebGLRenderingContext::get_supported_extensions()
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    m_canvas_element->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getSupportedExtensions"sv);
     return context().get_supported_extensions();
 }
 
 JS::Object* WebGLRenderingContext::get_extension(String const& name)
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    m_canvas_element->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getExtension"sv);
     // Returns an object if, and only if, name is an ASCII case-insensitive match [HTML] for one of the names returned
     // from getSupportedExtensions; otherwise, returns null. The object returned from getExtension contains any constants
     // or functions provided by the extension. A returned object may have no constants or functions if the extension does

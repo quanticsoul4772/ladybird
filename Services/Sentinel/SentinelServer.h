@@ -9,6 +9,7 @@
 #include "ClientRateLimiter.h"
 #include "HealthCheck.h"
 #include "MalwareML.h"
+#include "ThreatFeed.h"
 #include <AK/Error.h>
 #include <AK/HashMap.h>
 #include <AK/NonnullOwnPtr.h>
@@ -79,6 +80,9 @@ private:
 
     // ML-based malware detection (Milestone 0.4)
     OwnPtr<MalwareMLDetector> m_ml_detector;
+
+    // Federated threat intelligence (Milestone 0.4 Phase 3)
+    OwnPtr<ThreatFeed> m_threat_feed;
 };
 
 }

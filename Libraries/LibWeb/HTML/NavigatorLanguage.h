@@ -16,7 +16,7 @@ namespace Web::HTML {
 class NavigatorLanguageMixin {
 public:
     // https://html.spec.whatwg.org/multipage/system-state.html#dom-navigator-language
-    String const& language() const { return ResourceLoader::the().preferred_languages()[0]; }
+    String const& language() const;
 
     // https://html.spec.whatwg.org/multipage/system-state.html#dom-navigator-languages
     ReadonlySpan<String> languages() const { return ResourceLoader::the().preferred_languages(); }
