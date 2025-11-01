@@ -96,6 +96,46 @@ FormMonitor analyzes:
 - **Form action URLs** (where data is being sent)
 - **Origin comparison** (form page vs. action destination)
 - **Connection security** (HTTP vs. HTTPS)
+- **Form anomalies** (suspicious patterns indicating phishing or data harvesting)
+
+### Advanced Anomaly Detection (Milestone 0.3 Phase 6)
+
+Beyond basic cross-origin detection, Ladybird uses advanced heuristics to identify sophisticated phishing and data harvesting attempts:
+
+#### 1. Hidden Field Ratio Analysis (30% weight)
+- **What it detects**: Forms with excessive hidden fields often indicate phishing
+- **Normal forms**: 10-20% hidden fields (CSRF tokens, session IDs)
+- **Suspicious forms**: >50% hidden fields (data collection, credential harvesting)
+- **Example**: A login form with 10 fields where 6 are hidden
+
+#### 2. Field Count Analysis (20% weight)
+- **What it detects**: Unusually high number of fields suggests data harvesting
+- **Normal forms**: 2-15 fields
+- **Suspicious forms**: >25 fields (profile scraping, mass data collection)
+- **Example**: A "simple login" form with 30+ input fields
+
+#### 3. Domain Reputation Check (30% weight)
+- **Free TLDs**: `.tk`, `.ml`, `.ga`, `.cf`, `.gq` commonly used in phishing
+- **Suspicious keywords**: `phishing`, `fake-`, `scam`, `data-collect`, `harvester`
+- **IP addresses**: Forms submitting to raw IP addresses instead of domains
+- **Long domains**: >40 characters may indicate typosquatting
+- **Example**: `secure-bank-login-verification.tk/auth`
+
+#### 4. Submission Frequency Analysis (20% weight)
+- **What it detects**: Bot-like rapid form submissions
+- **Normal behavior**: 1-2 submissions per minute
+- **Suspicious behavior**: >5 submissions in 5 seconds
+- **Automated attacks**: Consistent timing patterns (variance <1s)
+
+#### Anomaly Scoring
+
+Each form submission receives an anomaly score (0.0-1.0):
+- **0.0-0.2**: Normal, no additional warnings
+- **0.2-0.5**: Mildly suspicious, noted in alert details
+- **0.5-0.8**: Highly suspicious, prominent warning
+- **0.8-1.0**: Extremely suspicious, strong block recommendation
+
+When multiple anomalies are detected, the scores combine to provide an overall risk assessment. High-scoring forms trigger enhanced security warnings with detailed anomaly indicators.
 
 ---
 
@@ -569,26 +609,40 @@ Credential protection is part of the Sentinel security system. Contributions are
 
 ## Version History
 
-### Milestone 0.2 (Phase 6 Days 36-42)
+### Milestone 0.3 - Enhanced Credential Protection (2025-10-31)
 
-- ✅ Real-time form submission monitoring (Day 37)
-- ✅ Cross-origin detection (Day 37)
-- ✅ Security alert dialogs (Day 38)
-- ✅ Trusted form relationships (Day 38)
-- ✅ Autofill protection (Day 39)
-- ✅ One-time autofill override (Day 39)
-- ✅ about:security integration (Day 40)
-- ✅ User education modal (Day 41)
-- ✅ Security tips section (Day 41)
-- ✅ End-to-end tests (Day 42)
-- ✅ User guide documentation (Day 42)
+- ✅ Persistent trusted/blocked form relationships (Phase 1-3)
+- ✅ Credential alert history database (Phase 1-3)
+- ✅ Import/export trusted relationships (Phase 4)
+- ✅ Policy template system (Phase 5)
+- ✅ Advanced form anomaly detection (Phase 6)
+  - Hidden field ratio analysis
+  - Field count anomaly detection
+  - Domain reputation checking
+  - Submission frequency monitoring
+  - Multi-factor anomaly scoring (0.0-1.0)
+  - Anomaly indicators in alert metadata
+
+### Milestone 0.2 - Core Credential Protection (2025-10-29)
+
+- ✅ Real-time form submission monitoring
+- ✅ Cross-origin detection
+- ✅ Security alert dialogs
+- ✅ Trusted form relationships
+- ✅ Autofill protection
+- ✅ One-time autofill override
+- ✅ about:security integration
+- ✅ User education modal
+- ✅ Security tips section
+- ✅ End-to-end tests
+- ✅ User guide documentation
 
 ### Future Roadmap
 
-- 🔮 Persistent trusted relationships (PolicyGraph storage)
-- 🔮 Credential alert history
-- 🔮 Import/export trust lists
 - 🔮 Machine learning-based anomaly detection
+- 🔮 Federated threat intelligence sharing
+- 🔮 Browser fingerprinting detection
+- 🔮 Advanced phishing URL analysis
 - 🔮 Browser extension API for third-party security tools
 
 ---
@@ -606,6 +660,6 @@ Credential protection is provided as-is without warranty. While Ladybird makes a
 
 ---
 
-*Last updated: Sentinel Phase 6 Day 42*
+*Last updated: Milestone 0.3 Phase 6 (2025-10-31)*
 *Document version: 1.0*
 *Ladybird Browser - Protecting your credentials*

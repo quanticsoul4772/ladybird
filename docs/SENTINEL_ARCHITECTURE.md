@@ -2139,13 +2139,19 @@ Malicious YARA rules could cause DoS:
 - Tests: `credential-protection-*.html`
 - Docs: `USER_GUIDE_CREDENTIAL_PROTECTION.md`
 
-### Milestone 0.3 (Planned)
+### Milestone 0.3 (Complete - 2025-10-31)
 
-- Persistent trusted relationships (PolicyGraph storage)
-- Credential alert history
-- Import/export trust lists
-- Policy templates for credential protection
-- Machine learning-based form anomaly detection
+- ✅ Persistent trusted relationships (PolicyGraph storage)
+- ✅ Credential alert history
+- ✅ Import/export trust lists
+- ✅ Policy templates for credential protection
+- ✅ Rule-based form anomaly detection (Phase 6)
+  - Hidden field ratio analysis (30% weight)
+  - Field count anomaly detection (20% weight)
+  - Domain reputation checking (30% weight)
+  - Submission frequency monitoring (20% weight)
+  - Multi-factor scoring algorithm (0.0-1.0 scale)
+  - Anomaly metadata persistence
 
 ### Milestone 0.4+ (Roadmap)
 
