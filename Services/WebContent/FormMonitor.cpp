@@ -5,6 +5,7 @@
  */
 
 #include "FormMonitor.h"
+#include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
 #include <AK/StringBuilder.h>
@@ -57,6 +58,19 @@ ErrorOr<void> FormMonitor::load_relationships_from_database()
 
 void FormMonitor::on_form_submit(FormSubmitEvent const& event)
 {
+    // Milestone 0.3 Phase 6: Track submission timestamp for frequency analysis
+    auto form_origin = extract_origin(event.document_url);
+    if (!m_submission_timestamps.contains(form_origin)) {
+        m_submission_timestamps.set(form_origin, Vector<UnixDateTime> {});
+    }
+    auto& timestamps = m_submission_timestamps.get(form_origin).value();
+    timestamps.append(event.timestamp);
+
+    // Keep only last 10 timestamps to prevent unbounded memory growth
+    if (timestamps.size() > 10) {
+        timestamps.remove(0);
+    }
+
     // Check if submission is suspicious
     if (!is_suspicious_submission(event))
         return;
@@ -73,6 +87,9 @@ void FormMonitor::on_form_submit(FormSubmitEvent const& event)
     dbgln("  Severity: {}", alert->severity);
     dbgln("  Alert type: {}", alert->alert_type);
 
+    // Milestone 0.3 Phase 6: Calculate anomaly score
+    auto anomaly = calculate_anomaly_score(event);
+
     // Record alert in database if PolicyGraph is available
     if (m_policy_graph) {
         Sentinel::PolicyGraph::CredentialAlert db_alert;
@@ -87,11 +104,22 @@ void FormMonitor::on_form_submit(FormSubmitEvent const& event)
         db_alert.is_cross_origin = alert->is_cross_origin;
         db_alert.alert_json = alert->to_json();
 
+        // Milestone 0.3 Phase 6: Add anomaly data
+        // Convert float score (0.0-1.0) to integer (0-1000) for database storage
+        db_alert.anomaly_score = static_cast<i32>(anomaly.score * 1000.0f);
+
+        // Convert anomaly indicators to JSON array string
+        JsonArray indicators_array;
+        for (auto const& indicator : anomaly.indicators) {
+            indicators_array.must_append(indicator);
+        }
+        db_alert.anomaly_indicators = JsonValue(indicators_array).serialized();
+
         auto result = m_policy_graph->record_credential_alert(db_alert);
         if (result.is_error()) {
             dbgln("FormMonitor: Failed to record alert in database: {}", result.error());
         } else {
-            dbgln("FormMonitor: Recorded alert {} in database", result.value());
+            dbgln("FormMonitor: Recorded alert {} in database with anomaly score {:.2f}", result.value(), anomaly.score);
         }
     }
 }
@@ -400,6 +428,187 @@ void FormMonitor::consume_autofill_override(String const& form_origin, String co
     }
 
     dbgln("FormMonitor: One-time autofill override consumed and removed");
+}
+
+// Milestone 0.3 Phase 6: Form Anomaly Detection Implementation
+
+float FormMonitor::check_hidden_field_ratio(FormSubmitEvent const& event) const
+{
+    if (event.fields.is_empty())
+        return 0.0f;
+
+    size_t hidden_count = 0;
+    for (auto const& field : event.fields) {
+        if (field.type == FieldType::Hidden)
+            hidden_count++;
+    }
+
+    float ratio = static_cast<float>(hidden_count) / static_cast<float>(event.fields.size());
+
+    // Normalize to 0-1 score: ratios above 0.5 are highly suspicious
+    if (ratio < 0.3f)
+        return 0.0f;  // Normal
+    if (ratio < 0.5f)
+        return (ratio - 0.3f) / 0.2f * 0.5f;  // Slightly suspicious (0-0.5)
+
+    return 0.5f + (ratio - 0.5f) / 0.5f * 0.5f;  // Very suspicious (0.5-1.0)
+}
+
+float FormMonitor::check_field_count(FormSubmitEvent const& event) const
+{
+    size_t field_count = event.fields.size();
+
+    // Normal forms have 2-15 fields
+    if (field_count <= 15)
+        return 0.0f;
+
+    // Data harvesting forms often have 20+ fields
+    if (field_count <= 25)
+        return (static_cast<float>(field_count) - 15.0f) / 10.0f * 0.5f;  // 0-0.5
+
+    // Extremely suspicious: 25+ fields
+    if (field_count <= 50)
+        return 0.5f + (static_cast<float>(field_count) - 25.0f) / 25.0f * 0.5f;  // 0.5-1.0
+
+    return 1.0f;  // 50+ fields is maximum suspicion
+}
+
+float FormMonitor::check_action_domain_reputation(URL::URL const& action_url) const
+{
+    auto host = action_url.host();
+    if (!host.has_value())
+        return 0.0f;
+
+    auto host_str = host->serialize();
+
+    // Check for known suspicious patterns
+    Vector<StringView> suspicious_patterns = {
+        "data-collect"sv,
+        "analytics"sv,
+        "tracking"sv,
+        "logger"sv,
+        "harvester"sv,
+        "phishing"sv,
+        "fake-"sv,
+        "scam"sv,
+        ".tk"sv,    // Free TLD often used for phishing
+        ".ml"sv,    // Free TLD
+        ".ga"sv,    // Free TLD
+        ".cf"sv,    // Free TLD
+        ".gq"sv     // Free TLD
+    };
+
+    for (auto const& pattern : suspicious_patterns) {
+        if (host_str.contains(pattern))
+            return 0.8f;  // High suspicion for known patterns
+    }
+
+    // Check for IP address instead of domain (common in phishing)
+    // Simple heuristic: if it starts with a digit and contains dots, likely an IP
+    auto host_view = host_str.bytes_as_string_view();
+    if (!host_view.is_empty() && is_ascii_digit(host_view[0]) && host_view.contains('.'))
+        return 0.7f;  // IP addresses are suspicious
+
+    // Check for very long domains (possible typosquatting)
+    if (host_str.bytes().size() > 40)
+        return 0.6f;
+
+    return 0.0f;  // No obvious red flags
+}
+
+float FormMonitor::check_submission_frequency(String const& form_origin) const
+{
+    auto it = m_submission_timestamps.find(form_origin);
+    if (it == m_submission_timestamps.end())
+        return 0.0f;  // First submission, not suspicious
+
+    auto const& timestamps = it->value;
+    if (timestamps.size() < 3)
+        return 0.0f;  // Not enough data yet
+
+    // Check for rapid-fire submissions in last 5 seconds (bot behavior)
+    auto now = UnixDateTime::now();
+    auto five_seconds_ago = UnixDateTime::from_milliseconds_since_epoch(now.milliseconds_since_epoch() - 5000);
+
+    size_t recent_count = 0;
+    for (auto const& timestamp : timestamps) {
+        if (timestamp >= five_seconds_ago)
+            recent_count++;
+    }
+
+    if (recent_count >= 5)
+        return 1.0f;  // 5+ submissions in 5 seconds = bot
+    if (recent_count >= 3)
+        return 0.7f;  // 3-4 submissions in 5 seconds = suspicious
+
+    // Check for consistent interval pattern (automated testing)
+    if (timestamps.size() >= 5) {
+        Vector<i64> intervals;
+        for (size_t i = 1; i < timestamps.size(); ++i) {
+            i64 interval = timestamps[i].milliseconds_since_epoch() - timestamps[i - 1].milliseconds_since_epoch();
+            intervals.append(interval);
+        }
+
+        // Calculate variance in intervals
+        i64 sum = 0;
+        for (auto interval : intervals)
+            sum += interval;
+        i64 avg = sum / intervals.size();
+
+        i64 variance_sum = 0;
+        for (auto interval : intervals) {
+            i64 diff = interval - avg;
+            variance_sum += diff * diff;
+        }
+
+        // Low variance = consistent timing = automated
+        if (variance_sum < 1000000)  // Less than 1 second variance
+            return 0.6f;
+    }
+
+    return 0.0f;
+}
+
+FormMonitor::FormAnomalyScore FormMonitor::calculate_anomaly_score(FormSubmitEvent const& event) const
+{
+    float score = 0.0f;
+    Vector<String> indicators;
+
+    // 1. Hidden field ratio (weight: 0.3)
+    float hidden_ratio = check_hidden_field_ratio(event);
+    if (hidden_ratio > 0.5f) {
+        score += 0.3f * hidden_ratio;
+        indicators.append(MUST(String::formatted("High hidden field ratio ({:.1f}%)", hidden_ratio * 100.0f)));
+    }
+
+    // 2. Excessive fields (weight: 0.2)
+    float field_score = check_field_count(event);
+    if (field_score > 0.7f) {
+        score += 0.2f * field_score;
+        indicators.append(MUST(String::formatted("Excessive field count ({} fields)", event.fields.size())));
+    }
+
+    // 3. Domain reputation (weight: 0.3)
+    float domain_score = check_action_domain_reputation(event.action_url);
+    if (domain_score > 0.5f) {
+        score += 0.3f * domain_score;
+        auto host_str = event.action_url.host().has_value()
+            ? event.action_url.host()->serialize()
+            : "unknown"_string;
+        indicators.append(MUST(String::formatted("Suspicious action domain: {}", host_str)));
+    }
+
+    // 4. Submission frequency (weight: 0.2)
+    auto form_origin = extract_origin(event.document_url);
+    float freq_score = check_submission_frequency(form_origin);
+    if (freq_score > 0.8f) {
+        score += 0.2f * freq_score;
+        indicators.append("Unusual submission frequency detected"_string);
+    }
+
+    dbgln("FormMonitor: Anomaly score {:.2f} with {} indicators", score, indicators.size());
+
+    return FormAnomalyScore { score, move(indicators) };
 }
 
 }

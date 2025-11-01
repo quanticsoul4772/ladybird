@@ -295,6 +295,8 @@ ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_dir
             user_action TEXT,
             policy_id INTEGER,
             alert_json TEXT,
+            anomaly_score INTEGER DEFAULT 0,
+            anomaly_indicators TEXT DEFAULT '[]',
             FOREIGN KEY(policy_id) REFERENCES policies(id)
         );
     )#"sv));
@@ -478,8 +480,8 @@ ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_dir
         INSERT INTO credential_alerts
             (detected_at, form_origin, action_origin, alert_type, severity,
              has_password_field, has_email_field, uses_https, is_cross_origin,
-             user_action, policy_id, alert_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+             user_action, policy_id, alert_json, anomaly_score, anomaly_indicators)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )#"sv));
 
     statements.get_credential_alerts_all = TRY(database->prepare_statement(
@@ -1521,7 +1523,9 @@ ErrorOr<i64> PolicyGraph::record_credential_alert(CredentialAlert const& alert)
         alert.is_cross_origin ? 1 : 0,
         alert.user_action.has_value() ? alert.user_action.value() : ""_string,
         alert.policy_id.has_value() ? alert.policy_id.value() : -1,
-        alert.alert_json
+        alert.alert_json,
+        alert.anomaly_score,
+        alert.anomaly_indicators
     );
 
     i64 alert_id = -1;

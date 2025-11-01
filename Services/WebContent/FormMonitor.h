@@ -98,7 +98,21 @@ public:
     bool has_autofill_override(String const& form_origin, String const& action_origin) const;
     void consume_autofill_override(String const& form_origin, String const& action_origin);
 
+    // Milestone 0.3 Phase 6: Form Anomaly Detection
+    struct FormAnomalyScore {
+        float score { 0.0f };  // 0.0 (normal) to 1.0 (highly suspicious)
+        Vector<String> indicators;  // List of detected anomalies
+    };
+
+    // Calculate anomaly score for form submission
+    FormAnomalyScore calculate_anomaly_score(FormSubmitEvent const& event) const;
+
 private:
+    // Milestone 0.3 Phase 6: Anomaly detection helpers
+    float check_hidden_field_ratio(FormSubmitEvent const& event) const;
+    float check_field_count(FormSubmitEvent const& event) const;
+    float check_action_domain_reputation(URL::URL const& action_url) const;
+    float check_submission_frequency(String const& form_origin) const;
 
     // Check if submission uses insecure transport for credentials
     bool is_insecure_credential_submission(FormSubmitEvent const& event) const;
@@ -118,6 +132,10 @@ private:
 
     // PolicyGraph for persistent credential relationship storage
     OwnPtr<Sentinel::PolicyGraph> m_policy_graph;
+
+    // Milestone 0.3 Phase 6: Submission frequency tracking for anomaly detection
+    // Maps form_origin to timestamps of recent submissions
+    HashMap<String, Vector<UnixDateTime>> m_submission_timestamps;
 };
 
 }

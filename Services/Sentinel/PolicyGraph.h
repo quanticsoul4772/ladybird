@@ -127,6 +127,9 @@ public:
         Optional<String> user_action;
         Optional<i64> policy_id;
         String alert_json;
+        // Milestone 0.3 Phase 6: Anomaly detection fields
+        i32 anomaly_score { 0 };  // 0-1000 (scaled from 0.0-1.0, multiply by 1000)
+        String anomaly_indicators;  // JSON array of detected anomalies
     };
 
     struct PolicyTemplate {
