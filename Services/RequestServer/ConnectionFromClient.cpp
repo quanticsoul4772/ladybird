@@ -70,6 +70,17 @@ ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transpo
         VERIFY(result == CURLM_OK);
         check_active_requests();
     });
+
+    // Initialize URL security analyzer for phishing detection
+    // If this fails, we continue without URL analysis rather than crashing
+    auto url_analyzer_result = URLSecurityAnalyzer::create();
+    if (url_analyzer_result.is_error()) {
+        dbgln("Warning: Failed to create URLSecurityAnalyzer: {}", url_analyzer_result.error());
+        dbgln("URL phishing detection will be disabled for this connection");
+    } else {
+        m_url_security_analyzer = url_analyzer_result.release_value();
+        dbgln("URL security analyzer initialized successfully");
+    }
 }
 
 ConnectionFromClient::~ConnectionFromClient()
@@ -594,6 +605,29 @@ void ConnectionFromClient::start_request(i32 request_id, ByteString method, URL:
         return;
 
     dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: start_request({}, {}, page_id={})", request_id, url, page_id);
+
+    // Security: URL phishing detection (Milestone 0.4 Phase 5)
+    if (m_url_security_analyzer) {
+        auto analysis_result = m_url_security_analyzer->analyze_url(url);
+        if (!analysis_result.is_error()) {
+            auto const& analysis = analysis_result.value();
+
+            // Send security alert for suspicious or dangerous URLs
+            if (analysis.is_suspicious) {
+                auto alert_json_result = m_url_security_analyzer->generate_security_alert_json(analysis, url);
+                if (!alert_json_result.is_error()) {
+                    ByteString alert_json = alert_json_result.value();
+                    dbgln("Phishing URL detected: {} (score={:.2f}, level={})",
+                        url, analysis.phishing_score,
+                        analysis.threat_level() == URLSecurityAnalyzer::URLThreatAnalysis::ThreatLevel::Dangerous ? "dangerous" :
+                        analysis.threat_level() == URLSecurityAnalyzer::URLThreatAnalysis::ThreatLevel::Suspicious ? "suspicious" : "safe");
+
+                    // Send security alert to WebContent via IPC
+                    async_security_alert(request_id, page_id, alert_json);
+                }
+            }
+        }
+    }
 
     // IPFS Integration: Detect P2P protocol types
     Request::ProtocolType protocol_type = Request::ProtocolType::HTTP;

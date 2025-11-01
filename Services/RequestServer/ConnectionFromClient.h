@@ -20,6 +20,7 @@
 #include <RequestServer/Request.h>
 #include <RequestServer/RequestClientEndpoint.h>
 #include <RequestServer/RequestServerEndpoint.h>
+#include <RequestServer/URLSecurityAnalyzer.h>
 
 namespace RequestServer {
 
@@ -162,6 +163,9 @@ private:
 
     // Security alert storage for quarantine operations (Phase 3 Day 19)
     HashMap<i32, ByteString> m_pending_security_alerts;
+
+    // URL security analyzer for phishing detection (Phase 5 Milestone 0.4)
+    OwnPtr<URLSecurityAnalyzer> m_url_security_analyzer;
 
     // Gateway arrays (in priority order)
     static constexpr StringView s_ipfs_gateways[] = {
