@@ -710,6 +710,14 @@ void WebContentClient::did_block_autofill(u64 page_id, String form_origin, Strin
     }
 }
 
+void WebContentClient::did_detect_traffic_alert(u64 page_id, ByteString alert_json)
+{
+    dbgln("WebContentClient: Traffic alert detected on page {}: {}", page_id, alert_json);
+
+    // FIXME: Implement traffic alert handling (e.g., show notification to user)
+    // This is currently just a stub for the phishing/malware detection system
+}
+
 void WebContentClient::did_change_favicon(u64 page_id, Gfx::ShareableBitmap favicon)
 {
     if (!favicon.is_valid()) {

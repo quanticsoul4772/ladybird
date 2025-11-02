@@ -22,6 +22,7 @@
 #include <RequestServer/RequestServerEndpoint.h>
 #include <RequestServer/TrafficMonitor.h>
 #include <RequestServer/URLSecurityAnalyzer.h>
+#include <Services/Sentinel/Sandbox/Orchestrator.h>
 
 namespace RequestServer {
 
@@ -37,6 +38,9 @@ public:
     // Network identity management (per-page for circuit isolation)
     [[nodiscard]] RefPtr<IPC::NetworkIdentity> network_identity_for_page(u64 page_id);
     [[nodiscard]] RefPtr<IPC::NetworkIdentity> get_or_create_network_identity_for_page(u64 page_id);
+
+    // Sandbox orchestrator access (Milestone 0.5 Phase 1)
+    [[nodiscard]] Sentinel::Sandbox::Orchestrator* sandbox_orchestrator() { return m_sandbox_orchestrator.ptr(); }
 
     void request_complete(Badge<Request>, int request_id);
 
@@ -173,6 +177,9 @@ private:
 
     // Traffic monitor for network behavioral analysis (Phase 6 Milestone 0.4)
     OwnPtr<TrafficMonitor> m_traffic_monitor;
+
+    // Sandbox orchestrator for real-time malware analysis (Milestone 0.5 Phase 1)
+    OwnPtr<Sentinel::Sandbox::Orchestrator> m_sandbox_orchestrator;
 
     // Gateway arrays (in priority order)
     static constexpr StringView s_ipfs_gateways[] = {

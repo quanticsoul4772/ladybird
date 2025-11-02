@@ -42,6 +42,7 @@ public:
         Vector<FormField> fields;
         bool has_password_field { false };
         bool has_email_field { false };
+        bool had_user_interaction { false };  // True if user clicked/typed before submit
         UnixDateTime timestamp;
     };
 

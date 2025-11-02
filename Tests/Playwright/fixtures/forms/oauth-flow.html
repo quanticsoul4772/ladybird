@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OAuth Login - Example App</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 500px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .oauth-info {
+      background: #e7f3ff;
+      border: 1px solid #007bff;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 5px;
+    }
+    .login-form {
+      border: 1px solid #ccc;
+      padding: 20px;
+      border-radius: 5px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 15px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      background-color: #6c757d;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background-color: #5a6268;
+    }
+  </style>
+</head>
+<body>
+  <div class="oauth-info">
+    <strong>ℹ️ OAuth/SSO Flow</strong><br>
+    This demonstrates a legitimate cross-origin login flow (e.g., "Login with Google").
+    FormMonitor should allow this if user trusts the OAuth provider.
+  </div>
+
+  <div class="login-form">
+    <h1>Login with Auth Provider</h1>
+    <p>Sign in using your Auth0 account</p>
+
+    <!-- Cross-origin but legitimate (OAuth/SSO) -->
+    <form id="oauth-form" action="https://auth0.com/authorize" method="POST">
+      <!-- OAuth parameters -->
+      <input type="hidden" name="client_id" value="app123_oauth_client">
+      <input type="hidden" name="redirect_uri" value="https://example-app.com/callback">
+      <input type="hidden" name="response_type" value="code">
+      <input type="hidden" name="scope" value="openid profile email">
+
+      <label for="email">Email Address:</label>
+      <input type="email" id="email" name="email" value="user@example.com" required>
+
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" value="oauth-password" required>
+
+      <button type="submit" id="submit-btn">Login with Auth0</button>
+    </form>
+  </div>
+
+  <div id="test-status" style="margin-top: 20px; padding: 10px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 3px;">
+    <strong>FormMonitor Status:</strong> <span id="status-text">Checking trust...</span>
+  </div>
+
+  <script>
+    // FormMonitor test data
+    const form = document.getElementById('oauth-form');
+    const documentOrigin = window.location.origin || 'data:';
+    const actionOrigin = new URL(form.action).origin;
+
+    const isCrossOrigin = documentOrigin !== actionOrigin;
+    const allFields = form.querySelectorAll('input');
+    const hiddenFields = form.querySelectorAll('input[type="hidden"]');
+
+    window.__formMonitorTestData = {
+      testName: 'oauth-flow',
+      documentUrl: window.location.href,
+      actionUrl: form.action,
+      formOrigin: documentOrigin,
+      actionOrigin: actionOrigin,
+      method: 'POST',
+      hasPasswordField: true,
+      hasEmailField: true,
+      isCrossOrigin: isCrossOrigin,
+      totalFields: allFields.length,
+      hiddenFields: hiddenFields.length,
+      isOAuthFlow: true,
+      isTrustedRelationship: false, // Will be true if user previously trusted
+      expectedAlert: 'credential_exfiltration', // First time
+      expectedSeverity: 'high',
+      expectedUserAction: 'trust', // User should click "Trust" for OAuth
+      policyGraphEntry: {
+        form_origin: documentOrigin,
+        action_origin: actionOrigin,
+        relationship_type: 'trusted',
+        created_by: 'user_decision',
+        notes: 'User trusts auth0.com for OAuth login'
+      },
+      note: 'Legitimate OAuth flow. User should trust this once, then no future alerts.'
+    };
+
+    document.getElementById('status-text').textContent =
+      `Cross-origin OAuth: ${documentOrigin} → ${actionOrigin}. ` +
+      `First submission will alert, user can Trust for future.`;
+  </script>
+</body>
+</html>

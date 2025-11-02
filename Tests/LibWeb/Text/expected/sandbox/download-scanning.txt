@@ -1,0 +1,49 @@
+=== Sentinel Sandbox Download Scanning Integration Test ===
+
+Test 1: Clean file download
+  ✓ Clean file download initiated
+  Expected: Low threat score, no sandbox execution
+
+Test 2: Suspicious file download
+  ✓ Suspicious file download initiated
+  Expected: Medium threat score, Tier 1 WASM sandbox execution
+
+Test 3: Malicious file download (EICAR test pattern)
+  ✓ Malicious file download initiated
+  Expected: High threat score, full sandbox analysis, quarantine
+
+Test 4: Large file download
+  ✓ Large file download initiated (1MB)
+  Expected: Size-appropriate scanning strategy
+
+Test 5: Binary executable download
+  ✓ Executable file download initiated
+  Expected: High priority scan, behavioral analysis
+
+Test 6: JavaScript file with obfuscation
+  ✓ Obfuscated script download initiated
+  Expected: Script analysis, obfuscation detection
+
+Test 7: Archive file download
+  ✓ Archive file download initiated
+  Expected: Archive inspection, nested file analysis
+
+Test 8: Office document download
+  ✓ Office document download initiated
+  Expected: Macro detection, sandbox execution if present
+
+=== Test Summary ===
+All download scenarios initiated successfully.
+
+Expected Flow:
+1. RequestServer receives download request
+2. SecurityTap intercepts and computes SHA256
+3. Orchestrator performs static analysis (YARA + ML)
+4. If suspicious: WasmExecutor runs Tier 1 sandbox
+5. If still suspicious: Native Tier 2 sandbox (if enabled)
+6. VerdictEngine generates final threat assessment
+7. User receives alert via IPC (for threats)
+8. PolicyGraph caches verdict for future lookups
+
+Note: Actual scanning occurs in RequestServer/Sentinel processes.
+This test verifies download initiation; verdicts logged to console.

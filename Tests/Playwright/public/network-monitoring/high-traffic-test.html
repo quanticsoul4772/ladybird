@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High Traffic Test</title>
+</head>
+<body>
+    <h1>High Traffic Test</h1>
+    <p>This page makes many network requests to test monitoring performance impact.</p>
+    <div id="status">Starting high-volume requests...</div>
+    <div id="stats"></div>
+
+    <script>
+        const startTime = Date.now();
+        const totalRequests = 50;
+        let completed = 0;
+
+        // Make many concurrent requests to various endpoints
+        for (let i = 0; i < totalRequests; i++) {
+            const endpoints = [
+                `http://api${i % 5}.example.com/data`,
+                `http://cdn${i % 3}.example.net/resource`,
+                `http://service${i % 4}.example.org/endpoint`
+            ];
+
+            const endpoint = endpoints[i % endpoints.length];
+
+            fetch(endpoint, { mode: 'no-cors' })
+                .finally(() => {
+                    completed++;
+                    if (completed === totalRequests) {
+                        const duration = Date.now() - startTime;
+                        document.getElementById('status').textContent = `Completed ${totalRequests} requests`;
+                        document.getElementById('stats').innerHTML = `
+                            <p>Total requests: ${totalRequests}</p>
+                            <p>Duration: ${duration}ms</p>
+                            <p>Average: ${(duration / totalRequests).toFixed(2)}ms per request</p>
+                        `;
+                    }
+                });
+        }
+    </script>
+</body>
+</html>

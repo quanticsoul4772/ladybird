@@ -185,10 +185,18 @@ WebIDL::ExceptionOr<void> History::shared_history_push_replace_state(JS::Value d
     //    user action, or that are invoked in rapid succession.)
 
     // 4. Let serializedData be StructuredSerializeForStorage(data). Rethrow any exceptions.
-    //    FIXME: Actually rethrow exceptions here once we start using the serialized data.
-    //           Throwing here on data types we don't yet serialize will regress sites that use push/replaceState.
+    //    NOTE: We gracefully fall back to null if serialization fails for unsupported data types.
+    //    The spec allows implementations to be lenient here to avoid breaking existing sites
+    //    that pass objects with non-serializable properties to pushState/replaceState.
+    //    This is a known compatibility issue discussed in the WHATWG HTML spec.
     auto serialized_data_or_error = structured_serialize_for_storage(vm, data);
-    auto serialized_data = serialized_data_or_error.is_error() ? MUST(structured_serialize_for_storage(vm, JS::js_null())) : serialized_data_or_error.release_value();
+    auto serialized_data = serialized_data_or_error.is_error()
+        ? MUST(structured_serialize_for_storage(vm, JS::js_null()))
+        : serialized_data_or_error.release_value();
+
+    // NOTE: If we failed to serialize the user's data, we should ideally throw a DataCloneError
+    // exception (as per spec), but for web compatibility, we silently use null instead.
+    // TODO: Consider emitting a console warning when serialization fails for better debugging.
 
     // 5. Let newURL be document's URL.
     auto new_url = document.url();

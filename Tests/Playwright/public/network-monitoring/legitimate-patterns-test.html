@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Legitimate Patterns Test</title>
+</head>
+<body>
+    <h1>Legitimate Network Patterns Test</h1>
+    <p>This page exhibits legitimate network behaviors that should NOT trigger alerts:</p>
+    <ul>
+        <li>CDN requests (many subdomains)</li>
+        <li>Real-time polling (periodic requests)</li>
+        <li>Large file uploads (large payloads)</li>
+    </ul>
+    <div id="status">Running legitimate network patterns...</div>
+
+    <script>
+        // 1. CDN Pattern - Many subdomains but from known CDN provider
+        const cdnSubdomains = ['cdn1', 'cdn2', 'cdn3', 'cdn4', 'cdn5'];
+        cdnSubdomains.forEach((subdomain, i) => {
+            setTimeout(() => {
+                // Cloudflare-like CDN pattern
+                fetch(`http://${subdomain}.cloudfront.net/asset${i}.js`, { mode: 'no-cors' })
+                    .catch(() => {});
+            }, i * 500);
+        });
+
+        // 2. Legitimate Polling - Real-time updates (e.g., stock prices, notifications)
+        let pollCount = 0;
+        const pollingInterval = setInterval(() => {
+            if (pollCount >= 5) {
+                clearInterval(pollingInterval);
+                return;
+            }
+
+            // Poll known API endpoint
+            fetch('http://api.example.com/notifications/poll', { mode: 'no-cors' })
+                .catch(() => {});
+
+            pollCount++;
+        }, 6000); // Every 6 seconds - typical for legitimate polling
+
+        // 3. Large Upload - User uploading file
+        setTimeout(() => {
+            // Simulate legitimate file upload
+            const fileData = new Blob([new ArrayBuffer(100000)]); // 100KB file
+
+            const formData = new FormData();
+            formData.append('file', fileData, 'document.pdf');
+
+            fetch('http://upload.example.com/files', {
+                method: 'POST',
+                mode: 'no-cors',
+                body: formData
+            }).catch(() => {});
+        }, 3000);
+
+        document.getElementById('status').textContent = 'Legitimate patterns active - should NOT trigger alerts';
+    </script>
+</body>
+</html>

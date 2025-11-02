@@ -173,8 +173,12 @@ if (NOT WIN32)
     add_cxx_link_options(-fstack-protector-strong)
 endif()
 
+# -fstrict-flex-arrays=2 requires GCC 13+ or Clang 16+
 if (NOT MSVC)
-    add_cxx_compile_options(-fstrict-flex-arrays=2)
+    if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "13") OR
+        (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16"))
+        add_cxx_compile_options(-fstrict-flex-arrays=2)
+    endif()
 endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/sanitizers.cmake)

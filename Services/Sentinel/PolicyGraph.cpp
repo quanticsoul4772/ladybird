@@ -548,6 +548,30 @@ ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_dir
     statements.delete_network_behavior_policy = TRY(database->prepare_statement(
         "DELETE FROM network_behavior_policies WHERE id = ?;"sv));
 
+    // Milestone 0.5 Phase 1d: Sandbox Verdict Cache statements
+    statements.store_sandbox_verdict = TRY(database->prepare_statement(R"#(
+        INSERT INTO sandbox_verdicts
+            (file_hash, threat_level, confidence, composite_score, verdict_explanation,
+             yara_score, ml_score, behavioral_score, analyzed_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(file_hash) DO UPDATE SET
+            threat_level = excluded.threat_level,
+            confidence = excluded.confidence,
+            composite_score = excluded.composite_score,
+            verdict_explanation = excluded.verdict_explanation,
+            yara_score = excluded.yara_score,
+            ml_score = excluded.ml_score,
+            behavioral_score = excluded.behavioral_score,
+            analyzed_at = excluded.analyzed_at,
+            expires_at = excluded.expires_at;
+    )#"sv));
+
+    statements.lookup_sandbox_verdict = TRY(database->prepare_statement(
+        "SELECT * FROM sandbox_verdicts WHERE file_hash = ? AND expires_at > ?;"sv));
+
+    statements.delete_expired_verdicts = TRY(database->prepare_statement(
+        "DELETE FROM sandbox_verdicts WHERE expires_at <= ?;"sv));
+
     auto policy_graph = adopt_own(*new PolicyGraph(move(database), statements));
 
     // Cleanup old threats on initialization
@@ -2162,6 +2186,95 @@ ErrorOr<void> PolicyGraph::delete_network_behavior_policy(i64 policy_id)
     );
 
     dbgln("PolicyGraph: Deleted network behavior policy {}", policy_id);
+    return {};
+}
+
+// Milestone 0.5 Phase 1d: Sandbox Verdict Cache implementations
+
+ErrorOr<void> PolicyGraph::store_sandbox_verdict(SandboxVerdict const& verdict)
+{
+    // Validate file_hash (SHA256 = 64 hex chars)
+    auto hash_result = InputValidator::validate_sha256(verdict.file_hash);
+    if (!hash_result.is_valid)
+        return InputValidator::to_error(hash_result);
+
+    // Validate verdict_explanation length
+    auto explanation_result = InputValidator::validate_length(verdict.verdict_explanation, 0, 1024, "verdict_explanation"sv);
+    if (!explanation_result.is_valid)
+        return InputValidator::to_error(explanation_result);
+
+    m_database->execute_statement(
+        m_statements.store_sandbox_verdict,
+        {},
+        verdict.file_hash,
+        verdict.threat_level,
+        verdict.confidence,
+        verdict.composite_score,
+        verdict.verdict_explanation,
+        verdict.yara_score,
+        verdict.ml_score,
+        verdict.behavioral_score,
+        verdict.analyzed_at.milliseconds_since_epoch(),
+        verdict.expires_at.milliseconds_since_epoch()
+    );
+
+    dbgln_if(false, "PolicyGraph: Stored sandbox verdict for hash {} (threat_level: {}, confidence: {})",
+        verdict.file_hash, verdict.threat_level, verdict.confidence);
+    return {};
+}
+
+ErrorOr<Optional<PolicyGraph::SandboxVerdict>> PolicyGraph::lookup_sandbox_verdict(String const& file_hash)
+{
+    // Validate file_hash (SHA256 = 64 hex chars)
+    auto hash_result = InputValidator::validate_sha256(file_hash);
+    if (!hash_result.is_valid)
+        return Error::from_string_literal("Invalid file hash format");
+
+    auto now = UnixDateTime::now();
+    Optional<SandboxVerdict> verdict;
+
+    m_database->execute_statement(
+        m_statements.lookup_sandbox_verdict,
+        [&](auto stmt_id) {
+            SandboxVerdict v;
+            i32 col = 0;
+            v.file_hash = m_database->result_column<String>(stmt_id, col++);
+            v.threat_level = static_cast<i32>(m_database->result_column<i64>(stmt_id, col++));
+            v.confidence = static_cast<i32>(m_database->result_column<i64>(stmt_id, col++));
+            v.composite_score = static_cast<i32>(m_database->result_column<i64>(stmt_id, col++));
+            v.verdict_explanation = m_database->result_column<String>(stmt_id, col++);
+            v.yara_score = static_cast<i32>(m_database->result_column<i64>(stmt_id, col++));
+            v.ml_score = static_cast<i32>(m_database->result_column<i64>(stmt_id, col++));
+            v.behavioral_score = static_cast<i32>(m_database->result_column<i64>(stmt_id, col++));
+            v.analyzed_at = UnixDateTime::from_milliseconds_since_epoch(m_database->result_column<i64>(stmt_id, col++));
+            v.expires_at = UnixDateTime::from_milliseconds_since_epoch(m_database->result_column<i64>(stmt_id, col++));
+            verdict = move(v);
+        },
+        file_hash,
+        now.milliseconds_since_epoch()
+    );
+
+    if (verdict.has_value()) {
+        dbgln_if(false, "PolicyGraph: Cache HIT for hash {} (threat_level: {}, confidence: {})",
+            file_hash, verdict->threat_level, verdict->confidence);
+    } else {
+        dbgln_if(false, "PolicyGraph: Cache MISS for hash {}", file_hash);
+    }
+
+    return verdict;
+}
+
+ErrorOr<void> PolicyGraph::cleanup_expired_verdicts()
+{
+    auto now = UnixDateTime::now();
+
+    m_database->execute_statement(
+        m_statements.delete_expired_verdicts,
+        {},
+        now.milliseconds_since_epoch()
+    );
+
+    dbgln_if(false, "PolicyGraph: Cleaned up expired sandbox verdicts");
     return {};
 }
 

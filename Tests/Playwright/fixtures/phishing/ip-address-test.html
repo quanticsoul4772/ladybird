@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>IP Address Phishing Test - PHISH-005</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; background-color: #f5f5f5; }
+    .test-container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    h1 { color: #c0392b; border-bottom: 2px solid #c0392b; padding-bottom: 10px; }
+    .test-info { background: #fadbd8; border-left: 4px solid #c0392b; padding: 15px; margin: 20px 0; }
+    .button { background: #c0392b; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin: 10px 5px; }
+    .button:hover { background: #a93226; }
+    #result { margin-top: 20px; padding: 15px; border-radius: 4px; display: none; }
+    #result.visible { display: block; }
+    code { background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }
+    .warning-box { background: #ffebee; border: 2px solid #e74c3c; padding: 15px; border-radius: 4px; margin: 20px 0; }
+  </style>
+</head>
+<body>
+  <div class="test-container">
+    <h1>🔬 Phishing Detection Test: IP Address URLs (PHISH-005)</h1>
+
+    <div class="test-info">
+      <strong>🚨 Test Objective:</strong> Detect phishing attempts using raw IP addresses
+      instead of domain names. Legitimate sites almost never use IP addresses.
+    </div>
+
+    <h2>Why IP Addresses are Suspicious</h2>
+    <div class="warning-box">
+      <strong>⚠️ Red Flags:</strong>
+      <ul>
+        <li>Legitimate websites use domain names, not IPs</li>
+        <li>IP addresses can't be verified via SSL certificates</li>
+        <li>Easy to quickly switch IPs to evade detection</li>
+        <li>Often used for phishing login pages</li>
+      </ul>
+    </div>
+
+    <h2>Test Scenarios</h2>
+    <div style="margin: 30px 0;">
+      <button id="test-ipv4-login" class="button">Test: http://192.168.1.100/login</button>
+      <button id="test-ipv4-https" class="button">Test: https://203.0.113.45/secure</button>
+      <button id="test-ipv6" class="button">Test: http://[2001:db8::1]/banking</button>
+    </div>
+
+    <div id="result"></div>
+  </div>
+
+  <script>
+    window.__phishingTestData = {
+      testId: 'PHISH-005',
+      testCases: [
+        {
+          url: 'http://192.168.1.100/login',
+          type: 'IPv4',
+          ip: '192.168.1.100',
+          path: '/login',
+          risk: 'Very High - Login page on IP address'
+        },
+        {
+          url: 'https://203.0.113.45/secure',
+          type: 'IPv4',
+          ip: '203.0.113.45',
+          path: '/secure',
+          risk: 'High - HTTPS doesn\'t make IP addresses safe'
+        },
+        {
+          url: 'http://[2001:db8::1]/banking',
+          type: 'IPv6',
+          ip: '2001:db8::1',
+          path: '/banking',
+          risk: 'Very High - Banking page on IPv6 address'
+        }
+      ],
+      expectedDetection: {
+        isIPAddress: true,
+        phishingScore: 0.25, // High score for IP addresses
+        shouldAlert: true,
+        shouldBlock: true
+      }
+    };
+
+    function testIPAddress(testCase) {
+      const resultDiv = document.getElementById('result');
+      resultDiv.className = 'visible';
+      resultDiv.style.background = '#fadbd8';
+      resultDiv.style.border = '2px solid #c0392b';
+      resultDiv.style.color = '#721c24';
+
+      resultDiv.innerHTML = `
+        <strong>🚨 IP Address Detected - High Risk!</strong>
+        <br><br>
+        <strong>URL:</strong> <code>${testCase.url}</code>
+        <br>
+        <strong>Type:</strong> ${testCase.type}
+        <br>
+        <strong>IP Address:</strong> <code>${testCase.ip}</code>
+        <br>
+        <strong>Path:</strong> ${testCase.path}
+        <br>
+        <strong>Risk Level:</strong> ${testCase.risk}
+        <br><br>
+        <strong>Detection Details:</strong>
+        <ul style="margin: 10px 0; padding-left: 20px;">
+          <li>Raw IP address used instead of domain name</li>
+          <li>Phishing Score: <strong>+0.25</strong> (25% weight)</li>
+          <li>Cannot verify SSL certificate properly</li>
+          <li>Commonly used for credential phishing</li>
+        </ul>
+        <strong>⛔ Recommendation:</strong> <strong>BLOCK</strong> this URL. Legitimate websites
+        do not use IP addresses for user-facing pages.
+      `;
+
+      window.__ipAddressDetected = true;
+      window.__detectionResult = {
+        detected: true,
+        isIPAddress: true,
+        ipType: testCase.type,
+        phishingScore: 0.25,
+        confidence: 1.0,
+        shouldBlock: true,
+        explanation: 'URL uses raw IP address instead of domain name'
+      };
+    }
+
+    document.getElementById('test-ipv4-login').addEventListener('click', () => {
+      testIPAddress(window.__phishingTestData.testCases[0]);
+    });
+
+    document.getElementById('test-ipv4-https').addEventListener('click', () => {
+      testIPAddress(window.__phishingTestData.testCases[1]);
+    });
+
+    document.getElementById('test-ipv6').addEventListener('click', () => {
+      testIPAddress(window.__phishingTestData.testCases[2]);
+    });
+
+    console.log('[PHISH-005] IP address test fixture loaded');
+  </script>
+</body>
+</html>

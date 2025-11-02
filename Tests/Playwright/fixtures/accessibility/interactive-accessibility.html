@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Accessibility Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        main {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #333;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 10px;
+            margin-top: 30px;
+        }
+        section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .description {
+            background-color: #f0f0f0;
+            padding: 10px;
+            margin: 15px 0;
+            border-left: 4px solid #4CAF50;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: 3px solid #0066cc;
+            outline-offset: 2px;
+            border-color: #0066cc;
+        }
+        input[aria-invalid="true"],
+        select[aria-invalid="true"],
+        textarea[aria-invalid="true"] {
+            border-color: #cc0000;
+            background-color: #fff5f5;
+        }
+        .error-message {
+            color: #cc0000;
+            font-size: 14px;
+            margin-top: 5px;
+            display: none;
+        }
+        .error-message.show {
+            display: block;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px 10px 0;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:focus {
+            outline: 3px solid #0066cc;
+            outline-offset: 2px;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .success-message {
+            background-color: #d4edda;
+            border: 1px solid #4CAF50;
+            color: #155724;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+            display: none;
+        }
+        .success-message.show {
+            display: block;
+        }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.open {
+            display: flex;
+        }
+        .modal {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            position: relative;
+        }
+        .modal-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-close:focus {
+            outline: 2px solid #0066cc;
+        }
+        .password-strength {
+            margin-top: 10px;
+        }
+        .strength-bar {
+            height: 5px;
+            background-color: #ddd;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .strength-fill {
+            height: 100%;
+            width: 0%;
+            background-color: #cc0000;
+            transition: width 0.3s;
+        }
+        .strength-fill.weak {
+            background-color: #cc0000;
+            width: 33%;
+        }
+        .strength-fill.fair {
+            background-color: #ffcc00;
+            width: 66%;
+        }
+        .strength-fill.strong {
+            background-color: #4CAF50;
+            width: 100%;
+        }
+        .strength-text {
+            font-size: 12px;
+            margin-top: 5px;
+        }
+        .checkbox-group, .radio-group {
+            margin: 15px 0;
+        }
+        .checkbox-group label, .radio-group label {
+            display: inline-block;
+            margin-right: 20px;
+            width: auto;
+        }
+        .checkbox-group input, .radio-group input {
+            margin-right: 8px;
+            width: auto;
+        }
+        .field-error {
+            border-color: #cc0000 !important;
+        }
+        .field-error + .error-message {
+            display: block;
+        }
+        .announcement {
+            position: absolute;
+            left: -10000px;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Interactive Accessibility Testing</h1>
+
+        <!-- TEST 1: Form Error Identification -->
+        <section id="test-form-errors">
+            <h2>Test 1: Form Error Identification and Recovery</h2>
+            <p>Submit an empty form to see accessible error messages. Errors should be:</p>
+            <ul>
+                <li>Identified programmatically (aria-invalid="true")</li>
+                <li>Described with aria-describedby</li>
+                <li>Visually distinct (color + icon + text)</li>
+                <li>Associated with the form field</li>
+            </ul>
+
+            <form id="form-errors" novalidate>
+                <div class="form-group">
+                    <label for="error-name">Full Name</label>
+                    <input
+                        type="text"
+                        id="error-name"
+                        name="name"
+                        aria-describedby="error-name-error"
+                        required
+                    >
+                    <div id="error-name-error" class="error-message">
+                        ⚠ Full name is required
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="error-email">Email Address</label>
+                    <input
+                        type="email"
+                        id="error-email"
+                        name="email"
+                        aria-describedby="error-email-error"
+                        required
+                    >
+                    <div id="error-email-error" class="error-message">
+                        ⚠ Please enter a valid email address
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="error-phone">Phone Number</label>
+                    <input
+                        type="tel"
+                        id="error-phone"
+                        name="phone"
+                        aria-describedby="error-phone-error"
+                        pattern="[0-9\-\+\(\) ]+"
+                    >
+                    <div id="error-phone-error" class="error-message">
+                        ⚠ Please enter a valid phone number
+                    </div>
+                </div>
+
+                <button type="submit">Submit</button>
+                <button type="reset">Clear</button>
+            </form>
+
+            <div class="success-message" id="form-errors-success" role="alert">
+                ✓ Form submitted successfully!
+            </div>
+
+            <div class="description">
+                ✓ aria-invalid="true" marks invalid fields
+                <br>✓ aria-describedby links to error messages
+                <br>✓ Error messages appear at field level
+                <br>✓ Color + text + icon used for visibility
+                <br>✓ Form can be easily corrected and resubmitted
+            </div>
+        </section>
+
+        <!-- TEST 2: Modal Focus Management -->
+        <section id="test-modal-focus">
+            <h2>Test 2: Modal Focus Management</h2>
+            <p>When a modal opens, focus should move to a focusable element inside the modal. Tab should cycle through elements without escaping the modal.</p>
+
+            <button onclick="openModal()">Open Modal Dialog</button>
+
+            <div id="modal-overlay" class="modal-overlay">
+                <div
+                    class="modal"
+                    id="test-modal"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="modal-title"
+                >
+                    <button class="modal-close" aria-label="Close modal" onclick="closeModal()">✕</button>
+                    <h2 id="modal-title">Confirm Your Action</h2>
+                    <p>Are you sure you want to proceed with this action?</p>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="modal-confirm">
+                            I understand the consequences
+                        </label>
+                    </div>
+
+                    <div style="display: flex; gap: 10px;">
+                        <button onclick="confirmAction()">Confirm</button>
+                        <button onclick="closeModal()">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="success-message" id="modal-success" role="alert">
+                ✓ Action confirmed!
+            </div>
+
+            <div class="description">
+                ✓ Focus moves to modal when it opens
+                <br>✓ Tab cycles through modal elements
+                <br>✓ Focus is trapped within modal
+                <br>✓ Focus returns to trigger button when closed
+                <br>✓ modal role with aria-modal="true"
+            </div>
+        </section>
+
+        <!-- TEST 3: Advanced Form with Real-time Validation -->
+        <section id="test-form-validation">
+            <h2>Test 3: Real-time Form Validation and Feedback</h2>
+            <p>This form provides real-time feedback using aria-live regions and aria-invalid.</p>
+
+            <form id="registration-form" novalidate>
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input
+                        type="text"
+                        id="username"
+                        name="username"
+                        aria-describedby="username-hint username-error"
+                        minlength="3"
+                        maxlength="20"
+                        required
+                    >
+                    <div id="username-hint" class="description">
+                        3-20 characters, alphanumeric only
+                    </div>
+                    <div id="username-error" class="error-message"></div>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input
+                        type="password"
+                        id="password"
+                        name="password"
+                        aria-describedby="password-hint password-error"
+                        required
+                    >
+                    <div id="password-hint" class="description">
+                        Minimum 8 characters with uppercase, lowercase, and number
+                    </div>
+                    <div class="password-strength">
+                        <div class="strength-bar">
+                            <div id="strength-fill" class="strength-fill"></div>
+                        </div>
+                        <div id="strength-text" class="strength-text"></div>
+                    </div>
+                    <div id="password-error" class="error-message"></div>
+                </div>
+
+                <div class="form-group">
+                    <label for="confirm-password">Confirm Password</label>
+                    <input
+                        type="password"
+                        id="confirm-password"
+                        name="confirm-password"
+                        aria-describedby="confirm-error"
+                        required
+                    >
+                    <div id="confirm-error" class="error-message"></div>
+                </div>
+
+                <div class="form-group">
+                    <fieldset>
+                        <legend>Account Type</legend>
+                        <div class="radio-group">
+                            <label>
+                                <input type="radio" name="account-type" value="personal" checked>
+                                Personal
+                            </label>
+                            <label>
+                                <input type="radio" name="account-type" value="business">
+                                Business
+                            </label>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div class="form-group">
+                    <fieldset>
+                        <legend>Preferences</legend>
+                        <div class="checkbox-group">
+                            <label>
+                                <input type="checkbox" name="newsletter">
+                                Subscribe to newsletter
+                            </label>
+                            <label>
+                                <input type="checkbox" name="notifications" checked>
+                                Enable notifications
+                            </label>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <button type="submit">Create Account</button>
+            </form>
+
+            <div class="success-message" id="form-success" role="alert">
+                ✓ Account created successfully!
+            </div>
+
+            <div aria-live="polite" aria-atomic="true" class="announcement" id="form-announcement"></div>
+
+            <div class="description">
+                ✓ Real-time validation with aria-invalid
+                <br>✓ Password strength indicator
+                <br>✓ Error messages displayed at field level
+                <br>✓ aria-describedby for hints and errors
+                <br>✓ aria-live region for announcements
+            </div>
+        </section>
+
+        <script>
+            // Test data
+            window.__interactive_test_data = {
+                testId: 'A11Y-019-to-A11Y-020',
+                testType: 'interactive',
+                formsCount: 3,
+                modalsCount: 1,
+                modalFocusTrapped: false, // Will be updated
+                formErrorsAccessible: true
+            };
+
+            // Form error handling
+            const errorForm = document.getElementById('form-errors');
+            errorForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+
+                let isValid = true;
+                const fields = ['error-name', 'error-email', 'error-phone'];
+
+                fields.forEach((fieldId) => {
+                    const field = document.getElementById(fieldId);
+                    const errorMsg = document.getElementById(fieldId + '-error');
+
+                    let fieldValid = true;
+                    if (fieldId === 'error-name') {
+                        fieldValid = field.value.trim() !== '';
+                    } else if (fieldId === 'error-email') {
+                        fieldValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(field.value);
+                    } else if (fieldId === 'error-phone') {
+                        fieldValid = field.value === '' || /^[0-9\-\+\(\)\s ]+$/.test(field.value);
+                    }
+
+                    if (!fieldValid) {
+                        field.setAttribute('aria-invalid', 'true');
+                        field.classList.add('field-error');
+                        errorMsg.classList.add('show');
+                        isValid = false;
+                    } else {
+                        field.setAttribute('aria-invalid', 'false');
+                        field.classList.remove('field-error');
+                        errorMsg.classList.remove('show');
+                    }
+                });
+
+                if (isValid) {
+                    document.getElementById('form-errors-success').classList.add('show');
+                    setTimeout(() => {
+                        document.getElementById('form-errors-success').classList.remove('show');
+                    }, 3000);
+                }
+            });
+
+            // Modal management
+            let modalPreviousFocus = null;
+
+            function openModal() {
+                modalPreviousFocus = document.activeElement;
+                const modal = document.getElementById('modal-overlay');
+                modal.classList.add('open');
+                const firstButton = document.getElementById('modal-confirm');
+                if (firstButton) {
+                    firstButton.focus();
+                }
+
+                // Implement focus trap
+                const focusableElements = modal.querySelectorAll(
+                    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+                );
+                const firstElement = focusableElements[0];
+                const lastElement = focusableElements[focusableElements.length - 1];
+
+                const trapFocus = (e) => {
+                    // Handle Escape key to close modal
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeModal();
+                        return;
+                    }
+
+                    if (e.key !== 'Tab') return;
+
+                    if (e.shiftKey) {
+                        if (document.activeElement === firstElement) {
+                            e.preventDefault();
+                            lastElement.focus();
+                        }
+                    } else {
+                        if (document.activeElement === lastElement) {
+                            e.preventDefault();
+                            firstElement.focus();
+                        }
+                    }
+                };
+
+                modal.addEventListener('keydown', trapFocus);
+                modal.__trapFocusListener = trapFocus;
+                window.__interactive_test_data.modalFocusTrapped = true;
+            }
+
+            function closeModal() {
+                const modal = document.getElementById('modal-overlay');
+                modal.classList.remove('open');
+                if (modal.__trapFocusListener) {
+                    modal.removeEventListener('keydown', modal.__trapFocusListener);
+                }
+                if (modalPreviousFocus) {
+                    modalPreviousFocus.focus();
+                }
+            }
+
+            function confirmAction() {
+                document.getElementById('modal-success').classList.add('show');
+                closeModal();
+                setTimeout(() => {
+                    document.getElementById('modal-success').classList.remove('show');
+                }, 3000);
+            }
+
+            // Registration form validation
+            const regForm = document.getElementById('registration-form');
+            const usernameField = document.getElementById('username');
+            const passwordField = document.getElementById('password');
+            const confirmField = document.getElementById('confirm-password');
+
+            usernameField.addEventListener('blur', validateUsername);
+            passwordField.addEventListener('input', validatePassword);
+            confirmField.addEventListener('blur', validateConfirmPassword);
+
+            function validateUsername() {
+                const value = usernameField.value;
+                const error = document.getElementById('username-error');
+
+                if (value.length < 3) {
+                    usernameField.setAttribute('aria-invalid', 'true');
+                    error.textContent = '⚠ Username must be at least 3 characters';
+                    error.classList.add('show');
+                } else if (!/^[a-zA-Z0-9]+$/.test(value)) {
+                    usernameField.setAttribute('aria-invalid', 'true');
+                    error.textContent = '⚠ Username must be alphanumeric only';
+                    error.classList.add('show');
+                } else {
+                    usernameField.setAttribute('aria-invalid', 'false');
+                    error.classList.remove('show');
+                }
+            }
+
+            function validatePassword() {
+                const value = passwordField.value;
+                const fill = document.getElementById('strength-fill');
+                const text = document.getElementById('strength-text');
+                const error = document.getElementById('password-error');
+
+                let strength = 'weak';
+                fill.className = 'strength-fill';
+
+                if (value.length >= 8) {
+                    const hasUpper = /[A-Z]/.test(value);
+                    const hasLower = /[a-z]/.test(value);
+                    const hasNumber = /[0-9]/.test(value);
+
+                    if (hasUpper && hasLower && hasNumber) {
+                        strength = 'strong';
+                        fill.classList.add('strong');
+                        text.textContent = 'Strong password ✓';
+                        error.classList.remove('show');
+                    } else if (hasUpper && hasLower) {
+                        strength = 'fair';
+                        fill.classList.add('fair');
+                        text.textContent = 'Fair password (add number)';
+                        error.classList.remove('show');
+                    } else {
+                        strength = 'weak';
+                        fill.classList.add('weak');
+                        text.textContent = 'Weak password';
+                        error.textContent = '⚠ Password must have uppercase, lowercase, and number';
+                        error.classList.add('show');
+                    }
+                } else {
+                    fill.classList.add('weak');
+                    text.textContent = `Weak (${value.length}/8 characters)`;
+                    error.textContent = '⚠ Password must be at least 8 characters';
+                    error.classList.add('show');
+                }
+
+                validateConfirmPassword();
+            }
+
+            function validateConfirmPassword() {
+                const confirmValue = confirmField.value;
+                const passwordValue = passwordField.value;
+                const error = document.getElementById('confirm-error');
+
+                if (confirmValue && confirmValue !== passwordValue) {
+                    confirmField.setAttribute('aria-invalid', 'true');
+                    error.textContent = '⚠ Passwords do not match';
+                    error.classList.add('show');
+                } else {
+                    confirmField.setAttribute('aria-invalid', 'false');
+                    error.classList.remove('show');
+                }
+            }
+
+            regForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+
+                validateUsername();
+                validatePassword();
+                validateConfirmPassword();
+
+                const hasErrors = regForm.querySelectorAll('[aria-invalid="true"]').length > 0;
+
+                if (!hasErrors) {
+                    document.getElementById('form-success').classList.add('show');
+                    const announcement = document.getElementById('form-announcement');
+                    announcement.textContent = 'Account created successfully!';
+                    setTimeout(() => {
+                        document.getElementById('form-success').classList.remove('show');
+                    }, 3000);
+                }
+            });
+        </script>
+    </main>
+</body>
+</html>

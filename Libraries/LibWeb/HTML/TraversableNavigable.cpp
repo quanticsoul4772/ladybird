@@ -1094,8 +1094,14 @@ void TraversableNavigable::clear_the_forward_session_history()
         auto& entry_list = entry_lists.take_first();
 
         // 1. Remove every session history entry from entryList that has a step greater than step.
+        //    NOTE: According to spec, entries with "pending" step are not removed, as they don't have
+        //    a numeric step value. We use .get<int>() which will only match numeric steps.
         entry_list.remove_all_matching([step](auto& entry) {
-            return entry->step().template get<int>() > step;
+            // Only remove entries with numeric steps that are greater than the current step.
+            // Entries with "pending" step are left untouched (spec compliant).
+            if (auto* entry_step = entry->step().template get_pointer<int>())
+                return *entry_step > step;
+            return false;
         });
 
         // 2. For each entry of entryList:
@@ -1161,12 +1167,19 @@ void TraversableNavigable::traverse_the_history_by_delta(int delta, GC::Ptr<DOM:
         auto current_step_index = *all_steps.find_first_index(current_session_history_step());
 
         // 3. Let targetStepIndex be currentStepIndex plus delta
-        auto target_step_index = current_step_index + delta;
+        auto target_step_index_raw = static_cast<int>(current_step_index) + delta;
 
         // 4. If allSteps[targetStepIndex] does not exist, then abort these steps.
-        if (target_step_index >= all_steps.size()) {
+        // FIXME: According to WHATWG HTML spec, targetStepIndex must be a valid index.
+        //        We need to check both negative indices (when going back() beyond history start)
+        //        AND out-of-bounds indices (when going forward() beyond history end).
+        //        The spec states: "If allSteps[targetStepIndex] does not exist, then abort these steps."
+        //        This includes both cases where targetStepIndex < 0 OR targetStepIndex >= allSteps.size()
+        if (target_step_index_raw < 0 || target_step_index_raw >= static_cast<int>(all_steps.size())) {
             return;
         }
+
+        auto target_step_index = static_cast<size_t>(target_step_index_raw);
 
         // 5. Apply the traverse history step allSteps[targetStepIndex] to traversable, given sourceSnapshotParams,
         //    initiatorToCheck, and userInvolvement.

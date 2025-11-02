@@ -20,7 +20,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Web APIs', () => {
 
   test('JS-API-001: LocalStorage (set/get/remove)', { tag: '@p0' }, async ({ page }) => {
-    await page.goto('data:text/html,<body></body>');
+    await page.goto('http://example.com/');
 
     const result = await page.evaluate(() => {
       // Clear any existing data
@@ -67,7 +67,7 @@ test.describe('Web APIs', () => {
   });
 
   test('JS-API-002: SessionStorage', { tag: '@p0' }, async ({ page, context }) => {
-    await page.goto('data:text/html,<body></body>');
+    await page.goto('http://example.com/');
 
     // Set sessionStorage in first page
     await page.evaluate(() => {
@@ -90,7 +90,7 @@ test.describe('Web APIs', () => {
 
     // Open new tab - sessionStorage should be separate
     const newPage = await context.newPage();
-    await newPage.goto('data:text/html,<body></body>');
+    await newPage.goto('http://example.com/');
 
     const newPageData = await newPage.evaluate(() => {
       return {
@@ -300,7 +300,7 @@ test.describe('Web APIs', () => {
   });
 
   test('JS-API-009: Window.history (pushState, replaceState)', { tag: '@p0' }, async ({ page }) => {
-    await page.goto('data:text/html,<body></body>');
+    await page.goto('http://example.com/');
 
     await page.evaluate(() => {
       // Push new state

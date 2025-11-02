@@ -21,9 +21,11 @@ set(SOURCES
     Animations/DocumentTimeline.cpp
     Animations/KeyframeEffect.cpp
     Animations/PseudoElementParsing.cpp
+    ARIA/AccessibleNameCalculation.cpp
     ARIA/AriaData.cpp
     ARIA/ARIAMixin.cpp
     ARIA/AttributeNames.cpp
+    ARIA/ReferenceResolution.cpp
     ARIA/Roles.cpp
     ARIA/RoleType.cpp
     ARIA/StateAndProperties.cpp

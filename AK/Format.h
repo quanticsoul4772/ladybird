@@ -585,6 +585,7 @@ struct Formatter<long double> : StandardFormatter {
     ErrorOr<void> format(FormatBuilder&, long double value);
 };
 
+#ifdef AK_HAS_FLOAT_16
 template<>
 struct Formatter<f16> : StandardFormatter {
     Formatter() = default;
@@ -595,6 +596,7 @@ struct Formatter<f16> : StandardFormatter {
 
     ErrorOr<void> format(FormatBuilder&, f16 value);
 };
+#endif
 
 template<>
 struct Formatter<nullptr_t> : Formatter<FlatPtr> {

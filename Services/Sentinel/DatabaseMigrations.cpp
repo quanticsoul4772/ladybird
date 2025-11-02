@@ -325,6 +325,40 @@ ErrorOr<void> DatabaseMigrations::migrate_v3_to_v4(Database::Database& db)
     return {};
 }
 
+ErrorOr<void> DatabaseMigrations::migrate_v4_to_v5(Database::Database& db)
+{
+    dbgln("DatabaseMigrations: Migrating from v4 to v5 (adding sandbox verdict cache)");
+
+    // Add sandbox_verdicts table for Milestone 0.5 Phase 1d
+    // Stores cached sandbox analysis results to avoid re-scanning files
+    auto create_verdicts_table = TRY(db.prepare_statement(R"#(
+        CREATE TABLE IF NOT EXISTS sandbox_verdicts (
+            file_hash TEXT PRIMARY KEY,
+            threat_level INTEGER NOT NULL,
+            confidence INTEGER NOT NULL,
+            composite_score INTEGER NOT NULL,
+            verdict_explanation TEXT NOT NULL,
+            yara_score INTEGER NOT NULL,
+            ml_score INTEGER NOT NULL,
+            behavioral_score INTEGER NOT NULL,
+            analyzed_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL
+        );
+    )#"_string));
+    db.execute_statement(create_verdicts_table, {});
+    dbgln("DatabaseMigrations: Created table sandbox_verdicts");
+
+    // Add index for expiration cleanup
+    auto idx_verdicts_expires = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_verdicts_expires_at ON sandbox_verdicts(expires_at);"_string));
+    db.execute_statement(idx_verdicts_expires, {});
+
+    dbgln("DatabaseMigrations: Created index for sandbox_verdicts");
+
+    dbgln("DatabaseMigrations: v4 to v5 migration complete - added sandbox verdict cache");
+    return {};
+}
+
 ErrorOr<void> DatabaseMigrations::migrate(Database::Database& db)
 {
     auto current_version = TRY(get_schema_version(db));
@@ -359,6 +393,11 @@ ErrorOr<void> DatabaseMigrations::migrate(Database::Database& db)
     if (current_version < 4) {
         TRY(migrate_v3_to_v4(db));
         TRY(set_schema_version(db, 4));
+    }
+
+    if (current_version < 5) {
+        TRY(migrate_v4_to_v5(db));
+        TRY(set_schema_version(db, 5));
     }
 
     dbgln("DatabaseMigrations: Migration complete");

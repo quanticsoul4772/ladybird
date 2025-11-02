@@ -101,6 +101,17 @@ ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transpo
     } else {
         dbgln("Network behavioral monitoring disabled by user preference");
     }
+
+    // Initialize sandbox orchestrator for real-time malware analysis (Milestone 0.5 Phase 1)
+    // If this fails, we continue without sandbox analysis rather than crashing
+    auto sandbox_result = Sentinel::Sandbox::Orchestrator::create();
+    if (sandbox_result.is_error()) {
+        dbgln("Warning: Failed to create Sandbox Orchestrator: {}", sandbox_result.error());
+        dbgln("Real-time sandbox analysis will be disabled for this connection");
+    } else {
+        m_sandbox_orchestrator = sandbox_result.release_value();
+        dbgln("Sandbox Orchestrator initialized successfully");
+    }
 }
 
 ConnectionFromClient::~ConnectionFromClient()

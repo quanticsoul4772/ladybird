@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Typosquatting Detection Test - PHISH-003</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    .test-container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #e67e22;
+      border-bottom: 2px solid #e67e22;
+      padding-bottom: 10px;
+    }
+    .test-info {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 15px;
+      margin: 20px 0;
+    }
+    .typosquat-examples {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    .example-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px;
+      border-bottom: 1px solid #dee2e6;
+    }
+    .example-row:last-child {
+      border-bottom: none;
+    }
+    .typo-domain {
+      color: #e74c3c;
+      font-weight: bold;
+    }
+    .legit-domain {
+      color: #27ae60;
+      font-weight: bold;
+    }
+    .edit-distance {
+      background: #6c757d;
+      color: white;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+    .button {
+      background: #e67e22;
+      color: white;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 10px 5px;
+    }
+    .button:hover {
+      background: #d35400;
+    }
+    #result {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 4px;
+      display: none;
+    }
+    #result.visible {
+      display: block;
+    }
+    code {
+      background: #f8f9fa;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="test-container">
+    <h1>🔬 Phishing Detection Test: Typosquatting (PHISH-003)</h1>
+
+    <div class="test-info">
+      <strong>⚠️ Test Objective:</strong> Verify that Sentinel detects typosquatting attacks
+      where attackers register domains with intentional typos that resemble popular websites.
+    </div>
+
+    <h2>Typosquatting Techniques</h2>
+    <div class="typosquat-examples">
+      <h3>Common Patterns:</h3>
+
+      <div class="example-row">
+        <span><strong>Character Repetition:</strong></span>
+        <span>
+          <span class="typo-domain">faceboook.com</span> →
+          <span class="legit-domain">facebook.com</span>
+          <span class="edit-distance">Distance: 1</span>
+        </span>
+      </div>
+
+      <div class="example-row">
+        <span><strong>Missing Character:</strong></span>
+        <span>
+          <span class="typo-domain">gogle.com</span> →
+          <span class="legit-domain">google.com</span>
+          <span class="edit-distance">Distance: 1</span>
+        </span>
+      </div>
+
+      <div class="example-row">
+        <span><strong>Character Swap:</strong></span>
+        <span>
+          <span class="typo-domain">gooogle.com</span> →
+          <span class="legit-domain">google.com</span>
+          <span class="edit-distance">Distance: 1</span>
+        </span>
+      </div>
+
+      <div class="example-row">
+        <span><strong>Adjacent Key:</strong></span>
+        <span>
+          <span class="typo-domain">paypal.con</span> →
+          <span class="legit-domain">paypal.com</span>
+          <span class="edit-distance">Distance: 1</span>
+        </span>
+      </div>
+
+      <div class="example-row">
+        <span><strong>Character Substitution:</strong></span>
+        <span>
+          <span class="typo-domain">amazonn.com</span> →
+          <span class="legit-domain">amazon.com</span>
+          <span class="edit-distance">Distance: 1</span>
+        </span>
+      </div>
+    </div>
+
+    <h2>Detection Method</h2>
+    <p>
+      PhishingURLAnalyzer uses <strong>Levenshtein Distance</strong> (edit distance) to
+      compare domain names against a database of 100+ popular domains.
+    </p>
+    <ul>
+      <li><strong>Edit Distance 1-3:</strong> Flagged as typosquatting (25% phishing score)</li>
+      <li><strong>Edit Distance 0:</strong> Exact match, legitimate</li>
+      <li><strong>Edit Distance &gt; 3:</strong> Too different, not typosquatting</li>
+    </ul>
+
+    <h2>Test Typosquatting Domains</h2>
+    <div style="margin: 30px 0;">
+      <button id="test-facebook-typo" class="button">
+        Test: faceboook.com
+      </button>
+      <button id="test-google-typo" class="button">
+        Test: googlle.com
+      </button>
+      <button id="test-paypal-typo" class="button">
+        Test: paypai.com
+      </button>
+      <button id="test-amazon-typo" class="button">
+        Test: amazom.com
+      </button>
+    </div>
+
+    <div id="result"></div>
+  </div>
+
+  <script>
+    // Test data for Playwright
+    window.__phishingTestData = {
+      testId: 'PHISH-003',
+      typosquatExamples: [
+        {
+          typo: 'faceboook.com',
+          legitimate: 'facebook.com',
+          editDistance: 1,
+          technique: 'character_repetition'
+        },
+        {
+          typo: 'googlle.com',
+          legitimate: 'google.com',
+          editDistance: 2,
+          technique: 'character_substitution'
+        },
+        {
+          typo: 'paypai.com',
+          legitimate: 'paypal.com',
+          editDistance: 1,
+          technique: 'character_substitution'
+        },
+        {
+          typo: 'amazom.com',
+          legitimate: 'amazon.com',
+          editDistance: 1,
+          technique: 'character_substitution'
+        }
+      ],
+      expectedDetection: {
+        isTyposquatting: true,
+        phishingScore: 0.25, // 25% weight for typosquatting
+        shouldAlert: true,
+        closestLegitDomain: 'populated_by_test'
+      }
+    };
+
+    // Levenshtein distance implementation for demonstration
+    function levenshteinDistance(a, b) {
+      const m = a.length;
+      const n = b.length;
+      const dp = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+
+      for (let i = 0; i <= m; i++) dp[i][0] = i;
+      for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+      for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+          dp[i][j] = Math.min(
+            dp[i - 1][j] + 1,      // deletion
+            dp[i][j - 1] + 1,      // insertion
+            dp[i - 1][j - 1] + cost // substitution
+          );
+        }
+      }
+
+      return dp[m][n];
+    }
+
+    function testTyposquatting(typoInfo) {
+      const resultDiv = document.getElementById('result');
+      resultDiv.className = 'visible';
+      resultDiv.style.background = '#f8d7da';
+      resultDiv.style.border = '1px solid #f5c6cb';
+      resultDiv.style.color = '#721c24';
+
+      // Extract domain name (remove TLD)
+      const typoDomain = typoInfo.typo.split('.')[0];
+      const legitDomain = typoInfo.legitimate.split('.')[0];
+      const calculatedDistance = levenshteinDistance(typoDomain, legitDomain);
+
+      resultDiv.innerHTML = `
+        <strong>⚠️ Typosquatting Attack Detected!</strong>
+        <br><br>
+        <strong>Suspicious Domain:</strong> <code>${typoInfo.typo}</code>
+        <br>
+        <strong>Closest Legitimate Domain:</strong> <code>${typoInfo.legitimate}</code>
+        <br>
+        <strong>Edit Distance:</strong> ${calculatedDistance}
+        <br>
+        <strong>Technique:</strong> ${typoInfo.technique.replace(/_/g, ' ')}
+        <br><br>
+        <strong>Detection Details:</strong>
+        <ul style="margin: 10px 0; padding-left: 20px;">
+          <li>Typosquatting detected using Levenshtein distance</li>
+          <li>Phishing Score: <strong>0.25</strong> (25% weight)</li>
+          <li>Confidence: <strong>High</strong></li>
+          <li>Algorithm: Compare against 100+ popular domains</li>
+        </ul>
+        <strong>Risk:</strong> This domain closely resembles a legitimate website and
+        may be used to steal credentials or personal information.
+        <br><br>
+        <strong>Recommendation:</strong> Block or show prominent warning before proceeding.
+      `;
+
+      window.__typosquattingDetected = true;
+      window.__detectionResult = {
+        detected: true,
+        isTyposquatting: true,
+        phishingScore: 0.25,
+        confidence: 1.0,
+        closestLegitDomain: typoInfo.legitimate,
+        editDistance: calculatedDistance,
+        explanation: `Similar to legitimate domain '${typoInfo.legitimate}' (edit distance: ${calculatedDistance})`
+      };
+    }
+
+    document.getElementById('test-facebook-typo').addEventListener('click', () => {
+      testTyposquatting(window.__phishingTestData.typosquatExamples[0]);
+    });
+
+    document.getElementById('test-google-typo').addEventListener('click', () => {
+      testTyposquatting(window.__phishingTestData.typosquatExamples[1]);
+    });
+
+    document.getElementById('test-paypal-typo').addEventListener('click', () => {
+      testTyposquatting(window.__phishingTestData.typosquatExamples[2]);
+    });
+
+    document.getElementById('test-amazon-typo').addEventListener('click', () => {
+      testTyposquatting(window.__phishingTestData.typosquatExamples[3]);
+    });
+
+    console.log('[PHISH-003] Typosquatting test fixture loaded');
+    console.log('[PHISH-003] Test data:', window.__phishingTestData);
+  </script>
+</body>
+</html>

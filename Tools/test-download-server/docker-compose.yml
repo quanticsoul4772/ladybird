@@ -9,6 +9,9 @@ services:
     restart: unless-stopped
     networks:
       - test-network
+    volumes:
+      # Mount Playwright test fixtures for accessibility tests
+      - ../../Tests/Playwright/fixtures:/usr/share/nginx/html:ro
 
 networks:
   test-network:

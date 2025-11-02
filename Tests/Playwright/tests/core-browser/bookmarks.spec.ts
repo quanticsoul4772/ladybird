@@ -17,7 +17,7 @@ test.describe('Bookmarks', () => {
 
   test('BKM-001: Add bookmark (Ctrl+D)', { tag: '@p1' }, async ({ page }) => {
     // Navigate to a page
-    await page.goto('http://example.com');
+    await page.goto('http://example.com/');
     await expect(page).toHaveTitle(/Example Domain/);
 
     // Add bookmark (Ctrl+D)
@@ -39,7 +39,7 @@ test.describe('Bookmarks', () => {
 
   test('BKM-002: Remove bookmark', { tag: '@p1' }, async ({ page }) => {
     // Navigate to a page
-    await page.goto('http://example.com');
+    await page.goto('http://example.com/');
 
     // Add bookmark first
     await page.keyboard.press('Control+d');
@@ -58,7 +58,7 @@ test.describe('Bookmarks', () => {
 
   test('BKM-003: Edit bookmark title/URL', { tag: '@p1' }, async ({ page }) => {
     // Navigate to a page
-    await page.goto('http://example.com');
+    await page.goto('http://example.com/');
     await expect(page).toHaveTitle(/Example Domain/);
 
     // Add bookmark
@@ -104,7 +104,7 @@ test.describe('Bookmarks', () => {
 
   test('BKM-005: Bookmark bar visibility toggle', { tag: '@p1' }, async ({ page }) => {
     // Navigate to a page
-    await page.goto('http://example.com');
+    await page.goto('http://example.com/');
 
     // TODO: Toggle bookmark bar visibility (Ctrl+Shift+B or View menu)
     await page.keyboard.press('Control+Shift+b');
@@ -125,7 +125,7 @@ test.describe('Bookmarks', () => {
 
   test('BKM-006: Click bookmark to navigate', { tag: '@p1' }, async ({ page }) => {
     // Add a bookmark first
-    const bookmarkURL = 'http://example.com';
+    const bookmarkURL = 'http://example.com/';
     await page.goto(bookmarkURL);
     await page.keyboard.press('Control+d');
     await page.waitForTimeout(500);
@@ -152,7 +152,7 @@ test.describe('Bookmarks', () => {
 <TITLE>Bookmarks</TITLE>
 <H1>Bookmarks</H1>
 <DL><p>
-    <DT><A HREF="http://example.com" ADD_DATE="1234567890">Example Site</A>
+    <DT><A HREF="http://example.com/" ADD_DATE="1234567890">Example Site</A>
     <DT><A HREF="https://www.iana.org" ADD_DATE="1234567891">IANA</A>
     <DT><H3 ADD_DATE="1234567892" LAST_MODIFIED="1234567893">Work Folder</H3>
     <DL><p>
@@ -176,7 +176,7 @@ test.describe('Bookmarks', () => {
   test('BKM-008: Export bookmarks (HTML format)', { tag: '@p1' }, async ({ page }) => {
     // Add several bookmarks
     const pages = [
-      'http://example.com',
+      'http://example.com/',
       'https://www.iana.org/domains/reserved',
       'data:text/html,<title>Test Page</title>'
     ];
@@ -227,7 +227,7 @@ test.describe('Bookmarks', () => {
   });
 
   test('BKM-010: Bookmark duplicate detection', { tag: '@p1' }, async ({ page }) => {
-    const duplicateURL = 'http://example.com';
+    const duplicateURL = 'http://example.com/';
 
     // Add bookmark for the first time
     await page.goto(duplicateURL);

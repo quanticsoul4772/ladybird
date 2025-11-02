@@ -20,6 +20,10 @@ set(SOURCES
     PhishingURLAnalyzer.cpp
     PolicyGraph.cpp
     PolicyTemplates.cpp
+    Sandbox/BehavioralAnalyzer.cpp
+    Sandbox/Orchestrator.cpp
+    Sandbox/VerdictEngine.cpp
+    Sandbox/WasmExecutor.cpp
     SentinelMetrics.cpp
     SentinelServer.cpp
     ThreatFeed.cpp
@@ -58,6 +62,64 @@ else()
     target_compile_definitions(sentinelservice PRIVATE USE_ML_STUB)
 endif()
 
+# ============================================================================
+# Wasmtime Integration (Optional - Real-Time WASM Sandboxing)
+# ============================================================================
+# Wasmtime provides Tier 1 fast malware pre-analysis in isolated WASM sandbox.
+# Not available in vcpkg - requires manual installation.
+# Download: https://github.com/bytecodealliance/wasmtime/releases
+# Minimum version: v1.0.0 (Tested: v38.0.3)
+# Target: <100ms execution time for JavaScript-heavy files
+# ============================================================================
+
+find_library(WASMTIME_LIBRARY NAMES wasmtime libwasmtime
+    PATHS
+        /usr/local/wasmtime/lib
+        /usr/local/lib
+        /usr/lib
+        ~/wasmtime/lib
+        ${CMAKE_CURRENT_SOURCE_DIR}/wasmtime/lib
+        C:/wasmtime/lib
+    NO_DEFAULT_PATH)
+
+find_path(WASMTIME_INCLUDE_DIR wasmtime.h
+    PATHS
+        /usr/local/wasmtime/include
+        /usr/local/include
+        /usr/include
+        ~/wasmtime/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/wasmtime/include
+        C:/wasmtime/include
+    NO_DEFAULT_PATH)
+
+if(WASMTIME_LIBRARY AND WASMTIME_INCLUDE_DIR)
+    message(STATUS "Found Wasmtime: ${WASMTIME_LIBRARY}")
+    message(STATUS "Wasmtime include: ${WASMTIME_INCLUDE_DIR}")
+    target_include_directories(sentinelservice PRIVATE ${WASMTIME_INCLUDE_DIR})
+    target_link_libraries(sentinelservice PRIVATE ${WASMTIME_LIBRARY})
+    target_compile_definitions(sentinelservice PRIVATE ENABLE_WASMTIME)
+
+    # Platform-specific dependencies for Wasmtime
+    if(UNIX AND NOT APPLE)
+        # Linux: pthread, dl, m
+        target_link_libraries(sentinelservice PRIVATE pthread dl m)
+    elseif(WIN32)
+        # Windows: Winsock, advapi, userenv, ntdll, shell32, ole32, bcrypt
+        target_link_libraries(sentinelservice PRIVATE
+            ws2_32 advapi32 userenv ntdll shell32 ole32 bcrypt)
+    endif()
+    # macOS requires no additional libraries
+else()
+    message(STATUS "Wasmtime not found. WASM sandbox will use stub mode.")
+    message(STATUS "To enable WASM sandboxing:")
+    message(STATUS "  1. Download: https://github.com/bytecodealliance/wasmtime/releases")
+    message(STATUS "  2. Extract to /usr/local/wasmtime (or ~/wasmtime)")
+    message(STATUS "  3. Rebuild Sentinel")
+    message(STATUS "See docs/WASMTIME_INTEGRATION_GUIDE.md for installation instructions.")
+    # Define stub mode for graceful degradation
+    target_compile_definitions(sentinelservice PRIVATE USE_WASMTIME_STUB)
+endif()
+
 add_executable(Sentinel main.cpp)
 add_executable(TestPolicyGraph TestPolicyGraph.cpp)
 add_executable(TestPhase3Integration TestPhase3Integration.cpp)
@@ -69,7 +131,9 @@ add_executable(TestPhishingURLAnalyzer TestPhishingURLAnalyzer.cpp)
 add_executable(TestFingerprintingDetector TestFingerprintingDetector.cpp)
 add_executable(TestC2Detector TestC2Detector.cpp)
 add_executable(TestDNSAnalyzer TestDNSAnalyzer.cpp)
+add_executable(TestSandbox TestSandbox.cpp)
 add_executable(BenchmarkC2Detector BenchmarkC2Detector.cpp)
+add_executable(BenchmarkBehavioralAnalyzer BenchmarkBehavioralAnalyzer.cpp)
 add_executable(sentinel-cli ../../Tools/sentinel-cli.cpp)
 
 target_include_directories(sentinelservice PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../..)
@@ -104,11 +168,14 @@ target_link_libraries(TestPhishingURLAnalyzer PRIVATE sentinelservice LibCore Li
 target_link_libraries(TestFingerprintingDetector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestC2Detector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestDNSAnalyzer PRIVATE sentinelservice LibCore LibMain)
+target_link_libraries(TestSandbox PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(BenchmarkC2Detector PRIVATE sentinelservice LibCore LibMain)
+target_link_libraries(BenchmarkBehavioralAnalyzer PRIVATE sentinelservice LibCore LibMain LibFileSystem)
 target_link_libraries(sentinel-cli PRIVATE sentinelservice LibCore LibMain LibFileSystem requestserverservice)
 
 # Use proper test infrastructure for LibTest-based tests
 ladybird_test(TestBloomFilter.cpp Sentinel LIBS sentinelservice LibDatabase LibFileSystem)
+ladybird_test(TestBehavioralAnalyzer.cpp Sentinel LIBS sentinelservice LibCore LibFileSystem)
 
 # Install targets
 install(TARGETS Sentinel sentinel-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

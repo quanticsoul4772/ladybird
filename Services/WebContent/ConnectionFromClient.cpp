@@ -1552,14 +1552,21 @@ void ConnectionFromClient::credential_alert_action(u64 page_id, String form_orig
 
     auto& page_client = maybe_page.value();
 
+    // Check if FormMonitor is initialized
+    auto* monitor = page_client.form_monitor();
+    if (!monitor) {
+        dbgln("WebContent: FormMonitor not initialized, cannot process alert response");
+        return;
+    }
+
     if (action == "block"sv) {
         dbgln("WebContent: User chose to BLOCK credential submission from {} to {}", form_origin, action_origin);
-        page_client.form_monitor().block_submission(form_origin, action_origin);
+        monitor->block_submission(form_origin, action_origin);
     } else if (action == "trust"sv) {
         dbgln("WebContent: User chose to TRUST relationship from {} to {}", form_origin, action_origin);
         // Store trusted relationship in FormMonitor
         // FormMonitor will learn this as a trusted relationship
-        page_client.form_monitor().learn_trusted_relationship(form_origin, action_origin);
+        monitor->learn_trusted_relationship(form_origin, action_origin);
     } else if (action == "learn_more"sv) {
         dbgln("WebContent: User requested LEARN MORE for alert from {} to {}", form_origin, action_origin);
         // Open help documentation or show detailed alert information
@@ -1583,8 +1590,15 @@ void ConnectionFromClient::grant_autofill_override(u64 page_id, String form_orig
 
     auto& page_client = maybe_page.value();
 
+    // Check if FormMonitor is initialized
+    auto* monitor = page_client.form_monitor();
+    if (!monitor) {
+        dbgln("WebContent: FormMonitor not initialized, cannot grant autofill override");
+        return;
+    }
+
     // Grant one-time autofill permission in FormMonitor
-    page_client.form_monitor().grant_autofill_override(form_origin, action_origin);
+    monitor->grant_autofill_override(form_origin, action_origin);
 
     dbgln("WebContent: Autofill override granted - next autofill attempt will succeed");
 }

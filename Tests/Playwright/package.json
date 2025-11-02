@@ -11,7 +11,12 @@
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
     "report": "playwright show-report",
-    "codegen": "playwright codegen"
+    "codegen": "playwright codegen",
+    "test-server": "node test-server.js",
+    "test-server-alt": "PORT=8081 node test-server.js",
+    "servers": "concurrently \"npm run test-server\" \"npm run test-server-alt\"",
+    "server:start": "node test-server.js",
+    "server:health": "curl http://localhost:8080/health"
   },
   "keywords": [
     "playwright",
@@ -25,6 +30,9 @@
   "license": "BSD-2-Clause",
   "devDependencies": {
     "@playwright/test": "^1.40.0",
+    "concurrently": "^8.2.2",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
     "typescript": "^5.3.0"
   },
   "engines": {

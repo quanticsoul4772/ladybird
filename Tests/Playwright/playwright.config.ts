@@ -55,6 +55,8 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         // Launch actual Ladybird browser
         executablePath: '/home/rbsmith4/ladybird/Build/release/bin/Ladybird',
+        // Accept self-signed certificates for HTTPS testing
+        ignoreHTTPSErrors: true,
         // Ladybird-specific configurations
         launchOptions: {
           args: [
@@ -95,4 +97,45 @@ export default defineConfig({
   //   url: 'http://localhost:3000',
   //   reuseExistingServer: !process.env.CI,
   // },
+
+  /**
+   * Local HTTP/HTTPS test servers for cross-origin and security testing
+   * Automatically started/stopped with Playwright tests
+   *
+   * Servers:
+   * - Port 9080: Primary HTTP test server (Origin A)
+   * - Port 9081: Secondary HTTP test server (Origin B for cross-origin)
+   * - Port 9443: HTTPS test server (for mixed content, HSTS, etc.)
+   *
+   * Usage in tests:
+   *   await page.goto('http://localhost:9080/forms/legitimate-login.html');
+   *   await page.goto('http://localhost:9081/forms/phishing-attack.html');
+   *   await page.goto('https://localhost:9443/'); // HTTPS tests
+   */
+  webServer: [
+    {
+      command: 'PORT=9080 node test-server.js',
+      port: 9080,
+      timeout: 10000,
+      reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'PORT=9081 node test-server.js',
+      port: 9081,
+      timeout: 10000,
+      reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      command: 'USE_HTTPS=true PORT=9443 node test-server.js',
+      port: 9443,
+      timeout: 10000,
+      reuseExistingServer: !process.env.CI,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  ],
 });

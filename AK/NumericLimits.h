@@ -143,6 +143,7 @@ struct NumericLimits<long double> {
     static constexpr size_t digits() { return __LDBL_MANT_DIG__; }
 };
 
+#ifdef AK_HAS_FLOAT_16
 template<>
 struct NumericLimits<f16> {
     static constexpr f16 lowest() { return -__FLT16_MAX__; }
@@ -153,6 +154,7 @@ struct NumericLimits<f16> {
     static constexpr bool is_signed() { return true; }
     static constexpr size_t digits() { return __FLT16_MANT_DIG__; }
 };
+#endif
 
 }
 

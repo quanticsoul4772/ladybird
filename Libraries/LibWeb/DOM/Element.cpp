@@ -2300,12 +2300,24 @@ static CSSPixelPoint determine_the_scroll_into_view_position(Element& target, Bi
     // block flow direction position block, an inline base direction position inline, and a scrolling box scrolling box,
     // run the following steps:
 
-    if (!scrolling_box.is_document()) {
-        // FIXME: Add support for scrolling boxes other than the viewport.
+    // Get the scrolling box's rectangle
+    CSSPixelRect scrolling_box_rect;
+    if (scrolling_box.is_document()) {
+        // NOTE: For a viewport scrolling box is initial containing block
+        scrolling_box_rect = scrolling_box.document().viewport_rect();
+    } else if (scrolling_box.is_element()) {
+        // For element scroll containers, use the padding box (the scrollable area)
+        auto& element = static_cast<Element&>(scrolling_box);
+        auto* paintable_box = element.paintable_box();
+        if (!paintable_box)
+            return {};
+
+        // The scrolling box rect should be relative to the same coordinate system as the target's bounding box
+        // getBoundingClientRect returns viewport-relative coordinates
+        scrolling_box_rect = paintable_box->absolute_padding_box_rect();
+    } else {
         return {};
     }
-    // NOTE: For a viewport scrolling box is initial containing block
-    CSSPixelRect scrolling_box_rect = scrolling_box.document().viewport_rect();
 
     // FIXME: All of this needs to support different block/inline directions.
 
@@ -2464,7 +2476,30 @@ static ErrorOr<void> scroll_an_element_into_view(Element& target, Bindings::Scro
         if (true) {
             // -> If scrolling box is associated with an element
             if (scrolling_box.is_element()) {
-                // FIXME: Perform a scroll of the element’s scrolling box to position, with the element as the associated element and behavior as the scroll behavior.
+                // Perform a scroll of the element's scrolling box to position, with the element as the associated element and behavior as the scroll behavior.
+                auto& element = static_cast<Element&>(scrolling_box);
+                auto* paintable_box = element.paintable_box();
+                if (!paintable_box)
+                    continue;
+
+                // Get the current scroll offset
+                auto current_scroll_offset = paintable_box->scroll_offset();
+
+                // Calculate the new scroll offset
+                // The position returned by determine_the_scroll_into_view_position is in absolute coordinates,
+                // but we need to convert it to be relative to the scroll container's content area
+                auto scrolling_box_rect = paintable_box->absolute_padding_box_rect();
+
+                // Calculate the delta from the scrolling box's top-left to the desired position
+                CSSPixelPoint new_scroll_offset;
+                new_scroll_offset.set_x(current_scroll_offset.x() + (position.x() - scrolling_box_rect.x()));
+                new_scroll_offset.set_y(current_scroll_offset.y() + (position.y() - scrolling_box_rect.y()));
+
+                // FIXME: Implement smooth scrolling when behavior is ScrollBehavior::Smooth
+                (void)behavior;
+
+                // Set the scroll offset
+                (void)paintable_box->set_scroll_offset(new_scroll_offset);
             }
             // -> If scrolling box is associated with a viewport
             else if (scrolling_box.is_document()) {

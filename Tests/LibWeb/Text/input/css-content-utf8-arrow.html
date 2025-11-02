@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+.arrow::before {
+  content: "→ ";
+}
+</style>
+<script src="../include.js"></script>
+<script>
+test(() => {
+  const el = document.querySelector('.arrow');
+  const computed = window.getComputedStyle(el, '::before');
+  const content = computed.content;
+
+  println(`Content value: ${content}`);
+
+  // Extract the string without quotes
+  const str = content.replace(/^"(.*)"$/, '$1');
+  println(`String without quotes: ${str}`);
+  println(`String length: ${str.length}`);
+
+  // Check each character code
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    println(`Character ${i}: U+${code.toString(16).toUpperCase().padStart(4, '0')} (${str[i]})`);
+  }
+
+  // The first character should be U+2192 (→)
+  println(`First char is arrow (U+2192): ${str.charCodeAt(0) === 0x2192}`);
+});
+</script>
+</head>
+<body>
+<div class="arrow">Test</div>
+</body>
+</html>

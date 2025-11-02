@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Media Heavy Performance Test</title>
+  <style>
+    .gallery { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .gallery img { width: 100%; height: auto; }
+  </style>
+</head>
+<body>
+  <h1>Media Heavy Performance Test</h1>
+  <div class="gallery" id="gallery"></div>
+
+  <script>
+    // Generate placeholder images using data URIs
+    const gallery = document.getElementById('gallery');
+
+    // Create 20 small placeholder images
+    for (let i = 0; i < 20; i++) {
+      const img = document.createElement('img');
+      // Use a small SVG as placeholder
+      const svg = `<svg width="200" height="150" xmlns="http://www.w3.org/2000/svg">
+        <rect width="200" height="150" fill="hsl(${i * 18}, 70%, 60%)"/>
+        <text x="100" y="75" text-anchor="middle" fill="white" font-size="20">Image ${i + 1}</text>
+      </svg>`;
+      img.src = 'data:image/svg+xml;base64,' + btoa(svg);
+      img.alt = `Test image ${i + 1}`;
+      gallery.appendChild(img);
+    }
+
+    console.log('Loaded', gallery.children.length, 'images');
+  </script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Scrolling in Data URL vs HTTP URL</title>
+    <style>
+        body { margin: 0; padding: 20px; }
+        .test-container { 
+            height: 3000px; 
+            background: linear-gradient(to bottom, #fff 0%, #f0f0f0 100%);
+        }
+        #section { 
+            margin-top: 2000px; 
+            padding: 20px;
+            background: yellow;
+            font-size: 24px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Scroll Test</h1>
+    <div class="test-container">
+        <a href="#section" id="anchor-link">Jump to Section</a>
+        <div id="section">Target Section</div>
+    </div>
+    
+    <script>
+        // Test 1: Check if we have a navigable/viewport
+        console.log('Document URL:', document.URL);
+        console.log('Document origin:', window.location.origin);
+        
+        // Test 2: Try scrollIntoView
+        setTimeout(() => {
+            console.log('Initial scrollY:', window.scrollY);
+            const el = document.getElementById('section');
+            if (el) {
+                try {
+                    el.scrollIntoView();
+                    console.log('scrollIntoView() called');
+                    setTimeout(() => {
+                        console.log('After scrollIntoView, scrollY:', window.scrollY);
+                    }, 500);
+                } catch (e) {
+                    console.error('scrollIntoView() error:', e);
+                }
+            }
+        }, 1000);
+        
+        // Test 3: Try window.scrollTo
+        setTimeout(() => {
+            console.log('Trying window.scrollTo(0, 2000)');
+            try {
+                window.scrollTo(0, 2000);
+                setTimeout(() => {
+                    console.log('After scrollTo, scrollY:', window.scrollY);
+                }, 500);
+            } catch (e) {
+                console.error('scrollTo() error:', e);
+            }
+        }, 3000);
+    </script>
+</body>
+</html>

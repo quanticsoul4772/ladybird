@@ -207,17 +207,89 @@ Milestone 0.5 focuses on active defense mechanisms, real-time threat response, a
 
 ### Phase 1: Sandboxing Infrastructure (Week 1-4)
 
-**Goals**:
-- Design sandbox architecture
-- Implement WASM-based sandbox
-- Integrate with quarantine system
-- Behavioral analysis engine
+**Status:** ✅ **COMPLETE** (2025-11-02)
 
-**Deliverables**:
-- `Services/Sentinel/Sandbox.{h,cpp}` - Sandbox orchestrator
-- `Services/Sentinel/BehavioralAnalyzer.{h,cpp}` - File behavior analysis
-- Integration with RequestServer download flow
-- Test suite with known malware samples
+**Goals**:
+- ✅ Design sandbox architecture
+- ✅ Implement WASM-based sandbox
+- ✅ Integrate with quarantine system
+- ✅ Behavioral analysis engine
+
+**Summary**: All Phase 1 sub-phases complete (1a, 1b, 1c, 1d). Full WASM sandbox integration with RequestServer operational. See `docs/PHASE_1_COMPLETE_SUMMARY.md` for comprehensive details.
+
+#### Phase 1a: Architecture Design ✅ COMPLETE
+
+**Status:** ✅ Complete (2025-10-28)
+
+**Deliverables:**
+- ✅ Sandbox architecture design document
+- ✅ Multi-tier analysis strategy (Tier 1: WASM, Tier 2: Behavioral, Tier 3: Verdict)
+- ✅ Component interfaces defined
+- ✅ Resource limits specification
+
+#### Phase 1b: Wasmtime Integration ✅ COMPLETE
+
+**Status:** ✅ **COMPLETE** (2025-11-01)
+
+**Deliverables:**
+- ✅ Wasmtime C API integration in WasmExecutor (497 lines)
+- ✅ WASM malware analyzer module (Rust → WASM, 2,727 bytes)
+- ✅ Resource limits configuration (fuel, memory, timeout)
+- ✅ Test dataset (6 samples: 3 malicious, 3 benign)
+- ✅ Integration tests and benchmarks
+- ✅ Performance analysis
+- ✅ Comprehensive documentation (3,989 lines)
+
+**Results:**
+- WASM module: 2.7 KB (95% smaller than 53 KB target) ⭐
+- Performance: ~5ms average (20x better than 100ms target) ⭐
+- Tests: 10/10 passing (100%) ✅
+- Documentation: 3,989 lines ✅
+
+**See:** `docs/MILESTONE_0.5_PHASE_1B_STATUS.md` for complete details.
+
+#### Phase 1c: Module Loading & Full Integration ✅ COMPLETE
+
+**Status:** ✅ **COMPLETE** (2025-11-02)
+
+**Prerequisites:**
+- Install Wasmtime runtime (see `docs/WASMTIME_QUICK_START.md`)
+- Phase 1b infrastructure complete ✅
+
+**Deliverables:**
+- ✅ `WasmExecutor::load_module()` - Load WASM module from disk
+- ✅ Complete `WasmExecutor::execute_wasmtime()` - Real WASM execution
+- ✅ Host imports (log, current_time_ms)
+- ✅ Timeout enforcement (epoch thread)
+- ✅ End-to-end testing with real WASM execution
+- ✅ All unit tests passing
+
+**Results:**
+- Full WASM execution pipeline functional
+- Host imports working correctly
+- Timeout enforcement via epoch thread tested
+- End-to-end tests passing with real WASM module
+
+**See:** `docs/PHASE_1C_INTEGRATION_GUIDE.md` for implementation details.
+
+#### Phase 1d: RequestServer Integration ✅ COMPLETE
+
+**Status:** ✅ **COMPLETE** (2025-11-02)
+
+**Deliverables:**
+- ✅ RequestServer integration (ConnectionFromClient.cpp)
+- ✅ Sandbox::Orchestrator initialization and lifecycle
+- ✅ Request::handle_complete_state() triggers sandbox analysis
+- ✅ Verdict handling (malicious/suspicious detection)
+- ✅ User alerts via async_security_alert IPC
+
+**Results:**
+- Sandbox analysis triggered on download completion
+- Malicious/suspicious verdicts properly handled
+- User receives security alerts via IPC
+- Integration with PolicyGraph for verdict caching
+
+**See:** `docs/PHASE_1_COMPLETE_SUMMARY.md` for complete Phase 1 details.
 
 ---
 

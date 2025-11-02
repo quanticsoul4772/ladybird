@@ -155,6 +155,20 @@ public:
         String notes;
     };
 
+    // Milestone 0.5 Phase 1d: Sandbox Verdict Cache
+    struct SandboxVerdict {
+        String file_hash;             // SHA256 hex string (primary key)
+        i32 threat_level;             // 0=Clean, 1=Suspicious, 2=Malicious, 3=Critical
+        i32 confidence;               // 0-1000 (scaled from 0.0-1.0)
+        i32 composite_score;          // 0-1000 (scaled from 0.0-1.0)
+        String verdict_explanation;   // Human-readable summary
+        i32 yara_score;               // 0-1000 (scaled from 0.0-1.0)
+        i32 ml_score;                 // 0-1000 (scaled from 0.0-1.0)
+        i32 behavioral_score;         // 0-1000 (scaled from 0.0-1.0)
+        UnixDateTime analyzed_at;     // When analysis was performed
+        UnixDateTime expires_at;      // When cache entry expires
+    };
+
     static ErrorOr<NonnullOwnPtr<PolicyGraph>> create(ByteString const& db_directory);
 
     // Policy CRUD operations
@@ -244,6 +258,11 @@ public:
     ErrorOr<void> update_network_behavior_policy(i64 policy_id, String const& new_policy, String const& notes = ""_string);
     ErrorOr<void> delete_network_behavior_policy(i64 policy_id);
 
+    // Milestone 0.5 Phase 1d: Sandbox Verdict Caching
+    ErrorOr<void> store_sandbox_verdict(SandboxVerdict const& verdict);
+    ErrorOr<Optional<SandboxVerdict>> lookup_sandbox_verdict(String const& file_hash);
+    ErrorOr<void> cleanup_expired_verdicts();
+
 private:
     struct Statements {
         // Policy CRUD
@@ -311,6 +330,11 @@ private:
         Database::StatementID get_all_network_behavior_policies { 0 };
         Database::StatementID update_network_behavior_policy { 0 };
         Database::StatementID delete_network_behavior_policy { 0 };
+
+        // Milestone 0.5 Phase 1d: Sandbox Verdict Cache
+        Database::StatementID store_sandbox_verdict { 0 };
+        Database::StatementID lookup_sandbox_verdict { 0 };
+        Database::StatementID delete_expired_verdicts { 0 };
     };
 
     PolicyGraph(NonnullRefPtr<Database::Database>, Statements);

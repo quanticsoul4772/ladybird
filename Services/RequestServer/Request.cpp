@@ -579,17 +579,62 @@ void Request::handle_complete_state()
                         if (!sha256_result.is_error()) {
                             const_cast<SecurityTap::DownloadMetadata&>(metadata).sha256 = sha256_result.release_value();
 
-                            // Scan the content
+                            // Scan the content with YARA/ML
                             auto scan_result = m_security_tap->inspect_download(metadata, content_buffer.bytes());
+
+                            bool is_threat = false;
+                            String threat_explanation;
 
                             if (!scan_result.is_error() && scan_result.value().is_threat) {
                                 dbgln("SecurityTap: Threat detected in download: {}", metadata.filename);
+                                is_threat = true;
                                 // Store alert JSON for quarantine (Phase 3 Day 19)
                                 m_security_alert_json = scan_result.value().alert_json.value();
-                                // Send security alert to browser via IPC (with page_id for routing)
-                                m_client.async_security_alert(m_request_id, m_page_id, scan_result.value().alert_json.value());
                             } else if (scan_result.is_error()) {
                                 dbgln("SecurityTap: Scan failed: {}", scan_result.error());
+                            }
+
+                            // Sandbox analysis (Milestone 0.5 Phase 1) - deeper inspection for suspicious files
+                            // Run sandbox if YARA/ML didn't find a definite threat OR if we want deeper analysis
+                            auto* sandbox = m_client.sandbox_orchestrator();
+                            if (sandbox && !is_threat && metadata.size_bytes > 0) {
+                                dbgln("Sandbox: Analyzing '{}' ({} bytes)", metadata.filename, metadata.size_bytes);
+
+                                auto sandbox_result = sandbox->analyze_file(content_buffer, String::from_byte_string(metadata.filename).value_or("download"_string));
+
+                                if (!sandbox_result.is_error()) {
+                                    auto const& result = sandbox_result.value();
+
+                                    dbgln("Sandbox: Analysis complete - Threat: {}, Confidence: {:.2f}, Composite: {:.2f}",
+                                        static_cast<int>(result.threat_level), result.confidence, result.composite_score);
+
+                                    if (result.is_malicious()) {
+                                        dbgln("Sandbox: MALWARE DETECTED - {}", result.verdict_explanation);
+                                        is_threat = true;
+                                        threat_explanation = result.verdict_explanation;
+
+                                        // Generate alert JSON for quarantine
+                                        // Format: {"verdict":"malicious","score":0.85,"explanation":"..."}
+                                        StringBuilder alert_builder;
+                                        alert_builder.append("{\"verdict\":\"malicious\",\"score\":"sv);
+                                        alert_builder.appendff("{:.2f}", result.composite_score);
+                                        alert_builder.append(",\"explanation\":\""sv);
+                                        alert_builder.append(result.verdict_explanation);
+                                        alert_builder.append("\"}"sv);
+
+                                        m_security_alert_json = alert_builder.to_byte_string();
+                                    } else if (result.is_suspicious()) {
+                                        dbgln("Sandbox: Suspicious file detected - {}", result.verdict_explanation);
+                                        // TODO: In future, send warning to UI (not blocking)
+                                    }
+                                } else {
+                                    dbgln("Sandbox: Analysis failed: {}", sandbox_result.error());
+                                }
+                            }
+
+                            // Send security alert if threat detected by either scanner
+                            if (is_threat && m_security_alert_json.has_value()) {
+                                m_client.async_security_alert(m_request_id, m_page_id, m_security_alert_json.value());
                             }
                         }
 
@@ -784,17 +829,53 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
                 if (!sha256_result.is_error()) {
                     const_cast<SecurityTap::DownloadMetadata&>(metadata).sha256 = sha256_result.release_value();
 
-                    // Scan the content
+                    // Scan the content with YARA/ML
                     auto scan_result = request.m_security_tap->inspect_download(metadata, content_buffer.bytes());
+
+                    bool is_threat = false;
 
                     if (!scan_result.is_error() && scan_result.value().is_threat) {
                         dbgln("SecurityTap: Threat detected during download: {}", metadata.filename);
-
+                        is_threat = true;
                         // Store alert JSON for quarantine (Phase 3 Day 19)
                         request.m_security_alert_json = scan_result.value().alert_json.value();
+                    }
 
+                    // Sandbox analysis (Milestone 0.5 Phase 1) - deeper inspection
+                    auto* sandbox = request.m_client.sandbox_orchestrator();
+                    if (sandbox && !is_threat && metadata.size_bytes > 0) {
+                        dbgln("Sandbox: Analyzing '{}' during download ({} bytes)", metadata.filename, metadata.size_bytes);
+
+                        auto sandbox_result = sandbox->analyze_file(content_buffer, String::from_byte_string(metadata.filename).value_or("download"_string));
+
+                        if (!sandbox_result.is_error()) {
+                            auto const& result = sandbox_result.value();
+
+                            dbgln("Sandbox: Analysis complete - Threat: {}, Confidence: {:.2f}",
+                                static_cast<int>(result.threat_level), result.confidence);
+
+                            if (result.is_malicious()) {
+                                dbgln("Sandbox: MALWARE DETECTED during download - {}", result.verdict_explanation);
+                                is_threat = true;
+
+                                // Generate alert JSON
+                                StringBuilder alert_builder;
+                                alert_builder.append("{\"verdict\":\"malicious\",\"score\":"sv);
+                                alert_builder.appendff("{:.2f}", result.composite_score);
+                                alert_builder.append(",\"explanation\":\""sv);
+                                alert_builder.append(result.verdict_explanation);
+                                alert_builder.append("\"}"sv);
+
+                                request.m_security_alert_json = alert_builder.to_byte_string();
+                            }
+                        } else {
+                            dbgln("Sandbox: Analysis failed: {}", sandbox_result.error());
+                        }
+                    }
+
+                    if (is_threat && request.m_security_alert_json.has_value()) {
                         // Send security alert to browser via IPC
-                        request.m_client.async_security_alert(request.m_request_id, request.m_page_id, scan_result.value().alert_json.value());
+                        request.m_client.async_security_alert(request.m_request_id, request.m_page_id, request.m_security_alert_json.value());
 
                         // Transition to WaitingForPolicy state
                         request.transition_to_state(State::WaitingForPolicy);

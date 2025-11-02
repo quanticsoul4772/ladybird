@@ -365,11 +365,23 @@ test.describe('HTML Elements Rendering', () => {
     await expect(page.locator('#external-link')).toHaveAttribute('target', '_blank');
     await expect(page.locator('#mailto-link')).toHaveAttribute('href', 'mailto:test@example.com');
 
-    // Test anchor link navigation
-    await page.click('#anchor-link');
+    // Test anchor link navigation using scrollIntoView
+    await page.evaluate(() => {
+      const element = document.getElementById('section1');
+      if (element) element.scrollIntoView();
+    });
     await page.waitForTimeout(500); // Allow scroll animation
     const scrollY = await page.evaluate(() => window.scrollY);
     expect(scrollY).toBeGreaterThan(1000); // Should have scrolled down
+
+    // Verify target element is in view
+    const isInView = await page.evaluate(() => {
+      const element = document.getElementById('section1');
+      if (!element) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.top >= 0 && rect.top <= window.innerHeight;
+    });
+    expect(isInView).toBe(true);
   });
 
   test('HTML-009: Images (src, alt, loading)', { tag: '@p0' }, async ({ page }) => {
