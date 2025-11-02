@@ -594,20 +594,23 @@ export class MediaTestHelper {
 
 /**
  * Media file paths for testing
+ * Note: Test server (test-server.js) serves 'fixtures/' directory as root,
+ * so paths should be absolute URLs pointing to the test server (http://localhost:9080)
+ * We use port 9080 as the primary test server (configured in playwright.config.ts)
  */
 export const MEDIA_FIXTURES = {
   audio: {
-    mono: '/fixtures/media/silent-mono.mp3',
-    stereo: '/fixtures/media/silent-stereo.mp3',
-    wav: '/fixtures/media/silent.wav',
-    ogg: '/fixtures/media/silent.ogg'
+    mono: 'http://localhost:9080/media/silent-mono.mp3',
+    stereo: 'http://localhost:9080/media/silent-stereo.mp3',
+    wav: 'http://localhost:9080/media/silent.wav',
+    ogg: 'http://localhost:9080/media/silent.ogg'
   },
   video: {
-    mp4: '/fixtures/media/test-video.mp4',
-    webm: '/fixtures/media/test-video.webm',
-    ogv: '/fixtures/media/test-video.ogv'
+    mp4: 'http://localhost:9080/media/test-video.mp4',
+    webm: 'http://localhost:9080/media/test-video.webm',
+    ogv: 'http://localhost:9080/media/test-video.ogv'
   },
-  poster: '/fixtures/media/poster.png'
+  poster: 'http://localhost:9080/media/poster.png'
 };
 
 /**

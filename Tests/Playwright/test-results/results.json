@@ -92,48 +92,74 @@
           "specs": [
             {
               "title": "MEDIA-001: Audio playback basic functionality",
-              "ok": true,
+              "ok": false,
               "tags": [
                 "p1"
               ],
               "tests": [
                 {
                   "timeout": 60000,
-                  "annotations": [
-                    {
-                      "type": "skip",
-                      "location": {
-                        "file": "/home/rbsmith4/ladybird/Tests/Playwright/tests/multimedia/media.spec.ts",
-                        "line": 98,
-                        "column": 8
-                      }
-                    }
-                  ],
-                  "expectedStatus": "skipped",
+                  "annotations": [],
+                  "expectedStatus": "passed",
                   "projectId": "ladybird",
                   "projectName": "ladybird",
                   "results": [
                     {
-                      "workerIndex": -1,
-                      "parallelIndex": -1,
-                      "status": "skipped",
-                      "duration": 0,
-                      "errors": [],
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 14052,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mtrue\u001b[39m\nReceived: \u001b[31mfalse\u001b[39m",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mtrue\u001b[39m\nReceived: \u001b[31mfalse\u001b[39m\n    at /home/rbsmith4/ladybird/Tests/Playwright/tests/multimedia/media.spec.ts:120:28",
+                        "location": {
+                          "file": "/home/rbsmith4/ladybird/Tests/Playwright/tests/multimedia/media.spec.ts",
+                          "column": 28,
+                          "line": 120
+                        },
+                        "snippet": "  118 |     // Wait for metadata to load\n  119 |     const metadataLoaded = await mediaHelper.waitForMetadata('audio-player');\n> 120 |     expect(metadataLoaded).toBe(true);\n      |                            ^\n  121 |\n  122 |     // Verify duration is loaded\n  123 |     state = await mediaHelper.getPlaybackState('audio-player');"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/home/rbsmith4/ladybird/Tests/Playwright/tests/multimedia/media.spec.ts",
+                            "column": 28,
+                            "line": 120
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mtrue\u001b[39m\nReceived: \u001b[31mfalse\u001b[39m\n\n  118 |     // Wait for metadata to load\n  119 |     const metadataLoaded = await mediaHelper.waitForMetadata('audio-player');\n> 120 |     expect(metadataLoaded).toBe(true);\n      |                            ^\n  121 |\n  122 |     // Verify duration is loaded\n  123 |     state = await mediaHelper.getPlaybackState('audio-player');\n    at /home/rbsmith4/ladybird/Tests/Playwright/tests/multimedia/media.spec.ts:120:28"
+                        }
+                      ],
                       "stdout": [],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2025-11-02T19:18:25.786Z",
+                      "startTime": "2025-11-02T21:42:12.305Z",
                       "annotations": [],
-                      "attachments": []
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/rbsmith4/ladybird/Tests/Playwright/test-results/multimedia-media-Multimedi-c75fa-layback-basic-functionality-ladybird/test-failed-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/rbsmith4/ladybird/Tests/Playwright/test-results/multimedia-media-Multimedi-c75fa-layback-basic-functionality-ladybird/video.webm"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/home/rbsmith4/ladybird/Tests/Playwright/tests/multimedia/media.spec.ts",
+                        "column": 28,
+                        "line": 120
+                      }
                     }
                   ],
-                  "status": "skipped"
+                  "status": "unexpected"
                 }
               ],
               "id": "e7a107cc7a19d0e4014d-f313b1946b0bc3c4f926",
               "file": "multimedia/media.spec.ts",
               "line": 98,
-              "column": 8
+              "column": 7
             }
           ]
         }
@@ -142,11 +168,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2025-11-02T19:18:25.318Z",
-    "duration": 476.75,
+    "startTime": "2025-11-02T21:42:11.657Z",
+    "duration": 14943.777,
     "expected": 0,
-    "skipped": 1,
-    "unexpected": 0,
+    "skipped": 0,
+    "unexpected": 1,
     "flaky": 0
   }
 }

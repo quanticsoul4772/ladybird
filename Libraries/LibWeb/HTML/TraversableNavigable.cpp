@@ -1099,7 +1099,8 @@ void TraversableNavigable::clear_the_forward_session_history()
         entry_list.remove_all_matching([step](auto& entry) {
             // Only remove entries with numeric steps that are greater than the current step.
             // Entries with "pending" step are left untouched (spec compliant).
-            if (auto* entry_step = entry->step().template get_pointer<int>())
+            auto const& step_variant = entry->step();
+            if (auto* entry_step = step_variant.template get_pointer<int>())
                 return *entry_step > step;
             return false;
         });

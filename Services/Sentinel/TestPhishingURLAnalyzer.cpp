@@ -169,7 +169,7 @@ static void test_suspicious_tlds()
             detected++;
     }
 
-    if (detected == suspicious_tld_urls.size())
+    if (static_cast<size_t>(detected) == suspicious_tld_urls.size())
         log_pass("Suspicious TLD detection");
     else
         log_fail("Suspicious TLDs", "Did not detect all suspicious TLDs");

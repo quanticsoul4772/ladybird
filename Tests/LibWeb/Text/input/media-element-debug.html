@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="../include.js"></script>
+</head>
+<body>
+    <audio id="test-audio" controls>
+        <source src="data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7v/////////////////////////////////////////////////////////////" type="audio/mpeg">
+    </audio>
+
+    <script>
+        const audio = document.getElementById('test-audio');
+
+        println('Initial duration: ' + audio.duration);
+        println('Initial readyState: ' + audio.readyState);
+        println('Initial networkState: ' + audio.networkState);
+        println('Initial paused: ' + audio.paused);
+
+        audio.addEventListener('loadedmetadata', () => {
+            println('loadedmetadata event fired');
+            println('Duration after metadata: ' + audio.duration);
+            println('ReadyState after metadata: ' + audio.readyState);
+        });
+
+        audio.addEventListener('error', (e) => {
+            println('error event fired');
+            if (audio.error) {
+                println('Error code: ' + audio.error.code);
+                println('Error message: ' + audio.error.message);
+            }
+        });
+
+        audio.addEventListener('loadstart', () => {
+            println('loadstart event fired');
+        });
+
+        audio.addEventListener('progress', () => {
+            println('progress event fired');
+        });
+
+        audio.addEventListener('canplay', () => {
+            println('canplay event fired');
+        });
+
+        audio.load();
+        println('Called audio.load()');
+    </script>
+</body>
+</html>

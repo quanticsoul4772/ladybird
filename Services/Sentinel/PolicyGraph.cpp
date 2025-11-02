@@ -1474,38 +1474,64 @@ ErrorOr<Vector<PolicyGraph::CredentialRelationship>> PolicyGraph::list_relations
 {
     Vector<CredentialRelationship> relationships;
 
-    auto statement_id = type_filter.has_value()
-        ? m_statements.list_relationships_filtered
-        : m_statements.list_relationships;
+    if (type_filter.has_value()) {
+        m_database->execute_statement(
+            m_statements.list_relationships_filtered,
+            [&](auto stmt_id) {
+                CredentialRelationship relationship;
+                int col = 0;
+                relationship.id = m_database->result_column<i64>(stmt_id, col++);
+                relationship.form_origin = m_database->result_column<String>(stmt_id, col++);
+                relationship.action_origin = m_database->result_column<String>(stmt_id, col++);
+                relationship.relationship_type = m_database->result_column<String>(stmt_id, col++);
+                relationship.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+                relationship.created_by = m_database->result_column<String>(stmt_id, col++);
 
-    m_database->execute_statement(
-        statement_id,
-        [&](auto stmt_id) {
-            CredentialRelationship relationship;
-            int col = 0;
-            relationship.id = m_database->result_column<i64>(stmt_id, col++);
-            relationship.form_origin = m_database->result_column<String>(stmt_id, col++);
-            relationship.action_origin = m_database->result_column<String>(stmt_id, col++);
-            relationship.relationship_type = m_database->result_column<String>(stmt_id, col++);
-            relationship.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
-            relationship.created_by = m_database->result_column<String>(stmt_id, col++);
+                auto last_used_ms = m_database->result_column<i64>(stmt_id, col++);
+                if (last_used_ms > 0)
+                    relationship.last_used = UnixDateTime::from_milliseconds_since_epoch(last_used_ms);
 
-            auto last_used_ms = m_database->result_column<i64>(stmt_id, col++);
-            if (last_used_ms > 0)
-                relationship.last_used = UnixDateTime::from_milliseconds_since_epoch(last_used_ms);
+                relationship.use_count = m_database->result_column<i64>(stmt_id, col++);
 
-            relationship.use_count = m_database->result_column<i64>(stmt_id, col++);
+                auto expires_ms = m_database->result_column<i64>(stmt_id, col++);
+                if (expires_ms > 0)
+                    relationship.expires_at = UnixDateTime::from_milliseconds_since_epoch(expires_ms);
 
-            auto expires_ms = m_database->result_column<i64>(stmt_id, col++);
-            if (expires_ms > 0)
-                relationship.expires_at = UnixDateTime::from_milliseconds_since_epoch(expires_ms);
+                relationship.notes = m_database->result_column<String>(stmt_id, col++);
 
-            relationship.notes = m_database->result_column<String>(stmt_id, col++);
+                relationships.append(move(relationship));
+            },
+            type_filter.value()
+        );
+    } else {
+        m_database->execute_statement(
+            m_statements.list_relationships,
+            [&](auto stmt_id) {
+                CredentialRelationship relationship;
+                int col = 0;
+                relationship.id = m_database->result_column<i64>(stmt_id, col++);
+                relationship.form_origin = m_database->result_column<String>(stmt_id, col++);
+                relationship.action_origin = m_database->result_column<String>(stmt_id, col++);
+                relationship.relationship_type = m_database->result_column<String>(stmt_id, col++);
+                relationship.created_at = m_database->result_column<UnixDateTime>(stmt_id, col++);
+                relationship.created_by = m_database->result_column<String>(stmt_id, col++);
 
-            relationships.append(move(relationship));
-        },
-        type_filter.has_value() ? type_filter.value() : ""_string
-    );
+                auto last_used_ms = m_database->result_column<i64>(stmt_id, col++);
+                if (last_used_ms > 0)
+                    relationship.last_used = UnixDateTime::from_milliseconds_since_epoch(last_used_ms);
+
+                relationship.use_count = m_database->result_column<i64>(stmt_id, col++);
+
+                auto expires_ms = m_database->result_column<i64>(stmt_id, col++);
+                if (expires_ms > 0)
+                    relationship.expires_at = UnixDateTime::from_milliseconds_since_epoch(expires_ms);
+
+                relationship.notes = m_database->result_column<String>(stmt_id, col++);
+
+                relationships.append(move(relationship));
+            }
+        );
+    }
 
     return relationships;
 }

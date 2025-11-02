@@ -10,6 +10,7 @@
 #include <AK/Error.h>
 #include <AK/HashMap.h>
 #include <AK/NonnullOwnPtr.h>
+#include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
@@ -175,6 +176,22 @@ struct SyscallFilter {
     bool monitor_memory_ops { true };
 };
 
+// Process information for launched sandbox
+struct SandboxProcess {
+    pid_t pid;
+    int stdin_fd;
+    int stdout_fd;
+    int stderr_fd;
+};
+
+// Parsed syscall event from nsjail stderr output
+// Format: [SYSCALL] name(args...)
+struct SyscallEvent {
+    String name;              // Syscall name (e.g., "open", "socket", "write")
+    Vector<String> args;      // Optional parsed arguments
+    u64 timestamp_ns { 0 };   // Optional timestamp (reserved for future use)
+};
+
 // BehavioralAnalyzer - Tier 2 deep analysis with OS-level syscall monitoring
 // Milestone 0.5 Phase 1: Real-time Sandboxing
 //
@@ -232,12 +249,43 @@ private:
     ErrorOr<void> process_syscall_events();
     void update_metrics_from_syscall(StringView syscall_name, BehavioralMetrics& metrics);
 
+    // Timeout enforcement and process cleanup (Week 1 Day 4)
+    ErrorOr<void> enforce_sandbox_timeout(pid_t sandbox_pid, Duration timeout);
+    ErrorOr<int> wait_for_sandbox_completion(pid_t sandbox_pid);
+
+    // File handling infrastructure (Week 1 Day 3-4)
+    ErrorOr<String> create_temp_sandbox_directory();
+    ErrorOr<void> cleanup_temp_directory(String const& directory);
+    ErrorOr<String> write_file_to_sandbox(String const& sandbox_dir, ByteBuffer const& file_data, String const& filename);
+    ErrorOr<void> make_executable(String const& file_path);
+
     // Behavioral heuristics (mock implementation)
     ErrorOr<void> analyze_file_behavior(ByteBuffer const& file_data, BehavioralMetrics& metrics);
     ErrorOr<void> analyze_process_behavior(ByteBuffer const& file_data, BehavioralMetrics& metrics);
     ErrorOr<void> analyze_network_behavior(ByteBuffer const& file_data, BehavioralMetrics& metrics);
     ErrorOr<float> calculate_threat_score(BehavioralMetrics const& metrics);
     ErrorOr<Vector<String>> generate_suspicious_behaviors(BehavioralMetrics const& metrics);
+
+    // Advanced malware pattern detection (Week 2 Task 2)
+    bool detect_ransomware_pattern(BehavioralMetrics const& metrics);
+    bool detect_keylogger_pattern(BehavioralMetrics const& metrics);
+    bool detect_rootkit_pattern(BehavioralMetrics const& metrics);
+    bool detect_cryptominer_pattern(BehavioralMetrics const& metrics);
+    bool detect_process_injector_pattern(BehavioralMetrics const& metrics);
+
+    // nsjail command building (real implementation)
+    ErrorOr<Vector<String>> build_nsjail_command(String const& executable_path, Vector<String> const& args = {});
+    ErrorOr<String> locate_nsjail_config_file();
+
+    // Process management (real implementation)
+    ErrorOr<SandboxProcess> launch_nsjail_sandbox(Vector<String> const& nsjail_command);
+
+    // Pipe I/O helpers for reading nsjail stderr (Week 1 Day 5)
+    ErrorOr<ByteBuffer> read_pipe_nonblocking(int fd, Duration timeout = Duration::from_seconds(1));
+    ErrorOr<Vector<String>> read_pipe_lines(int fd, Duration timeout = Duration::from_seconds(1));
+
+    // Syscall event parsing (Week 1 Day 6)
+    ErrorOr<Optional<SyscallEvent>> parse_syscall_event(StringView line);
 
     SandboxConfig m_config;
     SyscallFilter m_syscall_filter;

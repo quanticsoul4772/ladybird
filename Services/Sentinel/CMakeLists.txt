@@ -133,7 +133,7 @@ add_executable(TestC2Detector TestC2Detector.cpp)
 add_executable(TestDNSAnalyzer TestDNSAnalyzer.cpp)
 add_executable(TestSandbox TestSandbox.cpp)
 add_executable(BenchmarkC2Detector BenchmarkC2Detector.cpp)
-add_executable(BenchmarkBehavioralAnalyzer BenchmarkBehavioralAnalyzer.cpp)
+# add_executable(BenchmarkBehavioralAnalyzer BenchmarkBehavioralAnalyzer.cpp) # Disabled - missing dependencies
 add_executable(sentinel-cli ../../Tools/sentinel-cli.cpp)
 
 target_include_directories(sentinelservice PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/../..)
@@ -170,7 +170,7 @@ target_link_libraries(TestC2Detector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestDNSAnalyzer PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestSandbox PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(BenchmarkC2Detector PRIVATE sentinelservice LibCore LibMain)
-target_link_libraries(BenchmarkBehavioralAnalyzer PRIVATE sentinelservice LibCore LibMain LibFileSystem)
+# target_link_libraries(BenchmarkBehavioralAnalyzer PRIVATE sentinelservice LibCore LibMain LibFileSystem) # Disabled
 target_link_libraries(sentinel-cli PRIVATE sentinelservice LibCore LibMain LibFileSystem requestserverservice)
 
 # Use proper test infrastructure for LibTest-based tests

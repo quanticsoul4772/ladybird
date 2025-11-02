@@ -9,6 +9,7 @@
 #include <AK/ByteReader.h>
 #include <AK/Debug.h>
 #include <AK/Endian.h>
+#include <AK/Function.h>
 #include <AK/MemoryStream.h>
 #include <AK/NumericLimits.h>
 #include <AK/QuickSort.h>
@@ -4531,9 +4532,10 @@ CompiledInstructions try_compile_instructions(Expression const& expression, Span
         }
     };
 
-    auto find_root = [&parent](this auto& self, ValueID x) -> ValueID {
+    Function<ValueID(ValueID)> find_root;
+    find_root = [&parent, &find_root](ValueID x) -> ValueID {
         if (parent[x.value()] != x)
-            parent[x.value()] = self(parent[x.value()]);
+            parent[x.value()] = find_root(parent[x.value()]);
         return parent[x.value()];
     };
 

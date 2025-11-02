@@ -1200,13 +1200,19 @@ void HTMLMediaElement::update_video_frame_and_timeline()
 // https://html.spec.whatwg.org/multipage/media.html#media-data-processing-steps-list
 WebIDL::ExceptionOr<void> HTMLMediaElement::process_media_data(Function<void(String)> failure_callback)
 {
+    dbgln("HTMLMediaElement: process_media_data() called - Starting media data processing");
+    dbgln("HTMLMediaElement: Media data size: {} bytes", m_media_data.size());
+
     auto& realm = this->realm();
 
+    dbgln("HTMLMediaElement: Attempting to create PlaybackManager from media data");
     auto playback_manager_result = Media::PlaybackManager::try_create(m_media_data.bytes());
 
     // -> If the media data cannot be fetched at all, due to network errors, causing the user agent to give up trying to fetch the resource
     // -> If the media data can be fetched but is found by inspection to be in an unsupported format, or can otherwise not be rendered at all
     if (playback_manager_result.is_error()) {
+        dbgln("HTMLMediaElement: ERROR - PlaybackManager creation failed: {}", playback_manager_result.error().description());
+
         // 1. The user agent should cancel the fetching process.
         m_fetch_controller->stop_fetch();
 
@@ -1215,6 +1221,8 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::process_media_data(Function<void(Str
         return {};
     }
 
+    dbgln("HTMLMediaElement: SUCCESS - PlaybackManager created successfully");
+
     // NOTE: The spec is unclear on whether the following media resource track conditions should trigger multiple
     //       times on one media resource, but it is implied to be possible by the start of the "Media elements"
     //       section, where it says that a "media resource can have multiple audio and video tracks."
@@ -1222,6 +1230,7 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::process_media_data(Function<void(Str
     //       Therefore, we enumerate all the available tracks into our VideoTrackList and AudioTrackList.
 
     m_playback_manager = playback_manager_result.release_value();
+    dbgln("HTMLMediaElement: PlaybackManager assigned to m_playback_manager");
 
     m_playback_manager->on_playback_state_change = [weak_self = GC::Weak(*this)] {
         if (weak_self)
@@ -1353,7 +1362,9 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::process_media_data(Function<void(Str
     // 4. Update the duration attribute with the time of the last frame of the resource, if known, on the media timeline established above. If it is
     //    not known (e.g. a stream that is in principle infinite), update the duration attribute to the value positive Infinity.
     // FIXME: Handle unbounded media resources.
-    set_duration(m_playback_manager->duration().to_seconds_f64());
+    auto duration_seconds = m_playback_manager->duration().to_seconds_f64();
+    dbgln("HTMLMediaElement: Setting duration to {} seconds", duration_seconds);
+    set_duration(duration_seconds);
 
     // 5. For video elements, set the videoWidth and videoHeight attributes, and queue a media element task given the media element to fire an event
     //    named resize at the media element.
@@ -1368,7 +1379,10 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::process_media_data(Function<void(Str
     }
 
     // 6. Set the readyState attribute to HAVE_METADATA.
+    dbgln("HTMLMediaElement: About to call set_ready_state(ReadyState::HaveMetadata)");
+    dbgln("HTMLMediaElement: Current ready state: {}, network state: {}", (int)m_ready_state, (int)m_network_state);
     set_ready_state(ReadyState::HaveMetadata);
+    dbgln("HTMLMediaElement: set_ready_state(ReadyState::HaveMetadata) completed");
 
     // 7. Let jumped be false.
     [[maybe_unused]] auto jumped = false;
@@ -1465,6 +1479,9 @@ void HTMLMediaElement::forget_media_resource_specific_tracks()
 // https://html.spec.whatwg.org/multipage/media.html#ready-states:media-element-3
 void HTMLMediaElement::set_ready_state(ReadyState ready_state)
 {
+    dbgln("HTMLMediaElement: set_ready_state() called with ready_state={}", (int)ready_state);
+    dbgln("HTMLMediaElement: Current m_ready_state={}, m_network_state={}", (int)m_ready_state, (int)m_network_state);
+
     ScopeGuard guard { [&] {
         m_ready_state = ready_state;
         upon_has_ended_playback_possibly_changed();
@@ -1473,14 +1490,18 @@ void HTMLMediaElement::set_ready_state(ReadyState ready_state)
 
     // When the ready state of a media element whose networkState is not NETWORK_EMPTY changes, the user agent must
     // follow the steps given below:
-    if (m_network_state == NetworkState::Empty)
+    if (m_network_state == NetworkState::Empty) {
+        dbgln("HTMLMediaElement: Network state is Empty, returning early without firing events");
         return;
+    }
 
     // 1. Apply the first applicable set of substeps from the following list:
     // -> If the previous ready state was HAVE_NOTHING, and the new ready state is HAVE_METADATA
     if (m_ready_state == ReadyState::HaveNothing && ready_state == ReadyState::HaveMetadata) {
+        dbgln("HTMLMediaElement: Transitioning from HAVE_NOTHING to HAVE_METADATA - Queueing loadedmetadata event");
         // Queue a media element task given the media element to fire an event named loadedmetadata at the element.
         queue_a_media_element_task([this] {
+            dbgln("HTMLMediaElement: Dispatching loadedmetadata event");
             dispatch_event(DOM::Event::create(this->realm(), HTML::EventNames::loadedmetadata));
         });
 

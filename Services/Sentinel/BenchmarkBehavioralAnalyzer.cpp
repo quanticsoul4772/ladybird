@@ -11,7 +11,7 @@
 #include <LibCore/File.h>
 #include <LibFileSystem/FileSystem.h>
 #include <Services/Sentinel/Sandbox/BehavioralAnalyzer.h>
-#include <Services/Sentinel/Sandbox/SandboxConfig.h>
+// #include <Services/Sentinel/Sandbox/SandboxConfig.h> // File doesn't exist yet
 
 using namespace Sentinel::Sandbox;
 

@@ -95,7 +95,7 @@ test.describe('Multimedia - HTML5 Audio/Video Elements', () => {
   // AUDIO ELEMENT TESTS (MEDIA-001 to MEDIA-006)
   // ============================================================================
 
-  test.skip('MEDIA-001: Audio playback basic functionality', { tag: '@p1' }, async ({
+  test('MEDIA-001: Audio playback basic functionality', { tag: '@p1' }, async ({
     page
   }) => {
     // SKIPPED: Ladybird limitation - metadata loading fails
