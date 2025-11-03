@@ -17,6 +17,14 @@ using AK::Duration;
 
 namespace Sentinel {
     class PolicyGraph;  // Milestone 0.5 Phase 1d
+
+    namespace ThreatIntelligence {
+        class VirusTotalClient;  // VirusTotal API integration
+    }
+
+    namespace NetworkIsolation {
+        class NetworkIsolationManager;  // Milestone 0.5 Phase 2: Network isolation
+    }
 }
 
 namespace Sentinel::Sandbox {
@@ -44,10 +52,16 @@ struct SandboxResult {
     String verdict_explanation;                   // User-facing summary
 
     // Detailed scoring breakdown
-    float yara_score { 0.0f };                    // 0.0-1.0 (40% weight)
-    float ml_score { 0.0f };                      // 0.0-1.0 (35% weight)
-    float behavioral_score { 0.0f };              // 0.0-1.0 (25% weight)
+    float yara_score { 0.0f };                    // 0.0-1.0 (30% weight)
+    float ml_score { 0.0f };                      // 0.0-1.0 (25% weight)
+    float behavioral_score { 0.0f };              // 0.0-1.0 (20% weight)
+    float vt_score { 0.0f };                      // 0.0-1.0 (25% weight) - VirusTotal
     float composite_score { 0.0f };               // Final weighted score
+
+    // VirusTotal metadata
+    u32 vt_malicious_count { 0 };
+    u32 vt_total_engines { 0 };
+    bool vt_lookup_performed { false };
 
     // Metrics from behavioral analysis
     u32 file_operations { 0 };
@@ -68,6 +82,8 @@ struct SandboxConfig {
     bool allow_network { false };                     // Network access in sandbox
     bool allow_filesystem { false };                  // File I/O in sandbox
     u64 max_memory_bytes { 128 * 1024 * 1024 };      // 128 MB memory limit
+    bool use_mock_for_testing { false };              // TESTING ONLY: Skip nsjail requirement
+    bool enable_network_isolation { false };          // Isolate suspicious processes from network
 };
 
 // Orchestrator - coordinates sandbox execution and analysis
@@ -134,6 +150,8 @@ private:
     OwnPtr<BehavioralAnalyzer> m_behavioral_analyzer;
     OwnPtr<VerdictEngine> m_verdict_engine;
     OwnPtr<PolicyGraph> m_policy_graph;  // Milestone 0.5 Phase 1d: Verdict cache
+    OwnPtr<ThreatIntelligence::VirusTotalClient> m_vt_client;  // VirusTotal API client
+    OwnPtr<NetworkIsolation::NetworkIsolationManager> m_network_isolation;  // Milestone 0.5 Phase 2: Network isolation
     // OwnPtr<Reporter> m_reporter; // TODO: Implement Reporter component
 };
 

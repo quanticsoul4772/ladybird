@@ -94,7 +94,11 @@ export class MediaTestHelper {
       </html>
     `;
 
-    await this.page.goto(`data:text/html,${encodeURIComponent(html)}`);
+    // Use setContent with base URL to avoid cross-origin issues
+    await this.page.setContent(html, {
+      waitUntil: 'domcontentloaded',
+      baseURL: 'http://localhost:9081/'
+    });
   }
 
   /**
@@ -158,7 +162,11 @@ export class MediaTestHelper {
       </html>
     `;
 
-    await this.page.goto(`data:text/html,${encodeURIComponent(html)}`);
+    // Use setContent with base URL to avoid cross-origin issues
+    await this.page.setContent(html, {
+      waitUntil: 'domcontentloaded',
+      baseURL: 'http://localhost:9081/'
+    });
   }
 
   /**
@@ -557,7 +565,8 @@ export class MediaTestHelper {
       await this.page.waitForFunction(
         (elementId) => {
           const element = document.getElementById(elementId) as any;
-          return element.duration > 0;
+          // Wait for ready state to be at least HAVE_METADATA (1) AND duration to be valid
+          return element.readyState >= 1 && !isNaN(element.duration) && element.duration > 0;
         },
         id,
         { timeout: timeoutMs }
@@ -595,22 +604,22 @@ export class MediaTestHelper {
 /**
  * Media file paths for testing
  * Note: Test server (test-server.js) serves 'fixtures/' directory as root,
- * so paths should be absolute URLs pointing to the test server (http://localhost:9080)
- * We use port 9080 as the primary test server (configured in playwright.config.ts)
+ * so paths should be absolute URLs pointing to the test server (http://localhost:9081)
+ * Playwright test server uses port 9081 (configured in playwright.config.ts webServer)
  */
 export const MEDIA_FIXTURES = {
   audio: {
-    mono: 'http://localhost:9080/media/silent-mono.mp3',
-    stereo: 'http://localhost:9080/media/silent-stereo.mp3',
-    wav: 'http://localhost:9080/media/silent.wav',
-    ogg: 'http://localhost:9080/media/silent.ogg'
+    mono: 'http://localhost:9081/media/silent-mono.mp3',
+    stereo: 'http://localhost:9081/media/silent-stereo.mp3',
+    wav: 'http://localhost:9081/media/silent.wav',
+    ogg: 'http://localhost:9081/media/silent.ogg'
   },
   video: {
-    mp4: 'http://localhost:9080/media/test-video.mp4',
-    webm: 'http://localhost:9080/media/test-video.webm',
-    ogv: 'http://localhost:9080/media/test-video.ogv'
+    mp4: 'http://localhost:9081/media/test-video.mp4',
+    webm: 'http://localhost:9081/media/test-video.webm',
+    ogv: 'http://localhost:9081/media/test-video.ogv'
   },
-  poster: 'http://localhost:9080/media/poster.png'
+  poster: 'http://localhost:9081/media/poster.png'
 };
 
 /**

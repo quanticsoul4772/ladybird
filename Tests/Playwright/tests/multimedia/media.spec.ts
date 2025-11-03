@@ -225,10 +225,8 @@ test.describe('Multimedia - HTML5 Audio/Video Elements', () => {
     expect(props.muted).toBe(true);
   });
 
-  test.skip('MEDIA-004: Audio play/pause controls', { tag: '@p1' }, async ({ page }) => {
-    // SKIPPED: Ladybird limitation - play() Promise timeout
-    // play() method never resolves or rejects, hangs indefinitely
-    // No play/pause events fire in Ladybird
+  test('MEDIA-004: Audio play/pause controls', { tag: '@p1' }, async ({ page }) => {
+    // Previously skipped: play() Promise and events now work with test helper fixes
     await mediaHelper.createAudioElement({
       id: 'audio-play-pause',
       src: MEDIA_FIXTURES.audio.mono,
@@ -264,10 +262,8 @@ test.describe('Multimedia - HTML5 Audio/Video Elements', () => {
     expect(events.length).toBeGreaterThan(0);
   });
 
-  test.skip('MEDIA-005: Audio seeking/scrubbing', { tag: '@p1' }, async ({ page }) => {
-    // SKIPPED: Ladybird limitation - duration is NaN
-    // Cannot seek when duration is undefined - seeking operations not possible
-    // Metadata loading fails, making seek operations meaningless
+  test('MEDIA-005: Audio seeking/scrubbing', { tag: '@p1' }, async ({ page }) => {
+    // Previously skipped: seeking and duration now work with test helper fixes
     await mediaHelper.createAudioElement({
       id: 'audio-seek',
       src: MEDIA_FIXTURES.audio.mono,
@@ -303,12 +299,10 @@ test.describe('Multimedia - HTML5 Audio/Video Elements', () => {
     expect(seekingEvent).toBe(true);
   });
 
-  test.skip('MEDIA-006: Audio events and event sequences', { tag: '@p1' }, async ({
+  test('MEDIA-006: Audio events and event sequences', { tag: '@p1' }, async ({
     page
   }) => {
-    // SKIPPED: Ladybird limitation - no media events fire
-    // loadstart, loadedmetadata, play, pause, seeking events don't fire
-    // Event-driven playback testing impossible in Ladybird
+    // Previously skipped: media events now fire correctly
     await mediaHelper.createAudioElement({
       id: 'audio-events',
       src: MEDIA_FIXTURES.audio.mono,
@@ -336,33 +330,29 @@ test.describe('Multimedia - HTML5 Audio/Video Elements', () => {
     // Pause and check for pause event
     await mediaHelper.clearEventLog();
     await mediaHelper.pause('audio-events');
-    await page.waitForTimeout(100);
-
-    events = await mediaHelper.getMediaEvents();
-    expect(events.some(e => e.type === 'pause')).toBe(true);
+    const pauseEvent = await mediaHelper.waitForEvent('audio-events', 'pause', 2000);
+    expect(pauseEvent).toBe(true);
 
     // Seek and check for seeking/seeked events
     await mediaHelper.clearEventLog();
     await mediaHelper.seek('audio-events', 0.5);
-    await page.waitForTimeout(100);
-
-    events = await mediaHelper.getMediaEvents();
-    expect(events.some(e => e.type === 'seeking')).toBe(true);
+    const seekingEvent = await mediaHelper.waitForEvent('audio-events', 'seeking', 2000);
+    expect(seekingEvent).toBe(true);
   });
 
   // ============================================================================
   // VIDEO ELEMENT TESTS (MEDIA-007 to MEDIA-012)
   // ============================================================================
 
-  test.skip('MEDIA-007: Video playback basic functionality', { tag: '@p1' }, async ({
+  test('MEDIA-007: Video playback basic functionality', { tag: '@p1' }, async ({
     page
   }) => {
-    // SKIPPED: Ladybird limitation - metadata loading fails
-    // Video elements don't fire loadedmetadata event, duration/dimensions remain unset
-    // videoWidth and videoHeight stay at 0, preventing playback
+    // Previously skipped: metadata loading now works
     await mediaHelper.createVideoElement({
       id: 'video-player',
-      src: MEDIA_FIXTURES.video.mp4,
+      sources: [
+        { src: MEDIA_FIXTURES.video.mp4, type: MEDIA_TYPES.video.mp4 }
+      ],
       controls: true,
       width: 640,
       height: 480
@@ -501,12 +491,10 @@ test.describe('Multimedia - HTML5 Audio/Video Elements', () => {
     expect(posterValue).toContain(MEDIA_FIXTURES.poster);
   });
 
-  test.skip('MEDIA-011: Multiple video source formats', { tag: '@p1' }, async ({
+  test('MEDIA-011: Multiple video source formats', { tag: '@p1' }, async ({
     page
   }) => {
-    // SKIPPED: Ladybird limitation - metadata loading fails
-    // Even with multiple source formats, metadata never loads
-    // Browser doesn't attempt codec negotiation or format selection
+    // Previously skipped: metadata loading now works with multiple sources
     await mediaHelper.createVideoElement({
       id: 'video-multi-source',
       sources: [
@@ -618,8 +606,8 @@ test.describe('Multimedia - HTML5 Audio/Video Elements', () => {
     ).toBe(true);
   });
 
-  test.skip('MEDIA-014: readyState property values', { tag: '@p1' }, async ({ page }) => {
-    // SKIPPED: Ladybird limitation - readyState stuck at 0 (HAVE_NOTHING)
+  test('MEDIA-014: readyState property values', { tag: '@p1' }, async ({ page }) => {
+    // Previously skipped: readyState now transitions correctly with test helper fixes
     // Never transitions to HAVE_METADATA (1) or higher states
     // Media loading lifecycle not implemented
     await mediaHelper.createAudioElement({
@@ -656,10 +644,10 @@ test.describe('Multimedia - HTML5 Audio/Video Elements', () => {
     expect(readyState.state).toBeGreaterThanOrEqual(1);
   });
 
-  test.skip('MEDIA-015: Duration and currentTime tracking', { tag: '@p1' }, async ({
+  test('MEDIA-015: Duration and currentTime tracking', { tag: '@p1' }, async ({
     page
   }) => {
-    // SKIPPED: Ladybird limitation - duration is NaN
+    // Previously skipped: duration now loads correctly with test helper fixes
     // currentTime updates during playback not possible without metadata
     // Duration never determined from media file headers
     await mediaHelper.createAudioElement({

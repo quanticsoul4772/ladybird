@@ -5,6 +5,7 @@
 
 #include "PolicyGraph.h"
 #include <AK/StringView.h>
+#include <AK/Time.h>
 #include <stdio.h>
 
 using namespace Sentinel;
@@ -381,6 +382,265 @@ static void test_network_behavior_policies(PolicyGraph& pg)
     printf("✅ PASSED: Verified policy deletion\n");
 }
 
+// Milestone 0.5 Phase 1d: Sandbox Verdict Cache Tests
+
+static void test_store_and_lookup_verdict(PolicyGraph& pg)
+{
+    printf("\n=== Test: Store and Lookup Verdict ===\n");
+
+    // Create a test verdict
+    PolicyGraph::SandboxVerdict verdict {
+        .file_hash = "a1b2c3d4e5f6789012345678901234567890123456789012345678901234abcd"_string,
+        .threat_level = 2, // Malicious
+        .confidence = 850,
+        .composite_score = 780,
+        .verdict_explanation = "Detected malware: Zeus trojan variant"_string,
+        .yara_score = 900,
+        .ml_score = 750,
+        .behavioral_score = 690,
+        .triggered_rules = { "Zeus_Variant_v1"_string, "Trojan_Generic"_string },
+        .detected_behaviors = { "network_beacon"_string, "registry_modification"_string, "process_injection"_string },
+        .analyzed_at = UnixDateTime::now(),
+        .expires_at = UnixDateTime::now() + PolicyGraph::calculate_verdict_ttl(2) // 90 days for malicious
+    };
+
+    // Store the verdict
+    auto store_result = pg.store_sandbox_verdict(verdict);
+    if (store_result.is_error()) {
+        printf("❌ FAILED: Could not store verdict: %s\n", store_result.error().string_literal().characters_without_null_termination());
+        return;
+    }
+    printf("✅ PASSED: Stored verdict for hash %s\n", verdict.file_hash.bytes_as_string_view().characters_without_null_termination());
+
+    // Lookup the verdict
+    auto lookup_result = pg.lookup_sandbox_verdict(verdict.file_hash);
+    if (lookup_result.is_error()) {
+        printf("❌ FAILED: Could not lookup verdict: %s\n", lookup_result.error().string_literal().characters_without_null_termination());
+        return;
+    }
+
+    auto cached = lookup_result.value();
+    if (!cached.has_value()) {
+        printf("❌ FAILED: Verdict not found in cache\n");
+        return;
+    }
+
+    // Verify all fields match
+    auto const& v = cached.value();
+    bool matches = v.file_hash == verdict.file_hash &&
+                   v.threat_level == verdict.threat_level &&
+                   v.confidence == verdict.confidence &&
+                   v.composite_score == verdict.composite_score &&
+                   v.verdict_explanation == verdict.verdict_explanation &&
+                   v.yara_score == verdict.yara_score &&
+                   v.ml_score == verdict.ml_score &&
+                   v.behavioral_score == verdict.behavioral_score &&
+                   v.triggered_rules.size() == verdict.triggered_rules.size() &&
+                   v.detected_behaviors.size() == verdict.detected_behaviors.size();
+
+    if (!matches) {
+        printf("❌ FAILED: Cached verdict does not match stored verdict\n");
+        return;
+    }
+
+    printf("✅ PASSED: Retrieved verdict matches stored data (threat_level: %d, rules: %zu, behaviors: %zu)\n",
+           v.threat_level, v.triggered_rules.size(), v.detected_behaviors.size());
+}
+
+static void test_expired_verdict_returns_empty(PolicyGraph& pg)
+{
+    printf("\n=== Test: Expired Verdict Returns Empty ===\n");
+
+    // Create a verdict that's already expired
+    PolicyGraph::SandboxVerdict verdict {
+        .file_hash = "expired123456789012345678901234567890123456789012345678901234abcd"_string,
+        .threat_level = 1, // Suspicious
+        .confidence = 600,
+        .composite_score = 550,
+        .verdict_explanation = "Expired test verdict"_string,
+        .yara_score = 500,
+        .ml_score = 600,
+        .behavioral_score = 550,
+        .triggered_rules = { "Test_Rule"_string },
+        .detected_behaviors = { "test_behavior"_string },
+        .analyzed_at = UnixDateTime::now() - AK::Duration::from_seconds(86400), // 1 day ago
+        .expires_at = UnixDateTime::now() - AK::Duration::from_seconds(3600) // Expired 1 hour ago
+    };
+
+    // Store the expired verdict
+    auto store_result = pg.store_sandbox_verdict(verdict);
+    if (store_result.is_error()) {
+        printf("❌ FAILED: Could not store verdict\n");
+        return;
+    }
+
+    // Try to lookup - should return empty because it's expired
+    auto lookup_result = pg.lookup_sandbox_verdict(verdict.file_hash);
+    if (lookup_result.is_error()) {
+        printf("❌ FAILED: Lookup error: %s\n", lookup_result.error().string_literal().characters_without_null_termination());
+        return;
+    }
+
+    if (lookup_result.value().has_value()) {
+        printf("❌ FAILED: Expired verdict was returned (should be empty)\n");
+        return;
+    }
+
+    printf("✅ PASSED: Expired verdict correctly returns empty\n");
+}
+
+static void test_invalidate_verdict(PolicyGraph& pg)
+{
+    printf("\n=== Test: Invalidate Verdict ===\n");
+
+    // Create and store a verdict
+    PolicyGraph::SandboxVerdict verdict {
+        .file_hash = "invalidate12345678901234567890123456789012345678901234567890abcd"_string,
+        .threat_level = 0, // Clean
+        .confidence = 950,
+        .composite_score = 100,
+        .verdict_explanation = "Clean file - no threats detected"_string,
+        .yara_score = 0,
+        .ml_score = 50,
+        .behavioral_score = 150,
+        .triggered_rules = {},
+        .detected_behaviors = {},
+        .analyzed_at = UnixDateTime::now(),
+        .expires_at = UnixDateTime::now() + PolicyGraph::calculate_verdict_ttl(0) // 30 days
+    };
+
+    auto store_result = pg.store_sandbox_verdict(verdict);
+    if (store_result.is_error()) {
+        printf("❌ FAILED: Could not store verdict\n");
+        return;
+    }
+
+    // Verify it's in cache
+    auto lookup_before = pg.lookup_sandbox_verdict(verdict.file_hash);
+    if (lookup_before.is_error() || !lookup_before.value().has_value()) {
+        printf("❌ FAILED: Verdict not found before invalidation\n");
+        return;
+    }
+
+    // Invalidate it
+    auto invalidate_result = pg.invalidate_verdict(verdict.file_hash);
+    if (invalidate_result.is_error()) {
+        printf("❌ FAILED: Could not invalidate verdict\n");
+        return;
+    }
+
+    // Verify it's gone from cache
+    auto lookup_after = pg.lookup_sandbox_verdict(verdict.file_hash);
+    if (lookup_after.is_error() || lookup_after.value().has_value()) {
+        printf("❌ FAILED: Verdict still exists after invalidation\n");
+        return;
+    }
+
+    printf("✅ PASSED: Verdict successfully invalidated\n");
+}
+
+static void test_ttl_by_threat_level([[maybe_unused]] PolicyGraph& pg)
+{
+    printf("\n=== Test: TTL Varies by Threat Level ===\n");
+
+    struct ThreatLevelTest {
+        i32 level;
+        char const* name;
+        i64 expected_seconds;
+    };
+
+    ThreatLevelTest tests[] = {
+        { 0, "Clean", 2592000 },      // 30 days
+        { 1, "Suspicious", 604800 },   // 7 days
+        { 2, "Malicious", 7776000 },   // 90 days
+        { 3, "Critical", 31536000 },   // 365 days
+    };
+
+    bool all_passed = true;
+    for (auto const& test : tests) {
+        auto ttl = PolicyGraph::calculate_verdict_ttl(test.level);
+        auto seconds = ttl.to_seconds();
+
+        if (seconds != test.expected_seconds) {
+            printf("❌ FAILED: %s (level %d) TTL is %ld seconds, expected %ld\n",
+                   test.name, test.level, static_cast<long>(seconds), static_cast<long>(test.expected_seconds));
+            all_passed = false;
+        } else {
+            printf("  ✅ %s (level %d): %ld seconds (%ld days)\n",
+                   test.name, test.level, static_cast<long>(seconds), static_cast<long>(seconds / 86400));
+        }
+    }
+
+    if (all_passed) {
+        printf("✅ PASSED: All TTL calculations correct\n");
+    }
+}
+
+static void test_clear_verdict_cache(PolicyGraph& pg)
+{
+    printf("\n=== Test: Clear Verdict Cache ===\n");
+
+    // Store multiple verdicts
+    int count = 3;
+    for (int i = 0; i < count; i++) {
+        auto hash = String::formatted("cleartest{}456789012345678901234567890123456789012345678901abcd", i);
+        if (hash.is_error()) {
+            printf("❌ FAILED: Could not format hash\n");
+            return;
+        }
+
+        PolicyGraph::SandboxVerdict verdict {
+            .file_hash = hash.release_value(),
+            .threat_level = i,
+            .confidence = 800,
+            .composite_score = 700,
+            .verdict_explanation = "Test verdict for clear cache"_string,
+            .yara_score = 600,
+            .ml_score = 700,
+            .behavioral_score = 800,
+            .triggered_rules = {},
+            .detected_behaviors = {},
+            .analyzed_at = UnixDateTime::now(),
+            .expires_at = UnixDateTime::now() + AK::Duration::from_seconds(86400)
+        };
+
+        auto store_result = pg.store_sandbox_verdict(verdict);
+        if (store_result.is_error()) {
+            printf("❌ FAILED: Could not store verdict %d\n", i);
+            return;
+        }
+    }
+    printf("  Stored %d test verdicts\n", count);
+
+    // Clear the cache
+    auto clear_result = pg.clear_verdict_cache();
+    if (clear_result.is_error()) {
+        printf("❌ FAILED: Could not clear cache\n");
+        return;
+    }
+
+    // Verify all verdicts are gone
+    bool all_cleared = true;
+    for (int i = 0; i < count; i++) {
+        auto hash = String::formatted("cleartest{}456789012345678901234567890123456789012345678901abcd", i);
+        if (hash.is_error())
+            continue;
+
+        auto lookup = pg.lookup_sandbox_verdict(hash.value());
+        if (lookup.is_error() || lookup.value().has_value()) {
+            all_cleared = false;
+            break;
+        }
+    }
+
+    if (!all_cleared) {
+        printf("❌ FAILED: Some verdicts still exist after clear\n");
+        return;
+    }
+
+    printf("✅ PASSED: All verdicts cleared from cache\n");
+}
+
 int main()
 {
     printf("====================================\n");
@@ -410,6 +670,13 @@ int main()
     test_get_threat_history(pg);
     test_policy_statistics(pg);
     test_network_behavior_policies(pg);
+
+    // Milestone 0.5 Phase 1d: Verdict cache tests
+    test_store_and_lookup_verdict(pg);
+    test_expired_verdict_returns_empty(pg);
+    test_invalidate_verdict(pg);
+    test_ttl_by_threat_level(pg);
+    test_clear_verdict_cache(pg);
 
     printf("\n====================================\n");
     printf("  All Tests Complete!\n");

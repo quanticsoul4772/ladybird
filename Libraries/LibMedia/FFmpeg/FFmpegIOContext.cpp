@@ -42,11 +42,13 @@ ErrorOr<NonnullOwnPtr<FFmpegIOContext>> FFmpegIOContext::create(AK::SeekableStre
             AK::Bytes buffer_bytes { buffer, AK::min<size_t>(size, PAGE_SIZE) };
             auto read_bytes_or_error = stream.read_some(buffer_bytes);
             if (read_bytes_or_error.is_error()) {
+                dbgln("FFmpegIOContext read callback: ERROR - {}", read_bytes_or_error.error());
                 if (read_bytes_or_error.error().code() == EOF)
                     return AVERROR_EOF;
                 return AVERROR_UNKNOWN;
             }
             int number_of_bytes_read = read_bytes_or_error.value().size();
+            dbgln("FFmpegIOContext read callback: Requested {} bytes, read {} bytes", size, number_of_bytes_read);
             if (number_of_bytes_read == 0)
                 return AVERROR_EOF;
             return number_of_bytes_read;
@@ -56,8 +58,11 @@ ErrorOr<NonnullOwnPtr<FFmpegIOContext>> FFmpegIOContext::create(AK::SeekableStre
             whence &= ~AVSEEK_FORCE;
 
             auto& stream = *static_cast<SeekableStream*>(opaque);
-            if (whence == AVSEEK_SIZE)
-                return static_cast<int64_t>(stream.size().value());
+            if (whence == AVSEEK_SIZE) {
+                auto size = stream.size().value();
+                dbgln("FFmpegIOContext seek callback: AVSEEK_SIZE returning {}", size);
+                return static_cast<int64_t>(size);
+            }
 
             auto seek_mode_from_whence = [](int origin) -> SeekMode {
                 if (origin == SEEK_CUR)
@@ -66,9 +71,13 @@ ErrorOr<NonnullOwnPtr<FFmpegIOContext>> FFmpegIOContext::create(AK::SeekableStre
                     return SeekMode::FromEndPosition;
                 return SeekMode::SetPosition;
             };
+            dbgln("FFmpegIOContext seek callback: Seeking to offset {} with whence {}", offset, whence);
             auto offset_or_error = stream.seek(offset, seek_mode_from_whence(whence));
-            if (offset_or_error.is_error())
+            if (offset_or_error.is_error()) {
+                dbgln("FFmpegIOContext seek callback: Seek FAILED - {}", offset_or_error.error());
                 return -EIO;
+            }
+            dbgln("FFmpegIOContext seek callback: Seek succeeded");
             return 0;
         });
     if (avio_context == nullptr) {

@@ -61,19 +61,38 @@ ErrorOr<void> BehavioralAnalyzer::initialize_sandbox()
 {
     dbgln_if(false, "BehavioralAnalyzer: Initializing native sandbox");
 
-    // Try to detect nsjail availability
-    // For now, use mock implementation (Phase 1a)
-    m_use_mock = true;
+    // Check if testing mock mode is explicitly enabled
+    if (m_config.use_mock_for_testing) {
+        m_use_mock = true;
+        dbgln("BehavioralAnalyzer: Using mock mode for testing (use_mock_for_testing=true)");
+
+        // Create temporary sandbox directory
+        m_sandbox_dir = TRY(create_temp_sandbox_directory());
+        return {};
+    }
+
+    // PRODUCTION MODE: Check if nsjail is available - FAIL FAST if not found
+    auto nsjail_check = Core::System::access("/usr/bin/nsjail"sv, X_OK);
+    if (nsjail_check.is_error()) {
+        // Check alternative location
+        nsjail_check = Core::System::access("/usr/local/bin/nsjail"sv, X_OK);
+        if (nsjail_check.is_error()) {
+            return Error::from_string_literal(
+                "nsjail not found - BehavioralAnalyzer requires nsjail for real malware analysis\n"
+                "Install: sudo apt install nsjail\n"
+                "Or build from source: https://github.com/google/nsjail\n"
+                "For testing only, set config.use_mock_for_testing = true");
+        }
+    }
+
+    m_use_mock = false;  // Real mode
+    dbgln("BehavioralAnalyzer: nsjail found, using real sandbox mode");
 
     // Create temporary sandbox directory using mkdtemp
     m_sandbox_dir = TRY(create_temp_sandbox_directory());
 
-    if (m_use_mock) {
-        dbgln("BehavioralAnalyzer: Using mock implementation (nsjail not available)");
-    } else {
-        TRY(setup_seccomp_filter());
-        dbgln_if(false, "BehavioralAnalyzer: nsjail sandbox initialized");
-    }
+    TRY(setup_seccomp_filter());
+    dbgln_if(false, "BehavioralAnalyzer: nsjail sandbox initialized");
 
     return {};
 }

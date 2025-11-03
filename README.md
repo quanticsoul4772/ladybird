@@ -15,8 +15,10 @@ Local threat detection daemon with zero cloud dependencies.
 **Malware Detection**:
 - YARA signature scanning (9 builtin rules + custom rule support)
 - ML-based detection using TensorFlow Lite
-- WASM sandbox for behavioral analysis
-- Quarantine system for suspicious files
+- WASM + nsjail sandbox for behavioral analysis
+- Quarantine system with AES-256 encryption
+- VirusTotal and AlienVault OTX threat intelligence integration
+- Automatic YARA rule generation from threat feeds
 
 **Credential Protection**:
 - Real-time form monitoring for cross-origin credential submissions
@@ -39,6 +41,11 @@ Local threat detection daemon with zero cloud dependencies.
 - Data exfiltration monitoring
 - DGA (Domain Generation Algorithm) detection
 - DNS tunneling detection
+
+**Network Isolation**:
+- Per-process network isolation using iptables/nftables
+- Process monitoring and automatic rule cleanup
+- Prevents malicious processes from network access
 
 ### Network Privacy
 
@@ -156,6 +163,9 @@ https://uniswap.eth
 │  ├─ Behavioral Sandbox (WASM + nsjail)             │
 │  ├─ PolicyGraph (SQLite + LRU Cache)                │
 │  ├─ ThreatFeed (Bloom Filter)                       │
+│  ├─ ThreatIntelligence (VirusTotal, OTX)           │
+│  ├─ QuarantineManager (AES-256 encryption)          │
+│  ├─ NetworkIsolation (iptables/nftables)           │
 │  └─ AuditLogger                                      │
 └─────────────────────────────────────────────────────┘
 ```
@@ -223,13 +233,16 @@ npm test
 
 ### Fork Additions
 
-- Services/Sentinel/ - Security daemon (69 files)
+- Services/Sentinel/ - Security daemon
+  - Sandbox/ - WASM + nsjail behavioral analysis, ThreatReporter
+  - ThreatIntelligence/ - VirusTotal, OTX feeds, YARA generator
+  - Quarantine/ - Encrypted quarantine with AES-256
+  - NetworkIsolation/ - iptables/nftables process isolation
 - FormMonitor - Credential protection
 - FingerprintingDetector - Tracking detection
 - SecurityTap - YARA integration
-- PolicyGraph - Security policy database
+- PolicyGraph - Security policy database with LRU cache
 - NetworkIdentity - Per-tab network isolation
-- Sandbox/ - WASM + nsjail behavioral analysis
 
 ---
 

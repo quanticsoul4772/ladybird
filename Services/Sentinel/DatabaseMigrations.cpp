@@ -359,6 +359,104 @@ ErrorOr<void> DatabaseMigrations::migrate_v4_to_v5(Database::Database& db)
     return {};
 }
 
+ErrorOr<void> DatabaseMigrations::migrate_v5_to_v6(Database::Database& db)
+{
+    dbgln("DatabaseMigrations: Migrating from v5 to v6 (adding verdict metadata fields)");
+
+    // Add triggered_rules and detected_behaviors columns to sandbox_verdicts
+    // These store JSON arrays of YARA rules and behavioral indicators
+    auto add_triggered_rules = TRY(db.prepare_statement(
+        "ALTER TABLE sandbox_verdicts ADD COLUMN triggered_rules TEXT DEFAULT '[]';"_string));
+    db.execute_statement(add_triggered_rules, {});
+    dbgln("DatabaseMigrations: Added triggered_rules column");
+
+    auto add_detected_behaviors = TRY(db.prepare_statement(
+        "ALTER TABLE sandbox_verdicts ADD COLUMN detected_behaviors TEXT DEFAULT '[]';"_string));
+    db.execute_statement(add_detected_behaviors, {});
+    dbgln("DatabaseMigrations: Added detected_behaviors column");
+
+    dbgln("DatabaseMigrations: v5 to v6 migration complete - added verdict metadata fields");
+    return {};
+}
+
+ErrorOr<void> DatabaseMigrations::migrate_v6_to_v7(Database::Database& db)
+{
+    dbgln("DatabaseMigrations: Migrating from v6 to v7 (adding IOC table for threat intelligence)");
+
+    // Create IOC (Indicator of Compromise) table for AlienVault OTX feed
+    auto create_iocs_table = TRY(db.prepare_statement(R"(
+        CREATE TABLE IF NOT EXISTS iocs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            indicator TEXT NOT NULL UNIQUE,
+            description TEXT,
+            tags TEXT,
+            created_at INTEGER NOT NULL,
+            source TEXT DEFAULT 'otx'
+        );
+    )"_string));
+    db.execute_statement(create_iocs_table, {});
+    dbgln("DatabaseMigrations: Created iocs table");
+
+    // Create index for fast IOC lookups
+    auto create_indicator_index = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_iocs_indicator ON iocs(indicator);"_string));
+    db.execute_statement(create_indicator_index, {});
+    dbgln("DatabaseMigrations: Created indicator index");
+
+    // Create index for searching by type
+    auto create_type_index = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_iocs_type ON iocs(type);"_string));
+    db.execute_statement(create_type_index, {});
+    dbgln("DatabaseMigrations: Created type index");
+
+    // Create index for searching by source
+    auto create_source_index = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_iocs_source ON iocs(source);"_string));
+    db.execute_statement(create_source_index, {});
+    dbgln("DatabaseMigrations: Created source index");
+
+    dbgln("DatabaseMigrations: v6 to v7 migration complete - added IOC table");
+    return {};
+}
+
+ErrorOr<void> DatabaseMigrations::migrate_v7_to_v8(Database::Database& db)
+{
+    dbgln("DatabaseMigrations: Migrating from v7 to v8 (adding quarantine table)");
+
+    // Milestone 0.5 Phase 1e: Automated Quarantine with User Rollback
+    // Create quarantine table for storing quarantined files
+    auto create_quarantine_table = TRY(db.prepare_statement(
+        "CREATE TABLE IF NOT EXISTS quarantine ("
+        "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "    original_path TEXT NOT NULL,"
+        "    quarantine_path TEXT NOT NULL UNIQUE,"
+        "    quarantine_reason TEXT NOT NULL,"
+        "    threat_score REAL NOT NULL,"
+        "    threat_level INTEGER NOT NULL,"
+        "    quarantined_at INTEGER NOT NULL,"
+        "    file_size INTEGER NOT NULL,"
+        "    sha256_hash TEXT NOT NULL"
+        ");"_string));
+    db.execute_statement(create_quarantine_table, {});
+    dbgln("DatabaseMigrations: Created quarantine table");
+
+    // Create index for fast timestamp-based lookups (for cleanup and listing)
+    auto create_timestamp_index = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_quarantine_timestamp ON quarantine(quarantined_at);"_string));
+    db.execute_statement(create_timestamp_index, {});
+    dbgln("DatabaseMigrations: Created quarantine timestamp index");
+
+    // Create index for fast hash-based lookups (for duplicate detection)
+    auto create_hash_index = TRY(db.prepare_statement(
+        "CREATE INDEX IF NOT EXISTS idx_quarantine_hash ON quarantine(sha256_hash);"_string));
+    db.execute_statement(create_hash_index, {});
+    dbgln("DatabaseMigrations: Created quarantine hash index");
+
+    dbgln("DatabaseMigrations: v7 to v8 migration complete - added quarantine table");
+    return {};
+}
+
 ErrorOr<void> DatabaseMigrations::migrate(Database::Database& db)
 {
     auto current_version = TRY(get_schema_version(db));
@@ -398,6 +496,21 @@ ErrorOr<void> DatabaseMigrations::migrate(Database::Database& db)
     if (current_version < 5) {
         TRY(migrate_v4_to_v5(db));
         TRY(set_schema_version(db, 5));
+    }
+
+    if (current_version < 6) {
+        TRY(migrate_v5_to_v6(db));
+        TRY(set_schema_version(db, 6));
+    }
+
+    if (current_version < 7) {
+        TRY(migrate_v6_to_v7(db));
+        TRY(set_schema_version(db, 7));
+    }
+
+    if (current_version < 8) {
+        TRY(migrate_v7_to_v8(db));
+        TRY(set_schema_version(db, 8));
     }
 
     dbgln("DatabaseMigrations: Migration complete");

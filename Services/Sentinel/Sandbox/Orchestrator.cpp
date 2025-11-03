@@ -16,6 +16,8 @@
 #include "VerdictEngine.h"
 #include "WasmExecutor.h"
 #include "../PolicyGraph.h"
+#include "../ThreatIntelligence/VirusTotalClient.h"
+#include "../NetworkIsolation/NetworkIsolationManager.h"
 
 namespace Sentinel::Sandbox {
 
@@ -64,6 +66,23 @@ ErrorOr<void> Orchestrator::initialize_components()
     m_verdict_engine = move(verdict_engine);
     dbgln_if(false, "Orchestrator: Verdict engine initialized");
 
+    // Initialize VirusTotal client (optional - requires API key)
+    // Read API key from environment variable or config file
+    auto vt_api_key = getenv("VIRUSTOTAL_API_KEY");
+    if (vt_api_key && strlen(vt_api_key) > 0) {
+        auto vt_key_string = TRY(String::from_utf8(StringView { vt_api_key, strlen(vt_api_key) }));
+        auto vt_client_result = ThreatIntelligence::VirusTotalClient::create(vt_key_string);
+        if (vt_client_result.is_error()) {
+            dbgln("Orchestrator: Warning - Failed to initialize VirusTotal client: {}", vt_client_result.error());
+            dbgln("Orchestrator: VirusTotal integration will be disabled");
+        } else {
+            m_vt_client = vt_client_result.release_value();
+            dbgln_if(false, "Orchestrator: VirusTotal client initialized");
+        }
+    } else {
+        dbgln_if(false, "Orchestrator: No VIRUSTOTAL_API_KEY env var - VirusTotal disabled");
+    }
+
     // Initialize policy graph (Milestone 0.5 Phase 1d: verdict cache)
     // Create in ~/.cache/ladybird/sentinel directory (same as RequestServer)
     auto cache_dir = Core::StandardPaths::cache_directory();
@@ -88,6 +107,20 @@ ErrorOr<void> Orchestrator::initialize_components()
         } else {
             m_policy_graph = policy_graph_result.release_value();
             dbgln_if(false, "Orchestrator: PolicyGraph initialized (verdict caching enabled)");
+        }
+    }
+
+    // Initialize network isolation (Milestone 0.5 Phase 2)
+    if (m_config.enable_network_isolation) {
+        auto network_isolation_result = NetworkIsolation::NetworkIsolationManager::create();
+        if (network_isolation_result.is_error()) {
+            dbgln("Orchestrator: Warning - failed to initialize NetworkIsolationManager: {}", network_isolation_result.error());
+            dbgln("Orchestrator: Network isolation will be disabled");
+            dbgln("Orchestrator: Note: Network isolation requires root/sudo privileges or CAP_NET_ADMIN capability");
+            // Continue without network isolation - it's optional
+        } else {
+            m_network_isolation = network_isolation_result.release_value();
+            dbgln_if(false, "Orchestrator: NetworkIsolationManager initialized (network isolation enabled)");
         }
     }
 
@@ -230,7 +263,31 @@ ErrorOr<SandboxResult> Orchestrator::analyze_file(ByteBuffer const& file_data, S
         }
     }
 
-    // Stage 3: Generate final verdict
+    // Stage 3: VirusTotal lookup (if enabled and file hash available)
+    if (m_vt_client && !file_hash.is_empty()) {
+        auto vt_result = m_vt_client->lookup_file_hash(file_hash);
+        if (vt_result.is_error()) {
+            dbgln("Orchestrator: VirusTotal lookup failed: {}", vt_result.error());
+            // Continue without VT score - graceful degradation
+        } else {
+            auto vt = vt_result.release_value();
+            result.vt_score = vt.threat_score;
+            result.vt_malicious_count = vt.malicious_count;
+            result.vt_total_engines = vt.total_engines;
+            result.vt_lookup_performed = true;
+
+            dbgln_if(false, "Orchestrator: VirusTotal score: {:.3f} ({}/{} engines detected)",
+                vt.threat_score, vt.malicious_count, vt.total_engines);
+
+            // Add VT detection to triggered rules
+            if (vt.is_malicious()) {
+                TRY(result.triggered_rules.try_append(TRY(String::formatted(
+                    "VirusTotal: {}/{} engines detected threat", vt.malicious_count, vt.total_engines))));
+            }
+        }
+    }
+
+    // Stage 4: Generate final verdict
     TRY(generate_verdict(result));
 
     result.execution_time = MonotonicTime::now() - start_time;
@@ -253,6 +310,7 @@ ErrorOr<SandboxResult> Orchestrator::analyze_file(ByteBuffer const& file_data, S
         verdict.yara_score = static_cast<i32>(result.yara_score * 1000.0f);
         verdict.ml_score = static_cast<i32>(result.ml_score * 1000.0f);
         verdict.behavioral_score = static_cast<i32>(result.behavioral_score * 1000.0f);
+        verdict.vt_score = static_cast<i32>(result.vt_score * 1000.0f);
         verdict.analyzed_at = UnixDateTime::now();
         // Cache expires after 30 days
         verdict.expires_at = UnixDateTime::from_seconds_since_epoch(UnixDateTime::now().seconds_since_epoch() + (30 * 24 * 60 * 60));
@@ -360,11 +418,12 @@ ErrorOr<void> Orchestrator::generate_verdict(SandboxResult& result)
 {
     VERIFY(m_verdict_engine);
 
-    // Generate final verdict using multi-layer scoring
+    // Generate final verdict using 4-layer scoring (YARA + ML + Behavioral + VirusTotal)
     auto verdict = TRY(m_verdict_engine->calculate_verdict(
         result.yara_score,
         result.ml_score,
-        result.behavioral_score));
+        result.behavioral_score,
+        result.vt_score));
 
     result.composite_score = verdict.composite_score;
     result.confidence = verdict.confidence;

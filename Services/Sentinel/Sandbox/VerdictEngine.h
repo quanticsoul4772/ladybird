@@ -20,17 +20,18 @@ struct Verdict {
     String explanation;                           // User-facing summary
 
     // Component scores (for transparency)
-    float yara_weight { 0.40f };                  // 40%
-    float ml_weight { 0.35f };                    // 35%
-    float behavioral_weight { 0.25f };            // 25%
+    float yara_weight { 0.30f };                  // 30%
+    float ml_weight { 0.25f };                    // 25%
+    float behavioral_weight { 0.20f };            // 20%
+    float vt_weight { 0.25f };                    // 25% - VirusTotal
 };
 
 // Scoring thresholds for threat levels
 struct ScoringThresholds {
     float clean_threshold { 0.3f };               // < 0.3 = Clean
-    float suspicious_threshold { 0.5f };          // 0.3-0.5 = Suspicious
-    float malicious_threshold { 0.7f };           // 0.5-0.7 = Malicious
-                                                   // >= 0.7 = Critical
+    float suspicious_threshold { 0.6f };          // 0.3-0.6 = Suspicious
+    float malicious_threshold { 0.8f };           // 0.6-0.8 = Malicious
+                                                   // >= 0.8 = Critical
 };
 
 // VerdictEngine - Multi-layer threat scoring and verdict generation
@@ -45,11 +46,12 @@ public:
 
     ~VerdictEngine();
 
-    // Generate verdict from multi-layer scores
+    // Generate verdict from multi-layer scores (4-way scoring)
     ErrorOr<Verdict> calculate_verdict(
         float yara_score,
         float ml_score,
-        float behavioral_score) const;
+        float behavioral_score,
+        float vt_score = 0.0f) const;
 
     // Update scoring thresholds (for tuning)
     void update_thresholds(ScoringThresholds const& thresholds);
@@ -73,15 +75,16 @@ private:
     explicit VerdictEngine(ScoringThresholds const& thresholds);
 
     // Scoring helpers
-    float calculate_composite_score(float yara, float ml, float behavioral) const;
-    float calculate_confidence(float yara, float ml, float behavioral) const;
+    float calculate_composite_score(float yara, float ml, float behavioral, float vt) const;
+    float calculate_confidence(float yara, float ml, float behavioral, float vt) const;
     SandboxResult::ThreatLevel determine_threat_level(float composite_score) const;
     ErrorOr<String> generate_explanation(
         SandboxResult::ThreatLevel level,
         float composite_score,
         float yara,
         float ml,
-        float behavioral) const;
+        float behavioral,
+        float vt) const;
 
     ScoringThresholds m_thresholds;
     mutable Statistics m_stats;

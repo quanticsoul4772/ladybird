@@ -31,20 +31,21 @@ VerdictEngine::~VerdictEngine() = default;
 ErrorOr<Verdict> VerdictEngine::calculate_verdict(
     float yara_score,
     float ml_score,
-    float behavioral_score) const
+    float behavioral_score,
+    float vt_score) const
 {
-    dbgln_if(false, "VerdictEngine: Calculating verdict - YARA: {:.2f}, ML: {:.2f}, Behavioral: {:.2f}",
-        yara_score, ml_score, behavioral_score);
+    dbgln_if(false, "VerdictEngine: Calculating verdict - YARA: {:.2f}, ML: {:.2f}, Behavioral: {:.2f}, VT: {:.2f}",
+        yara_score, ml_score, behavioral_score, vt_score);
 
     m_stats.total_verdicts++;
 
     Verdict verdict;
 
-    // Calculate composite score (weighted average)
-    verdict.composite_score = calculate_composite_score(yara_score, ml_score, behavioral_score);
+    // Calculate composite score (weighted average with 4 components)
+    verdict.composite_score = calculate_composite_score(yara_score, ml_score, behavioral_score, vt_score);
 
     // Calculate confidence (agreement between detectors)
-    verdict.confidence = calculate_confidence(yara_score, ml_score, behavioral_score);
+    verdict.confidence = calculate_confidence(yara_score, ml_score, behavioral_score, vt_score);
 
     // Determine threat level based on composite score
     verdict.threat_level = determine_threat_level(verdict.composite_score);
@@ -55,7 +56,8 @@ ErrorOr<Verdict> VerdictEngine::calculate_verdict(
         verdict.composite_score,
         yara_score,
         ml_score,
-        behavioral_score));
+        behavioral_score,
+        vt_score));
 
     // Update statistics
     switch (verdict.threat_level) {
@@ -84,23 +86,24 @@ ErrorOr<Verdict> VerdictEngine::calculate_verdict(
     return verdict;
 }
 
-float VerdictEngine::calculate_composite_score(float yara, float ml, float behavioral) const
+float VerdictEngine::calculate_composite_score(float yara, float ml, float behavioral, float vt) const
 {
-    // Weighted average: YARA (40%) + ML (35%) + Behavioral (25%)
-    float composite = (yara * 0.40f) + (ml * 0.35f) + (behavioral * 0.25f);
+    // Weighted average: YARA (30%) + ML (25%) + Behavioral (20%) + VirusTotal (25%)
+    float composite = (yara * 0.30f) + (ml * 0.25f) + (behavioral * 0.20f) + (vt * 0.25f);
     return min(1.0f, max(0.0f, composite));
 }
 
-float VerdictEngine::calculate_confidence(float yara, float ml, float behavioral) const
+float VerdictEngine::calculate_confidence(float yara, float ml, float behavioral, float vt) const
 {
-    // Confidence based on agreement between detectors
+    // Confidence based on agreement between 4 detectors
     // High confidence when all agree (all high or all low)
     // Low confidence when they disagree
 
-    float mean = (yara + ml + behavioral) / 3.0f;
+    float mean = (yara + ml + behavioral + vt) / 4.0f;
 
     // Calculate variance (how much scores differ from mean)
-    float variance = (AK::pow(yara - mean, 2.0f) + AK::pow(ml - mean, 2.0f) + AK::pow(behavioral - mean, 2.0f)) / 3.0f;
+    float variance = (AK::pow(yara - mean, 2.0f) + AK::pow(ml - mean, 2.0f) +
+                      AK::pow(behavioral - mean, 2.0f) + AK::pow(vt - mean, 2.0f)) / 4.0f;
 
     // Standard deviation
     float stddev = AK::sqrt(variance);
@@ -110,7 +113,15 @@ float VerdictEngine::calculate_confidence(float yara, float ml, float behavioral
     float confidence = 1.0f - min(1.0f, stddev * 2.0f);
 
     // Boost confidence if all scores are extreme (all very high or very low)
-    if ((yara > 0.8f && ml > 0.8f && behavioral > 0.8f) || (yara < 0.2f && ml < 0.2f && behavioral < 0.2f)) {
+    u32 high_count = 0;
+    u32 low_count = 0;
+    if (yara > 0.8f) high_count++; else if (yara < 0.2f) low_count++;
+    if (ml > 0.8f) high_count++; else if (ml < 0.2f) low_count++;
+    if (behavioral > 0.8f) high_count++; else if (behavioral < 0.2f) low_count++;
+    if (vt > 0.8f) high_count++; else if (vt < 0.2f) low_count++;
+
+    // If 3+ detectors agree on extreme values, boost confidence
+    if (high_count >= 3 || low_count >= 3) {
         confidence = max(confidence, 0.9f);
     }
 
@@ -136,7 +147,8 @@ ErrorOr<String> VerdictEngine::generate_explanation(
     float composite_score,
     float yara,
     float ml,
-    float behavioral) const
+    float behavioral,
+    float vt) const
 {
     StringBuilder sb;
 
@@ -157,14 +169,16 @@ ErrorOr<String> VerdictEngine::generate_explanation(
 
     TRY(sb.try_appendff("Overall threat score: {:.0f}%. ", composite_score * 100.0f));
 
-    // Explain primary detection method
-    float max_score = max(max(yara, ml), behavioral);
+    // Explain primary detection method (highest score)
+    float max_score = max(max(max(yara, ml), behavioral), vt);
     if (max_score == yara && yara > 0.5f) {
         TRY(sb.try_appendff("Pattern matching detected malware signatures ({:.0f}%). ", yara * 100.0f));
     } else if (max_score == ml && ml > 0.5f) {
         TRY(sb.try_appendff("Machine learning model flagged malicious features ({:.0f}%). ", ml * 100.0f));
     } else if (max_score == behavioral && behavioral > 0.5f) {
         TRY(sb.try_appendff("Behavioral analysis detected suspicious runtime activity ({:.0f}%). ", behavioral * 100.0f));
+    } else if (max_score == vt && vt > 0.5f) {
+        TRY(sb.try_appendff("VirusTotal detected threat across multiple antivirus engines ({:.0f}%). ", vt * 100.0f));
     }
 
     // Indicate if multiple detectors agree
@@ -172,9 +186,10 @@ ErrorOr<String> VerdictEngine::generate_explanation(
     if (yara > 0.5f) high_score_count++;
     if (ml > 0.5f) high_score_count++;
     if (behavioral > 0.5f) high_score_count++;
+    if (vt > 0.5f) high_score_count++;
 
     if (high_score_count >= 2) {
-        TRY(sb.try_append("Multiple detection methods agree. "sv));
+        TRY(sb.try_appendff("{} detection methods agree. "sv, high_score_count));
     }
 
     return sb.to_string();

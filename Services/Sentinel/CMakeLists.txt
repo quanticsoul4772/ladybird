@@ -17,16 +17,28 @@ set(SOURCES
     InputValidator.cpp
     IPFSThreatSync.cpp
     MalwareML.cpp
+    NetworkIsolation/IPTablesBackend.cpp
+    NetworkIsolation/NetworkIsolationManager.cpp
+    NetworkIsolation/NFTablesBackend.cpp
+    NetworkIsolation/ProcessMonitor.cpp
     PhishingURLAnalyzer.cpp
     PolicyGraph.cpp
     PolicyTemplates.cpp
+    Quarantine/FileEncryption.cpp
+    Quarantine/QuarantineManager.cpp
     Sandbox/BehavioralAnalyzer.cpp
     Sandbox/Orchestrator.cpp
+    Sandbox/ThreatReporter.cpp
     Sandbox/VerdictEngine.cpp
     Sandbox/WasmExecutor.cpp
     SentinelMetrics.cpp
     SentinelServer.cpp
     ThreatFeed.cpp
+    ThreatIntelligence/OTXFeedClient.cpp
+    ThreatIntelligence/RateLimiter.cpp
+    ThreatIntelligence/UpdateScheduler.cpp
+    ThreatIntelligence/VirusTotalClient.cpp
+    ThreatIntelligence/YARAGenerator.cpp
 )
 
 add_library(sentinelservice STATIC ${SOURCES})
@@ -132,7 +144,11 @@ add_executable(TestFingerprintingDetector TestFingerprintingDetector.cpp)
 add_executable(TestC2Detector TestC2Detector.cpp)
 add_executable(TestDNSAnalyzer TestDNSAnalyzer.cpp)
 add_executable(TestSandbox TestSandbox.cpp)
+add_executable(TestThreatReporter TestThreatReporter.cpp)
+add_executable(TestOTXFeedClient TestOTXFeedClient.cpp)
+add_executable(TestVirusTotalClient TestVirusTotalClient.cpp)
 add_executable(BenchmarkC2Detector BenchmarkC2Detector.cpp)
+add_executable(BenchmarkThreatScoring BenchmarkThreatScoring.cpp)
 # add_executable(BenchmarkBehavioralAnalyzer BenchmarkBehavioralAnalyzer.cpp) # Disabled - missing dependencies
 add_executable(sentinel-cli ../../Tools/sentinel-cli.cpp)
 
@@ -169,13 +185,22 @@ target_link_libraries(TestFingerprintingDetector PRIVATE sentinelservice LibCore
 target_link_libraries(TestC2Detector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestDNSAnalyzer PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestSandbox PRIVATE sentinelservice LibCore LibMain)
+target_link_libraries(TestThreatReporter PRIVATE sentinelservice LibCore LibMain)
+target_link_libraries(TestOTXFeedClient PRIVATE sentinelservice LibCore LibMain LibFileSystem)
+target_link_libraries(TestVirusTotalClient PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(BenchmarkC2Detector PRIVATE sentinelservice LibCore LibMain)
+target_link_libraries(BenchmarkThreatScoring PRIVATE sentinelservice LibCore LibMain)
 # target_link_libraries(BenchmarkBehavioralAnalyzer PRIVATE sentinelservice LibCore LibMain LibFileSystem) # Disabled
 target_link_libraries(sentinel-cli PRIVATE sentinelservice LibCore LibMain LibFileSystem requestserverservice)
 
 # Use proper test infrastructure for LibTest-based tests
 ladybird_test(TestBloomFilter.cpp Sentinel LIBS sentinelservice LibDatabase LibFileSystem)
 ladybird_test(TestBehavioralAnalyzer.cpp Sentinel LIBS sentinelservice LibCore LibFileSystem)
+ladybird_test(TestVerdictEngine.cpp Sentinel LIBS sentinelservice LibCore)
+ladybird_test(TestOrchestrator.cpp Sentinel LIBS sentinelservice LibCore LibCrypto LibFileSystem LibDatabase)
+ladybird_test(TestE2EIntegration.cpp Sentinel LIBS sentinelservice LibCore LibCrypto LibFileSystem LibDatabase)
+ladybird_test(NetworkIsolation/TestNetworkIsolationManager.cpp Sentinel LIBS sentinelservice LibCore LibThreading)
+ladybird_test(TestQuarantineManager.cpp Sentinel LIBS sentinelservice LibCore LibCrypto LibFileSystem LibDatabase)
 
 # Install targets
 install(TARGETS Sentinel sentinel-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

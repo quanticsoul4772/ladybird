@@ -8,8 +8,10 @@
 #include "DatabaseMigrations.h"
 #include "InputValidator.h"
 #include "PolicyTemplates.h"
+#include "Quarantine/QuarantineManager.h"
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
+#include <AK/JsonValue.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/RetryPolicy.h>
@@ -552,8 +554,9 @@ ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_dir
     statements.store_sandbox_verdict = TRY(database->prepare_statement(R"#(
         INSERT INTO sandbox_verdicts
             (file_hash, threat_level, confidence, composite_score, verdict_explanation,
-             yara_score, ml_score, behavioral_score, analyzed_at, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             yara_score, ml_score, behavioral_score, triggered_rules, detected_behaviors,
+             analyzed_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_hash) DO UPDATE SET
             threat_level = excluded.threat_level,
             confidence = excluded.confidence,
@@ -562,6 +565,8 @@ ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_dir
             yara_score = excluded.yara_score,
             ml_score = excluded.ml_score,
             behavioral_score = excluded.behavioral_score,
+            triggered_rules = excluded.triggered_rules,
+            detected_behaviors = excluded.detected_behaviors,
             analyzed_at = excluded.analyzed_at,
             expires_at = excluded.expires_at;
     )#"sv));
@@ -569,8 +574,49 @@ ErrorOr<NonnullOwnPtr<PolicyGraph>> PolicyGraph::create(ByteString const& db_dir
     statements.lookup_sandbox_verdict = TRY(database->prepare_statement(
         "SELECT * FROM sandbox_verdicts WHERE file_hash = ? AND expires_at > ?;"sv));
 
+    statements.invalidate_verdict = TRY(database->prepare_statement(
+        "DELETE FROM sandbox_verdicts WHERE file_hash = ?;"sv));
+
+    statements.clear_verdict_cache = TRY(database->prepare_statement(
+        "DELETE FROM sandbox_verdicts;"sv));
+
     statements.delete_expired_verdicts = TRY(database->prepare_statement(
         "DELETE FROM sandbox_verdicts WHERE expires_at <= ?;"sv));
+
+    // Milestone 0.5 Phase 2: IOC Management statements
+    statements.store_ioc = TRY(database->prepare_statement(
+        "INSERT INTO iocs (type, indicator, description, tags, created_at, source) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(indicator) DO UPDATE SET "
+        "  type = excluded.type, "
+        "  description = excluded.description, "
+        "  tags = excluded.tags, "
+        "  source = excluded.source;"sv));
+
+    statements.get_ioc = TRY(database->prepare_statement(
+        "SELECT id, type, indicator, description, tags, created_at, source "
+        "FROM iocs WHERE indicator = ?;"sv));
+
+    statements.search_iocs_all = TRY(database->prepare_statement(
+        "SELECT id, type, indicator, description, tags, created_at, source FROM iocs;"sv));
+
+    statements.search_iocs_by_type = TRY(database->prepare_statement(
+        "SELECT id, type, indicator, description, tags, created_at, source "
+        "FROM iocs WHERE type = ?;"sv));
+
+    statements.search_iocs_by_source = TRY(database->prepare_statement(
+        "SELECT id, type, indicator, description, tags, created_at, source "
+        "FROM iocs WHERE source = ?;"sv));
+
+    statements.search_iocs_by_type_and_source = TRY(database->prepare_statement(
+        "SELECT id, type, indicator, description, tags, created_at, source "
+        "FROM iocs WHERE type = ? AND source = ?;"sv));
+
+    statements.delete_ioc = TRY(database->prepare_statement(
+        "DELETE FROM iocs WHERE id = ?;"sv));
+
+    statements.count_iocs = TRY(database->prepare_statement(
+        "SELECT COUNT(*) FROM iocs;"sv));
 
     auto policy_graph = adopt_own(*new PolicyGraph(move(database), statements));
 
@@ -2229,6 +2275,17 @@ ErrorOr<void> PolicyGraph::store_sandbox_verdict(SandboxVerdict const& verdict)
     if (!explanation_result.is_valid)
         return InputValidator::to_error(explanation_result);
 
+    // Serialize triggered_rules and detected_behaviors to JSON arrays
+    JsonArray rules_array;
+    for (auto const& rule : verdict.triggered_rules)
+        rules_array.must_append(rule);
+    auto rules_json = JsonValue(rules_array).serialized();
+
+    JsonArray behaviors_array;
+    for (auto const& behavior : verdict.detected_behaviors)
+        behaviors_array.must_append(behavior);
+    auto behaviors_json = JsonValue(behaviors_array).serialized();
+
     m_database->execute_statement(
         m_statements.store_sandbox_verdict,
         {},
@@ -2240,12 +2297,14 @@ ErrorOr<void> PolicyGraph::store_sandbox_verdict(SandboxVerdict const& verdict)
         verdict.yara_score,
         verdict.ml_score,
         verdict.behavioral_score,
+        rules_json,
+        behaviors_json,
         verdict.analyzed_at.milliseconds_since_epoch(),
         verdict.expires_at.milliseconds_since_epoch()
     );
 
-    dbgln_if(false, "PolicyGraph: Stored sandbox verdict for hash {} (threat_level: {}, confidence: {})",
-        verdict.file_hash, verdict.threat_level, verdict.confidence);
+    dbgln_if(false, "PolicyGraph: Stored sandbox verdict for hash {} (threat_level: {}, confidence: {}, rules: {}, behaviors: {})",
+        verdict.file_hash, verdict.threat_level, verdict.confidence, verdict.triggered_rules.size(), verdict.detected_behaviors.size());
     return {};
 }
 
@@ -2272,6 +2331,29 @@ ErrorOr<Optional<PolicyGraph::SandboxVerdict>> PolicyGraph::lookup_sandbox_verdi
             v.yara_score = static_cast<i32>(m_database->result_column<i64>(stmt_id, col++));
             v.ml_score = static_cast<i32>(m_database->result_column<i64>(stmt_id, col++));
             v.behavioral_score = static_cast<i32>(m_database->result_column<i64>(stmt_id, col++));
+
+            // Deserialize triggered_rules JSON array
+            auto rules_json = m_database->result_column<String>(stmt_id, col++);
+            auto rules_value = JsonValue::from_string(rules_json);
+            if (!rules_value.is_error() && rules_value.value().is_array()) {
+                auto const& rules_array = rules_value.value().as_array();
+                for (auto const& rule : rules_array.values()) {
+                    if (rule.is_string())
+                        v.triggered_rules.append(rule.as_string());
+                }
+            }
+
+            // Deserialize detected_behaviors JSON array
+            auto behaviors_json = m_database->result_column<String>(stmt_id, col++);
+            auto behaviors_value = JsonValue::from_string(behaviors_json);
+            if (!behaviors_value.is_error() && behaviors_value.value().is_array()) {
+                auto const& behaviors_array = behaviors_value.value().as_array();
+                for (auto const& behavior : behaviors_array.values()) {
+                    if (behavior.is_string())
+                        v.detected_behaviors.append(behavior.as_string());
+                }
+            }
+
             v.analyzed_at = UnixDateTime::from_milliseconds_since_epoch(m_database->result_column<i64>(stmt_id, col++));
             v.expires_at = UnixDateTime::from_milliseconds_since_epoch(m_database->result_column<i64>(stmt_id, col++));
             verdict = move(v);
@@ -2302,6 +2384,372 @@ ErrorOr<void> PolicyGraph::cleanup_expired_verdicts()
 
     dbgln_if(false, "PolicyGraph: Cleaned up expired sandbox verdicts");
     return {};
+}
+
+ErrorOr<void> PolicyGraph::invalidate_verdict(String const& file_hash)
+{
+    // Validate file_hash (SHA256 = 64 hex chars)
+    auto hash_result = InputValidator::validate_sha256(file_hash);
+    if (!hash_result.is_valid)
+        return Error::from_string_literal("Invalid file hash format");
+
+    m_database->execute_statement(
+        m_statements.invalidate_verdict,
+        {},
+        file_hash
+    );
+
+    dbgln_if(false, "PolicyGraph: Invalidated verdict for hash {}", file_hash);
+    return {};
+}
+
+ErrorOr<void> PolicyGraph::clear_verdict_cache()
+{
+    m_database->execute_statement(
+        m_statements.clear_verdict_cache,
+        {}
+    );
+
+    dbgln("PolicyGraph: Cleared all cached verdicts");
+    return {};
+}
+
+AK::Duration PolicyGraph::calculate_verdict_ttl(i32 threat_level)
+{
+    // TTL based on threat level:
+    // - Clean (0): 30 days (2592000 seconds)
+    // - Suspicious (1): 7 days (604800 seconds)
+    // - Malicious (2): 90 days (7776000 seconds)
+    // - Critical (3): 365 days (31536000 seconds)
+
+    switch (threat_level) {
+    case 0: // Clean
+        return Duration::from_seconds(2592000);
+    case 1: // Suspicious
+        return Duration::from_seconds(604800);
+    case 2: // Malicious
+        return Duration::from_seconds(7776000);
+    case 3: // Critical
+        return Duration::from_seconds(31536000);
+    default:
+        // Default to suspicious (7 days) for unknown threat levels
+        return Duration::from_seconds(604800);
+    }
+}
+
+// ============================================================================
+// Milestone 0.5 Phase 2: IOC (Indicator of Compromise) Management
+// ============================================================================
+
+ErrorOr<i64> PolicyGraph::store_ioc(IOC const& ioc)
+{
+    // Serialize tags to JSON array
+    StringBuilder tags_json;
+    tags_json.append("["sv);
+    for (size_t i = 0; i < ioc.tags.size(); ++i) {
+        if (i > 0)
+            tags_json.append(","sv);
+        tags_json.append("\""sv);
+        tags_json.append(ioc.tags[i]);
+        tags_json.append("\""sv);
+    }
+    tags_json.append("]"sv);
+
+    m_database->execute_statement(
+        m_statements.store_ioc,
+        {},
+        ioc_type_to_string(ioc.type),
+        ioc.indicator,
+        ioc.description.value_or(""_string),
+        TRY(tags_json.to_string()),
+        ioc.created_at.seconds_since_epoch(),
+        ioc.source
+    );
+
+    // Get the ID of the inserted IOC
+    i64 ioc_id = 0;
+    m_database->execute_statement(m_statements.get_last_insert_id, [&](auto stmt_id) {
+        ioc_id = m_database->result_column<i64>(stmt_id, 0);
+    });
+
+    dbgln("PolicyGraph: Stored IOC {} ({}): {}", ioc_id, ioc_type_to_string(ioc.type), ioc.indicator);
+    return ioc_id;
+}
+
+ErrorOr<Optional<PolicyGraph::IOC>> PolicyGraph::get_ioc(String const& indicator)
+{
+    Optional<IOC> result;
+
+    m_database->execute_statement(m_statements.get_ioc, [&](auto stmt_id) {
+        IOC ioc;
+        ioc.id = m_database->result_column<i64>(stmt_id, 0);
+        ioc.type = string_to_ioc_type(m_database->result_column<String>(stmt_id, 1));
+        ioc.indicator = m_database->result_column<String>(stmt_id, 2);
+
+        auto desc = m_database->result_column<String>(stmt_id, 3);
+        if (!desc.is_empty())
+            ioc.description = desc;
+
+        // Parse tags JSON array
+        auto tags_json = m_database->result_column<String>(stmt_id, 4);
+        // Simple JSON array parsing (assumes format: ["tag1","tag2"])
+        if (!tags_json.is_empty() && tags_json != "[]"sv) {
+            auto tags_str = tags_json.bytes_as_string_view().substring_view(1, tags_json.bytes_as_string_view().length() - 2); // Remove [ ]
+            auto tag_parts = tags_str.split_view(',');
+            for (auto const& tag_part : tag_parts) {
+                auto trimmed = tag_part.trim("\""sv);
+                if (!trimmed.is_empty())
+                    ioc.tags.append(MUST(String::from_utf8(trimmed)));
+            }
+        }
+
+        ioc.created_at = UnixDateTime::from_seconds_since_epoch(m_database->result_column<i64>(stmt_id, 5));
+        ioc.source = m_database->result_column<String>(stmt_id, 6);
+
+        result = ioc;
+    }, indicator);
+
+    return result;
+}
+
+ErrorOr<Vector<PolicyGraph::IOC>> PolicyGraph::search_iocs(Optional<IOC::Type> type_filter, Optional<String> source_filter)
+{
+    Vector<IOC> results;
+
+    Database::StatementID statement_id;
+
+    if (type_filter.has_value() && source_filter.has_value()) {
+        statement_id = m_statements.search_iocs_by_type_and_source;
+        m_database->execute_statement(statement_id, [&](auto stmt_id) {
+            IOC ioc;
+            ioc.id = m_database->result_column<i64>(stmt_id, 0);
+            ioc.type = string_to_ioc_type(m_database->result_column<String>(stmt_id, 1));
+            ioc.indicator = m_database->result_column<String>(stmt_id, 2);
+
+            auto desc = m_database->result_column<String>(stmt_id, 3);
+            if (!desc.is_empty())
+                ioc.description = desc;
+
+            auto tags_json = m_database->result_column<String>(stmt_id, 4);
+            if (!tags_json.is_empty() && tags_json != "[]"sv) {
+                auto tags_str = tags_json.bytes_as_string_view().substring_view(1, tags_json.bytes_as_string_view().length() - 2);
+                auto tag_parts = tags_str.split_view(',');
+                for (auto const& tag_part : tag_parts) {
+                    auto trimmed = tag_part.trim("\""sv);
+                    if (!trimmed.is_empty())
+                        ioc.tags.append(MUST(String::from_utf8(trimmed)));
+                }
+            }
+
+            ioc.created_at = UnixDateTime::from_seconds_since_epoch(m_database->result_column<i64>(stmt_id, 5));
+            ioc.source = m_database->result_column<String>(stmt_id, 6);
+
+            results.append(ioc);
+        }, ioc_type_to_string(type_filter.value()), source_filter.value());
+    } else if (type_filter.has_value()) {
+        statement_id = m_statements.search_iocs_by_type;
+        m_database->execute_statement(statement_id, [&](auto stmt_id) {
+            IOC ioc;
+            ioc.id = m_database->result_column<i64>(stmt_id, 0);
+            ioc.type = string_to_ioc_type(m_database->result_column<String>(stmt_id, 1));
+            ioc.indicator = m_database->result_column<String>(stmt_id, 2);
+
+            auto desc = m_database->result_column<String>(stmt_id, 3);
+            if (!desc.is_empty())
+                ioc.description = desc;
+
+            auto tags_json = m_database->result_column<String>(stmt_id, 4);
+            if (!tags_json.is_empty() && tags_json != "[]"sv) {
+                auto tags_str = tags_json.bytes_as_string_view().substring_view(1, tags_json.bytes_as_string_view().length() - 2);
+                auto tag_parts = tags_str.split_view(',');
+                for (auto const& tag_part : tag_parts) {
+                    auto trimmed = tag_part.trim("\""sv);
+                    if (!trimmed.is_empty())
+                        ioc.tags.append(MUST(String::from_utf8(trimmed)));
+                }
+            }
+
+            ioc.created_at = UnixDateTime::from_seconds_since_epoch(m_database->result_column<i64>(stmt_id, 5));
+            ioc.source = m_database->result_column<String>(stmt_id, 6);
+
+            results.append(ioc);
+        }, ioc_type_to_string(type_filter.value()));
+    } else if (source_filter.has_value()) {
+        statement_id = m_statements.search_iocs_by_source;
+        m_database->execute_statement(statement_id, [&](auto stmt_id) {
+            IOC ioc;
+            ioc.id = m_database->result_column<i64>(stmt_id, 0);
+            ioc.type = string_to_ioc_type(m_database->result_column<String>(stmt_id, 1));
+            ioc.indicator = m_database->result_column<String>(stmt_id, 2);
+
+            auto desc = m_database->result_column<String>(stmt_id, 3);
+            if (!desc.is_empty())
+                ioc.description = desc;
+
+            auto tags_json = m_database->result_column<String>(stmt_id, 4);
+            if (!tags_json.is_empty() && tags_json != "[]"sv) {
+                auto tags_str = tags_json.bytes_as_string_view().substring_view(1, tags_json.bytes_as_string_view().length() - 2);
+                auto tag_parts = tags_str.split_view(',');
+                for (auto const& tag_part : tag_parts) {
+                    auto trimmed = tag_part.trim("\""sv);
+                    if (!trimmed.is_empty())
+                        ioc.tags.append(MUST(String::from_utf8(trimmed)));
+                }
+            }
+
+            ioc.created_at = UnixDateTime::from_seconds_since_epoch(m_database->result_column<i64>(stmt_id, 5));
+            ioc.source = m_database->result_column<String>(stmt_id, 6);
+
+            results.append(ioc);
+        }, source_filter.value());
+    } else {
+        statement_id = m_statements.search_iocs_all;
+        m_database->execute_statement(statement_id, [&](auto stmt_id) {
+            IOC ioc;
+            ioc.id = m_database->result_column<i64>(stmt_id, 0);
+            ioc.type = string_to_ioc_type(m_database->result_column<String>(stmt_id, 1));
+            ioc.indicator = m_database->result_column<String>(stmt_id, 2);
+
+            auto desc = m_database->result_column<String>(stmt_id, 3);
+            if (!desc.is_empty())
+                ioc.description = desc;
+
+            auto tags_json = m_database->result_column<String>(stmt_id, 4);
+            if (!tags_json.is_empty() && tags_json != "[]"sv) {
+                auto tags_str = tags_json.bytes_as_string_view().substring_view(1, tags_json.bytes_as_string_view().length() - 2);
+                auto tag_parts = tags_str.split_view(',');
+                for (auto const& tag_part : tag_parts) {
+                    auto trimmed = tag_part.trim("\""sv);
+                    if (!trimmed.is_empty())
+                        ioc.tags.append(MUST(String::from_utf8(trimmed)));
+                }
+            }
+
+            ioc.created_at = UnixDateTime::from_seconds_since_epoch(m_database->result_column<i64>(stmt_id, 5));
+            ioc.source = m_database->result_column<String>(stmt_id, 6);
+
+            results.append(ioc);
+        });
+    }
+
+    return results;
+}
+
+ErrorOr<void> PolicyGraph::delete_ioc(i64 ioc_id)
+{
+    m_database->execute_statement(m_statements.delete_ioc, {}, ioc_id);
+    dbgln("PolicyGraph: Deleted IOC {}", ioc_id);
+    return {};
+}
+
+ErrorOr<u64> PolicyGraph::get_ioc_count()
+{
+    u64 count = 0;
+    m_database->execute_statement(m_statements.count_iocs, [&](auto stmt_id) {
+        count = static_cast<u64>(m_database->result_column<i64>(stmt_id, 0));
+    });
+    return count;
+}
+
+PolicyGraph::IOC::Type PolicyGraph::string_to_ioc_type(String const& type_str)
+{
+    if (type_str == "FileHash"sv)
+        return IOC::Type::FileHash;
+    if (type_str == "Domain"sv)
+        return IOC::Type::Domain;
+    if (type_str == "IP"sv)
+        return IOC::Type::IP;
+    if (type_str == "URL"sv)
+        return IOC::Type::URL;
+
+    return IOC::Type::FileHash; // Default
+}
+
+String PolicyGraph::ioc_type_to_string(IOC::Type type)
+{
+    switch (type) {
+    case IOC::Type::FileHash:
+        return "FileHash"_string;
+    case IOC::Type::Domain:
+        return "Domain"_string;
+    case IOC::Type::IP:
+        return "IP"_string;
+    case IOC::Type::URL:
+        return "URL"_string;
+    }
+    return "FileHash"_string; // Default
+}
+
+// Milestone 0.5 Phase 1e: Quarantine Database Operations
+
+ErrorOr<i64> PolicyGraph::insert_quarantine_record(Quarantine::QuarantineRecord const& record)
+{
+    auto sql = "INSERT INTO quarantine "
+               "(original_path, quarantine_path, quarantine_reason, threat_score, threat_level, "
+               "quarantined_at, file_size, sha256_hash) "
+               "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"_string;
+
+    auto statement = TRY(m_database->prepare_statement(sql));
+
+    m_database->execute_statement(
+        statement,
+        {},
+        record.original_path,
+        record.quarantine_path,
+        record.quarantine_reason,
+        record.threat_score,
+        static_cast<i32>(record.threat_level),
+        record.quarantined_at.seconds_since_epoch(),
+        static_cast<i64>(record.file_size),
+        record.sha256_hash);
+
+    // Get last insert ID
+    i64 id = -1;
+    m_database->execute_statement(m_statements.get_last_insert_id, [&](auto stmt_id) {
+        id = m_database->result_column<i64>(stmt_id, 0);
+    });
+
+    dbgln("PolicyGraph: Inserted quarantine record (ID: {})", id);
+    return id;
+}
+
+ErrorOr<void> PolicyGraph::delete_quarantine_record(i64 quarantine_id)
+{
+    auto sql = MUST(String::formatted("DELETE FROM quarantine WHERE id = {}", quarantine_id));
+    auto statement = TRY(m_database->prepare_statement(sql));
+    m_database->execute_statement(statement, {});
+
+    dbgln("PolicyGraph: Deleted quarantine record (ID: {})", quarantine_id);
+    return {};
+}
+
+ErrorOr<Vector<Quarantine::QuarantineRecord>> PolicyGraph::query_quarantine_records(String const& where_clause)
+{
+    auto sql = MUST(String::formatted(
+        "SELECT id, original_path, quarantine_path, quarantine_reason, threat_score, threat_level, "
+        "quarantined_at, file_size, sha256_hash FROM quarantine {} ORDER BY quarantined_at DESC",
+        where_clause));
+
+    auto statement = TRY(m_database->prepare_statement(sql));
+
+    Vector<Quarantine::QuarantineRecord> records;
+
+    m_database->execute_statement(statement, [&](auto stmt_id) {
+        Quarantine::QuarantineRecord record;
+        record.id = m_database->result_column<i64>(stmt_id, 0);
+        record.original_path = MUST(String::from_byte_string(m_database->result_column<ByteString>(stmt_id, 1)));
+        record.quarantine_path = MUST(String::from_byte_string(m_database->result_column<ByteString>(stmt_id, 2)));
+        record.quarantine_reason = MUST(String::from_byte_string(m_database->result_column<ByteString>(stmt_id, 3)));
+        record.threat_score = static_cast<float>(m_database->result_column<double>(stmt_id, 4));
+        record.threat_level = static_cast<Sandbox::SandboxResult::ThreatLevel>(m_database->result_column<i32>(stmt_id, 5));
+        record.quarantined_at = UnixDateTime::from_seconds_since_epoch(m_database->result_column<i64>(stmt_id, 6));
+        record.file_size = static_cast<u64>(m_database->result_column<i64>(stmt_id, 7));
+        record.sha256_hash = MUST(String::from_byte_string(m_database->result_column<ByteString>(stmt_id, 8)));
+
+        MUST(records.try_append(record));
+    });
+
+    return records;
 }
 
 }

@@ -20,6 +20,15 @@
 
 namespace Sentinel {
 
+// Forward declarations
+namespace Quarantine {
+    struct QuarantineRecord;
+}
+
+}
+
+namespace Sentinel {
+
 // Policy cache wrapper using O(1) LRU cache
 class PolicyGraphCache {
 public:
@@ -165,6 +174,9 @@ public:
         i32 yara_score;               // 0-1000 (scaled from 0.0-1.0)
         i32 ml_score;                 // 0-1000 (scaled from 0.0-1.0)
         i32 behavioral_score;         // 0-1000 (scaled from 0.0-1.0)
+        i32 vt_score { 0 };           // 0-1000 (scaled from 0.0-1.0) - VirusTotal score
+        Vector<String> triggered_rules;      // YARA rules that matched
+        Vector<String> detected_behaviors;   // Behavioral indicators detected
         UnixDateTime analyzed_at;     // When analysis was performed
         UnixDateTime expires_at;      // When cache entry expires
     };
@@ -261,7 +273,46 @@ public:
     // Milestone 0.5 Phase 1d: Sandbox Verdict Caching
     ErrorOr<void> store_sandbox_verdict(SandboxVerdict const& verdict);
     ErrorOr<Optional<SandboxVerdict>> lookup_sandbox_verdict(String const& file_hash);
+    ErrorOr<void> invalidate_verdict(String const& file_hash);
+    ErrorOr<void> clear_verdict_cache();
     ErrorOr<void> cleanup_expired_verdicts();
+
+    // Helper: Calculate TTL based on threat level
+    // Clean: 30 days, Suspicious: 7 days, Malicious: 90 days, Critical: 365 days
+    static AK::Duration calculate_verdict_ttl(i32 threat_level);
+
+    // Milestone 0.5 Phase 2: IOC (Indicator of Compromise) Management
+    struct IOC {
+        enum class Type {
+            FileHash,
+            Domain,
+            IP,
+            URL
+        };
+
+        i64 id { -1 };
+        Type type;
+        String indicator;
+        Optional<String> description;
+        Vector<String> tags;
+        UnixDateTime created_at;
+        String source;  // "otx", "virustotal", "manual"
+    };
+
+    ErrorOr<i64> store_ioc(IOC const& ioc);
+    ErrorOr<Optional<IOC>> get_ioc(String const& indicator);
+    ErrorOr<Vector<IOC>> search_iocs(Optional<IOC::Type> type_filter, Optional<String> source_filter);
+    ErrorOr<void> delete_ioc(i64 ioc_id);
+    ErrorOr<u64> get_ioc_count();
+
+    // Conversion utilities for IOC types
+    static IOC::Type string_to_ioc_type(String const& type_str);
+    static String ioc_type_to_string(IOC::Type type);
+
+    // Milestone 0.5 Phase 1e: Quarantine Database Operations
+    ErrorOr<i64> insert_quarantine_record(Quarantine::QuarantineRecord const& record);
+    ErrorOr<void> delete_quarantine_record(i64 quarantine_id);
+    ErrorOr<Vector<Quarantine::QuarantineRecord>> query_quarantine_records(String const& where_clause);
 
 private:
     struct Statements {
@@ -334,7 +385,19 @@ private:
         // Milestone 0.5 Phase 1d: Sandbox Verdict Cache
         Database::StatementID store_sandbox_verdict { 0 };
         Database::StatementID lookup_sandbox_verdict { 0 };
+        Database::StatementID invalidate_verdict { 0 };
+        Database::StatementID clear_verdict_cache { 0 };
         Database::StatementID delete_expired_verdicts { 0 };
+
+        // Milestone 0.5 Phase 2: IOC Management
+        Database::StatementID store_ioc { 0 };
+        Database::StatementID get_ioc { 0 };
+        Database::StatementID search_iocs_all { 0 };
+        Database::StatementID search_iocs_by_type { 0 };
+        Database::StatementID search_iocs_by_source { 0 };
+        Database::StatementID search_iocs_by_type_and_source { 0 };
+        Database::StatementID delete_ioc { 0 };
+        Database::StatementID count_iocs { 0 };
     };
 
     PolicyGraph(NonnullRefPtr<Database::Database>, Statements);
