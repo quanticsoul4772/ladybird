@@ -218,7 +218,7 @@ npm test
 
 ## About Ladybird
 
-[Ladybird](https://ladybird.org) is a truly independent web browser using a novel engine based on web standards. Ladybird is in pre-alpha and suitable only for developers.
+This fork builds on [Ladybird](https://ladybird.org), a web browser built from scratch with its own rendering and JavaScript engines. Ladybird is pre-alpha software under active development.
 
 ### Core Libraries
 
