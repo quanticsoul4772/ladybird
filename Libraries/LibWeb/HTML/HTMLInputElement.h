@@ -76,7 +76,7 @@ public:
 
     StringView type() const;
     TypeAttributeState type_state() const { return m_type; }
-    WebIDL::ExceptionOr<void> set_type(String const&);
+    void set_type(String const&);
 
     String default_value() const { return get_attribute_value(HTML::AttributeNames::value); }
 
@@ -139,10 +139,10 @@ public:
     WebIDL::ExceptionOr<void> set_size(WebIDL::UnsignedLong value);
 
     WebIDL::UnsignedLong height() const;
-    WebIDL::ExceptionOr<void> set_height(WebIDL::UnsignedLong value);
+    void set_height(WebIDL::UnsignedLong value);
 
     WebIDL::UnsignedLong width() const;
-    WebIDL::ExceptionOr<void> set_width(WebIDL::UnsignedLong value);
+    void set_width(WebIDL::UnsignedLong value);
 
     struct SelectedCoordinate {
         int x { 0 };
@@ -287,6 +287,8 @@ private:
     virtual RefPtr<Gfx::ImmutableBitmap> current_image_bitmap_sized(Gfx::IntSize) const override;
     virtual void set_visible_in_viewport(bool) override;
     virtual GC::Ptr<DOM::Element const> to_html_element() const override { return *this; }
+    virtual size_t current_frame_index() const override { return 0; }
+    virtual GC::Ptr<HTML::DecodedImageData> decoded_image_data() const override { return image_data(); }
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;

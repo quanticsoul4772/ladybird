@@ -53,10 +53,10 @@ public:
     virtual RefPtr<Gfx::ImmutableBitmap> default_image_bitmap_sized(Gfx::IntSize) const override;
 
     WebIDL::UnsignedLong width() const;
-    WebIDL::ExceptionOr<void> set_width(WebIDL::UnsignedLong);
+    void set_width(WebIDL::UnsignedLong);
 
     WebIDL::UnsignedLong height() const;
-    WebIDL::ExceptionOr<void> set_height(WebIDL::UnsignedLong);
+    void set_height(WebIDL::UnsignedLong);
 
     unsigned natural_width() const;
     unsigned natural_height() const;
@@ -92,7 +92,7 @@ public:
     ImageRequest& current_request() { return *m_current_request; }
     ImageRequest const& current_request() const { return *m_current_request; }
 
-    size_t current_frame_index() const { return m_current_frame_index; }
+    virtual size_t current_frame_index() const override { return m_current_frame_index; }
 
     // https://html.spec.whatwg.org/multipage/images.html#upgrade-the-pending-request-to-the-current-request
     void upgrade_pending_request_to_current_request();
@@ -108,6 +108,7 @@ public:
     virtual RefPtr<Gfx::ImmutableBitmap> current_image_bitmap_sized(Gfx::IntSize) const override;
     virtual void set_visible_in_viewport(bool) override;
     virtual GC::Ptr<DOM::Element const> to_html_element() const override { return *this; }
+    virtual GC::Ptr<DecodedImageData> decoded_image_data() const override;
 
     virtual void visit_edges(Cell::Visitor&) override;
 
