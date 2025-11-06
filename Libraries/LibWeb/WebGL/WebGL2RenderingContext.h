@@ -12,13 +12,13 @@
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/WebGL/Types.h>
-#include <LibWeb/WebGL/WebGL2RenderingContextImpl.h>
+#include <LibWeb/WebGL/WebGL2RenderingContextOverloads.h>
 #include <LibWeb/WebGL/WebGLContextAttributes.h>
 
 namespace Web::WebGL {
 
 class WebGL2RenderingContext final : public Bindings::PlatformObject
-    , public WebGL2RenderingContextImpl {
+    , public WebGL2RenderingContextOverloads {
     WEB_PLATFORM_OBJECT(WebGL2RenderingContext, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(WebGL2RenderingContext);
 
@@ -53,6 +53,8 @@ public:
 
     virtual bool ext_texture_filter_anisotropic_extension_enabled() const override;
     virtual bool angle_instanced_arrays_extension_enabled() const override;
+    virtual bool oes_standard_derivatives_extension_enabled() const override;
+    virtual bool webgl_draw_buffers_extension_enabled() const override;
     virtual ReadonlySpan<WebIDL::UnsignedLong> enabled_compressed_texture_formats() const override;
 
 private:
@@ -82,8 +84,6 @@ private:
     // - clear, drawArrays, or drawElements has been called while the drawing buffer is the currently bound framebuffer
     bool m_should_present { true };
 
-    GLenum m_error { 0 };
-
     Vector<WebIDL::UnsignedLong> m_enabled_compressed_texture_formats;
 
     // Extensions
@@ -94,8 +94,6 @@ private:
     GC::Ptr<Extensions::EXTTextureNorm16> m_ext_texture_norm16;
     GC::Ptr<Extensions::WebGLCompressedTextureS3tc> m_webgl_compressed_texture_s3tc_extension;
     GC::Ptr<Extensions::WebGLCompressedTextureS3tcSrgb> m_webgl_compressed_texture_s3tc_srgb_extension;
-
-    virtual void set_error(GLenum error) override;
 };
 
 }

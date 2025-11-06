@@ -37,7 +37,7 @@ public:
     virtual void form_associated_element_was_removed(DOM::Node*) override;
 
     String data() const;
-    void set_data(String const& data) { MUST(set_attribute(HTML::AttributeNames::data, data)); }
+    void set_data(String const& data);
 
     String type() const { return get_attribute_value(HTML::AttributeNames::type); }
 
@@ -84,6 +84,8 @@ private:
     virtual RefPtr<Gfx::ImmutableBitmap> current_image_bitmap_sized(Gfx::IntSize) const override;
     virtual void set_visible_in_viewport(bool) override;
     virtual GC::Ptr<DOM::Element const> to_html_element() const override { return *this; }
+    virtual size_t current_frame_index() const override { return 0; }
+    virtual GC::Ptr<DecodedImageData> decoded_image_data() const override { return image_data(); }
 
     GC::Ptr<DecodedImageData> image_data() const;
 

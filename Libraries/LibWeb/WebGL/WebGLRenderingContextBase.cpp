@@ -166,11 +166,10 @@ Optional<WebGLRenderingContextBase::ConvertedTexture> WebGLRenderingContextBase:
     auto buffer = MUST(ByteBuffer::create_zeroed(buffer_pitch.value() * height));
 
     if (width > 0 && height > 0) {
-        // FIXME: Respect UNPACK_PREMULTIPLY_ALPHA_WEBGL
         // FIXME: Respect unpackColorSpace
         auto skia_format = opengl_format_and_type_to_skia_color_type(format, type);
         auto color_space = SkColorSpace::MakeSRGB();
-        auto image_info = SkImageInfo::Make(width, height, skia_format, SkAlphaType::kPremul_SkAlphaType, color_space);
+        auto image_info = SkImageInfo::Make(width, height, skia_format, m_unpack_premultiply_alpha ? SkAlphaType::kPremul_SkAlphaType : SkAlphaType::kUnpremul_SkAlphaType, color_space);
         auto surface = SkSurfaces::WrapPixels(image_info, buffer.data(), buffer_pitch.value());
         VERIFY(surface);
         auto surface_canvas = surface->getCanvas();
@@ -194,6 +193,30 @@ Optional<WebGLRenderingContextBase::ConvertedTexture> WebGLRenderingContextBase:
         .width = width,
         .height = height,
     };
+}
+
+// TODO: The glGetError spec allows for queueing errors which is something we should probably do, for now
+//       this just keeps track of one error which is also fine by the spec
+GLenum WebGLRenderingContextBase::get_error_value()
+{
+    if (m_error == GL_NO_ERROR)
+        return glGetError();
+
+    auto error = m_error;
+    m_error = GL_NO_ERROR;
+    return error;
+}
+
+void WebGLRenderingContextBase::set_error(GLenum error)
+{
+    if (m_error != GL_NO_ERROR)
+        return;
+
+    auto context_error = glGetError();
+    if (context_error != GL_NO_ERROR)
+        m_error = context_error;
+    else
+        m_error = error;
 }
 
 }

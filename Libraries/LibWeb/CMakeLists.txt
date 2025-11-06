@@ -762,7 +762,6 @@ set(SOURCES
     Loader/GeneratedPagesLoader.cpp
     Loader/LoadRequest.cpp
     Loader/ProxyMappings.cpp
-    Loader/Resource.cpp
     Loader/ResourceLoader.cpp
     MathML/AttributeNames.cpp
     MathML/MathMLElement.cpp
@@ -1036,6 +1035,7 @@ set(SOURCES
     WebGL/Extensions/EXTRenderSnorm.cpp
     WebGL/Extensions/EXTTextureFilterAnisotropic.cpp
     WebGL/Extensions/EXTTextureNorm16.cpp
+    WebGL/Extensions/OESStandardDerivatives.cpp
     WebGL/Extensions/OESVertexArrayObject.cpp
     WebGL/Extensions/WebGLCompressedTextureS3tc.cpp
     WebGL/Extensions/WebGLCompressedTextureS3tcSrgb.cpp
@@ -1044,6 +1044,7 @@ set(SOURCES
     WebGL/OpenGLContext.cpp
     WebGL/WebGL2RenderingContext.cpp
     WebGL/WebGL2RenderingContextImpl.cpp
+    WebGL/WebGL2RenderingContextOverloads.cpp
     WebGL/WebGLActiveInfo.cpp
     WebGL/WebGLBuffer.cpp
     WebGL/WebGLContextAttributes.cpp
@@ -1056,6 +1057,7 @@ set(SOURCES
     WebGL/WebGLRenderingContext.cpp
     WebGL/WebGLRenderingContextBase.cpp
     WebGL/WebGLRenderingContextImpl.cpp
+    WebGL/WebGLRenderingContextOverloads.cpp
     WebGL/WebGLSampler.cpp
     WebGL/WebGLShader.cpp
     WebGL/WebGLShaderPrecisionFormat.cpp

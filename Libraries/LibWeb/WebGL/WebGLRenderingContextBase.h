@@ -9,13 +9,25 @@
 #include <LibJS/Runtime/DataView.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/WebGL/Types.h>
 #include <LibWeb/WebIDL/Buffers.h>
 #include <LibWeb/WebIDL/Types.h>
+
+#define SET_ERROR_VALUE_IF_ERROR(expression, error_value) \
+    ({                                                    \
+        auto maybe_error = expression;                    \
+        if (maybe_error.is_error()) [[unlikely]] {        \
+            set_error(error_value);                       \
+            return;                                       \
+        }                                                 \
+        maybe_error.release_value();                      \
+    })
 
 namespace Web::WebGL {
 
 static constexpr int COMPRESSED_TEXTURE_FORMATS = 0x86A3;
 static constexpr int UNPACK_FLIP_Y_WEBGL = 0x9240;
+static constexpr int UNPACK_PREMULTIPLY_ALPHA_WEBGL = 0x9241;
 static constexpr int MAX_CLIENT_WAIT_TIMEOUT_WEBGL = 0x9247;
 
 // NOTE: This is the Variant created by the IDL wrapper generator, and needs to be updated accordingly.
@@ -34,6 +46,8 @@ public:
     virtual OpenGLContext& context() = 0;
     virtual bool ext_texture_filter_anisotropic_extension_enabled() const = 0;
     virtual bool angle_instanced_arrays_extension_enabled() const = 0;
+    virtual bool oes_standard_derivatives_extension_enabled() const = 0;
+    virtual bool webgl_draw_buffers_extension_enabled() const = 0;
     virtual ReadonlySpan<WebIDL::UnsignedLong> enabled_compressed_texture_formats() const = 0;
     virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const = 0;
 
@@ -117,11 +131,33 @@ public:
     Optional<ConvertedTexture> read_and_pixel_convert_texture_image_source(TexImageSource const& source, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, Optional<int> destination_width = OptionalNone {}, Optional<int> destination_height = OptionalNone {});
 
 protected:
+    static Vector<GLchar> null_terminated_string(StringView string)
+    {
+        Vector<GLchar> result;
+        result.ensure_capacity(string.length() + 1);
+        for (auto c : string.bytes())
+            result.append(c);
+        result.append('\0');
+        return result;
+    }
+
+    GLenum get_error_value();
+    void set_error(GLenum error);
+
     // UNPACK_FLIP_Y_WEBGL of type boolean
     //      If set, then during any subsequent calls to texImage2D or texSubImage2D, the source data is flipped along
     //      the vertical axis, so that conceptually the last row is the first one transferred. The initial value is false.
     //      Any non-zero value is interpreted as true.
     bool m_unpack_flip_y { false };
+
+    // UNPACK_PREMULTIPLY_ALPHA_WEBGL of type boolean
+    //      If set, then during any subsequent calls to texImage2D or texSubImage2D, the alpha channel of the source data,
+    //      if present, is multiplied into the color channels during the data transfer. The initial value is false.
+    //      Any non-zero value is interpreted as true.
+    bool m_unpack_premultiply_alpha { false };
+
+private:
+    GLenum m_error { 0 };
 };
 
 }
