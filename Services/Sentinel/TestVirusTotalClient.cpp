@@ -4,6 +4,7 @@
  */
 
 #include <LibTest/TestCase.h>
+#include <LibCore/System.h>
 #include <AK/Time.h>
 #include "ThreatIntelligence/RateLimiter.h"
 #include "ThreatIntelligence/VirusTotalClient.h"

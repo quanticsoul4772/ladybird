@@ -172,7 +172,7 @@ endif()
 # Find ICU for Unicode homograph detection
 find_package(ICU REQUIRED COMPONENTS uc i18n)
 
-target_link_libraries(sentinelservice PUBLIC AK LibCore LibCrypto LibDatabase LibFileSystem LibIPC LibURL ICU::uc ICU::i18n)
+target_link_libraries(sentinelservice PUBLIC AK LibCore LibCrypto LibDatabase LibFileSystem LibIPC LibThreading LibURL ICU::uc ICU::i18n)
 target_link_libraries(Sentinel PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestPolicyGraph PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestPhase3Integration PRIVATE sentinelservice LibCore LibMain LibFileSystem)

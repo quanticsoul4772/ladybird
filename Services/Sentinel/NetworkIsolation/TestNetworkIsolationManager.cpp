@@ -6,6 +6,9 @@
 
 #include <LibTest/TestCase.h>
 #include <Services/Sentinel/NetworkIsolation/NetworkIsolationManager.h>
+#include <Services/Sentinel/NetworkIsolation/IPTablesBackend.h>
+#include <Services/Sentinel/NetworkIsolation/NFTablesBackend.h>
+#include <Services/Sentinel/NetworkIsolation/ProcessMonitor.h>
 #include <unistd.h>
 #include <sys/wait.h>
 
@@ -19,7 +22,7 @@ TEST_CASE(firewall_backend_detection)
 
     if (manager_result.is_error()) {
         // It's okay if no firewall backend is available in test environment
-        EXPECT(manager_result.error().string_literal().contains("No supported firewall"));
+        EXPECT(manager_result.error().string_literal().contains("No supported firewall"sv));
         return;
     }
 
@@ -156,7 +159,7 @@ TEST_CASE(critical_process_blocking_prevention)
     auto result = manager->isolate_process(1, "Test"_string);
 
     EXPECT(result.is_error());
-    EXPECT(result.error().string_literal().contains("critical"));
+    EXPECT(result.error().string_literal().contains("critical"sv));
 }
 
 TEST_CASE(process_isolation_and_restoration)
