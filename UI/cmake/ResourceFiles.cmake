@@ -53,7 +53,6 @@ set(128x128_ICONS
     app-browser-dark.png
 )
 set(BROWSER_ICONS
-    clear-cache.png
     cookie.png
     dom-tree.png
     local-storage.png

@@ -78,7 +78,8 @@ private:
 
     virtual void ensure_connection(URL::URL url, ::RequestServer::CacheLevel cache_level) override;
 
-    virtual void clear_cache() override;
+    virtual void estimate_cache_size_accessed_since(u64 cache_size_estimation_id, UnixDateTime since) override;
+    virtual void remove_cache_entries_accessed_since(UnixDateTime since) override;
 
     // Tor network control IPC handlers (with page_id for per-tab isolation)
     virtual void enable_tor(u64 page_id, ByteString circuit_id) override;

@@ -337,7 +337,7 @@ ErrorOr<void> FormatBuilder::put_u64(
         TRY(put_padding(fill, used_by_right_padding));
     } else if (align == Align::Center) {
         auto const used_by_left_padding = used_by_padding / 2;
-        auto const used_by_right_padding = ceil_div<size_t, size_t>(used_by_padding, 2);
+        auto const used_by_right_padding = used_by_padding - used_by_left_padding;
 
         TRY(put_padding(fill, used_by_left_padding));
         TRY(put_prefix());
@@ -1160,14 +1160,14 @@ ErrorOr<void> Formatter<Error>::format_windows_error(FormatBuilder& builder, Err
         return Formatter<StringView>::format(builder, string->view());
     }
 
-    TCHAR* message = nullptr;
+    TCHAR message[256] = {};
     u32 size = FormatMessage(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         nullptr,
         static_cast<DWORD>(code),
         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
         message,
-        0,
+        256,
         nullptr);
     if (size == 0) {
         auto format_error = GetLastError();
@@ -1175,7 +1175,6 @@ ErrorOr<void> Formatter<Error>::format_windows_error(FormatBuilder& builder, Err
     }
 
     auto& string_in_map = windows_errors.ensure(code, [message, size] { return ByteString { message, size }; });
-    LocalFree(message);
     return Formatter<StringView>::format(builder, string_in_map.view());
 }
 #else

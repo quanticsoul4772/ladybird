@@ -217,6 +217,7 @@ set(SOURCES
     CSS/StyleProperty.cpp
     CSS/StylePropertyMapReadOnly.cpp
     CSS/StylePropertyMap.cpp
+    CSS/StyleScope.cpp
     CSS/StyleSheet.cpp
     CSS/StyleSheetIdentifier.cpp
     CSS/StyleSheetList.cpp
@@ -904,12 +905,14 @@ set(SOURCES
     SVG/SVGAnimatedEnumeration.cpp
     SVG/SVGAnimatedLength.cpp
     SVG/SVGAnimatedNumber.cpp
+    SVG/SVGAnimatedNumberList.cpp
     SVG/SVGAnimatedRect.cpp
     SVG/SVGAnimatedString.cpp
     SVG/SVGAnimatedTransformList.cpp
     SVG/SVGAnimationElement.cpp
     SVG/SVGCircleElement.cpp
     SVG/SVGClipPathElement.cpp
+    SVG/SVGComponentTransferFunctionElement.cpp
     SVG/SVGDecodedImageData.cpp
     SVG/SVGDefsElement.cpp
     SVG/SVGDescElement.cpp
@@ -917,12 +920,18 @@ set(SOURCES
     SVG/SVGEllipseElement.cpp
     SVG/SVGFEBlendElement.cpp
     SVG/SVGFEColorMatrixElement.cpp
+    SVG/SVGFEComponentTransferElement.cpp
     SVG/SVGFECompositeElement.cpp
     SVG/SVGFEFloodElement.cpp
+    SVG/SVGFEFuncAElement.cpp
+    SVG/SVGFEFuncBElement.cpp
+    SVG/SVGFEFuncGElement.cpp
+    SVG/SVGFEFuncRElement.cpp
     SVG/SVGFEGaussianBlurElement.cpp
     SVG/SVGFEImageElement.cpp
     SVG/SVGFEMergeElement.cpp
     SVG/SVGFEMergeNodeElement.cpp
+    SVG/SVGFEMorphologyElement.cpp
     SVG/SVGFEOffsetElement.cpp
     SVG/SVGFilterElement.cpp
     SVG/SVGFilterPrimitiveStandardAttributes.cpp
@@ -936,8 +945,11 @@ set(SOURCES
     SVG/SVGLength.cpp
     SVG/SVGLinearGradientElement.cpp
     SVG/SVGLineElement.cpp
+    SVG/SVGList.cpp
     SVG/SVGMaskElement.cpp
     SVG/SVGMetadataElement.cpp
+    SVG/SVGNumber.cpp
+    SVG/SVGNumberList.cpp
     SVG/SVGPathElement.cpp
     SVG/SVGPolygonElement.cpp
     SVG/SVGPolylineElement.cpp

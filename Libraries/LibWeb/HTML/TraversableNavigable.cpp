@@ -380,7 +380,7 @@ static void deactivate_a_document_for_cross_document_navigation(GC::Ref<DOM::Doc
 
     // 5. If potentiallyTriggerViewTransition is false, then:
     if (!potentially_trigger_view_transition) {
-        // FIXME 1. Let firePageSwapBeforeUnload be the following step
+        // FIXME: 1. Let firePageSwapBeforeUnload be the following step
         //            1. Fire the pageswap event given displayedDocument, targetEntry, navigationType, and null.
 
         // 2. Set the ongoing navigation for navigable to null.
@@ -652,12 +652,11 @@ TraversableNavigable::HistoryStepResult TraversableNavigable::apply_the_history_
                 //    run afterDocumentPopulated.
                 Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(this->heap(), [populated_target_entry, potentially_target_specific_source_snapshot_params, target_snapshot_params, this, allow_POST, navigable, after_document_populated = GC::create_function(this->heap(), move(after_document_populated)), user_involvement] {
                     navigable->populate_session_history_entry_document(populated_target_entry, *potentially_target_specific_source_snapshot_params, target_snapshot_params, user_involvement, {}, Navigable::NullOrError {}, ContentSecurityPolicy::Directives::Directive::NavigationType::Other, allow_POST, GC::create_function(this->heap(), [this, after_document_populated, populated_target_entry]() mutable {
-                                 VERIFY(active_window());
-                                 queue_global_task(Task::Source::NavigationAndTraversal, *active_window(), GC::create_function(this->heap(), [after_document_populated, populated_target_entry]() mutable {
-                                     after_document_populated->function()(true, populated_target_entry);
-                                 }));
-                             }))
-                        .release_value_but_fixme_should_propagate_errors();
+                        VERIFY(active_window());
+                        queue_global_task(Task::Source::NavigationAndTraversal, *active_window(), GC::create_function(this->heap(), [after_document_populated, populated_target_entry]() mutable {
+                            after_document_populated->function()(true, populated_target_entry);
+                        }));
+                    }));
                 }));
             }
             // Otherwise, run afterDocumentPopulated immediately.

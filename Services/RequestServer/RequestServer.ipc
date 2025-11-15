@@ -25,7 +25,8 @@ endpoint RequestServer
 
     ensure_connection(URL::URL url, ::RequestServer::CacheLevel cache_level) =|
 
-    clear_cache() =|
+    estimate_cache_size_accessed_since(u64 cache_size_estimation_id, UnixDateTime since) =|
+    remove_cache_entries_accessed_since(UnixDateTime since) =|
 
     // Tor network control (with page_id for per-tab circuit isolation)
     enable_tor(u64 page_id, ByteString circuit_id) =|
