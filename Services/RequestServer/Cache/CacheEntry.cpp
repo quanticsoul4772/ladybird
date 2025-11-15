@@ -15,11 +15,6 @@
 
 namespace RequestServer {
 
-static LexicalPath path_for_cache_key(LexicalPath const& cache_directory, u64 cache_key)
-{
-    return cache_directory.append(MUST(String::formatted("{:016x}", cache_key)));
-}
-
 ErrorOr<CacheHeader> CacheHeader::read_from_stream(Stream& stream)
 {
     CacheHeader header;
@@ -121,7 +116,7 @@ ErrorOr<void> CacheEntryWriter::write_status_and_reason(u32 status_code, Optiona
         if (!is_cacheable(status_code, response_headers))
             return Error::from_string_literal("Response is not cacheable");
 
-        auto freshness_lifetime = calculate_freshness_lifetime(response_headers);
+        auto freshness_lifetime = calculate_freshness_lifetime(status_code, response_headers);
         auto current_age = calculate_age(response_headers, m_request_time, m_response_time);
 
         // We can cache already-expired responses if there are other cache directives that allow us to revalidate the

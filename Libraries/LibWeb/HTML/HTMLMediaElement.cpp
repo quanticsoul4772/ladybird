@@ -1098,7 +1098,7 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::fetch_resource(URL::URL const& url_r
             response->body()->fully_read(realm, update_media, empty_algorithm, GC::Ref { global });
         };
 
-        m_fetch_controller = TRY(Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input))));
+        m_fetch_controller = Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
         break;
     }
 
@@ -1268,8 +1268,8 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::process_media_data(Function<void(Str
         if (enable == TriState::True)
             audio_track->set_enabled(true);
 
-        // AD-HOC(ish): According to https://dev.w3.org/html5/html-sourcing-inband-tracks/, kind should be set according to format, and the following criteria within
-        //              the specified formats.
+        // NB: According to https://dev.w3.org/html5/html-sourcing-inband-tracks/, kind should be set according to format, and the following criteria within
+        //     the specified formats.
         // WebM:
         //     - "main": the FlagDefault element is set on the track
         //     - "translation": not first audio (video) track
@@ -1327,7 +1327,7 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::process_media_data(Function<void(Str
         if (enable == TriState::True)
             video_track->set_selected(true);
 
-        // AD-HOC(ish): See the comment regarding AudioTrack.kind above with regard to https://dev.w3.org/html5/html-sourcing-inband-tracks/.
+        // NB: See the comment regarding AudioTrack.kind above with regard to https://dev.w3.org/html5/html-sourcing-inband-tracks/.
         video_track->set_kind(enable == TriState::True ? "main"_utf16 : "translation"_utf16);
 
         // 7. Fire an event named addtrack at this VideoTrackList object, using TrackEvent, with the track attribute initialized to the new VideoTrack object.

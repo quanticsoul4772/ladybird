@@ -51,7 +51,7 @@ target_include_directories(requestserverservice PRIVATE ${LADYBIRD_SOURCE_DIR}/S
 target_link_libraries(RequestServer PRIVATE requestserverservice)
 target_link_libraries(TestSecurityTap PRIVATE requestserverservice)
 target_link_libraries(TestTrafficMonitor PRIVATE requestserverservice)
-target_link_libraries(requestserverservice PUBLIC LibCore LibDatabase LibDNS LibCrypto LibFileSystem LibIPC LibMain LibTLS LibWebSocket LibURL LibTextCodec LibThreading CURL::libcurl sentinelservice)
+target_link_libraries(requestserverservice PUBLIC LibCore LibDatabase LibDNS LibCrypto LibFileSystem LibIPC LibMain LibRequests LibTLS LibWebSocket LibURL LibTextCodec LibThreading CURL::libcurl sentinelservice)
 target_link_libraries(requestserverservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
 
 if (WIN32)
