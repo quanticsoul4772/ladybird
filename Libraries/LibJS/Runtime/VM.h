@@ -58,8 +58,9 @@ public:
     static NonnullRefPtr<VM> create();
     ~VM();
 
-    GC::Heap& heap() { return m_heap; }
-    GC::Heap const& heap() const { return m_heap; }
+    static VM& the();
+
+    GC::Heap& heap() const { return const_cast<GC::Heap&>(m_heap); }
 
     Bytecode::Interpreter& bytecode_interpreter() { return *m_bytecode_interpreter; }
 
@@ -202,7 +203,7 @@ public:
 
     // 5.2.3.2 Throw an Exception, https://tc39.es/ecma262/#sec-throw-an-exception
     template<typename T, typename... Args>
-    Completion throw_completion(Args&&... args)
+    COLD Completion throw_completion(Args&&... args)
     {
         auto& realm = *current_realm();
         auto completion = T::create(realm, forward<Args>(args)...);
@@ -211,13 +212,13 @@ public:
     }
 
     template<typename T>
-    Completion throw_completion(ErrorType const& type)
+    COLD Completion throw_completion(ErrorType const& type)
     {
         return throw_completion<T>(type.message());
     }
 
     template<typename T, typename... Args>
-    Completion throw_completion(ErrorType const& type, Args&&... args)
+    COLD Completion throw_completion(ErrorType const& type, Args&&... args)
     {
         return throw_completion<T>(Utf16String::formatted(type.format(), forward<Args>(args)...));
     }
@@ -295,7 +296,7 @@ public:
     Function<ThrowCompletionOr<void>(Realm&, NonnullOwnPtr<ExecutionContext>, ShadowRealm&)> host_initialize_shadow_realm;
     Function<Crypto::SignedBigInteger(Object const& global)> host_system_utc_epoch_nanoseconds;
 
-    Vector<StackTraceElement> stack_trace() const;
+    [[nodiscard]] GC::ConservativeVector<StackTraceElement> stack_trace() const;
 
 private:
     using ErrorMessages = AK::Array<Utf16String, to_underlying(ErrorMessage::__Count)>;
@@ -315,6 +316,8 @@ private:
     void set_well_known_symbols(WellKnownSymbols well_known_symbols) { m_well_known_symbols = move(well_known_symbols); }
 
     void run_queued_promise_jobs_impl();
+
+    static VM* s_the;
 
     HashMap<String, GC::Ptr<PrimitiveString>> m_string_cache;
     HashMap<Utf16String, GC::Ptr<PrimitiveString>> m_utf16_string_cache;
@@ -375,5 +378,7 @@ template<typename GlobalObjectType, typename... Args>
         nullptr));
     return root_execution_context;
 }
+
+ALWAYS_INLINE VM& Cell::vm() const { return VM::the(); }
 
 }

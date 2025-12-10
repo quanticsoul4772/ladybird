@@ -1,5 +1,5 @@
 {
-  "builtin-baseline": "b0b3de1b1a0aa4b8f2822460aa7f42f991629b3f",
+  "builtin-baseline": "4c4abc2e8727221ede31021349386dac674309b0",
   "dependencies": [
     {
       "name": "angle",
@@ -56,7 +56,7 @@
     },
     {
       "name": "fontconfig",
-      "platform": "linux | freebsd | openbsd | osx | windows"
+      "platform": "linux | freebsd | openbsd | osx"
     },
     {
       "name": "harfbuzz",
@@ -175,7 +175,17 @@
     },
     {
       "name": "skia",
-      "platform": "linux | freebsd | openbsd | windows",
+      "platform": "windows",
+      "features": [
+        "freetype",
+        "harfbuzz",
+        "icu",
+        "vulkan"
+      ]
+    },
+    {
+      "name": "skia",
+      "platform": "linux | freebsd | openbsd",
       "features": [
         "freetype",
         "fontconfig",
@@ -238,7 +248,7 @@
     },
     {
       "name": "icu",
-      "version": "76.1#0"
+      "version": "78.1#0"
     },
     {
       "name": "libjpeg-turbo",
@@ -262,11 +272,15 @@
     },
     {
       "name": "libavif",
-      "version": "1.3.0#0"
+      "version": "1.3.0#1"
     },
     {
       "name": "libwebp",
       "version": "1.6.0#1"
+    },
+    {
+      "name": "libxml2",
+      "version": "2.13.8#1"
     },
     {
       "name": "mman",

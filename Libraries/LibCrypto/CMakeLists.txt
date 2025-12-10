@@ -20,6 +20,7 @@ set(SOURCES
     Hash/PBKDF2.cpp
     Hash/SHA1.cpp
     Hash/SHA2.cpp
+    Hash/SHA3.cpp
     PK/RSA.cpp
     PK/EC.cpp
     SecureRandom.cpp

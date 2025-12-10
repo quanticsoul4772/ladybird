@@ -21,6 +21,7 @@ String DisplayList::dump() const
     int indentation = 0;
     for (auto const& command_list_item : m_commands) {
         auto const& command = command_list_item.command;
+        auto clip_frame = command_list_item.clip_frame;
 
         command.visit([&indentation](auto const& command) {
             if constexpr (requires { command.nesting_level_change; }) {
@@ -32,6 +33,18 @@ String DisplayList::dump() const
         if (indentation > 0)
             builder.append(MUST(String::repeated("  "_string, indentation)));
         command.visit([&builder](auto const& cmd) { cmd.dump(builder); });
+
+        if (clip_frame && clip_frame->clip_rects().size() > 0) {
+            builder.append(", clip_rects=["sv);
+            auto first = true;
+            for (auto const& clip_rect : clip_frame->clip_rects()) {
+                if (!first)
+                    builder.append(", "sv);
+                first = false;
+                builder.appendff("{}", clip_rect.rect);
+            }
+            builder.append("]"sv);
+        }
         builder.append('\n');
 
         command.visit([&indentation](auto const& command) {
@@ -258,7 +271,7 @@ void DisplayListPlayer::execute_impl(DisplayList& display_list, ScrollStateSnaps
         else HANDLE_COMMAND(PaintNestedDisplayList, paint_nested_display_list)
         else HANDLE_COMMAND(ApplyOpacity, apply_opacity)
         else HANDLE_COMMAND(ApplyCompositeAndBlendingOperator, apply_composite_and_blending_operator)
-        else HANDLE_COMMAND(ApplyFilter, apply_filters)
+        else HANDLE_COMMAND(ApplyFilter, apply_filter)
         else HANDLE_COMMAND(ApplyTransform, apply_transform)
         else HANDLE_COMMAND(ApplyMaskBitmap, apply_mask_bitmap)
         else VERIFY_NOT_REACHED();

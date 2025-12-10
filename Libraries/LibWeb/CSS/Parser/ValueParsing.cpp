@@ -60,10 +60,12 @@
 #include <LibWeb/CSS/StyleValues/PositionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RGBColorStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RadialGradientStyleValue.h>
+#include <LibWeb/CSS/StyleValues/RandomValueSharingStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RatioStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RectStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RepeatStyleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ResolutionStyleValue.h>
+#include <LibWeb/CSS/StyleValues/ScrollFunctionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StringStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/CSS/StyleValues/SuperellipseStyleValue.h>
@@ -72,19 +74,20 @@
 #include <LibWeb/CSS/StyleValues/URLStyleValue.h>
 #include <LibWeb/CSS/StyleValues/UnicodeRangeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/UnresolvedStyleValue.h>
+#include <LibWeb/CSS/StyleValues/ViewFunctionStyleValue.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 
 namespace Web::CSS::Parser {
 
-RefPtr<StyleValue const> Parser::parse_comma_separated_value_list(TokenStream<ComponentValue>& tokens, ParseFunction parse_one_value)
+RefPtr<StyleValueList const> Parser::parse_comma_separated_value_list(TokenStream<ComponentValue>& tokens, ParseFunction parse_one_value)
 {
     tokens.discard_whitespace();
     auto first = parse_one_value(tokens);
     tokens.discard_whitespace();
-    if (!first || !tokens.has_next_token())
-        return first;
+    if (!first)
+        return nullptr;
 
     StyleValueVector values;
     values.append(first.release_nonnull());
@@ -1377,6 +1380,43 @@ RefPtr<StyleValue const> Parser::parse_time_percentage_value(TokenStream<Compone
     return nullptr;
 }
 
+// https://drafts.csswg.org/scroll-animations-1/#view-timeline-inset
+RefPtr<StyleValue const> Parser::parse_view_timeline_inset_value(TokenStream<ComponentValue>& tokens)
+{
+    // [ [ auto | <length-percentage> ]{1,2} ]
+    auto transaction = tokens.begin_transaction();
+
+    StyleValueVector inset_values;
+
+    while (tokens.has_next_token() && inset_values.size() < 2) {
+        tokens.discard_whitespace();
+
+        if (tokens.next_token().is_ident("auto"sv)) {
+            tokens.discard_a_token(); // auto
+            inset_values.append(KeywordStyleValue::create(Keyword::Auto));
+            continue;
+        }
+
+        if (auto length_percentage = parse_length_percentage_value(tokens)) {
+            inset_values.append(length_percentage.release_nonnull());
+            continue;
+        }
+
+        break;
+    }
+
+    if (inset_values.is_empty())
+        return nullptr;
+
+    transaction.commit();
+
+    // If the second value is omitted, it is set to the first.
+    if (inset_values.size() == 1)
+        return StyleValueList::create({ inset_values[0], inset_values[0] }, StyleValueList::Separator::Space);
+
+    return StyleValueList::create(move(inset_values), StyleValueList::Separator::Space);
+}
+
 RefPtr<StyleValue const> Parser::parse_keyword_value(TokenStream<ComponentValue>& tokens)
 {
     tokens.discard_whitespace();
@@ -1390,6 +1430,113 @@ RefPtr<StyleValue const> Parser::parse_keyword_value(TokenStream<ComponentValue>
     }
 
     return nullptr;
+}
+
+// https://drafts.csswg.org/scroll-animations-1/#funcdef-scroll
+RefPtr<ScrollFunctionStyleValue const> Parser::parse_scroll_function_value(TokenStream<ComponentValue>& tokens)
+{
+    // <scroll()> = scroll( [ <scroller> || <axis> ]? )
+    auto transaction = tokens.begin_transaction();
+    auto const& function_token = tokens.consume_a_token();
+    if (!function_token.is_function("scroll"sv))
+        return nullptr;
+
+    Optional<Scroller> scroller;
+    Optional<Axis> axis;
+
+    auto argument_tokens = TokenStream { function_token.function().value };
+
+    while (argument_tokens.has_next_token()) {
+        tokens.discard_whitespace();
+
+        if (!argument_tokens.has_next_token())
+            break;
+
+        auto keyword_value = parse_keyword_value(argument_tokens);
+
+        if (!keyword_value)
+            return nullptr;
+
+        if (auto maybe_scroller = keyword_to_scroller(keyword_value->to_keyword()); maybe_scroller.has_value()) {
+            if (scroller.has_value())
+                return nullptr;
+
+            scroller = maybe_scroller;
+            continue;
+        }
+
+        if (auto maybe_axis = keyword_to_axis(keyword_value->to_keyword()); maybe_axis.has_value()) {
+            if (axis.has_value())
+                return nullptr;
+
+            axis = maybe_axis;
+            continue;
+        }
+
+        return nullptr;
+    }
+
+    // By default, scroll() references the block axis of the nearest ancestor scroll container.
+    if (!scroller.has_value())
+        scroller = Scroller::Nearest;
+
+    if (!axis.has_value())
+        axis = Axis::Block;
+
+    transaction.commit();
+    return ScrollFunctionStyleValue::create(scroller.value(), axis.value());
+}
+
+// https://drafts.csswg.org/scroll-animations-1/#funcdef-view
+RefPtr<ViewFunctionStyleValue const> Parser::parse_view_function_value(TokenStream<ComponentValue>& tokens)
+{
+    // <view()> = view( [ <axis> || <'view-timeline-inset'> ]? )
+    auto transaction = tokens.begin_transaction();
+    auto const& function_token = tokens.consume_a_token();
+    if (!function_token.is_function("view"sv))
+        return nullptr;
+
+    auto context_guard = push_temporary_value_parsing_context(FunctionContext { "view"sv });
+
+    Optional<Axis> axis;
+    RefPtr<StyleValue const> inset;
+
+    auto argument_tokens = TokenStream { function_token.function().value };
+
+    while (argument_tokens.has_next_token()) {
+        argument_tokens.discard_whitespace();
+
+        if (!argument_tokens.has_next_token())
+            break;
+
+        if (auto inset_value = parse_view_timeline_inset_value(argument_tokens); inset_value) {
+            if (inset)
+                return nullptr;
+
+            inset = inset_value;
+            continue;
+        }
+
+        if (auto keyword_value = parse_keyword_value(argument_tokens); keyword_value && keyword_to_axis(keyword_value->to_keyword()).has_value()) {
+            if (axis.has_value())
+                return nullptr;
+
+            axis = keyword_to_axis(keyword_value->to_keyword());
+            continue;
+        }
+
+        return nullptr;
+    }
+
+    // By default, view() references the block axis
+    if (!axis.has_value())
+        axis = Axis::Block;
+
+    if (!inset)
+        inset = StyleValueList::create({ KeywordStyleValue::create(Keyword::Auto), KeywordStyleValue::create(Keyword::Auto) }, StyleValueList::Separator::Space);
+
+    transaction.commit();
+    return ViewFunctionStyleValue::create(axis.value(), inset.release_nonnull());
 }
 
 // https://www.w3.org/TR/CSS2/visufx.html#value-def-shape
@@ -2135,6 +2282,7 @@ RefPtr<StyleValue const> Parser::parse_color_mix_function(TokenStream<ComponentV
 
     // color-mix() = color-mix( <color-interpolation-method> , [ <color> && <percentage [0,100]>? ]#)
     // FIXME: Update color-mix to accept 1+ colors instead of exactly 2.
+    // FIXME: <color-interpolation-method> is optional in the current spec.
     auto transaction = tokens.begin_transaction();
     tokens.discard_whitespace();
 
@@ -2382,7 +2530,7 @@ RefPtr<StyleValue const> Parser::parse_corner_shape_value(TokenStream<ComponentV
     }
 
     if (token.is_function("superellipse"sv)) {
-        // superellipse() = superellipse(<number [-∞,∞]> | infinity | -infinity)
+        // superellipse() = superellipse(<number> | infinity | -infinity)
         auto const& function = token.function();
 
         auto context_guard = push_temporary_value_parsing_context(FunctionContext { function.name });
@@ -3231,37 +3379,29 @@ RefPtr<URLStyleValue const> Parser::parse_url_value(TokenStream<ComponentValue>&
 }
 
 // https://www.w3.org/TR/css-shapes-1/#typedef-shape-radius
-Optional<ShapeRadius> Parser::parse_shape_radius(TokenStream<ComponentValue>& tokens)
+RefPtr<StyleValue const> Parser::parse_shape_radius(TokenStream<ComponentValue>& tokens)
 {
     // FIXME: <shape-radius> has been replaced <radial-size> as defined in CSS Images:
     //        https://drafts.csswg.org/css-images-3/#typedef-radial-size
 
     auto transaction = tokens.begin_transaction();
     tokens.discard_whitespace();
-    auto maybe_radius = parse_length_percentage(tokens);
-    if (maybe_radius.has_value()) {
+
+    if (auto length_percentage = parse_length_percentage_value(tokens); length_percentage) {
         // Negative radius is invalid.
-        auto radius = maybe_radius.value();
-        if ((radius.is_length() && radius.length().raw_value() < 0) || (radius.is_percentage() && radius.percentage().value() < 0))
+        if ((length_percentage->is_length() && length_percentage->as_length().raw_value() < 0) || (length_percentage->is_percentage() && length_percentage->as_percentage().raw_value() < 0))
             return {};
 
         transaction.commit();
-        return radius;
+        return length_percentage;
     }
 
-    if (tokens.next_token().is_ident("closest-side"sv)) {
-        tokens.discard_a_token();
+    if (auto keyword = parse_keyword_value(tokens); keyword && keyword_to_fit_side(keyword->to_keyword()).has_value()) {
         transaction.commit();
-        return FitSide::ClosestSide;
+        return keyword;
     }
 
-    if (tokens.next_token().is_ident("farthest-side"sv)) {
-        tokens.discard_a_token();
-        transaction.commit();
-        return FitSide::FarthestSide;
-    }
-
-    return {};
+    return nullptr;
 }
 
 RefPtr<FitContentStyleValue const> Parser::parse_fit_content_value(TokenStream<ComponentValue>& tokens)
@@ -3335,23 +3475,23 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
         // The four <length-percentage>s define the position of the top, right, bottom, and left edges of a rectangle.
 
         arguments_tokens.discard_whitespace();
-        auto top = parse_length_percentage(arguments_tokens);
-        if (!top.has_value())
+        auto top = parse_length_percentage_value(arguments_tokens);
+        if (!top)
             return nullptr;
 
         arguments_tokens.discard_whitespace();
-        auto right = parse_length_percentage(arguments_tokens);
-        if (!right.has_value())
+        auto right = parse_length_percentage_value(arguments_tokens);
+        if (!right)
             right = top;
 
         arguments_tokens.discard_whitespace();
-        auto bottom = parse_length_percentage(arguments_tokens);
-        if (!bottom.has_value())
+        auto bottom = parse_length_percentage_value(arguments_tokens);
+        if (!bottom)
             bottom = top;
 
         arguments_tokens.discard_whitespace();
-        auto left = parse_length_percentage(arguments_tokens);
-        if (!left.has_value())
+        auto left = parse_length_percentage_value(arguments_tokens);
+        if (!left)
             left = right;
 
         arguments_tokens.discard_whitespace();
@@ -3359,7 +3499,7 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             return nullptr;
 
         transaction.commit();
-        return BasicShapeStyleValue::create(Inset { LengthBox(top.value(), right.value(), bottom.value(), left.value()) });
+        return BasicShapeStyleValue::create(Inset { top.release_nonnull(), right.release_nonnull(), bottom.release_nonnull(), left.release_nonnull() });
     }
 
     if (function_name.equals_ignoring_ascii_case("xywh"sv)) {
@@ -3368,23 +3508,23 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
         auto arguments_tokens = TokenStream { component_value.function().value };
 
         arguments_tokens.discard_whitespace();
-        auto x = parse_length_percentage(arguments_tokens);
-        if (!x.has_value())
+        auto x = parse_length_percentage_value(arguments_tokens);
+        if (!x)
             return nullptr;
 
         arguments_tokens.discard_whitespace();
-        auto y = parse_length_percentage(arguments_tokens);
-        if (!y.has_value())
+        auto y = parse_length_percentage_value(arguments_tokens);
+        if (!y)
             return nullptr;
 
         arguments_tokens.discard_whitespace();
-        auto width = parse_length_percentage(arguments_tokens);
-        if (!width.has_value())
+        auto width = parse_length_percentage_value(arguments_tokens);
+        if (!width)
             return nullptr;
 
         arguments_tokens.discard_whitespace();
-        auto height = parse_length_percentage(arguments_tokens);
-        if (!height.has_value())
+        auto height = parse_length_percentage_value(arguments_tokens);
+        if (!height)
             return nullptr;
 
         arguments_tokens.discard_whitespace();
@@ -3392,14 +3532,14 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             return nullptr;
 
         // Negative width or height is invalid.
-        if ((width->is_length() && width->length().raw_value() < 0)
-            || (width->is_percentage() && width->percentage().value() < 0)
-            || (height->is_length() && height->length().raw_value() < 0)
-            || (height->is_percentage() && height->percentage().value() < 0))
+        if ((width->is_length() && width->as_length().raw_value() < 0)
+            || (width->is_percentage() && width->as_percentage().raw_value() < 0)
+            || (height->is_length() && height->as_length().raw_value() < 0)
+            || (height->is_percentage() && height->as_percentage().raw_value() < 0))
             return nullptr;
 
         transaction.commit();
-        return BasicShapeStyleValue::create(Xywh { x.value(), y.value(), width.value(), height.value() });
+        return BasicShapeStyleValue::create(Xywh { x.release_nonnull(), y.release_nonnull(), width.release_nonnull(), height.release_nonnull() });
     }
 
     if (function_name.equals_ignoring_ascii_case("rect"sv)) {
@@ -3407,12 +3547,12 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
         // FIXME: Parse the border-radius.
         auto arguments_tokens = TokenStream { component_value.function().value };
 
-        auto parse_length_percentage_or_auto = [this](TokenStream<ComponentValue>& tokens) -> Optional<LengthPercentageOrAuto> {
+        auto parse_length_percentage_or_auto = [this](TokenStream<ComponentValue>& tokens) -> RefPtr<StyleValue const> {
             tokens.discard_whitespace();
-            if (auto value = parse_length_percentage(tokens); value.has_value())
-                return value.release_value();
+            if (auto value = parse_length_percentage_value(tokens); value)
+                return value;
             if (tokens.consume_a_token().is_ident("auto"sv))
-                return LengthPercentageOrAuto::make_auto();
+                return KeywordStyleValue::create(Keyword::Auto);
             return {};
         };
 
@@ -3421,7 +3561,7 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
         auto bottom = parse_length_percentage_or_auto(arguments_tokens);
         auto left = parse_length_percentage_or_auto(arguments_tokens);
 
-        if (!top.has_value() || !right.has_value() || !bottom.has_value() || !left.has_value())
+        if (!top || !right || !bottom || !left)
             return nullptr;
 
         arguments_tokens.discard_whitespace();
@@ -3429,14 +3569,17 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             return nullptr;
 
         transaction.commit();
-        return BasicShapeStyleValue::create(Rect { LengthBox(top.value(), right.value(), bottom.value(), left.value()) });
+        return BasicShapeStyleValue::create(Rect { top.release_nonnull(), right.release_nonnull(), bottom.release_nonnull(), left.release_nonnull() });
     }
 
     if (function_name.equals_ignoring_ascii_case("circle"sv)) {
         // circle() = circle( <shape-radius>? [ at <position> ]? )
         auto arguments_tokens = TokenStream { component_value.function().value };
 
-        auto radius = parse_shape_radius(arguments_tokens).value_or(FitSide::ClosestSide);
+        auto radius = parse_shape_radius(arguments_tokens);
+
+        if (!radius)
+            radius = KeywordStyleValue::create(Keyword::ClosestSide);
 
         auto position = PositionStyleValue::create_center();
         arguments_tokens.discard_whitespace();
@@ -3455,22 +3598,22 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             return nullptr;
 
         transaction.commit();
-        return BasicShapeStyleValue::create(Circle { radius, position });
+        return BasicShapeStyleValue::create(Circle { radius.release_nonnull(), position });
     }
 
     if (function_name.equals_ignoring_ascii_case("ellipse"sv)) {
         // ellipse() = ellipse( [ <shape-radius>{2} ]? [ at <position> ]? )
         auto arguments_tokens = TokenStream { component_value.function().value };
 
-        Optional<ShapeRadius> radius_x = parse_shape_radius(arguments_tokens);
-        Optional<ShapeRadius> radius_y = parse_shape_radius(arguments_tokens);
+        auto radius_x = parse_shape_radius(arguments_tokens);
+        auto radius_y = parse_shape_radius(arguments_tokens);
 
-        if (radius_x.has_value() && !radius_y.has_value())
+        if (radius_x && !radius_y)
             return nullptr;
 
-        if (!radius_x.has_value()) {
-            radius_x = FitSide::ClosestSide;
-            radius_y = FitSide::ClosestSide;
+        if (!radius_x) {
+            radius_x = KeywordStyleValue::create(Keyword::ClosestSide);
+            radius_y = KeywordStyleValue::create(Keyword::ClosestSide);
         }
 
         auto position = PositionStyleValue::create_center();
@@ -3490,7 +3633,7 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             return nullptr;
 
         transaction.commit();
-        return BasicShapeStyleValue::create(Ellipse { radius_x.value(), radius_y.value(), position });
+        return BasicShapeStyleValue::create(Ellipse { radius_x.release_nonnull(), radius_y.release_nonnull(), position });
     }
 
     if (function_name.equals_ignoring_ascii_case("polygon"sv)) {
@@ -3518,20 +3661,20 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             TokenStream argument_tokens { argument };
 
             argument_tokens.discard_whitespace();
-            auto x_pos = parse_length_percentage(argument_tokens);
-            if (!x_pos.has_value())
+            auto x_pos = parse_length_percentage_value(argument_tokens);
+            if (!x_pos)
                 return nullptr;
 
             argument_tokens.discard_whitespace();
-            auto y_pos = parse_length_percentage(argument_tokens);
-            if (!y_pos.has_value())
+            auto y_pos = parse_length_percentage_value(argument_tokens);
+            if (!y_pos)
                 return nullptr;
 
             argument_tokens.discard_whitespace();
             if (argument_tokens.has_next_token())
                 return nullptr;
 
-            points.append(Polygon::Point { *x_pos, *y_pos });
+            points.append(Polygon::Point { x_pos.release_nonnull(), y_pos.release_nonnull() });
         }
 
         transaction.commit();
@@ -3641,6 +3784,86 @@ RefPtr<CustomIdentStyleValue const> Parser::parse_custom_ident_value(TokenStream
     if (auto custom_ident = parse_custom_ident(tokens, blacklist); custom_ident.has_value())
         return CustomIdentStyleValue::create(custom_ident.release_value());
     return nullptr;
+}
+
+// https://drafts.csswg.org/css-values-5/#typedef-random-value-sharing
+RefPtr<RandomValueSharingStyleValue const> Parser::parse_random_value_sharing(TokenStream<ComponentValue>& tokens)
+{
+    // <random-value-sharing> = [ [ auto | <dashed-ident> ] || element-shared ] | fixed <number [0,1]>
+    auto transaction = tokens.begin_transaction();
+
+    tokens.discard_whitespace();
+
+    if (!tokens.has_next_token())
+        return nullptr;
+
+    // fixed <number [0,1]>
+    if (tokens.next_token().is_ident("fixed"sv)) {
+        tokens.discard_a_token();
+        tokens.discard_whitespace();
+
+        auto context_guard = push_temporary_value_parsing_context(SpecialContext::RandomValueSharingFixedValue);
+        if (auto fixed_value = parse_number_value(tokens)) {
+            tokens.discard_whitespace();
+
+            if (tokens.has_next_token())
+                return nullptr;
+
+            if (fixed_value->is_number() && (fixed_value->as_number().number() < 0 || fixed_value->as_number().number() >= 1))
+                return nullptr;
+
+            transaction.commit();
+            return RandomValueSharingStyleValue::create_fixed(fixed_value.release_nonnull());
+        }
+
+        return nullptr;
+    }
+
+    // [ [ auto | <dashed-ident> ] || element-shared ]
+    bool has_explicit_auto = false;
+    Optional<FlyString> dashed_ident;
+    bool element_shared = false;
+
+    while (tokens.has_next_token()) {
+        if (auto maybe_dashed_ident_value = parse_dashed_ident_value(tokens)) {
+            if (has_explicit_auto || dashed_ident.has_value())
+                return nullptr;
+
+            dashed_ident = maybe_dashed_ident_value->custom_ident();
+
+            tokens.discard_whitespace();
+            continue;
+        }
+
+        auto maybe_keyword_value = parse_keyword_value(tokens);
+
+        if (maybe_keyword_value && maybe_keyword_value->to_keyword() == Keyword::Auto) {
+            if (has_explicit_auto || dashed_ident.has_value())
+                return nullptr;
+
+            has_explicit_auto = true;
+
+            tokens.discard_whitespace();
+            continue;
+        }
+
+        if (maybe_keyword_value && maybe_keyword_value->to_keyword() == Keyword::ElementShared) {
+            if (element_shared)
+                return nullptr;
+
+            element_shared = true;
+
+            tokens.discard_whitespace();
+            continue;
+        }
+
+        return nullptr;
+    }
+
+    if (!dashed_ident.has_value())
+        return RandomValueSharingStyleValue::create_auto(random_value_sharing_auto_name(), element_shared);
+
+    return RandomValueSharingStyleValue::create_dashed_ident(dashed_ident.value(), element_shared);
 }
 
 // https://drafts.csswg.org/css-values-4/#typedef-dashed-ident
@@ -4010,14 +4233,14 @@ Optional<ExplicitGridTrack> Parser::parse_grid_fixed_size(TokenStream<ComponentV
         auto const& function_token = token.function();
         if (function_token.name.equals_ignoring_ascii_case("minmax"sv)) {
             {
-                GridMinMaxParamParser parse_min = [this](auto& tokens) { return parse_grid_fixed_breadth(tokens).map([](auto& it) { return GridSize(Size::make_length_percentage(it)); }); };
+                GridMinMaxParamParser parse_min = [this](auto& tokens) { return parse_grid_fixed_breadth(tokens).map([](auto&& it) { return GridSize(Size::make_length_percentage(it)); }); };
                 GridMinMaxParamParser parse_max = [this](auto& tokens) { return parse_grid_track_breadth(tokens); };
                 if (auto result = parse_grid_minmax(tokens, parse_min, parse_max); result.has_value())
                     return result;
             }
             {
                 GridMinMaxParamParser parse_min = [this](auto& tokens) { return parse_grid_inflexible_breadth(tokens); };
-                GridMinMaxParamParser parse_max = [this](auto& tokens) { return parse_grid_fixed_breadth(tokens).map([](auto& it) { return GridSize(Size::make_length_percentage(it)); }); };
+                GridMinMaxParamParser parse_max = [this](auto& tokens) { return parse_grid_fixed_breadth(tokens).map([](auto&& it) { return GridSize(Size::make_length_percentage(it)); }); };
                 if (auto result = parse_grid_minmax(tokens, parse_min, parse_max); result.has_value())
                     return result;
             }
@@ -4221,6 +4444,9 @@ RefPtr<CalculatedStyleValue const> Parser::parse_calculated_value(ComponentValue
                         "circle"sv, "ellipse"sv, "inset"sv, "polygon"sv, "rect"sv, "xywh"sv)) {
                     return CalculationContext { .percentages_resolve_as = ValueType::Length };
                 }
+                if (function.name.equals_ignoring_ascii_case("view"sv)) {
+                    return CalculationContext { .percentages_resolve_as = ValueType::Length };
+                }
                 // FIXME: Add other functions that provide a context for resolving values
                 return {};
             },
@@ -4235,6 +4461,9 @@ RefPtr<CalculatedStyleValue const> Parser::parse_calculated_value(ComponentValue
                 case SpecialContext::CubicBezierFunctionXCoordinate:
                     // Coordinates on the X axis must be between 0 and 1
                     return CalculationContext { .accepted_type_ranges = { { ValueType::Number, { 0, 1 } } } };
+                case SpecialContext::RandomValueSharingFixedValue:
+                    // Fixed values have to be less than one and numbers serialize with six digits of precision
+                    return CalculationContext { .accepted_type_ranges = { { ValueType::Number, { 0, 0.999999 } } } };
                 case SpecialContext::StepsIntervalsJumpNone:
                     return CalculationContext { .resolve_numbers_as_integers = true, .accepted_type_ranges = { { ValueType::Integer, { 2, NumericLimits<float>::max() } } } };
                 case SpecialContext::StepsIntervalsNormal:
@@ -4271,8 +4500,10 @@ RefPtr<CalculationNode const> Parser::parse_a_calc_function_node(Function const&
 {
     auto context_guard = push_temporary_value_parsing_context(FunctionContext { function.name });
 
-    if (function.name.equals_ignoring_ascii_case("calc"sv))
-        return parse_a_calculation(function.value, context);
+    if (function.name.equals_ignoring_ascii_case("calc"sv)) {
+        TokenStream tokens { function.value };
+        return parse_a_calculation(tokens, context);
+    }
 
     if (auto maybe_function = parse_math_function(function, context)) {
         // NOTE: We have to simplify manually here, since parse_math_function() is a helper for calc() parsing
@@ -4331,7 +4562,8 @@ RefPtr<CalculationNode const> Parser::convert_to_calculation_node(CalcParsing::N
 
             // 1. If leaf is a parenthesized simple block, replace leaf with the result of parsing a calculation from leaf’s contents.
             if (component_value->is_block() && component_value->block().is_paren()) {
-                auto leaf_calculation = parse_a_calculation(component_value->block().value, context);
+                TokenStream tokens { component_value->block().value };
+                auto leaf_calculation = parse_a_calculation(tokens, context);
                 if (!leaf_calculation)
                     return nullptr;
 
@@ -4427,13 +4659,16 @@ RefPtr<CalculationNode const> Parser::convert_to_calculation_node(CalcParsing::N
 }
 
 // https://drafts.csswg.org/css-values-4/#parse-a-calculation
-RefPtr<CalculationNode const> Parser::parse_a_calculation(Vector<ComponentValue> const& original_values, CalculationContext const& context)
+RefPtr<CalculationNode const> Parser::parse_a_calculation(TokenStream<ComponentValue>& tokens, CalculationContext const& context)
 {
+    auto transaction = tokens.begin_transaction();
+
     // 1. Discard any <whitespace-token>s from values.
     // 2. An item in values is an “operator” if it’s a <delim-token> with the value "+", "-", "*", or "/". Otherwise, it’s a “value”.
 
     Vector<CalcParsing::Node> values;
-    for (auto const& value : original_values) {
+    while (tokens.has_next_token()) {
+        auto const& value = tokens.consume_a_token();
         if (value.is(Token::Type::Whitespace))
             continue;
         if (value.is(Token::Type::Delim)) {
@@ -4557,6 +4792,7 @@ RefPtr<CalculationNode const> Parser::parse_a_calculation(Vector<ComponentValue>
         return nullptr;
 
     // 6. Return the result of simplifying a calculation tree from values.
+    transaction.commit();
     return simplify_a_calculation_tree(*calculation_tree, context, CalculationResolutionContext {});
 }
 
@@ -5037,6 +5273,8 @@ RefPtr<StyleValue const> Parser::parse_value(ValueType value_type, TokenStream<C
         return parse_rect_value(tokens);
     case ValueType::Resolution:
         return parse_resolution_value(tokens);
+    case ValueType::ScrollFunction:
+        return parse_scroll_function_value(tokens);
     case ValueType::String:
         return parse_string_value(tokens);
     case ValueType::Time:
@@ -5049,6 +5287,10 @@ RefPtr<StyleValue const> Parser::parse_value(ValueType value_type, TokenStream<C
         return parse_transform_list_value(tokens);
     case ValueType::Url:
         return parse_url_value(tokens);
+    case ValueType::ViewFunction:
+        return parse_view_function_value(tokens);
+    case ValueType::ViewTimelineInset:
+        return parse_view_timeline_inset_value(tokens);
     }
     VERIFY_NOT_REACHED();
 }

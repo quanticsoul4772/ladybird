@@ -17,7 +17,7 @@
 #include <LibDevTools/Forward.h>
 #include <LibImageDecoderClient/Client.h>
 #include <LibMain/Main.h>
-#include <LibRequests/RequestClient.h>
+#include <LibRequests/Forward.h>
 #include <LibURL/URL.h>
 #include <LibWeb/CSS/PreferredColorScheme.h>
 #include <LibWeb/CSS/PreferredContrast.h>
@@ -140,7 +140,7 @@ protected:
     virtual void process_did_exit(Process&&);
 
     virtual void create_platform_arguments(Core::ArgsParser&) { }
-    virtual void create_platform_options(BrowserOptions&, WebContentOptions&) { }
+    virtual void create_platform_options(BrowserOptions&, RequestServerOptions&, WebContentOptions&) { }
     virtual NonnullOwnPtr<Core::EventLoop> create_platform_event_loop();
 
     virtual Optional<ByteString> ask_user_for_download_folder() const { return {}; }

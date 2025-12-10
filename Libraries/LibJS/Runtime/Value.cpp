@@ -257,7 +257,7 @@ ThrowCompletionOr<bool> Value::is_array(VM& vm) const
 
 Array& Value::as_array()
 {
-    VERIFY(is_object() && is<Array>(as_object()));
+    ASSERT(is_object() && is<Array>(as_object()));
     return static_cast<Array&>(as_object());
 }
 
@@ -272,13 +272,13 @@ bool Value::is_function() const
 
 FunctionObject& Value::as_function()
 {
-    VERIFY(is_function());
+    ASSERT(is_function());
     return static_cast<FunctionObject&>(as_object());
 }
 
 FunctionObject const& Value::as_function() const
 {
-    VERIFY(is_function());
+    ASSERT(is_function());
     return static_cast<FunctionObject const&>(as_object());
 }
 
@@ -386,6 +386,8 @@ String Value::to_string_without_side_effects() const
     case EMPTY_TAG:
         return "<empty>"_string;
     default:
+        if (is_cell())
+            return String::formatted("[internal object {}]", as_cell().class_name()).release_value();
         VERIFY_NOT_REACHED();
     }
 }
@@ -417,6 +419,8 @@ Utf16String Value::to_utf16_string_without_side_effects() const
     case EMPTY_TAG:
         return "<empty>"_utf16;
     default:
+        if (is_cell())
+            return Utf16String::formatted("[internal object {}]", as_cell().class_name());
         VERIFY_NOT_REACHED();
     }
 }
@@ -661,7 +665,7 @@ ThrowCompletionOr<GC::Ref<Object>> Value::to_object_slow(VM& vm) const
 }
 
 // 7.1.3 ToNumeric ( value ), https://tc39.es/ecma262/#sec-tonumeric
-FLATTEN ThrowCompletionOr<Value> Value::to_numeric_slow_case(VM& vm) const
+ThrowCompletionOr<Value> Value::to_numeric_slow_case(VM& vm) const
 {
     // OPTIMIZATION: Fast paths for some trivial common cases.
     if (is_boolean()) {
@@ -1328,7 +1332,7 @@ ThrowCompletionOr<GC::Ptr<FunctionObject>> Value::get_method(VM& vm, PropertyKey
 
     // 3. If IsCallable(func) is false, throw a TypeError exception.
     if (!function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function);
 
     // 4. Return func.
     return function.as_function();
@@ -1346,7 +1350,7 @@ ThrowCompletionOr<GC::Ptr<FunctionObject>> Value::get_method(VM& vm, PropertyKey
 
     // 3. If IsCallable(func) is false, throw a TypeError exception.
     if (!function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function);
 
     // 4. Return func.
     return function.as_function();
@@ -1361,10 +1365,6 @@ ThrowCompletionOr<bool> greater_than(VM& vm, Value lhs, Value rhs)
     // 3. Let rref be ? Evaluation of ShiftExpression.
     // 4. Let rval be ? GetValue(rref).
     // NOTE: This is handled in the AST or Bytecode interpreter.
-
-    // OPTIMIZATION: If both values are i32, we can do a direct comparison without calling into IsLessThan.
-    if (lhs.is_int32() && rhs.is_int32())
-        return lhs.as_i32() > rhs.as_i32();
 
     // 5. Let r be ? IsLessThan(rval, lval, false).
     auto relation = TRY(is_less_than(vm, lhs, rhs, false));
@@ -1385,10 +1385,6 @@ ThrowCompletionOr<bool> greater_than_equals(VM& vm, Value lhs, Value rhs)
     // 4. Let rval be ? GetValue(rref).
     // NOTE: This is handled in the AST or Bytecode interpreter.
 
-    // OPTIMIZATION: If both values are i32, we can do a direct comparison without calling into IsLessThan.
-    if (lhs.is_int32() && rhs.is_int32())
-        return lhs.as_i32() >= rhs.as_i32();
-
     // 5. Let r be ? IsLessThan(lval, rval, true).
     auto relation = TRY(is_less_than(vm, lhs, rhs, true));
 
@@ -1407,10 +1403,6 @@ ThrowCompletionOr<bool> less_than(VM& vm, Value lhs, Value rhs)
     // 3. Let rref be ? Evaluation of ShiftExpression.
     // 4. Let rval be ? GetValue(rref).
     // NOTE: This is handled in the AST or Bytecode interpreter.
-
-    // OPTIMIZATION: If both values are i32, we can do a direct comparison without calling into IsLessThan.
-    if (lhs.is_int32() && rhs.is_int32())
-        return lhs.as_i32() < rhs.as_i32();
 
     // 5. Let r be ? IsLessThan(lval, rval, true).
     auto relation = TRY(is_less_than(vm, lhs, rhs, true));
@@ -1431,10 +1423,6 @@ ThrowCompletionOr<bool> less_than_equals(VM& vm, Value lhs, Value rhs)
     // 4. Let rval be ? GetValue(rref).
     // NOTE: This is handled in the AST or Bytecode interpreter.
 
-    // OPTIMIZATION: If both values are i32, we can do a direct comparison without calling into IsLessThan.
-    if (lhs.is_int32() && rhs.is_int32())
-        return lhs.as_i32() <= rhs.as_i32();
-
     // 5. Let r be ? IsLessThan(rval, lval, false).
     auto relation = TRY(is_less_than(vm, lhs, rhs, false));
 
@@ -1448,10 +1436,6 @@ ThrowCompletionOr<bool> less_than_equals(VM& vm, Value lhs, Value rhs)
 // BitwiseANDExpression : BitwiseANDExpression & EqualityExpression
 ThrowCompletionOr<Value> bitwise_and(VM& vm, Value lhs, Value rhs)
 {
-    // OPTIMIZATION: Fast path when both values are Int32.
-    if (lhs.is_int32() && rhs.is_int32())
-        return Value(lhs.as_i32() & rhs.as_i32());
-
     // 13.15.3 ApplyStringOrNumericBinaryOperator ( lval, opText, rval ), https://tc39.es/ecma262/#sec-applystringornumericbinaryoperator
     // 1-2, 6. N/A.
 
@@ -1485,10 +1469,6 @@ ThrowCompletionOr<Value> bitwise_and(VM& vm, Value lhs, Value rhs)
 // BitwiseORExpression : BitwiseORExpression | BitwiseXORExpression
 ThrowCompletionOr<Value> bitwise_or(VM& vm, Value lhs, Value rhs)
 {
-    // OPTIMIZATION: Fast path when both values are Int32.
-    if (lhs.is_int32() && rhs.is_int32())
-        return Value(lhs.as_i32() | rhs.as_i32());
-
     // 13.15.3 ApplyStringOrNumericBinaryOperator ( lval, opText, rval ), https://tc39.es/ecma262/#sec-applystringornumericbinaryoperator
     // 1-2, 6. N/A.
 
@@ -1526,10 +1506,6 @@ ThrowCompletionOr<Value> bitwise_or(VM& vm, Value lhs, Value rhs)
 // BitwiseXORExpression : BitwiseXORExpression ^ BitwiseANDExpression
 ThrowCompletionOr<Value> bitwise_xor(VM& vm, Value lhs, Value rhs)
 {
-    // OPTIMIZATION: Fast path when both values are Int32.
-    if (lhs.is_int32() && rhs.is_int32())
-        return Value(lhs.as_i32() ^ rhs.as_i32());
-
     // 13.15.3 ApplyStringOrNumericBinaryOperator ( lval, opText, rval ), https://tc39.es/ecma262/#sec-applystringornumericbinaryoperator
     // 1-2, 6. N/A.
 
@@ -1822,18 +1798,6 @@ ThrowCompletionOr<Value> add(VM& vm, Value lhs, Value rhs)
 
     // 1. If opText is +, then
 
-    // OPTIMIZATION: If both values are i32 or double, we can do a direct addition without the type conversions below.
-    if (both_number(lhs, rhs)) {
-        if (lhs.is_int32() && rhs.is_int32()) {
-            Checked<i32> result;
-            result = MUST(lhs.to_i32(vm));
-            result += MUST(rhs.to_i32(vm));
-            if (!result.has_overflow())
-                return Value(result.value());
-        }
-        return Value(lhs.as_double() + rhs.as_double());
-    }
-
     // a. Let lprim be ? ToPrimitive(lval).
     auto lhs_primitive = TRY(lhs.to_primitive(vm));
 
@@ -1924,14 +1888,6 @@ ThrowCompletionOr<Value> sub(VM& vm, Value lhs, Value rhs)
 // MultiplicativeExpression : MultiplicativeExpression MultiplicativeOperator ExponentiationExpression
 ThrowCompletionOr<Value> mul(VM& vm, Value lhs, Value rhs)
 {
-    // OPTIMIZATION: Fast path for multiplication of two Int32 values.
-    if (lhs.is_int32() && rhs.is_int32()) {
-        Checked<i32> result = lhs.as_i32();
-        result *= rhs.as_i32();
-        if (!result.has_overflow())
-            return result.value();
-    }
-
     // 13.15.3 ApplyStringOrNumericBinaryOperator ( lval, opText, rval ), https://tc39.es/ecma262/#sec-applystringornumericbinaryoperator
     // 1-2, 6. N/A.
 
@@ -2193,7 +2149,7 @@ ThrowCompletionOr<Value> instance_of(VM& vm, Value value, Value target)
 {
     // 1. If target is not an Object, throw a TypeError exception.
     if (!target.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, target.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, target);
 
     // 2. Let instOfHandler be ? GetMethod(target, @@hasInstance).
     static Bytecode::PropertyLookupCache cache;
@@ -2213,7 +2169,7 @@ ThrowCompletionOr<Value> instance_of(VM& vm, Value value, Value target)
 
     // 4. If IsCallable(target) is false, throw a TypeError exception.
     if (!target.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, target.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, target);
 
     // 5. Return ? OrdinaryHasInstance(target, V).
     return ordinary_has_instance(vm, target, value);
@@ -2249,7 +2205,7 @@ ThrowCompletionOr<Value> ordinary_has_instance(VM& vm, Value lhs, Value rhs)
 
     // 5. If P is not an Object, throw a TypeError exception.
     if (!rhs_prototype.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::InstanceOfOperatorBadPrototype, rhs.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::InstanceOfOperatorBadPrototype, rhs);
 
     // 6. Repeat,
     while (true) {
@@ -2395,12 +2351,22 @@ ThrowCompletionOr<bool> is_loosely_equal(VM& vm, Value lhs, Value rhs)
     // B.3.6.2 Changes to IsLooselyEqual, https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot-aec
     // 4. Perform the following steps:
     // a. If Type(x) is Object and x has an [[IsHTMLDDA]] internal slot and y is either null or undefined, return true.
-    if (lhs.is_object() && lhs.as_object().is_htmldda() && rhs.is_nullish())
-        return true;
+    if (lhs.is_object() && rhs.is_nullish()) {
+        if (lhs.as_object().is_htmldda())
+            return true;
+
+        // OPTIMIZATION: We can return early here since non-HTMLDDA objects and nullish values are never equal.
+        return false;
+    }
 
     // b. If x is either null or undefined and Type(y) is Object and y has an [[IsHTMLDDA]] internal slot, return true.
-    if (lhs.is_nullish() && rhs.is_object() && rhs.as_object().is_htmldda())
-        return true;
+    if (lhs.is_nullish() && rhs.is_object()) {
+        if (rhs.as_object().is_htmldda())
+            return true;
+
+        // OPTIMIZATION: We can return early here since non-HTMLDDA objects and nullish values are never equal.
+        return false;
+    }
 
     // == End of B.3.6.2 ==
 

@@ -187,9 +187,10 @@ void FormAssociatedElement::reset_form_owner()
     if (is_listed() && html_element.has_attribute(HTML::AttributeNames::form) && html_element.is_connected()) {
         // 1. If the first element in element's tree, in tree order, to have an ID that is identical to element's form content attribute's value, is a form element, then associate the element with that form element.
         auto form_value = html_element.attribute(HTML::AttributeNames::form);
-        html_element.root().for_each_in_inclusive_subtree_of_type<HTMLFormElement>([this, &form_value](HTMLFormElement& form_element) {
-            if (form_element.id() == form_value) {
-                set_form(&form_element);
+        html_element.root().for_each_in_inclusive_subtree_of_type<HTMLElement>([this, &form_value](auto& element) {
+            if (element.id() == form_value) {
+                if (is<HTMLFormElement>(element))
+                    set_form(as<HTMLFormElement>(&element));
                 return TraversalDecision::Break;
             }
 
@@ -907,10 +908,10 @@ void FormAssociatedTextControlElement::collapse_selection_to_offset(size_t posit
 void FormAssociatedTextControlElement::selection_was_changed()
 {
     auto& element = form_associated_element_to_html_element();
-    if (is<HTML::HTMLInputElement>(element)) {
-        schedule_a_selectionchange_event(static_cast<HTML::HTMLInputElement&>(element), element.document());
-    } else if (is<HTML::HTMLTextAreaElement>(element)) {
-        schedule_a_selectionchange_event(static_cast<HTML::HTMLTextAreaElement&>(element), element.document());
+    if (auto* input_element = as_if<HTMLInputElement>(element)) {
+        schedule_a_selectionchange_event(*input_element, element.document());
+    } else if (auto* text_area_element = as_if<HTMLTextAreaElement>(element)) {
+        schedule_a_selectionchange_event(*text_area_element, element.document());
     } else {
         VERIFY_NOT_REACHED();
     }
@@ -921,6 +922,7 @@ void FormAssociatedTextControlElement::selection_was_changed()
     auto* text_paintable = text_node->paintable();
     if (!text_paintable)
         return;
+
     if (m_selection_start == m_selection_end) {
         text_paintable->set_selection_state(Painting::Paintable::SelectionState::None);
         text_node->document().reset_cursor_blink_cycle();
@@ -1101,12 +1103,12 @@ void FormAssociatedTextControlElement::decrement_cursor_position_to_previous_lin
 
 GC::Ptr<DOM::Position> FormAssociatedTextControlElement::cursor_position() const
 {
-    auto const node = form_associated_element_to_text_node();
+    auto node = form_associated_element_to_text_node();
     if (!node)
         return nullptr;
-    if (m_selection_start == m_selection_end)
-        return DOM::Position::create(node->realm(), const_cast<DOM::Text&>(*node), m_selection_start);
-    return nullptr;
+    if (m_selection_start != m_selection_end)
+        return nullptr;
+    return DOM::Position::create(node->realm(), const_cast<DOM::Text&>(*node), m_selection_start);
 }
 
 GC::Ref<JS::Cell> FormAssociatedTextControlElement::as_cell()

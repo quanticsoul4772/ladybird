@@ -4,6 +4,7 @@
  * Copyright (c) 2021-2025, Sam Atkins <sam@ladybird.org>
  * Copyright (c) 2024, Matthew Olsson <mattco@serenityos.org>
  * Copyright (c) 2025, Tim Ledbetter <tim.ledbetter@ladybird.org>
+ * Copyright (c) 2025, Jelle Raaijmakers <jelle@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -31,6 +32,7 @@
 #include <LibWeb/CSS/StyleValues/RectStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/CSS/StyleValues/SuperellipseStyleValue.h>
+#include <LibWeb/CSS/StyleValues/TextIndentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TransformationStyleValue.h>
 #include <LibWeb/CSS/Transformation.h>
@@ -413,7 +415,7 @@ static RefPtr<StyleValue const> interpolate_rotate(DOM::Element& element, Calcul
         from_axis.set_z(from_transform.values()[2]->as_number().number());
         from_angle_value = from_transform.values()[3];
     }
-    float from_angle = from_angle_value->as_angle().angle().to_radians();
+    float from_angle = Angle::from_style_value(from_angle_value, {}).to_radians();
 
     FloatVector3 to_axis { 0, 0, 1 };
     auto to_angle_value = to_transform.values()[0];
@@ -423,7 +425,7 @@ static RefPtr<StyleValue const> interpolate_rotate(DOM::Element& element, Calcul
         to_axis.set_z(to_transform.values()[2]->as_number().number());
         to_angle_value = to_transform.values()[3];
     }
-    float to_angle = to_angle_value->as_angle().angle().to_radians();
+    float to_angle = Angle::from_style_value(to_angle_value, {}).to_radians();
 
     auto from_axis_angle = [](FloatVector3 const& axis, float angle) -> FloatVector4 {
         auto normalized = axis.normalized();
@@ -613,7 +615,7 @@ ValueComparingRefPtr<StyleValue const> interpolate_property(DOM::Element& elemen
         return interpolate_repeatable_list(element, calculation_context, from, to, delta, allow_discrete);
     case AnimationType::Custom: {
         if (property_id == PropertyID::Transform) {
-            if (auto interpolated_transform = interpolate_transform(element, from, to, delta, allow_discrete))
+            if (auto interpolated_transform = interpolate_transform(element, calculation_context, from, to, delta, allow_discrete))
                 return *interpolated_transform;
 
             // https://drafts.csswg.org/css-transforms-1/#interpolation-of-transforms
@@ -756,83 +758,8 @@ bool property_values_are_transitionable(PropertyID property_id, StyleValue const
     return true;
 }
 
-// A null return value means the interpolated matrix was not invertible or otherwise invalid
-RefPtr<StyleValue const> interpolate_transform(DOM::Element& element, StyleValue const& from, StyleValue const& to, float delta, AllowDiscrete)
+static Optional<FloatMatrix4x4> interpolate_matrices(FloatMatrix4x4 const& from, FloatMatrix4x4 const& to, float delta)
 {
-    // Note that the spec uses column-major notation, so all the matrix indexing is reversed.
-
-    static constexpr auto make_transformation = [](TransformationStyleValue const& transformation) -> Optional<Transformation> {
-        Vector<TransformValue> values;
-
-        for (auto const& value : transformation.values()) {
-            switch (value->type()) {
-            case StyleValue::Type::Angle:
-                values.append(AngleOrCalculated { value->as_angle().angle() });
-                break;
-            case StyleValue::Type::Calculated: {
-                auto& calculated = value->as_calculated();
-                if (calculated.resolves_to_angle()) {
-                    values.append(AngleOrCalculated { calculated });
-                } else if (calculated.resolves_to_length_percentage()) {
-                    values.append(LengthPercentage { calculated });
-                } else if (calculated.resolves_to_number()) {
-                    values.append(NumberPercentage { calculated });
-                } else {
-                    dbgln("Calculation `{}` inside {} transform-function is not a recognized type", calculated.to_string(SerializationMode::Normal), to_string(transformation.transform_function()));
-                    return {};
-                }
-                break;
-            }
-            case StyleValue::Type::Length:
-                values.append(LengthPercentage { value->as_length().length() });
-                break;
-            case StyleValue::Type::Percentage:
-                values.append(LengthPercentage { value->as_percentage().percentage() });
-                break;
-            case StyleValue::Type::Number:
-                values.append(NumberPercentage { Number(Number::Type::Number, value->as_number().number()) });
-                break;
-            default:
-                return {};
-            }
-        }
-
-        return Transformation { transformation.transform_function(), move(values) };
-    };
-
-    static constexpr auto transformation_style_value_to_matrix = [](DOM::Element& element, TransformationStyleValue const& value) -> Optional<FloatMatrix4x4> {
-        auto transformation = make_transformation(value);
-        if (!transformation.has_value())
-            return {};
-        Optional<Painting::PaintableBox const&> paintable_box;
-        if (auto layout_node = element.layout_node()) {
-            if (auto* paintable = as_if<Painting::PaintableBox>(layout_node->first_paintable()))
-                paintable_box = *paintable;
-        }
-        if (auto matrix = transformation->to_matrix(paintable_box); !matrix.is_error())
-            return matrix.value();
-        return {};
-    };
-
-    static constexpr auto style_value_to_matrix = [](DOM::Element& element, StyleValue const& value) -> FloatMatrix4x4 {
-        if (value.is_transformation())
-            return transformation_style_value_to_matrix(element, value.as_transformation()).value_or(FloatMatrix4x4::identity());
-
-        // This encompasses both the allowed value "none" and any invalid values
-        if (!value.is_value_list())
-            return FloatMatrix4x4::identity();
-
-        auto matrix = FloatMatrix4x4::identity();
-        for (auto const& value_element : value.as_value_list().values()) {
-            if (value_element->is_transformation()) {
-                if (auto value_matrix = transformation_style_value_to_matrix(element, value_element->as_transformation()); value_matrix.has_value())
-                    matrix = matrix * value_matrix.value();
-            }
-        }
-
-        return matrix;
-    };
-
     struct DecomposedValues {
         FloatVector3 translation;
         FloatVector3 scale;
@@ -1037,20 +964,332 @@ RefPtr<StyleValue const> interpolate_transform(DOM::Element& element, StyleValue
         };
     };
 
-    auto from_matrix = style_value_to_matrix(element, from);
-    auto to_matrix = style_value_to_matrix(element, to);
-    auto from_decomposed = decompose(from_matrix);
-    auto to_decomposed = decompose(to_matrix);
+    auto from_decomposed = decompose(from);
+    auto to_decomposed = decompose(to);
     if (!from_decomposed.has_value() || !to_decomposed.has_value())
         return {};
     auto interpolated_decomposed = interpolate(from_decomposed.value(), to_decomposed.value(), delta);
-    auto interpolated = recompose(interpolated_decomposed);
+    return recompose(interpolated_decomposed);
+}
 
+static StyleValueVector matrix_to_style_value_vector(FloatMatrix4x4 const& matrix)
+{
     StyleValueVector values;
     values.ensure_capacity(16);
     for (int i = 0; i < 16; i++)
-        values.append(NumberStyleValue::create(static_cast<double>(interpolated[i % 4, i / 4])));
-    return StyleValueList::create({ TransformationStyleValue::create(PropertyID::Transform, TransformFunction::Matrix3d, move(values)) }, StyleValueList::Separator::Comma);
+        values.unchecked_append(NumberStyleValue::create(matrix[i % 4, i / 4]));
+    return values;
+}
+
+// https://drafts.csswg.org/css-transforms-1/#interpolation-of-transforms
+RefPtr<StyleValue const> interpolate_transform(DOM::Element& element, CalculationContext const& calculation_context,
+    StyleValue const& from, StyleValue const& to, float delta, AllowDiscrete)
+{
+    // * If both Va and Vb are none:
+    //   * Vresult is none.
+    if (from.is_keyword() && from.as_keyword().keyword() == Keyword::None
+        && to.is_keyword() && to.as_keyword().keyword() == Keyword::None) {
+        return KeywordStyleValue::create(Keyword::None);
+    }
+
+    // * Treating none as a list of zero length, if Va or Vb differ in length:
+    auto style_value_to_transformations = [](StyleValue const& style_value)
+        -> Vector<NonnullRefPtr<TransformationStyleValue const>> {
+        if (style_value.is_transformation())
+            return { style_value.as_transformation() };
+
+        // NB: This encompasses both the allowed value "none" and any invalid values.
+        if (!style_value.is_value_list())
+            return {};
+
+        Vector<NonnullRefPtr<TransformationStyleValue const>> result;
+        result.ensure_capacity(style_value.as_value_list().size());
+        for (auto const& value : style_value.as_value_list().values()) {
+            VERIFY(value->is_transformation());
+            result.unchecked_append(value->as_transformation());
+        }
+        return result;
+    };
+    auto from_transformations = style_value_to_transformations(from);
+    auto to_transformations = style_value_to_transformations(to);
+    if (from_transformations.size() != to_transformations.size()) {
+        //   * extend the shorter list to the length of the longer list, setting the function at each additional
+        //     position to the identity transform function matching the function at the corresponding position in the
+        //     longer list. Both transform function lists are then interpolated following the next rule.
+        auto& shorter_list = from_transformations.size() < to_transformations.size() ? from_transformations : to_transformations;
+        auto const& longer_list = from_transformations.size() < to_transformations.size() ? to_transformations : from_transformations;
+        for (size_t i = shorter_list.size(); i < longer_list.size(); ++i) {
+            auto const& transformation = longer_list[i];
+            shorter_list.append(TransformationStyleValue::identity_transformation(transformation->transform_function()));
+        }
+    }
+
+    // https://drafts.csswg.org/css-transforms-1/#transform-primitives
+    auto is_2d_primitive = [](TransformFunction function) {
+        return first_is_one_of(function,
+            TransformFunction::Rotate,
+            TransformFunction::Scale,
+            TransformFunction::Translate);
+    };
+    auto is_2d_transform = [&is_2d_primitive](TransformFunction function) {
+        return is_2d_primitive(function)
+            || first_is_one_of(function,
+                TransformFunction::ScaleX,
+                TransformFunction::ScaleY,
+                TransformFunction::TranslateX,
+                TransformFunction::TranslateY);
+    };
+
+    // https://drafts.csswg.org/css-transforms-2/#transform-primitives
+    auto is_3d_primitive = [](TransformFunction function) {
+        return first_is_one_of(function,
+            TransformFunction::Rotate3d,
+            TransformFunction::Scale3d,
+            TransformFunction::Translate3d);
+    };
+    auto is_3d_transform = [&is_2d_transform, &is_3d_primitive](TransformFunction function) {
+        return is_2d_transform(function)
+            || is_3d_primitive(function)
+            || first_is_one_of(function,
+                TransformFunction::RotateX,
+                TransformFunction::RotateY,
+                TransformFunction::RotateZ,
+                TransformFunction::ScaleZ,
+                TransformFunction::TranslateZ);
+    };
+
+    auto convert_2d_transform_to_primitive = [](NonnullRefPtr<TransformationStyleValue const> transform)
+        -> NonnullRefPtr<TransformationStyleValue const> {
+        TransformFunction generic_function;
+        StyleValueVector parameters;
+        switch (transform->transform_function()) {
+        case TransformFunction::Scale:
+            generic_function = TransformFunction::Scale;
+            parameters.append(transform->values()[0]);
+            parameters.append(transform->values().size() > 1 ? transform->values()[1] : transform->values()[0]);
+            break;
+        case TransformFunction::ScaleX:
+            generic_function = TransformFunction::Scale;
+            parameters.append(transform->values()[0]);
+            parameters.append(NumberStyleValue::create(1.));
+            break;
+        case TransformFunction::ScaleY:
+            generic_function = TransformFunction::Scale;
+            parameters.append(NumberStyleValue::create(1.));
+            parameters.append(transform->values()[0]);
+            break;
+        case TransformFunction::Rotate:
+            generic_function = TransformFunction::Rotate;
+            parameters.append(transform->values()[0]);
+            break;
+        case TransformFunction::Translate:
+            generic_function = TransformFunction::Translate;
+            parameters.append(transform->values()[0]);
+            parameters.append(transform->values().size() > 1
+                    ? transform->values()[1]
+                    : LengthStyleValue::create(Length::make_px(0.)));
+            break;
+        case TransformFunction::TranslateX:
+            generic_function = TransformFunction::Translate;
+            parameters.append(transform->values()[0]);
+            parameters.append(LengthStyleValue::create(Length::make_px(0.)));
+            break;
+        case TransformFunction::TranslateY:
+            generic_function = TransformFunction::Translate;
+            parameters.append(LengthStyleValue::create(Length::make_px(0.)));
+            parameters.append(transform->values()[0]);
+            break;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+        return TransformationStyleValue::create(PropertyID::Transform, generic_function, move(parameters));
+    };
+
+    auto convert_3d_transform_to_primitive = [&](NonnullRefPtr<TransformationStyleValue const> transform)
+        -> NonnullRefPtr<TransformationStyleValue const> {
+        // NB: Convert to 2D primitive if possible so we don't have to deal with scale/translate X/Y separately.
+        if (is_2d_transform(transform->transform_function()))
+            transform = convert_2d_transform_to_primitive(transform);
+
+        TransformFunction generic_function;
+        StyleValueVector parameters;
+        switch (transform->transform_function()) {
+        case TransformFunction::Rotate:
+        case TransformFunction::RotateZ:
+            generic_function = TransformFunction::Rotate3d;
+            parameters.append(NumberStyleValue::create(0.));
+            parameters.append(NumberStyleValue::create(0.));
+            parameters.append(NumberStyleValue::create(1.));
+            parameters.append(transform->values()[0]);
+            break;
+        case TransformFunction::RotateX:
+            generic_function = TransformFunction::Rotate3d;
+            parameters.append(NumberStyleValue::create(1.));
+            parameters.append(NumberStyleValue::create(0.));
+            parameters.append(NumberStyleValue::create(0.));
+            parameters.append(transform->values()[0]);
+            break;
+        case TransformFunction::RotateY:
+            generic_function = TransformFunction::Rotate3d;
+            parameters.append(NumberStyleValue::create(0.));
+            parameters.append(NumberStyleValue::create(1.));
+            parameters.append(NumberStyleValue::create(0.));
+            parameters.append(transform->values()[0]);
+            break;
+        case TransformFunction::Scale:
+            generic_function = TransformFunction::Scale3d;
+            parameters.append(transform->values()[0]);
+            parameters.append(transform->values().size() > 1 ? transform->values()[1] : transform->values()[0]);
+            parameters.append(NumberStyleValue::create(1.));
+            break;
+        case TransformFunction::ScaleZ:
+            generic_function = TransformFunction::Scale3d;
+            parameters.append(NumberStyleValue::create(1.));
+            parameters.append(NumberStyleValue::create(1.));
+            parameters.append(transform->values()[0]);
+            break;
+        case TransformFunction::Translate:
+            generic_function = TransformFunction::Translate3d;
+            parameters.append(transform->values()[0]);
+            parameters.append(transform->values().size() > 1
+                    ? transform->values()[1]
+                    : LengthStyleValue::create(Length::make_px(0.)));
+            parameters.append(LengthStyleValue::create(Length::make_px(0.)));
+            break;
+        case TransformFunction::TranslateZ:
+            generic_function = TransformFunction::Translate3d;
+            parameters.append(LengthStyleValue::create(Length::make_px(0.)));
+            parameters.append(LengthStyleValue::create(Length::make_px(0.)));
+            parameters.append(transform->values()[0]);
+            break;
+        default:
+            generic_function = TransformFunction::Matrix3d;
+            parameters = matrix_to_style_value_vector(MUST(transform->to_transformation().to_matrix({})));
+        }
+        return TransformationStyleValue::create(PropertyID::Transform, generic_function, move(parameters));
+    };
+
+    // *  Let Vresult be an empty list. Beginning at the start of Va and Vb, compare the corresponding functions at each
+    //    position:
+    StyleValueVector result;
+    result.ensure_capacity(from_transformations.size());
+    size_t index = 0;
+    for (; index < from_transformations.size(); ++index) {
+        auto from_transformation = from_transformations[index];
+        auto to_transformation = to_transformations[index];
+
+        auto from_function = from_transformation->transform_function();
+        auto to_function = to_transformation->transform_function();
+
+        //   * While the functions have either the same name, or are derivatives of the same primitive transform
+        //     function, interpolate the corresponding pair of functions as described in § 10 Interpolation of
+        //     primitives and derived transform functions and append the result to Vresult.
+
+        // https://drafts.csswg.org/css-transforms-2/#interpolation-of-transform-functions
+        // Two different types of transform functions that share the same primitive, or transform functions of the same
+        // type with different number of arguments can be interpolated. Both transform functions need a former
+        // conversion to the common primitive first and get interpolated numerically afterwards. The computed value will
+        // be the primitive with the resulting interpolated arguments.
+
+        // The transform functions <matrix()>, matrix3d() and perspective() get converted into 4x4 matrices first and
+        // interpolated as defined in section Interpolation of Matrices afterwards.
+        if (first_is_one_of(TransformFunction::Matrix, from_function, to_function)
+            || first_is_one_of(TransformFunction::Matrix3d, from_function, to_function)
+            || first_is_one_of(TransformFunction::Perspective, from_function, to_function)) {
+            break;
+        }
+
+        // If both transform functions share a primitive in the two-dimensional space, both transform functions get
+        // converted to the two-dimensional primitive. If one or both transform functions are three-dimensional
+        // transform functions, the common three-dimensional primitive is used.
+        if (is_2d_transform(from_function) && is_2d_transform(to_function)) {
+            from_transformation = convert_2d_transform_to_primitive(from_transformation);
+            to_transformation = convert_2d_transform_to_primitive(to_transformation);
+        } else if (is_3d_transform(from_function) || is_3d_transform(to_function)) {
+            // NB: 3D primitives do not support value expansion like their 2D counterparts do (e.g. scale(1.5) ->
+            //     scale(1.5, 1.5), so we check if they are already a primitive first.
+            if (!is_3d_primitive(from_function))
+                from_transformation = convert_3d_transform_to_primitive(from_transformation);
+            if (!is_3d_primitive(to_function))
+                to_transformation = convert_3d_transform_to_primitive(to_transformation);
+        }
+        from_function = from_transformation->transform_function();
+        to_function = to_transformation->transform_function();
+
+        // NB: We converted both functions to their primitives. But if they're different primitives or if they have a
+        //     different number of values, we can't interpolate numerically between them. Break here so the next loop
+        //     can take care of the remaining functions.
+        auto const& from_values = from_transformation->values();
+        auto const& to_values = to_transformation->values();
+        if (from_function != to_function || from_values.size() != to_values.size())
+            break;
+
+        // https://drafts.csswg.org/css-transforms-2/#interpolation-of-transform-functions
+        if (from_function == TransformFunction::Rotate3d) {
+            // FIXME: For interpolations with the primitive rotate3d(), the direction vectors of the transform functions get
+            // normalized first. If the normalized vectors are not equal and both rotation angles are non-zero the
+            // transform functions get converted into 4x4 matrices first and interpolated as defined in section
+            // Interpolation of Matrices afterwards. Otherwise the rotation angle gets interpolated numerically and the
+            // rotation vector of the non-zero angle is used or (0, 0, 1) if both angles are zero.
+
+            auto interpolated_rotation = interpolate_rotate(element, calculation_context, from_transformation,
+                to_transformation, delta, AllowDiscrete::No);
+            if (!interpolated_rotation)
+                break;
+            result.unchecked_append(*interpolated_rotation);
+        } else {
+            StyleValueVector interpolated;
+            interpolated.ensure_capacity(from_values.size());
+            for (size_t i = 0; i < from_values.size(); ++i) {
+                auto interpolated_value = interpolate_value(element, calculation_context, from_values[i], to_values[i],
+                    delta, AllowDiscrete::No);
+                if (!interpolated_value)
+                    break;
+                interpolated.unchecked_append(*interpolated_value);
+            }
+            if (interpolated.size() != from_values.size())
+                break;
+            result.unchecked_append(TransformationStyleValue::create(PropertyID::Transform, from_function, move(interpolated)));
+        }
+    }
+
+    // NB: Return if we're done.
+    if (index == from_transformations.size())
+        return StyleValueList::create(move(result), StyleValueList::Separator::Space);
+
+    //   * If the pair do not have a common name or primitive transform function, post-multiply the remaining
+    //     transform functions in each of Va and Vb respectively to produce two 4x4 matrices. Interpolate these two
+    //     matrices as described in § 11 Interpolation of Matrices, append the result to Vresult, and cease
+    //     iterating over Va and Vb.
+    Optional<Painting::PaintableBox const&> paintable_box;
+    if (auto* paintable = as_if<Painting::PaintableBox>(element.paintable()))
+        paintable_box = *paintable;
+
+    auto post_multiply_remaining_transformations = [&paintable_box](size_t start_index, Vector<NonnullRefPtr<TransformationStyleValue const>> const& transformations) {
+        FloatMatrix4x4 result = FloatMatrix4x4::identity();
+        for (auto index = start_index; index < transformations.size(); ++index) {
+            auto transformation = transformations[index]->to_transformation();
+            auto transformation_matrix = transformation.to_matrix(paintable_box);
+            if (transformation_matrix.is_error()) {
+                dbgln("Unable to interpret a transformation's matrix; bailing out of interpolation.");
+                break;
+            }
+            result = result * transformation_matrix.value();
+        }
+        return result;
+    };
+    auto from_matrix = post_multiply_remaining_transformations(index, from_transformations);
+    auto to_matrix = post_multiply_remaining_transformations(index, to_transformations);
+
+    auto maybe_interpolated_matrix = interpolate_matrices(from_matrix, to_matrix, delta);
+    if (maybe_interpolated_matrix.has_value()) {
+        result.append(TransformationStyleValue::create(PropertyID::Transform, TransformFunction::Matrix3d,
+            matrix_to_style_value_vector(maybe_interpolated_matrix.release_value())));
+    } else {
+        dbgln("Unable to interpolate matrices.");
+    }
+
+    return StyleValueList::create(move(result), StyleValueList::Separator::Space);
 }
 
 Color interpolate_color(Color from, Color to, float delta, ColorSyntax syntax)
@@ -1102,19 +1341,11 @@ RefPtr<StyleValue const> interpolate_box_shadow(DOM::Element& element, Calculati
     //                 (transparent 0 0 0 0) with a corresponding inset keyword as needed to match the longer list if
     //                 the shorter list is otherwise compatible with the longer one
 
-    static constexpr auto process_list = [](StyleValue const& value) {
-        StyleValueVector shadows;
-        if (value.is_value_list()) {
-            for (auto const& element : value.as_value_list().values()) {
-                if (element->is_shadow())
-                    shadows.append(element);
-            }
-        } else if (value.is_shadow()) {
-            shadows.append(value);
-        } else if (!value.is_keyword() || value.as_keyword().keyword() != Keyword::None) {
-            VERIFY_NOT_REACHED();
-        }
-        return shadows;
+    static constexpr auto process_list = [](StyleValue const& value) -> StyleValueVector {
+        if (value.to_keyword() == Keyword::None)
+            return {};
+
+        return value.as_value_list().values();
     };
 
     static constexpr auto extend_list_if_necessary = [](StyleValueVector& values, StyleValueVector const& other) {
@@ -1234,33 +1465,6 @@ static RefPtr<StyleValue const> interpolate_mixed_value(CalculationContext const
     auto to_value_type = get_value_type_of_numeric_style_value(to);
 
     if (from_value_type.has_value() && from_value_type == to_value_type) {
-        auto to_calculation_node = [&calculation_context](StyleValue const& value) -> NonnullRefPtr<CalculationNode const> {
-            switch (value.type()) {
-            case StyleValue::Type::Angle:
-                return NumericCalculationNode::create(value.as_angle().angle(), calculation_context);
-            case StyleValue::Type::Frequency:
-                return NumericCalculationNode::create(value.as_frequency().frequency(), calculation_context);
-            case StyleValue::Type::Integer:
-                // https://drafts.csswg.org/css-values-4/#combine-integers
-                // Interpolation of <integer> is defined as Vresult = round((1 - p) × VA + p × VB); that is,
-                // interpolation happens in the real number space as for <number>s, and the result is converted to an
-                // <integer> by rounding to the nearest integer.
-                return NumericCalculationNode::create(Number { Number::Type::Number, static_cast<double>(value.as_integer().integer()) }, calculation_context);
-            case StyleValue::Type::Length:
-                return NumericCalculationNode::create(value.as_length().length(), calculation_context);
-            case StyleValue::Type::Number:
-                return NumericCalculationNode::create(Number { Number::Type::Number, value.as_number().number() }, calculation_context);
-            case StyleValue::Type::Percentage:
-                return NumericCalculationNode::create(value.as_percentage().percentage(), calculation_context);
-            case StyleValue::Type::Time:
-                return NumericCalculationNode::create(value.as_time().time(), calculation_context);
-            case StyleValue::Type::Calculated:
-                return value.as_calculated().calculation();
-            default:
-                VERIFY_NOT_REACHED();
-            }
-        };
-
         // https://drafts.csswg.org/css-values-4/#combine-mixed
         // The computed value of a percentage-dimension mix is defined as
         // FIXME: a computed dimension if the percentage component is zero or is defined specifically to compute to a dimension value
@@ -1278,8 +1482,8 @@ static RefPtr<StyleValue const> interpolate_mixed_value(CalculationContext const
                 return PercentageStyleValue::create(Percentage { percentage_component });
         }
 
-        auto from_node = to_calculation_node(from);
-        auto to_node = to_calculation_node(to);
+        auto from_node = CalculationNode::from_style_value(from, calculation_context);
+        auto to_node = CalculationNode::from_style_value(to, calculation_context);
 
         // https://drafts.csswg.org/css-values-4/#combine-math
         // Interpolation of math functions, with each other or with numeric values and other numeric-valued functions, is defined as Vresult = calc((1 - p) * VA + p * VB).
@@ -1395,74 +1599,46 @@ static RefPtr<StyleValue const> interpolate_value_impl(DOM::Element& element, Ca
         if (from_shape.index() != to_shape.index())
             return {};
 
-        auto interpolate_length_box = [](CalculationContext const& calculation_context, LengthBox const& from, LengthBox const& to, float delta) -> Optional<LengthBox> {
-            auto interpolated_top = interpolate_length_percentage_or_auto(calculation_context, from.top(), to.top(), delta);
-            auto interpolated_right = interpolate_length_percentage_or_auto(calculation_context, from.right(), to.right(), delta);
-            auto interpolated_bottom = interpolate_length_percentage_or_auto(calculation_context, from.bottom(), to.bottom(), delta);
-            auto interpolated_left = interpolate_length_percentage_or_auto(calculation_context, from.left(), to.left(), delta);
-            if (!interpolated_top.has_value() || !interpolated_right.has_value() || !interpolated_bottom.has_value() || !interpolated_left.has_value())
-                return {};
-            return LengthBox { *interpolated_top, *interpolated_right, *interpolated_bottom, *interpolated_left };
+        CalculationContext basic_shape_calculation_context {
+            .percentages_resolve_as = ValueType::Length
         };
 
         auto interpolated_shape = from_shape.visit(
             [&](Inset const& from_inset) -> Optional<BasicShape> {
                 // If both shapes are of type inset(), interpolate between each value in the shape functions.
                 auto& to_inset = to_shape.get<Inset>();
-                auto interpolated_inset_box = interpolate_length_box(calculation_context, from_inset.inset_box, to_inset.inset_box, delta);
-                if (!interpolated_inset_box.has_value())
+                auto interpolated_top = interpolate_value(element, basic_shape_calculation_context, from_inset.top, to_inset.top, delta, allow_discrete);
+                auto interpolated_right = interpolate_value(element, basic_shape_calculation_context, from_inset.right, to_inset.right, delta, allow_discrete);
+                auto interpolated_bottom = interpolate_value(element, basic_shape_calculation_context, from_inset.bottom, to_inset.bottom, delta, allow_discrete);
+                auto interpolated_left = interpolate_value(element, basic_shape_calculation_context, from_inset.left, to_inset.left, delta, allow_discrete);
+                if (!interpolated_top || !interpolated_right || !interpolated_bottom || !interpolated_left)
                     return {};
-                return Inset { *interpolated_inset_box };
-            },
-            [&](Xywh const& from_xywh) -> Optional<BasicShape> {
-                auto& to_xywh = to_shape.get<Xywh>();
-                auto interpolated_x = interpolate_length_percentage(calculation_context, from_xywh.x, to_xywh.x, delta);
-                auto interpolated_y = interpolate_length_percentage(calculation_context, from_xywh.x, to_xywh.x, delta);
-                auto interpolated_width = interpolate_length_percentage(calculation_context, from_xywh.width, to_xywh.width, delta);
-                auto interpolated_height = interpolate_length_percentage(calculation_context, from_xywh.height, to_xywh.height, delta);
-                if (!interpolated_x.has_value() || !interpolated_y.has_value() || !interpolated_width.has_value() || !interpolated_height.has_value())
-                    return {};
-                return Xywh { *interpolated_x, *interpolated_y, *interpolated_width, *interpolated_height };
-            },
-            [&](Rect const& from_rect) -> Optional<BasicShape> {
-                auto const& to_rect = to_shape.get<Rect>();
-                auto from_rect_box = from_rect.box;
-                auto to_rect_box = to_rect.box;
-                auto interpolated_rect_box = interpolate_length_box(calculation_context, from_rect_box, to_rect_box, delta);
-                if (!interpolated_rect_box.has_value())
-                    return {};
-                return Rect { *interpolated_rect_box };
+                return Inset { interpolated_top.release_nonnull(), interpolated_right.release_nonnull(), interpolated_bottom.release_nonnull(), interpolated_left.release_nonnull() };
             },
             [&](Circle const& from_circle) -> Optional<BasicShape> {
                 // If both shapes are the same type, that type is ellipse() or circle(), and the radiuses are specified
                 // as <length-percentage> (rather than keywords), interpolate between each value in the shape functions.
                 auto const& to_circle = to_shape.get<Circle>();
-                if (!from_circle.radius.has<LengthPercentage>() || !to_circle.radius.has<LengthPercentage>())
+                if (from_circle.radius->is_keyword() || to_circle.radius->is_keyword())
                     return {};
-                auto interpolated_radius = interpolate_length_percentage(calculation_context, from_circle.radius.get<LengthPercentage>(), to_circle.radius.get<LengthPercentage>(), delta);
-                if (!interpolated_radius.has_value())
+                auto interpolated_radius = interpolate_value(element, basic_shape_calculation_context, from_circle.radius, to_circle.radius, delta, allow_discrete);
+                auto interpolated_position = interpolate_value(element, basic_shape_calculation_context, from_circle.position, to_circle.position, delta, allow_discrete);
+                if (!interpolated_radius || !interpolated_position)
                     return {};
-                auto interpolated_position = interpolate_value(element, calculation_context, from_circle.position, to_circle.position, delta, allow_discrete);
-                if (!interpolated_position)
-                    return {};
-                return Circle { *interpolated_radius, interpolated_position->as_position() };
+                return Circle { interpolated_radius.release_nonnull(), interpolated_position->as_position() };
             },
             [&](Ellipse const& from_ellipse) -> Optional<BasicShape> {
                 auto const& to_ellipse = to_shape.get<Ellipse>();
-                if (!from_ellipse.radius_x.has<LengthPercentage>() || !to_ellipse.radius_x.has<LengthPercentage>())
+                if (from_ellipse.radius_x->is_keyword() || to_ellipse.radius_x->is_keyword())
                     return {};
-                if (!from_ellipse.radius_y.has<LengthPercentage>() || !to_ellipse.radius_y.has<LengthPercentage>())
+                if (from_ellipse.radius_y->is_keyword() || to_ellipse.radius_y->is_keyword())
                     return {};
-                auto interpolated_radius_x = interpolate_length_percentage(calculation_context, from_ellipse.radius_x.get<LengthPercentage>(), to_ellipse.radius_x.get<LengthPercentage>(), delta);
-                if (!interpolated_radius_x.has_value())
+                auto interpolated_radius_x = interpolate_value(element, basic_shape_calculation_context, from_ellipse.radius_x, to_ellipse.radius_x, delta, allow_discrete);
+                auto interpolated_radius_y = interpolate_value(element, basic_shape_calculation_context, from_ellipse.radius_y, to_ellipse.radius_y, delta, allow_discrete);
+                auto interpolated_position = interpolate_value(element, basic_shape_calculation_context, from_ellipse.position, to_ellipse.position, delta, allow_discrete);
+                if (!interpolated_radius_x || !interpolated_radius_y || !interpolated_position)
                     return {};
-                auto interpolated_radius_y = interpolate_length_percentage(calculation_context, from_ellipse.radius_y.get<LengthPercentage>(), to_ellipse.radius_y.get<LengthPercentage>(), delta);
-                if (!interpolated_radius_y.has_value())
-                    return {};
-                auto interpolated_position = interpolate_value(element, calculation_context, from_ellipse.position, to_ellipse.position, delta, allow_discrete);
-                if (!interpolated_position)
-                    return {};
-                return Ellipse { *interpolated_radius_x, *interpolated_radius_y, interpolated_position->as_position() };
+                return Ellipse { interpolated_radius_x.release_nonnull(), interpolated_radius_y.release_nonnull(), interpolated_position->as_position() };
             },
             [&](Polygon const& from_polygon) -> Optional<BasicShape> {
                 // If both shapes are of type polygon(), both polygons have the same number of vertices, and use the
@@ -1477,9 +1653,9 @@ static RefPtr<StyleValue const> interpolate_value_impl(DOM::Element& element, Ca
                 for (size_t i = 0; i < from_polygon.points.size(); i++) {
                     auto const& from_point = from_polygon.points[i];
                     auto const& to_point = to_polygon.points[i];
-                    auto interpolated_point_x = interpolate_length_percentage(calculation_context, from_point.x, to_point.x, delta);
-                    auto interpolated_point_y = interpolate_length_percentage(calculation_context, from_point.y, to_point.y, delta);
-                    if (!interpolated_point_x.has_value() || !interpolated_point_y.has_value())
+                    auto interpolated_point_x = interpolate_value(element, basic_shape_calculation_context, from_point.x, to_point.x, delta, allow_discrete);
+                    auto interpolated_point_y = interpolate_value(element, basic_shape_calculation_context, from_point.y, to_point.y, delta, allow_discrete);
+                    if (!interpolated_point_x || !interpolated_point_y)
                         return {};
                     interpolated_points.unchecked_append(Polygon::Point { *interpolated_point_x, *interpolated_point_y });
                 }
@@ -1638,6 +1814,22 @@ static RefPtr<StyleValue const> interpolate_value_impl(DOM::Element& element, Ca
             interpolate_length_or_auto(from_rect.bottom_edge, to_rect.bottom_edge, calculation_context, delta),
             interpolate_length_or_auto(from_rect.left_edge, to_rect.left_edge, calculation_context, delta),
         });
+    }
+    case StyleValue::Type::TextIndent: {
+        auto& from_text_indent = from.as_text_indent();
+        auto& to_text_indent = to.as_text_indent();
+
+        if (from_text_indent.each_line() != to_text_indent.each_line()
+            || from_text_indent.hanging() != to_text_indent.hanging())
+            return {};
+
+        auto interpolated_length_percentage = interpolate_value(element, calculation_context, from_text_indent.length_percentage(), to_text_indent.length_percentage(), delta, allow_discrete);
+        if (!interpolated_length_percentage)
+            return {};
+
+        return TextIndentStyleValue::create(interpolated_length_percentage.release_nonnull(),
+            from_text_indent.hanging() ? TextIndentStyleValue::Hanging::Yes : TextIndentStyleValue::Hanging::No,
+            from_text_indent.each_line() ? TextIndentStyleValue::EachLine::Yes : TextIndentStyleValue::EachLine::No);
     }
     case StyleValue::Type::Superellipse: {
         // https://drafts.csswg.org/css-borders-4/#corner-shape-interpolation

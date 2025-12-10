@@ -274,6 +274,32 @@ static WebIDL::ExceptionOr<ByteBuffer> generate_random_key(JS::VM& vm, u16 const
     return key_buffer;
 }
 
+JS::ThrowCompletionOr<GC::Ref<JS::Object>> EncapsulatedKey::to_object(JS::Realm& realm)
+{
+    auto object = JS::Object::create(realm, realm.intrinsics().object_prototype());
+
+    if (shared_key.has_value())
+        TRY(object->create_data_property("shared_key"_utf16_fly_string, shared_key.value()));
+
+    if (ciphertext.has_value())
+        TRY(object->create_data_property("ciphertext"_utf16_fly_string, JS::ArrayBuffer::create(realm, ciphertext.value())));
+
+    return object;
+}
+
+JS::ThrowCompletionOr<GC::Ref<JS::Object>> EncapsulatedBits::to_object(JS::Realm& realm)
+{
+    auto object = JS::Object::create(realm, realm.intrinsics().object_prototype());
+
+    if (shared_key.has_value())
+        TRY(object->create_data_property("shared_key"_utf16_fly_string, JS::ArrayBuffer::create(realm, shared_key.value())));
+
+    if (ciphertext.has_value())
+        TRY(object->create_data_property("ciphertext"_utf16_fly_string, JS::ArrayBuffer::create(realm, ciphertext.value())));
+
+    return object;
+}
+
 AlgorithmParams::~AlgorithmParams() = default;
 
 JS::ThrowCompletionOr<NonnullOwnPtr<AlgorithmParams>> AlgorithmParams::from_value(JS::VM&, JS::Value)
@@ -3639,6 +3665,12 @@ WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> SHA::digest(AlgorithmParams const&
         hash_kind = ::Crypto::Hash::HashKind::SHA384;
     } else if (algorithm_name == "SHA-512") {
         hash_kind = ::Crypto::Hash::HashKind::SHA512;
+    } else if (algorithm_name == "SHA3-256") {
+        hash_kind = ::Crypto::Hash::HashKind::SHA3_256;
+    } else if (algorithm_name == "SHA3-384") {
+        hash_kind = ::Crypto::Hash::HashKind::SHA3_384;
+    } else if (algorithm_name == "SHA3-512") {
+        hash_kind = ::Crypto::Hash::HashKind::SHA3_512;
     } else {
         return WebIDL::NotSupportedError::create(m_realm, Utf16String::formatted("Invalid hash function '{}'", algorithm_name));
     }
@@ -4388,7 +4420,7 @@ WebIDL::ExceptionOr<GC::Ref<CryptoKey>> ECDSA::import_key(AlgorithmParams const&
             // The uncompressed point format MUST be supported.
             // 2. If the implementation does not support the compressed point format and a compressed point is provided, throw a DataError.
             // 3. If a decode error occurs or an identity point is found, throw a DataError.
-            auto maybe_public_key = ::Crypto::PK::EC::parse_ec_key(move(key_bytes), false, {});
+            auto maybe_public_key = ::Crypto::PK::EC::parse_ec_key(key_bytes, false, {});
             if (maybe_public_key.is_error())
                 return WebIDL::DataError::create(m_realm, "Failed to parse key"_utf16);
 
@@ -5340,7 +5372,7 @@ WebIDL::ExceptionOr<GC::Ref<CryptoKey>> ECDH::import_key(AlgorithmParams const& 
             // The uncompressed point format MUST be supported.
             // 2. If the implementation does not support the compressed point format and a compressed point is provided, throw a DataError.
             // 3. If a decode error occurs or an identity point is found, throw a DataError.
-            auto maybe_public_key = ::Crypto::PK::EC::parse_ec_key(move(key_bytes), false, {});
+            auto maybe_public_key = ::Crypto::PK::EC::parse_ec_key(key_bytes, false, {});
             if (maybe_public_key.is_error())
                 return WebIDL::DataError::create(m_realm, "Failed to parse key"_utf16);
 

@@ -23,6 +23,7 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/ResponsePrototype.h>
 #include <LibWeb/ContentSecurityPolicy/BlockingAlgorithms.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Response.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
@@ -284,7 +285,7 @@ JS::ThrowCompletionOr<NonnullOwnPtr<Wasm::ModuleInstance>> instantiate_module(JS
 
                                 auto method = TRY_OR_RETURN_TRAP(result.get_method(vm, vm.names.iterator));
                                 if (!method)
-                                    return Wasm::Trap::from_external_object(vm.throw_completion<JS::TypeError>(JS::ErrorType::NotIterable, result.to_string_without_side_effects()));
+                                    return Wasm::Trap::from_external_object(vm.throw_completion<JS::TypeError>(JS::ErrorType::NotIterable, result));
 
                                 auto values = TRY_OR_RETURN_TRAP(JS::iterator_to_list(vm, TRY_OR_RETURN_TRAP(JS::get_iterator_from_method(vm, result, *method))));
 
@@ -891,7 +892,7 @@ GC::Ref<WebIDL::Promise> compile_potential_webassembly_response(JS::VM& vm, GC::
         // 5. If mimeType is not a byte-case-insensitive match for `application/wasm`, reject returnValue with a TypeError and abort these substeps.
         // Note: extra parameters are not allowed, including the empty `application/wasm;`.
         // FIXME: Validate these extra constraints that are not checked by extract_mime_type()
-        if (auto mime = response->header_list()->extract_mime_type(); !mime.has_value() || mime.value().essence() != "application/wasm"sv) {
+        if (auto mime = Fetch::Infrastructure::extract_mime_type(response->header_list()); !mime.has_value() || mime.value().essence() != "application/wasm"sv) {
             WebIDL::reject_promise(realm, return_value, vm.throw_completion<JS::TypeError>("Response does not match the application/wasm MIME type"sv).value());
             return JS::js_undefined();
         }

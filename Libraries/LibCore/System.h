@@ -13,6 +13,7 @@
 #include <AK/OwnPtr.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
+#include <LibCore/AddressInfoVector.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -31,15 +32,20 @@
 #    include <termios.h>
 #    include <utime.h>
 #else
-#    include "SocketAddressWindows.h"
 #    include <io.h>
+
 #    define O_CLOEXEC O_NOINHERIT
 #    define STDIN_FILENO _get_osfhandle(_fileno(stdin))
 #    define STDOUT_FILENO _get_osfhandle(_fileno(stdout))
 #    define STDERR_FILENO _get_osfhandle(_fileno(stderr))
 #    define S_ISDIR(mode) (((mode) & S_IFMT) == S_IFDIR)
 #    define S_ISREG(mode) (((mode) & S_IFMT) == S_IFREG)
+
 using sighandler_t = void (*)(int);
+using socklen_t = int;
+
+struct addrinfo;
+struct sockaddr;
 #endif
 
 #if !defined(AK_OS_BSD_GENERIC) && !defined(AK_OS_ANDROID) && !defined(AK_OS_WINDOWS)
@@ -81,8 +87,8 @@ ErrorOr<void> close(int fd);
 ErrorOr<void> ftruncate(int fd, off_t length);
 ErrorOr<struct stat> stat(StringView path);
 ErrorOr<struct stat> lstat(StringView path);
-ErrorOr<ssize_t> read(int fd, Bytes buffer);
-ErrorOr<ssize_t> write(int fd, ReadonlyBytes buffer);
+ErrorOr<size_t> read(int fd, Bytes buffer);
+ErrorOr<size_t> write(int fd, ReadonlyBytes buffer);
 ErrorOr<int> dup(int source_fd);
 ErrorOr<int> dup2(int source_fd, int destination_fd);
 ErrorOr<ByteString> getcwd();
@@ -111,12 +117,12 @@ ErrorOr<void> bind(int sockfd, struct sockaddr const*, socklen_t);
 ErrorOr<void> listen(int sockfd, int backlog);
 ErrorOr<int> accept(int sockfd, struct sockaddr*, socklen_t*);
 ErrorOr<void> connect(int sockfd, struct sockaddr const*, socklen_t);
-ErrorOr<ssize_t> send(int sockfd, void const*, size_t, int flags);
-ErrorOr<ssize_t> sendmsg(int sockfd, const struct msghdr*, int flags);
-ErrorOr<ssize_t> sendto(int sockfd, void const*, size_t, int flags, struct sockaddr const*, socklen_t);
-ErrorOr<ssize_t> recv(int sockfd, void*, size_t, int flags);
-ErrorOr<ssize_t> recvmsg(int sockfd, struct msghdr*, int flags);
-ErrorOr<ssize_t> recvfrom(int sockfd, void*, size_t, int flags, struct sockaddr*, socklen_t*);
+ErrorOr<size_t> send(int sockfd, ReadonlyBytes, int flags);
+ErrorOr<size_t> sendmsg(int sockfd, const struct msghdr*, int flags);
+ErrorOr<size_t> sendto(int sockfd, ReadonlyBytes, int flags, struct sockaddr const*, socklen_t);
+ErrorOr<size_t> recv(int sockfd, Bytes, int flags);
+ErrorOr<size_t> recvmsg(int sockfd, struct msghdr*, int flags);
+ErrorOr<size_t> recvfrom(int sockfd, Bytes, int flags, struct sockaddr*, socklen_t*);
 ErrorOr<void> getsockopt(int sockfd, int level, int option, void* value, socklen_t* value_size);
 ErrorOr<void> setsockopt(int sockfd, int level, int option, void const* value, socklen_t value_size);
 ErrorOr<void> getsockname(int sockfd, struct sockaddr*, socklen_t*);
@@ -140,36 +146,6 @@ struct WaitPidResult {
 ErrorOr<WaitPidResult> waitpid(pid_t waitee, int options = 0);
 ErrorOr<void> fchown(int fd, uid_t, gid_t);
 #endif
-
-class AddressInfoVector {
-    AK_MAKE_NONCOPYABLE(AddressInfoVector);
-    AK_MAKE_DEFAULT_MOVABLE(AddressInfoVector);
-
-public:
-    ~AddressInfoVector() = default;
-
-    ReadonlySpan<struct addrinfo> addresses() const { return m_addresses; }
-
-private:
-    friend ErrorOr<AddressInfoVector> getaddrinfo(char const* nodename, char const* servname, struct addrinfo const& hints);
-
-    AddressInfoVector(Vector<struct addrinfo>&& addresses, struct addrinfo* ptr)
-        : m_addresses(move(addresses))
-        , m_ptr(adopt_own_if_nonnull(ptr))
-    {
-    }
-
-    struct AddrInfoDeleter {
-        void operator()(struct addrinfo* ptr)
-        {
-            if (ptr)
-                ::freeaddrinfo(ptr);
-        }
-    };
-
-    Vector<struct addrinfo> m_addresses {};
-    OwnPtr<struct addrinfo, AddrInfoDeleter> m_ptr {};
-};
 
 ErrorOr<AddressInfoVector> getaddrinfo(char const* nodename, char const* servname, struct addrinfo const& hints);
 

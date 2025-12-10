@@ -177,6 +177,15 @@ public:
         return 0;
     }
 
+    size_t current_index() const { return m_index; }
+
+    ReadonlySpan<T> tokens_since(size_t start) const
+    {
+        if (start > m_index)
+            return {};
+        return m_tokens.slice(start, m_index - start);
+    }
+
     void dump_all_tokens()
     {
         dbgln("Dumping all tokens:");
@@ -191,9 +200,7 @@ public:
 
     String dump_string()
     {
-        // FIXME: The whitespace is only needed because we strip it when parsing property values. Remove it here once
-        //        we stop doing that.
-        return MUST(String::join(" "sv, m_tokens));
+        return MUST(String::join(""sv, m_tokens));
     }
 
 private:

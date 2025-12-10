@@ -245,8 +245,9 @@ public:
     ALWAYS_INLINE ThrowCompletionOr(ValueType value)
         : m_value_or_error(move(value))
     {
-        if constexpr (IsSame<ValueType, Value>)
-            VERIFY(!m_value_or_error.template get<ValueType>().is_special_empty_value());
+        if constexpr (IsSame<ValueType, Value>) {
+            ASSERT(!m_value_or_error.template get<ValueType>().is_special_empty_value());
+        }
     }
 
     ALWAYS_INLINE ThrowCompletionOr(ThrowCompletionOr const&) = default;
@@ -346,7 +347,7 @@ inline Completion normal_completion(Value value)
 }
 
 // 6.2.4.2 ThrowCompletion ( value ), https://tc39.es/ecma262/#sec-throwcompletion
-JS_API Completion throw_completion(Value);
+JS_API COLD Completion throw_completion(Value);
 
 JS_API void set_log_all_js_exceptions(bool enabled);
 

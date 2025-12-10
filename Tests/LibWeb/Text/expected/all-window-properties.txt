@@ -317,6 +317,7 @@ NodeList
 Notification
 Number
 Object
+OfflineAudioCompletionEvent
 OfflineAudioContext
 OffscreenCanvas
 OffscreenCanvasRenderingContext2D
@@ -364,6 +365,7 @@ Response
 SVGAElement
 SVGAnimatedEnumeration
 SVGAnimatedLength
+SVGAnimatedLengthList
 SVGAnimatedNumber
 SVGAnimatedNumberList
 SVGAnimatedRect
@@ -400,6 +402,7 @@ SVGGradientElement
 SVGGraphicsElement
 SVGImageElement
 SVGLength
+SVGLengthList
 SVGLineElement
 SVGLinearGradientElement
 SVGMaskElement

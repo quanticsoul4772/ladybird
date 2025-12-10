@@ -29,8 +29,6 @@
 #include <LibWeb/CSS/Ratio.h>
 #include <LibWeb/CSS/Selector.h>
 #include <LibWeb/CSS/StyleValues/AbstractImageStyleValue.h>
-#include <LibWeb/CSS/StyleValues/BasicShapeStyleValue.h>
-#include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ShadowStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
 #include <LibWeb/CSS/StyleValues/TreeCountingFunctionStyleValue.h>
@@ -39,8 +37,6 @@
 #include <LibWeb/Forward.h>
 
 namespace Web::CSS::Parser {
-
-class PropertyDependencyNode;
 
 namespace CalcParsing {
 
@@ -79,6 +75,7 @@ enum SpecialContext : u8 {
     CubicBezierFunctionXCoordinate,
     DOMMatrixInitString,
     MediaCondition,
+    RandomValueSharingFixedValue,
     ShadowBlurRadius,
     StepsIntervalsJumpNone,
     StepsIntervalsNormal,
@@ -117,7 +114,7 @@ public:
     static Parser create(ParsingParams const&, StringView input, StringView encoding = "utf-8"sv);
 
     GC::RootVector<GC::Ref<CSSRule>> convert_rules(Vector<Rule> const& raw_rules);
-    GC::Ref<CSS::CSSStyleSheet> parse_as_css_stylesheet(Optional<::URL::URL> location, Vector<NonnullRefPtr<MediaQuery>> media_query_list = {});
+    GC::Ref<CSS::CSSStyleSheet> parse_as_css_stylesheet(Optional<::URL::URL> location, GC::Ptr<MediaList> = {});
 
     struct PropertiesAndCustomProperties {
         Vector<StyleProperty> properties;
@@ -251,8 +248,12 @@ private:
     Vector<RuleOrListOfDeclarations> consume_a_block(TokenStream<T>&);
     template<typename T>
     Vector<RuleOrListOfDeclarations> consume_a_blocks_contents(TokenStream<T>&);
+    enum class SaveOriginalText : u8 {
+        No,
+        Yes,
+    };
     template<typename T>
-    Optional<Declaration> consume_a_declaration(TokenStream<T>&, Nested = Nested::No);
+    Optional<Declaration> consume_a_declaration(TokenStream<T>&, Nested = Nested::No, SaveOriginalText = SaveOriginalText::No);
     template<typename T>
     void consume_the_remnants_of_a_bad_declaration(TokenStream<T>&, Nested);
     template<typename T>
@@ -352,15 +353,14 @@ private:
     Optional<URL> parse_url_function(TokenStream<ComponentValue>&);
     RefPtr<URLStyleValue const> parse_url_value(TokenStream<ComponentValue>&);
 
-    Optional<ShapeRadius> parse_shape_radius(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_shape_radius(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_basic_shape_value(TokenStream<ComponentValue>&);
 
     RefPtr<FitContentStyleValue const> parse_fit_content_value(TokenStream<ComponentValue>&);
 
-    template<typename TElement>
-    Optional<Vector<TElement>> parse_color_stop_list(TokenStream<ComponentValue>& tokens, auto parse_position);
-    Optional<Vector<LinearColorStopListElement>> parse_linear_color_stop_list(TokenStream<ComponentValue>&);
-    Optional<Vector<AngularColorStopListElement>> parse_angular_color_stop_list(TokenStream<ComponentValue>&);
+    Optional<Vector<ColorStopListElement>> parse_color_stop_list(TokenStream<ComponentValue>& tokens, auto parse_position);
+    Optional<Vector<ColorStopListElement>> parse_linear_color_stop_list(TokenStream<ComponentValue>&);
+    Optional<Vector<ColorStopListElement>> parse_angular_color_stop_list(TokenStream<ComponentValue>&);
     Optional<InterpolationMethod> parse_interpolation_method(TokenStream<ComponentValue>&);
 
     RefPtr<LinearGradientStyleValue const> parse_linear_gradient_function(TokenStream<ComponentValue>&);
@@ -381,6 +381,7 @@ private:
     RefPtr<CustomIdentStyleValue const> parse_custom_ident_value(TokenStream<ComponentValue>&, ReadonlySpan<StringView> blacklist);
     Optional<FlyString> parse_dashed_ident(TokenStream<ComponentValue>&);
     RefPtr<CustomIdentStyleValue const> parse_dashed_ident_value(TokenStream<ComponentValue>&);
+    RefPtr<RandomValueSharingStyleValue const> parse_random_value_sharing(TokenStream<ComponentValue>&);
     // NOTE: Implemented in generated code. (GenerateCSSMathFunctions.cpp)
     RefPtr<CalculationNode const> parse_math_function(Function const&, CalculationContext const&);
     RefPtr<CalculationNode const> parse_a_calc_function_node(Function const&, CalculationContext const&);
@@ -443,10 +444,14 @@ private:
     RefPtr<StyleValue const> parse_time_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_time_percentage_value(TokenStream<ComponentValue>&);
 
+    RefPtr<StyleValue const> parse_view_timeline_inset_value(TokenStream<ComponentValue>&);
+    RefPtr<ScrollFunctionStyleValue const> parse_scroll_function_value(TokenStream<ComponentValue>&);
+    RefPtr<ViewFunctionStyleValue const> parse_view_function_value(TokenStream<ComponentValue>&);
+
     using ParseFunction = AK::Function<RefPtr<StyleValue const>(TokenStream<ComponentValue>&)>;
-    RefPtr<StyleValue const> parse_comma_separated_value_list(TokenStream<ComponentValue>&, ParseFunction);
-    RefPtr<StyleValue const> parse_simple_comma_separated_value_list(PropertyID, TokenStream<ComponentValue>&);
-    RefPtr<StyleValue const> parse_coordinating_value_list_shorthand(TokenStream<ComponentValue>&, PropertyID shorthand_id, Vector<PropertyID> const& longhand_ids);
+    RefPtr<StyleValueList const> parse_comma_separated_value_list(TokenStream<ComponentValue>&, ParseFunction);
+    RefPtr<StyleValueList const> parse_simple_comma_separated_value_list(PropertyID, TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_coordinating_value_list_shorthand(TokenStream<ComponentValue>&, PropertyID shorthand_id, Vector<PropertyID> const& longhand_ids, Vector<PropertyID> const& reset_only_longhand_ids);
     RefPtr<StyleValue const> parse_all_as_single_keyword_value(TokenStream<ComponentValue>&, Keyword);
 
     RefPtr<StyleValue const> parse_anchor_name_value(TokenStream<ComponentValue>&);
@@ -454,6 +459,7 @@ private:
     RefPtr<StyleValue const> parse_aspect_ratio_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_animation_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_background_value(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_background_position_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_single_background_position_x_or_y_value(TokenStream<ComponentValue>&, PropertyID);
     RefPtr<StyleValue const> parse_single_background_size_value(PropertyID, TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_border_value(PropertyID, TokenStream<ComponentValue>&);
@@ -486,7 +492,6 @@ private:
     RefPtr<StyleValue const> parse_list_style_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_mask_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_math_depth_value(TokenStream<ComponentValue>&);
-    RefPtr<StyleValue const> parse_overflow_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_paint_order_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_place_content_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_place_items_value(TokenStream<ComponentValue>&);
@@ -499,6 +504,7 @@ private:
     RefPtr<StyleValue const> parse_position_visibility_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_quotes_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_single_repeat_style_value(PropertyID, TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_scroll_timeline_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_scrollbar_color_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_scrollbar_gutter_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_shadow_value(TokenStream<ComponentValue>&, ShadowStyleValue::ShadowType);
@@ -506,6 +512,7 @@ private:
     RefPtr<StyleValue const> parse_shape_outside_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_text_decoration_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_text_decoration_line_value(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_text_indent_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_text_underline_position_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_rotate_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_stroke_dasharray_value(TokenStream<ComponentValue>&);
@@ -528,14 +535,13 @@ private:
     RefPtr<StyleValue const> parse_grid_area_shorthand_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_grid_shorthand_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_touch_action_value(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_view_timeline_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_white_space_shorthand(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_white_space_trim_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_will_change_value(TokenStream<ComponentValue>&);
 
-    RefPtr<StyleValue const> parse_list_of_time_values(PropertyID, TokenStream<ComponentValue>&);
-
     RefPtr<CalculationNode const> convert_to_calculation_node(CalcParsing::Node const&, CalculationContext const&);
-    RefPtr<CalculationNode const> parse_a_calculation(Vector<ComponentValue> const&, CalculationContext const&);
+    RefPtr<CalculationNode const> parse_a_calculation(TokenStream<ComponentValue>&, CalculationContext const&);
 
     ParseErrorOr<NonnullRefPtr<Selector>> parse_complex_selector(TokenStream<ComponentValue>&, SelectorType);
     ParseErrorOr<Optional<Selector::CompoundSelector>> parse_compound_selector(TokenStream<ComponentValue>&);
@@ -560,6 +566,7 @@ private:
     OwnPtr<BooleanExpression> parse_boolean_expression_group(TokenStream<ComponentValue>&, MatchResult result_for_general_enclosed, ParseTest parse_test);
 
     OwnPtr<BooleanExpression> parse_supports_feature(TokenStream<ComponentValue>&);
+    OwnPtr<Supports::Declaration> parse_supports_declaration(TokenStream<ComponentValue>&);
 
     NonnullRefPtr<StyleValue const> resolve_unresolved_style_value(DOM::AbstractElement, GuardedSubstitutionContexts&, PropertyNameAndID const&, UnresolvedStyleValue const&);
 
@@ -583,13 +590,22 @@ private:
     TokenStream<Token> m_token_stream;
 
     Vector<ValueParsingContext> m_value_context;
+    size_t m_random_function_index = 0;
     auto push_temporary_value_parsing_context(ValueParsingContext&& context)
     {
         m_value_context.append(context);
-        return ScopeGuard { [&] { m_value_context.take_last(); } };
+        return ScopeGuard { [&] {
+            auto removed_context = m_value_context.take_last();
+
+            // Reset the random function index when we leave the top-level property parsing context
+            if (removed_context.has<PropertyID>() && !m_value_context.find_first_index_if([](ValueParsingContext context) { return context.has<PropertyID>(); }).has_value())
+                m_random_function_index = 0;
+        } };
     }
     bool context_allows_quirky_length() const;
     bool context_allows_tree_counting_functions() const;
+    bool context_allows_random_functions() const;
+    FlyString random_value_sharing_auto_name() const;
 
     Vector<RuleContext> m_rule_context;
     HashTable<FlyString> m_declared_namespaces;
@@ -601,7 +617,7 @@ private:
 
 namespace Web {
 
-GC::Ref<CSS::CSSStyleSheet> parse_css_stylesheet(CSS::Parser::ParsingParams const&, StringView, Optional<::URL::URL> location = {}, Vector<NonnullRefPtr<CSS::MediaQuery>> = {});
+GC::Ref<CSS::CSSStyleSheet> parse_css_stylesheet(CSS::Parser::ParsingParams const&, StringView, Optional<::URL::URL> location = {}, GC::Ptr<CSS::MediaList> media_list = {});
 CSS::Parser::Parser::PropertiesAndCustomProperties parse_css_property_declaration_block(CSS::Parser::ParsingParams const&, StringView);
 Vector<CSS::Descriptor> parse_css_descriptor_declaration_block(CSS::Parser::ParsingParams const&, CSS::AtRuleID, StringView);
 RefPtr<CSS::StyleValue const> parse_css_value(CSS::Parser::ParsingParams const&, StringView, CSS::PropertyID);

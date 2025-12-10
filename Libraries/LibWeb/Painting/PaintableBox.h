@@ -7,8 +7,7 @@
 
 #pragma once
 
-#include <LibGfx/Bitmap.h>
-#include <LibGfx/ImmutableBitmap.h>
+#include <LibGfx/Forward.h>
 #include <LibWeb/CSS/StyleValues/GridTrackSizeListStyleValue.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
@@ -44,8 +43,8 @@ public:
     void invalidate_stacking_context();
 
     virtual Optional<CSSPixelRect> get_masking_area() const;
-    virtual Optional<Gfx::Bitmap::MaskKind> get_mask_type() const { return {}; }
-    virtual RefPtr<Gfx::ImmutableBitmap> calculate_mask(DisplayListRecordingContext&, CSSPixelRect const&) const { return {}; }
+    virtual Optional<Gfx::MaskKind> get_mask_type() const { return {}; }
+    virtual RefPtr<Gfx::ImmutableBitmap> calculate_mask(DisplayListRecordingContext&, CSSPixelRect const&) const;
 
     Layout::NodeWithStyleAndBoxModelMetrics const& layout_node_with_style_and_box_metrics() const { return as<Layout::NodeWithStyleAndBoxModelMetrics const>(layout_node()); }
 
@@ -201,8 +200,8 @@ public:
     void set_transform(Gfx::FloatMatrix4x4 transform) { m_transform = transform; }
     Gfx::FloatMatrix4x4 const& transform() const { return m_transform; }
 
-    void set_perspective_matrix(Gfx::FloatMatrix4x4 perspective_matrix) { m_perspective_matrix = perspective_matrix; }
-    Gfx::FloatMatrix4x4 const& perspective_matrix() const { return m_perspective_matrix; }
+    void set_perspective_matrix(Optional<Gfx::FloatMatrix4x4> perspective_matrix) { m_perspective_matrix = perspective_matrix; }
+    Optional<Gfx::FloatMatrix4x4> const& perspective_matrix() const { return m_perspective_matrix; }
 
     void set_transform_origin(CSSPixelPoint transform_origin) { m_transform_origin = transform_origin; }
     CSSPixelPoint const& transform_origin() const { return m_transform_origin; }
@@ -217,7 +216,7 @@ public:
 
     virtual bool wants_mouse_events() const override;
 
-    CSSPixelRect transform_box_rect() const;
+    CSSPixelRect transform_reference_box() const;
     virtual void resolve_paint_properties() override;
 
     RefPtr<ScrollFrame const> nearest_scroll_frame() const;
@@ -331,8 +330,8 @@ private:
     BorderRadiiData m_border_radii_data;
     Vector<ShadowData> m_box_shadow_data;
     Gfx::FloatMatrix4x4 m_transform { Gfx::FloatMatrix4x4::identity() };
-    Gfx::FloatMatrix4x4 m_perspective_matrix { Gfx::FloatMatrix4x4::identity() };
     CSSPixelPoint m_transform_origin;
+    Optional<Gfx::FloatMatrix4x4> m_perspective_matrix {};
 
     Optional<BordersData> m_outline_data;
     CSSPixels m_outline_offset { 0 };

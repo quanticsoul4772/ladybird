@@ -93,14 +93,15 @@ struct BrowserOptions {
     EnableContentFilter enable_content_filter { EnableContentFilter::Yes };
 };
 
-enum class EnableHTTPDiskCache {
-    No,
-    Yes,
+enum class HTTPDiskCacheMode {
+    Disabled,
+    Enabled,
+    Testing,
 };
 
 struct RequestServerOptions {
     Vector<ByteString> certificates;
-    EnableHTTPDiskCache enable_http_disk_cache { EnableHTTPDiskCache::No };
+    HTTPDiskCacheMode http_disk_cache_mode { HTTPDiskCacheMode::Disabled };
 };
 
 enum class IsLayoutTestMode {
@@ -118,7 +119,7 @@ enum class EnableIDLTracing {
     Yes,
 };
 
-enum class EnableHTTPCache {
+enum class EnableMemoryHTTPCache {
     No,
     Yes,
 };
@@ -162,7 +163,7 @@ struct WebContentOptions {
     LogAllJSExceptions log_all_js_exceptions { LogAllJSExceptions::No };
     DisableSiteIsolation disable_site_isolation { DisableSiteIsolation::No };
     EnableIDLTracing enable_idl_tracing { EnableIDLTracing::No };
-    EnableHTTPCache enable_http_cache { EnableHTTPCache::No };
+    EnableMemoryHTTPCache enable_http_memory_cache { EnableMemoryHTTPCache::No };
     ExposeInternalsObject expose_internals_object { ExposeInternalsObject::No };
     ForceCPUPainting force_cpu_painting { ForceCPUPainting::No };
     ForceFontconfig force_fontconfig { ForceFontconfig::No };

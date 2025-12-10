@@ -11,6 +11,8 @@
 #include <AK/HashTable.h>
 #include <AK/StringBuilder.h>
 #include <LibGC/DeferGC.h>
+#include <LibIPC/Decoder.h>
+#include <LibIPC/Encoder.h>
 #include <LibJS/Runtime/FunctionObject.h>
 #include <LibRegex/Regex.h>
 #include <LibWeb/Animations/Animation.h>
@@ -53,6 +55,7 @@
 #include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/NavigableContainer.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
+#include <LibWeb/HTML/Scripting/SimilarOriginWindowAgent.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 #include <LibWeb/Layout/Node.h>
@@ -786,10 +789,10 @@ void Node::insert_before(GC::Ref<Node> node, GC::Ptr<Node> child, bool suppress_
     children_changed(&metadata);
 
     // 10. Let staticNodeList be a list of nodes, initially « ».
-    // Spec-Note: We collect all nodes before calling the post-connection steps on any one of them, instead of calling
-    //            the post-connection steps while we’re traversing the node tree. This is because the post-connection
-    //            steps can modify the tree’s structure, making live traversal unsafe, possibly leading to the
-    //            post-connection steps being called multiple times on the same node.
+    // NOTE: We collect all nodes before calling the post-connection steps on any one of them, instead of calling the
+    //       post-connection steps while we’re traversing the node tree. This is because the post-connection steps can
+    //       modify the tree’s structure, making live traversal unsafe, possibly leading to the post-connection steps
+    //       being called multiple times on the same node.
     GC::RootVector<GC::Ref<Node>> static_node_list(heap());
 
     // 11. For each node of nodes, in tree order:
@@ -874,11 +877,6 @@ WebIDL::ExceptionOr<GC::Ref<Node>> Node::append_child(GC::Ref<Node> node)
 {
     // To append a node to a parent, pre-insert node into parent before null.
     return pre_insert(node, nullptr);
-
-    // AD-HOC: invalidate the ordinal of the first list_item of the first child sibling of the appended node, if any.
-    // NOTE: This works since ordinal values are accessed (for layout and paint) in the preorder of list_item nodes !!
-    if (auto* first_child_element = this->first_child_of_type<Element>())
-        first_child_element->maybe_invalidate_ordinals_for_list_owner();
 }
 
 // https://dom.spec.whatwg.org/#live-range-pre-remove-steps
@@ -1008,13 +1006,13 @@ void Node::remove(bool suppress_observers)
         }
     }
 
-    // 14. For each shadow-including descendant descendant of node, in shadow-including tree order, then:
+    // 14. For each shadow-including descendant descendant of node, in shadow-including tree order:
     for_each_shadow_including_descendant([&](Node& descendant) {
-        // 1. Run the removing steps with descendant
+        // 1. Run the removing steps with descendant and null.
         descendant.removed_from(nullptr, parent_root);
 
-        // 2. If descendant is custom and isParentConnected is true, then enqueue a custom element callback reaction with descendant,
-        //    callback name "disconnectedCallback", and an empty argument list.
+        // 2. If descendant is custom and isParentConnected is true, then enqueue a custom element callback reaction
+        //    with descendant, callback name "disconnectedCallback", and « ».
         if (auto* element = as_if<DOM::Element>(descendant)) {
             if (element->is_custom() && is_parent_connected) {
                 GC::RootVector<JS::Value> empty_arguments { vm().heap() };
@@ -1025,9 +1023,10 @@ void Node::remove(bool suppress_observers)
         return TraversalDecision::Continue;
     });
 
-    // 15. For each inclusive ancestor inclusiveAncestor of parent, and then for each registered of inclusiveAncestor’s registered observer list,
-    //     if registered’s options["subtree"] is true, then append a new transient registered observer
-    //     whose observer is registered’s observer, options is registered’s options, and source is registered to node’s registered observer list.
+    // 15. For each inclusive ancestor inclusiveAncestor of parent, and then for each registered of inclusiveAncestor’s
+    //     registered observer list, if registered’s options["subtree"] is true, then append a new transient registered
+    //     observer whose observer is registered’s observer, options is registered’s options, and source is registered
+    //     to node’s registered observer list.
     for (auto* inclusive_ancestor = parent; inclusive_ancestor; inclusive_ancestor = inclusive_ancestor->parent()) {
         if (!inclusive_ancestor->m_registered_observer_list)
             continue;
@@ -1039,7 +1038,8 @@ void Node::remove(bool suppress_observers)
         }
     }
 
-    // 16. If suppress observers flag is unset, then queue a tree mutation record for parent with « », « node », oldPreviousSibling, and oldNextSibling.
+    // 16. If suppressObservers is false, then queue a tree mutation record for parent with « », « node »,
+    //     oldPreviousSibling, and oldNextSibling.
     if (!suppress_observers) {
         parent->queue_tree_mutation_record({}, { *this }, old_previous_sibling.ptr(), old_next_sibling.ptr());
     }
@@ -2593,13 +2593,16 @@ void Node::queue_mutation_record(FlyString const& type, Optional<FlyString> cons
     auto removed_nodes_list = StaticNodeList::create(realm(), move(removed_nodes));
 
     // 4. For each observer → mappedOldValue of interestedObservers:
-    for (auto& interested_observer : interested_observers) {
+    for (auto& [observer, mapped_old_value] : interested_observers) {
         // 1. Let record be a new MutationRecord object with its type set to type, target set to target, attributeName set to name, attributeNamespace set to namespace, oldValue set to mappedOldValue,
         //    addedNodes set to addedNodes, removedNodes set to removedNodes, previousSibling set to previousSibling, and nextSibling set to nextSibling.
-        auto record = MutationRecord::create(realm(), type, *this, added_nodes_list, removed_nodes_list, previous_sibling, next_sibling, string_attribute_name, string_attribute_namespace, /* mappedOldValue */ interested_observer.value);
+        auto record = MutationRecord::create(realm(), type, *this, added_nodes_list, removed_nodes_list, previous_sibling, next_sibling, string_attribute_name, string_attribute_namespace, mapped_old_value);
 
         // 2. Enqueue record to observer’s record queue.
-        interested_observer.key->enqueue_record({}, move(record));
+        observer->enqueue_record({}, move(record));
+
+        // 3. Append observer to the surrounding agent’s pending mutation observers.
+        HTML::relevant_similar_origin_window_agent(*this).pending_mutation_observers.append(*observer);
     }
 
     // 5. Queue a mutation observer microtask.

@@ -484,12 +484,6 @@ void HTMLParser::process_using_the_rules_for(InsertionMode mode, HTMLToken& toke
     case InsertionMode::InTableText:
         handle_in_table_text(token);
         break;
-    case InsertionMode::InSelectInTable:
-        handle_in_select_in_table(token);
-        break;
-    case InsertionMode::InSelect:
-        handle_in_select(token);
-        break;
     case InsertionMode::InCaption:
         handle_in_caption(token);
         break;
@@ -748,29 +742,30 @@ HTMLParser::AdjustedInsertionLocation HTMLParser::find_appropriate_place_for_ins
         // 3. If there is a last template and either there is no last table,
         //    or there is one, but last template is lower (more recently added) than last table in the stack of open elements,
         if (last_template.element && (!last_table.element || last_template.index > last_table.index)) {
-            // then: let adjusted insertion location be inside last template's template contents, after its last child (if any), and abort these steps.
+            // then: let adjusted insertion location be inside last template's template contents, after its last child
+            // (if any), and abort these steps.
 
             // NOTE: This returns the template content, so no need to check the parent is a template.
             return { as<HTMLTemplateElement>(*last_template.element).content().ptr(), nullptr };
         }
-        // 4. If there is no last table, then let adjusted insertion location be inside the first element in the stack of open elements (the html element),
-        //    after its last child (if any), and abort these steps. (fragment case)
+        // 4. If there is no last table, then let adjusted insertion location be inside the first element in the stack
+        //    of open elements (the html element), after its last child (if any), and abort these steps. (fragment case)
         if (!last_table.element) {
             VERIFY(m_parsing_fragment);
             // Guaranteed not to be a template element (it will be the html element),
             // so no need to check the parent is a template.
             return { *m_stack_of_open_elements.elements().first(), nullptr };
         }
-        // 5. If last table has a parent node, then let adjusted insertion location be inside last table's parent node, immediately before last table, and abort these steps.
-        if (last_table.element->parent_node()) {
-            adjusted_insertion_location = { last_table.element->parent_node(), last_table.element.ptr() };
-        } else {
-            // 6. Let previous element be the element immediately above last table in the stack of open elements.
-            auto previous_element = m_stack_of_open_elements.element_immediately_above(*last_table.element);
+        // 5. If last table has a parent node, then let adjusted insertion location be inside last table's parent node,
+        //    immediately before last table, and abort these steps.
+        if (last_table.element->parent_node())
+            return { last_table.element->parent_node(), last_table.element.ptr() };
 
-            // 7. Let adjusted insertion location be inside previous element, after its last child (if any).
-            adjusted_insertion_location = { previous_element.ptr(), nullptr };
-        }
+        // 6. Let previous element be the element immediately above last table in the stack of open elements.
+        auto previous_element = m_stack_of_open_elements.element_immediately_above(*last_table.element);
+
+        // 7. Let adjusted insertion location be inside previous element, after its last child (if any).
+        adjusted_insertion_location = { previous_element.ptr(), nullptr };
     } else {
         // `-> Otherwise
         //     Let adjusted insertion location be inside target, after its last child (if any).
@@ -789,25 +784,26 @@ HTMLParser::AdjustedInsertionLocation HTMLParser::find_appropriate_place_for_ins
 // https://html.spec.whatwg.org/multipage/parsing.html#create-an-element-for-the-token
 GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Optional<FlyString> const& namespace_, DOM::Node& intended_parent)
 {
-    // FIXME: 1. If the active speculative HTML parser is not null, then return the result of creating a speculative mock element given given namespace, the tag name of the given token, and the attributes of the given token.
-    // FIXME: 2. Otherwise, optionally create a speculative mock element given given namespace, the tag name of the given token, and the attributes of the given token.
+    // FIXME: 1. If the active speculative HTML parser is not null, then return the result of creating a speculative mock element given given namespace, token's tag name, and token's attributes.
+    // FIXME: 2. Otherwise, optionally create a speculative mock element given given namespace, token's tag name, and token's attributes.
 
-    // 3. Let document be intended parent's node document.
+    // 3. Let document be intendedParent's node document.
     GC::Ref<DOM::Document> document = intended_parent.document();
 
-    // 4. Let local name be the tag name of the token.
+    // 4. Let localName be token's tag name.
     auto const& local_name = token.tag_name();
 
-    // 5. Let is be the value of the "is" attribute in the given token, if such an attribute exists, or null otherwise.
+    // 5. Let is be the value of the "is" attribute in token, if such an attribute exists; otherwise null.
     auto is_value = token.attribute(AttributeNames::is);
 
-    // 6. Let definition be the result of looking up a custom element definition given document, given namespace, local name, and is.
+    // FIXME: 6. Let registry be the result of looking up a custom element registry given intendedParent.
+    // 7. Let definition be the result of looking up a custom element definition given registry, namespace, localName, and is.
     auto definition = document->lookup_custom_element_definition(namespace_, local_name, is_value);
 
-    // 7. Let willExecuteScript be true if definition is non-null and the parser was not created as part of the HTML fragment parsing algorithm; otherwise false.
+    // 8. Let willExecuteScript be true if definition is non-null and the parser was not created as part of the HTML fragment parsing algorithm; otherwise false.
     bool will_execute_script = definition && !m_parsing_fragment;
 
-    // 8. If willExecuteScript is true:
+    // 9. If willExecuteScript is true:
     if (will_execute_script) {
         // 1. Increment document's throw-on-dynamic-markup-insertion counter.
         document->increment_throw_on_dynamic_markup_insertion_counter({});
@@ -821,7 +817,8 @@ GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Opt
         relevant_similar_origin_window_agent(document).custom_element_reactions_stack.element_queue_stack.append({});
     }
 
-    // 9. Let element be the result of creating an element given document, localName, given namespace, null, is, and willExecuteScript.
+    // 10. Let element be the result of creating an element given document, localName, namespace, null, is, willExecuteScript, and registry.
+    // FIXME: and registry.
     auto element = create_element(*document, local_name, namespace_, {}, is_value, will_execute_script).release_value_but_fixme_should_propagate_errors();
 
     // AD-HOC: See AD-HOC comment on Element.m_had_duplicate_attribute_during_tokenization about why this is done.
@@ -837,7 +834,7 @@ GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Opt
         link_element.set_was_enabled_when_created_by_parser({}, !token.has_attribute(HTML::AttributeNames::disabled));
     }
 
-    // 10. Append each attribute in the given token to element.
+    // 11. Append each attribute in the given token to element.
     token.for_each_attribute([&](auto const& attribute) {
         DOM::QualifiedName qualified_name { attribute.local_name, attribute.prefix, attribute.namespace_ };
         auto dom_attribute = realm().create<DOM::Attr>(*document, move(qualified_name), attribute.value, element);
@@ -856,9 +853,10 @@ GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Opt
         }
     }
 
-    // 11. If willExecuteScript is true:
+    // 12. If willExecuteScript is true:
     if (will_execute_script) {
-        // 1. Let queue be the result of popping from document's relevant agent's custom element reactions stack. (This will be the same element queue as was pushed above.)
+        // 1. Let queue be the result of popping from document's relevant agent's custom element reactions stack.
+        //    (This will be the same element queue as was pushed above.)
         auto queue = relevant_similar_origin_window_agent(document).custom_element_reactions_stack.element_queue_stack.take_last();
 
         // 2. Invoke custom element reactions in queue.
@@ -868,14 +866,16 @@ GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Opt
         document->decrement_throw_on_dynamic_markup_insertion_counter({});
     }
 
-    // FIXME: 12. If element has an xmlns attribute in the XMLNS namespace whose value is not exactly the same as the element's namespace, that is a parse error.
+    // FIXME: 13. If element has an xmlns attribute in the XMLNS namespace whose value is not exactly the same as the element's namespace, that is a parse error.
     //            Similarly, if element has an xmlns:xlink attribute in the XMLNS namespace whose value is not the XLink Namespace, that is a parse error.
 
-    // FIXME: 13. If element is a resettable element and not a form-associated custom element, then invoke its reset algorithm. (This initializes the element's value and checkedness based on the element's attributes.)
+    // FIXME: 14. If element is a resettable element and not a form-associated custom element, then invoke its reset algorithm. (This initializes the element's value and checkedness based on the element's attributes.)
 
-    // 14. If element is a form-associated element and not a form-associated custom element, the form element pointer is not null, there is no template element on the stack of open elements,
-    //     element is either not listed or doesn't have a form attribute, and the intended parent is in the same tree as the element pointed to by the form element pointer,
-    //     then associate element with the form element pointed to by the form element pointer and set element's parser inserted flag.
+    // 15. If element is a form-associated element and not a form-associated custom element, the form element pointer
+    //     is not null, there is no template element on the stack of open elements, element is either not listed or
+    //     doesn't have a form attribute, and the intendedParent is in the same tree as the element pointed to by the
+    //     form element pointer, then associate element with the form element pointed to by the form element pointer
+    //     and set element's parser inserted flag.
     // FIXME: Check if the element is not a form-associated custom element.
     if (auto* form_associated_element = as_if<FormAssociatedElement>(*element)) {
         auto& html_element = form_associated_element->form_associated_element_to_html_element();
@@ -889,7 +889,7 @@ GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Opt
         }
     }
 
-    // 15. Return element.
+    // 16. Return element.
     return element;
 }
 
@@ -1154,7 +1154,7 @@ void HTMLParser::handle_in_head(HTMLToken& token)
     // -> A start tag whose tag name is "template"
     if (token.is_start_tag() && token.tag_name() == HTML::TagNames::template_) {
         // Run these steps:
-        // 1. Let template start tag be the start tag.
+        // 1. Let templateStartTag be the start tag.
         auto const& template_start_tag = token;
 
         // 2. Insert a marker at the end of the list of active formatting elements.
@@ -1191,7 +1191,7 @@ void HTMLParser::handle_in_head(HTMLToken& token)
         }
 
         // 9. If any of the following are false:
-        //    - templateStartTag's shadowrootmode is not in the none state;
+        //    - templateStartTag's shadowrootmode is not in the None state;
         //    - document's allow declarative shadow roots is true; or
         //    - the adjusted current node is not the topmost element in the stack of open elements,
         if (!shadowrootmode.has_value()
@@ -1213,13 +1213,13 @@ void HTMLParser::handle_in_head(HTMLToken& token)
             auto mode = shadowrootmode.value();
 
             // 4. Let clonable be true if templateStartTag has a shadowrootclonable attribute; otherwise false.
-            auto clonable = template_start_tag.attribute(HTML::AttributeNames::shadowrootclonable).has_value();
+            auto clonable = template_start_tag.has_attribute(HTML::AttributeNames::shadowrootclonable);
 
             // 5. Let serializable be true if templateStartTag has a shadowrootserializable attribute; otherwise false.
-            auto serializable = template_start_tag.attribute(HTML::AttributeNames::shadowrootserializable).has_value();
+            auto serializable = template_start_tag.has_attribute(HTML::AttributeNames::shadowrootserializable);
 
             // 6. Let delegatesFocus be true if templateStartTag has a shadowrootdelegatesfocus attribute; otherwise false.
-            auto delegates_focus = template_start_tag.attribute(HTML::AttributeNames::shadowrootdelegatesfocus).has_value();
+            auto delegates_focus = template_start_tag.has_attribute(HTML::AttributeNames::shadowrootdelegatesfocus);
 
             // 7. If declarativeShadowHostElement is a shadow host, then insert an element at the adjusted insertion location with template.
             if (declarative_shadow_host_element.is_shadow_host()) {
@@ -1231,31 +1231,39 @@ void HTMLParser::handle_in_head(HTMLToken& token)
 
             // 8. Otherwise:
             else {
-                // FIXME: The spec substeps here now deal with custom element registries. Update to match that.
+                // FIXME: 1. Let registry be null if templateStartTag has a shadowrootcustomelementregistry attribute; otherwise declarativeShadowHostElement's node document's custom element registry.
 
-                // 1. Attach a shadow root with declarativeShadowHostElement, mode, clonable, serializable, delegatesFocus, and "named".
-                //    If an exception is thrown, then catch it, report the exception, insert an element at the adjusted insertion location with template, and return.
+                // 2. Attach a shadow root with declarativeShadowHostElement, mode, clonable, serializable, delegatesFocus, "named", and registry.
+                // FIXME: and registry.
                 auto result = declarative_shadow_host_element.attach_a_shadow_root(mode, clonable, serializable, delegates_focus, Bindings::SlotAssignmentMode::Named);
+                //    If an exception is thrown, then catch it and:
                 if (result.is_error()) {
-                    report_exception(Bindings::exception_to_throw_completion(vm(), result.release_error()), realm());
+                    // 1. Insert an element at the adjusted insertion location with template.
                     // FIXME: We do manual "insert before" instead of "insert an element at the adjusted insertion location" here
                     //        Otherwise, the new insertion location will be inside the template's contents, which is not what we want here.
                     //        This might be a spec bug(?)
                     adjusted_insertion_location.parent->insert_before(*template_, adjusted_insertion_location.insert_before_sibling);
+
+                    // 2. The user agent may report an error to the developer console.
+                    report_exception(Bindings::exception_to_throw_completion(vm(), result.release_error()), realm());
+
+                    // 3. Return.
                     return;
                 }
 
-                // 2. Let shadow be declarativeShadowHostElement's shadow root.
+                // 3. Let shadow be declarativeShadowHostElement's shadow root.
                 auto& shadow = *declarative_shadow_host_element.shadow_root();
 
-                // 3. Set shadow's declarative to true.
+                // 4. Set shadow's declarative to true.
                 shadow.set_declarative(true);
 
-                // 4. Set template's template contents property to shadow.
+                // 5. Set template's template contents to shadow.
                 as<HTMLTemplateElement>(*template_).set_template_contents(shadow);
 
-                // 5. Set shadow's available to element internals to true.
+                // 6. Set shadow's available to element internals to true.
                 shadow.set_available_to_element_internals(true);
+
+                // FIXME: 7. If templateStartTag has a shadowrootcustomelementregistry attribute, then set shadow's keep custom element registry null to true.
             }
         }
 
@@ -1556,12 +1564,14 @@ void HTMLParser::handle_after_head(HTMLToken& token)
     }
 }
 
+// https://html.spec.whatwg.org/multipage/parsing.html#generate-implied-end-tags
 void HTMLParser::generate_implied_end_tags(FlyString const& exception)
 {
     while (current_node()->local_name() != exception && current_node()->local_name().is_one_of(HTML::TagNames::dd, HTML::TagNames::dt, HTML::TagNames::li, HTML::TagNames::optgroup, HTML::TagNames::option, HTML::TagNames::p, HTML::TagNames::rb, HTML::TagNames::rp, HTML::TagNames::rt, HTML::TagNames::rtc))
         (void)m_stack_of_open_elements.pop();
 }
 
+// https://html.spec.whatwg.org/multipage/parsing.html#generate-implied-end-tags
 void HTMLParser::generate_all_implied_end_tags_thoroughly()
 {
     while (current_node()->local_name().is_one_of(HTML::TagNames::caption, HTML::TagNames::colgroup, HTML::TagNames::dd, HTML::TagNames::dt, HTML::TagNames::li, HTML::TagNames::optgroup, HTML::TagNames::option, HTML::TagNames::p, HTML::TagNames::rb, HTML::TagNames::rp, HTML::TagNames::rt, HTML::TagNames::rtc, HTML::TagNames::tbody, HTML::TagNames::td, HTML::TagNames::tfoot, HTML::TagNames::th, HTML::TagNames::thead, HTML::TagNames::tr))
@@ -2086,14 +2096,9 @@ void HTMLParser::handle_in_body(HTMLToken& token)
     }
 
     // -> A start tag whose tag name is one of: "base", "basefont", "bgsound", "link", "meta", "noframes", "script", "style", "template", "title"
-    if (token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::base, HTML::TagNames::basefont, HTML::TagNames::bgsound, HTML::TagNames::link, HTML::TagNames::meta, HTML::TagNames::noframes, HTML::TagNames::script, HTML::TagNames::style, HTML::TagNames::template_, HTML::TagNames::title)) {
-        // Process the token using the rules for the "in head" insertion mode.
-        process_using_the_rules_for(InsertionMode::InHead, token);
-        return;
-    }
-
     // -> An end tag whose tag name is "template"
-    if (token.is_end_tag() && token.tag_name() == HTML::TagNames::template_) {
+    if ((token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::base, HTML::TagNames::basefont, HTML::TagNames::bgsound, HTML::TagNames::link, HTML::TagNames::meta, HTML::TagNames::noframes, HTML::TagNames::script, HTML::TagNames::style, HTML::TagNames::template_, HTML::TagNames::title))
+        || (token.is_end_tag() && token.tag_name() == HTML::TagNames::template_)) {
         // Process the token using the rules for the "in head" insertion mode.
         process_using_the_rules_for(InsertionMode::InHead, token);
         return;
@@ -2441,8 +2446,10 @@ void HTMLParser::handle_in_body(HTMLToken& token)
         return;
     }
 
-    // -> An end tag whose tag name is one of: "address", "article", "aside", "blockquote", "button", "center", "details", "dialog", "dir", "div", "dl", "fieldset", "figcaption", "figure", "footer", "header", "hgroup", "listing", "main", "menu", "nav", "ol", "pre", "search", "section", "summary", "ul"
-    if (token.is_end_tag() && token.tag_name().is_one_of(HTML::TagNames::address, HTML::TagNames::article, HTML::TagNames::aside, HTML::TagNames::blockquote, HTML::TagNames::button, HTML::TagNames::center, HTML::TagNames::details, HTML::TagNames::dialog, HTML::TagNames::dir, HTML::TagNames::div, HTML::TagNames::dl, HTML::TagNames::fieldset, HTML::TagNames::figcaption, HTML::TagNames::figure, HTML::TagNames::footer, HTML::TagNames::header, HTML::TagNames::hgroup, HTML::TagNames::listing, HTML::TagNames::main, HTML::TagNames::menu, HTML::TagNames::nav, HTML::TagNames::ol, HTML::TagNames::pre, HTML::TagNames::search, HTML::TagNames::section, HTML::TagNames::summary, HTML::TagNames::ul)) {
+    // -> An end tag whose tag name is one of: "address", "article", "aside", "blockquote", "button", "center",
+    //    "details", "dialog", "dir", "div", "dl", "fieldset", "figcaption", "figure", "footer", "header", "hgroup",
+    //    "listing", "main", "menu", "nav", "ol", "pre", "search", "section", "select",  "summary", "ul"
+    if (token.is_end_tag() && token.tag_name().is_one_of(HTML::TagNames::address, HTML::TagNames::article, HTML::TagNames::aside, HTML::TagNames::blockquote, HTML::TagNames::button, HTML::TagNames::center, HTML::TagNames::details, HTML::TagNames::dialog, HTML::TagNames::dir, HTML::TagNames::div, HTML::TagNames::dl, HTML::TagNames::fieldset, HTML::TagNames::figcaption, HTML::TagNames::figure, HTML::TagNames::footer, HTML::TagNames::header, HTML::TagNames::hgroup, HTML::TagNames::listing, HTML::TagNames::main, HTML::TagNames::menu, HTML::TagNames::nav, HTML::TagNames::ol, HTML::TagNames::pre, HTML::TagNames::search, HTML::TagNames::section, HTML::TagNames::select, HTML::TagNames::summary, HTML::TagNames::ul)) {
         // If the stack of open elements does not have an element in scope that is an HTML element with the same tag name as that of the token, then this is a parse error; ignore the token.
         if (!m_stack_of_open_elements.has_in_scope(token.tag_name())) {
             log_parse_error();
@@ -2757,6 +2764,26 @@ void HTMLParser::handle_in_body(HTMLToken& token)
 
     // -> A start tag whose tag name is "input"
     if (token.is_start_tag() && token.tag_name() == HTML::TagNames::input) {
+        // If the parser was created as part of the HTML fragment parsing algorithm (fragment case) and the context
+        // element passed to that algorithm is a select element:
+        if (m_parsing_fragment && m_context_element->local_name() == HTML::TagNames::select) {
+            // 1. Parse error.
+            // 2. Ignore the token.
+            log_parse_error();
+
+            // 3. Return.
+            return;
+        }
+
+        // If the stack of open elements has a select element in scope:
+        if (m_stack_of_open_elements.has_in_scope(HTML::TagNames::select)) {
+            // 1. Parse error.
+            log_parse_error();
+
+            // 2. Pop elements from the stack of open elements until a select element has been popped from the stack.
+            m_stack_of_open_elements.pop_until_an_element_with_tag_name_has_been_popped(HTML::TagNames::select);
+        }
+
         // Reconstruct the active formatting elements, if any.
         reconstruct_the_active_formatting_elements();
 
@@ -2791,6 +2818,17 @@ void HTMLParser::handle_in_body(HTMLToken& token)
         // If the stack of open elements has a p element in button scope, then close a p element.
         if (m_stack_of_open_elements.has_in_button_scope(HTML::TagNames::p))
             close_a_p_element();
+
+        // If the stack of open elements has a select element in scope:
+        if (m_stack_of_open_elements.has_in_scope(HTML::TagNames::select)) {
+            // 1. Generate implied end tags.
+            generate_implied_end_tags();
+
+            // 2. If the stack of open elements has an option element in scope or has an optgroup element in scope, then
+            //    this is a parse error.
+            if (m_stack_of_open_elements.has_in_scope(HTML::TagNames::option) || m_stack_of_open_elements.has_in_scope(HTML::TagNames::optgroup))
+                log_parse_error();
+        }
 
         // Insert an HTML element for the token. Immediately pop the current node off the stack of open elements.
         (void)insert_html_element(token);
@@ -2875,36 +2913,77 @@ void HTMLParser::handle_in_body(HTMLToken& token)
 
     // -> A start tag whose tag name is "select"
     if (token.is_start_tag() && token.tag_name() == HTML::TagNames::select) {
+        // If the parser was created as part of the HTML fragment parsing algorithm (fragment case)
+        // and the context element passed to that algorithm is a select element:
+        if (m_parsing_fragment && m_context_element->local_name() == HTML::TagNames::select) {
+            // 1. Parse error.
+            // 2. Ignore the token.
+            log_parse_error();
+        }
+        // Otherwise, if the stack of open elements has a select element in scope:
+        else if (m_stack_of_open_elements.has_in_scope(HTML::TagNames::select)) {
+            // 1. Parse error.
+            // 2. Ignore the token.
+            log_parse_error();
+
+            // 3. Pop elements from the stack of open elements until a select element has been popped from the stack.
+            m_stack_of_open_elements.pop_until_an_element_with_tag_name_has_been_popped(HTML::TagNames::select);
+        }
+        // Otherwise:
+        else {
+            // 1. Reconstruct the active formatting elements, if any.
+            reconstruct_the_active_formatting_elements();
+
+            // 2. Insert an HTML element for the token.
+            (void)insert_html_element(token);
+
+            // 3. Set the frameset-ok flag to "not ok".
+            m_frameset_ok = false;
+        }
+        return;
+    }
+
+    // -> A start tag whose tag name is "option"
+    if (token.is_start_tag() && token.tag_name() == HTML::TagNames::option) {
+        // If the stack of open elements has a select element in scope:
+        if (m_stack_of_open_elements.has_in_scope(HTML::TagNames::select)) {
+            // 1. Generate implied end tags except for optgroup elements.
+            generate_implied_end_tags(HTML::TagNames::optgroup);
+
+            // 2. If the stack of open elements has an option element in scope, then this is a parse error.
+            if (m_stack_of_open_elements.has_in_scope(HTML::TagNames::option))
+                log_parse_error();
+        }
+        // Otherwise, if the current node is an option element, then pop the current node from the stack of open elements.
+        else if (current_node()->local_name() == HTML::TagNames::option) {
+            (void)m_stack_of_open_elements.pop();
+        }
+
         // Reconstruct the active formatting elements, if any.
         reconstruct_the_active_formatting_elements();
 
         // Insert an HTML element for the token.
         (void)insert_html_element(token);
-
-        // Set the frameset-ok flag to "not ok".
-        m_frameset_ok = false;
-
-        // If the insertion mode is one of "in table", "in caption", "in table body", "in row", or "in cell", then switch the insertion mode to "in select in table". Otherwise, switch the insertion mode to "in select".
-        switch (m_insertion_mode) {
-        case InsertionMode::InTable:
-        case InsertionMode::InCaption:
-        case InsertionMode::InTableBody:
-        case InsertionMode::InRow:
-        case InsertionMode::InCell:
-            m_insertion_mode = InsertionMode::InSelectInTable;
-            break;
-        default:
-            m_insertion_mode = InsertionMode::InSelect;
-            break;
-        }
         return;
     }
 
-    // -> A start tag whose tag name is one of: "optgroup", "option"
-    if (token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::optgroup, HTML::TagNames::option)) {
-        // If the current node is an option element, then pop the current node off the stack of open elements.
-        if (current_node()->local_name() == HTML::TagNames::option)
+    // -> A start tag whose tag name is "optgroup"
+    if (token.is_start_tag() && token.tag_name() == HTML::TagNames::optgroup) {
+
+        // If the stack of open elements has a select element in scope:
+        if (m_stack_of_open_elements.has_in_scope(HTML::TagNames::select)) {
+            // 1. Generate implied end tags.
+            generate_implied_end_tags();
+
+            // 2. If the stack of open elements has an option element in scope or has an optgroup element in scope, then
+            //    this is a parse error.
+            if (m_stack_of_open_elements.has_in_scope(HTML::TagNames::option) || m_stack_of_open_elements.has_in_scope(HTML::TagNames::optgroup))
+                log_parse_error();
+        }
+        // Otherwise, if the current node is an option element, then pop the current node from the stack of open elements.
+        else if (current_node()->local_name() == HTML::TagNames::option) {
             (void)m_stack_of_open_elements.pop();
+        }
 
         // Reconstruct the active formatting elements, if any.
         reconstruct_the_active_formatting_elements();
@@ -3930,250 +4009,6 @@ void HTMLParser::handle_in_table(HTMLToken& token)
     }
 }
 
-// https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inselectintable
-void HTMLParser::handle_in_select_in_table(HTMLToken& token)
-{
-    // -> A start tag whose tag name is one of: "caption", "table", "tbody", "tfoot", "thead", "tr", "td", "th"
-    if (token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::caption, HTML::TagNames::table, HTML::TagNames::tbody, HTML::TagNames::tfoot, HTML::TagNames::thead, HTML::TagNames::tr, HTML::TagNames::td, HTML::TagNames::th)) {
-        // Parse error.
-        log_parse_error();
-
-        // Pop elements from the stack of open elements until a select element has been popped from the stack.
-        m_stack_of_open_elements.pop_until_an_element_with_tag_name_has_been_popped(HTML::TagNames::select);
-
-        // Reset the insertion mode appropriately.
-        reset_the_insertion_mode_appropriately();
-
-        // Reprocess the token.
-        process_using_the_rules_for(m_insertion_mode, token);
-        return;
-    }
-
-    // -> An end tag whose tag name is one of: "caption", "table", "tbody", "tfoot", "thead", "tr", "td", "th"
-    if (token.is_end_tag() && token.tag_name().is_one_of(HTML::TagNames::caption, HTML::TagNames::table, HTML::TagNames::tbody, HTML::TagNames::tfoot, HTML::TagNames::thead, HTML::TagNames::tr, HTML::TagNames::td, HTML::TagNames::th)) {
-
-        // Parse error.
-        log_parse_error();
-
-        // If the stack of open elements does not have an element in table scope that is an HTML element with the same
-        // tag name as that of the token, then ignore the token.
-        if (!m_stack_of_open_elements.has_in_table_scope(token.tag_name()))
-            return;
-
-        // Otherwise:
-
-        // 1. Pop elements from the stack of open elements until a select element has been popped from the stack.
-        m_stack_of_open_elements.pop_until_an_element_with_tag_name_has_been_popped(HTML::TagNames::select);
-
-        // 2. Reset the insertion mode appropriately.
-        reset_the_insertion_mode_appropriately();
-
-        // 3. Reprocess the token.
-        process_using_the_rules_for(m_insertion_mode, token);
-        return;
-    }
-
-    // -> Anything else
-    //    Process the token using the rules for the "in select" insertion mode.
-    process_using_the_rules_for(InsertionMode::InSelect, token);
-}
-
-// https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inselect
-void HTMLParser::handle_in_select(HTMLToken& token)
-{
-    if (token.is_character()) {
-        // -> A character token that is U+0000 NULL
-        if (token.code_point() == 0) {
-            // Parse error. Ignore the token.
-            log_parse_error();
-            return;
-        }
-        // -> Any other character token
-        //    Insert the token's character.
-        insert_character(token.code_point());
-        return;
-    }
-
-    // -> A comment token
-    if (token.is_comment()) {
-        // Insert a comment.
-        insert_comment(token);
-        return;
-    }
-
-    // -> A DOCTYPE token
-    if (token.is_doctype()) {
-        // Parse error. Ignore the token.
-        log_parse_error();
-        return;
-    }
-
-    // -> A start tag whose tag name is "html"
-    if (token.is_start_tag() && token.tag_name() == HTML::TagNames::html) {
-        // Process the token using the rules for the "in body" insertion mode.
-        process_using_the_rules_for(InsertionMode::InBody, token);
-        return;
-    }
-
-    // -> A start tag whose tag name is "option"
-    if (token.is_start_tag() && token.tag_name() == HTML::TagNames::option) {
-        // If the current node is an option element, pop that node from the stack of open elements.
-        if (current_node()->local_name() == HTML::TagNames::option)
-            (void)m_stack_of_open_elements.pop();
-
-        // Insert an HTML element for the token.
-        (void)insert_html_element(token);
-        return;
-    }
-
-    // -> A start tag whose tag name is "optgroup"
-    if (token.is_start_tag() && token.tag_name() == HTML::TagNames::optgroup) {
-        // If the current node is an option element, pop that node from the stack of open elements.
-        if (current_node()->local_name() == HTML::TagNames::option)
-            (void)m_stack_of_open_elements.pop();
-
-        // If the current node is an optgroup element, pop that node from the stack of open elements.
-        if (current_node()->local_name() == HTML::TagNames::optgroup)
-            (void)m_stack_of_open_elements.pop();
-
-        // Insert an HTML element for the token.
-        (void)insert_html_element(token);
-        return;
-    }
-
-    // -> A start tag whose tag name is "hr"
-    if (token.is_start_tag() && token.tag_name() == HTML::TagNames::hr) {
-        // If the current node is an option element, pop that node from the stack of open elements.
-        if (current_node()->local_name() == HTML::TagNames::option)
-            (void)m_stack_of_open_elements.pop();
-
-        // If the current node is an optgroup element, pop that node from the stack of open elements.
-        if (current_node()->local_name() == HTML::TagNames::optgroup)
-            (void)m_stack_of_open_elements.pop();
-
-        // Insert an HTML element for the token. Immediately pop the current node off the stack of open elements.
-        (void)insert_html_element(token);
-        (void)m_stack_of_open_elements.pop();
-
-        // Acknowledge the token's self-closing flag, if it is set.
-        token.acknowledge_self_closing_flag_if_set();
-        return;
-    }
-
-    // -> An end tag whose tag name is "optgroup"
-    if (token.is_end_tag() && token.tag_name() == HTML::TagNames::optgroup) {
-        // First, if the current node is an option element, and the node immediately before it in the stack of open
-        // elements is an optgroup element, then pop the current node from the stack of open elements.
-        if (current_node()->local_name() == HTML::TagNames::option && node_before_current_node()->local_name() == HTML::TagNames::optgroup)
-            (void)m_stack_of_open_elements.pop();
-
-        // If the current node is an optgroup element, then pop that node from the stack of open elements.
-        // Otherwise, this is a parse error; ignore the token.
-        if (current_node()->local_name() == HTML::TagNames::optgroup) {
-            (void)m_stack_of_open_elements.pop();
-        } else {
-            log_parse_error();
-            return;
-        }
-        return;
-    }
-
-    // -> An end tag whose tag name is "option"
-    if (token.is_end_tag() && token.tag_name() == HTML::TagNames::option) {
-        // If the current node is an option element, then pop that node from the stack of open elements.
-        // Otherwise, this is a parse error; ignore the token.
-        if (current_node()->local_name() == HTML::TagNames::option) {
-            (void)m_stack_of_open_elements.pop();
-        } else {
-            log_parse_error();
-            return;
-        }
-        return;
-    }
-
-    // -> An end tag whose tag name is "select"
-    if (token.is_end_tag() && token.tag_name() == HTML::TagNames::select) {
-        // If the stack of open elements does not have a select element in select scope, this is a parse error; ignore
-        // the token. (fragment case)
-        if (!m_stack_of_open_elements.has_in_select_scope(HTML::TagNames::select)) {
-            VERIFY(m_parsing_fragment);
-            log_parse_error();
-            return;
-        }
-
-        // Otherwise:
-        // 1. Pop elements from the stack of open elements until a select element has been popped from the stack.
-        m_stack_of_open_elements.pop_until_an_element_with_tag_name_has_been_popped(HTML::TagNames::select);
-
-        // 2. Reset the insertion mode appropriately.
-        reset_the_insertion_mode_appropriately();
-        return;
-    }
-
-    // -> A start tag whose tag name is "select"
-    if (token.is_start_tag() && token.tag_name() == HTML::TagNames::select) {
-        // Parse error.
-        log_parse_error();
-
-        // If the stack of open elements does not have a select element in select scope, ignore the token. (fragment case)
-        if (!m_stack_of_open_elements.has_in_select_scope(HTML::TagNames::select)) {
-            VERIFY(m_parsing_fragment);
-            return;
-        }
-
-        // Otherwise:
-        // 1. Pop elements from the stack of open elements until a select element has been popped from the stack.
-        m_stack_of_open_elements.pop_until_an_element_with_tag_name_has_been_popped(HTML::TagNames::select);
-
-        // 2. Reset the insertion mode appropriately.
-        reset_the_insertion_mode_appropriately();
-        return;
-    }
-
-    // -> A start tag whose tag name is one of: "input", "keygen", "textarea"
-    if (token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::input, HTML::TagNames::keygen, HTML::TagNames::textarea)) {
-        // Parse error.
-        log_parse_error();
-
-        // If the stack of open elements does not have a select element in select scope, ignore the token. (fragment case)
-        if (!m_stack_of_open_elements.has_in_select_scope(HTML::TagNames::select)) {
-            VERIFY(m_parsing_fragment);
-            return;
-        }
-
-        // Otherwise:
-        // 1. Pop elements from the stack of open elements until a select element has been popped from the stack.
-        m_stack_of_open_elements.pop_until_an_element_with_tag_name_has_been_popped(HTML::TagNames::select);
-
-        // 2. Reset the insertion mode appropriately.
-        reset_the_insertion_mode_appropriately();
-
-        // 3. Reprocess the token.
-        process_using_the_rules_for(m_insertion_mode, token);
-        return;
-    }
-
-    // -> A start tag whose tag name is one of: "script", "template"
-    // -> An end tag whose tag name is "template"
-    if ((token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::script, HTML::TagNames::template_))
-        || (token.is_end_tag() && token.tag_name() == HTML::TagNames::template_)) {
-        // Process the token using the rules for the "in head" insertion mode.
-        process_using_the_rules_for(InsertionMode::InHead, token);
-        return;
-    }
-
-    // -> An end-of-file token
-    if (token.is_end_of_file()) {
-        // Process the token using the rules for the "in body" insertion mode.
-        process_using_the_rules_for(InsertionMode::InBody, token);
-        return;
-    }
-
-    // -> Anything else
-    //    Parse error. Ignore the token.
-    log_parse_error();
-}
-
 // https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-incaption
 void HTMLParser::handle_in_caption(HTMLToken& token)
 {
@@ -4364,13 +4199,10 @@ void HTMLParser::handle_in_template(HTMLToken& token)
     }
 
     // -> A start tag whose tag name is one of: "base", "basefont", "bgsound", "link", "meta", "noframes", "script", "style", "template", "title"
-    if (token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::base, HTML::TagNames::basefont, HTML::TagNames::bgsound, HTML::TagNames::link, HTML::TagNames::meta, HTML::TagNames::noframes, HTML::TagNames::script, HTML::TagNames::style, HTML::TagNames::template_, HTML::TagNames::title)) {
-        process_using_the_rules_for(InsertionMode::InHead, token);
-        return;
-    }
-
     // -> An end tag whose tag name is "template"
-    if (token.is_end_tag() && token.tag_name() == HTML::TagNames::template_) {
+    if ((token.is_start_tag() && token.tag_name().is_one_of(HTML::TagNames::base, HTML::TagNames::basefont, HTML::TagNames::bgsound, HTML::TagNames::link, HTML::TagNames::meta, HTML::TagNames::noframes, HTML::TagNames::script, HTML::TagNames::style, HTML::TagNames::template_, HTML::TagNames::title))
+        || (token.is_end_tag() && token.tag_name() == HTML::TagNames::template_)) {
+        // Process the token using the rules for the "in head" insertion mode.
         process_using_the_rules_for(InsertionMode::InHead, token);
         return;
     }
@@ -4879,97 +4711,68 @@ void HTMLParser::reset_the_insertion_mode_appropriately()
 
         // NOTE: The following steps only apply to HTML elements, so skip ones that aren't.
         if (node->namespace_uri() == Namespace::HTML) {
-            // 4. If node is a select element, run these substeps:
-            if (node->local_name() == HTML::TagNames::select) {
-                // 1. If last is true, jump to the step below labeled done.
-                if (!last) {
-                    // 2. Let ancestor be node.
-                    // 3. Loop: If ancestor is the first node in the stack of open elements, jump to the step below labeled done.
-                    for (ssize_t j = i; j > 0; --j) {
-                        // 4. Let ancestor be the node before ancestor in the stack of open elements.
-                        auto& ancestor = m_stack_of_open_elements.elements().at(j - 1);
-
-                        // 5. If ancestor is a template node, jump to the step below labeled done.
-                        if (is<HTMLTemplateElement>(*ancestor))
-                            break;
-
-                        // 6. If ancestor is a table node, switch the insertion mode to "in select in table" and return.
-                        if (is<HTMLTableElement>(*ancestor)) {
-                            m_insertion_mode = InsertionMode::InSelectInTable;
-                            return;
-                        }
-
-                        // 7. Jump back to the step labeled loop.
-                    }
-                }
-
-                // 8. Done: Switch the insertion mode to "in select" and return.
-                m_insertion_mode = InsertionMode::InSelect;
-                return;
-            }
-
-            // 5. If node is a td or th element and last is false, then switch the insertion mode to "in cell" and return.
+            // 4. If node is a td or th element and last is false, then switch the insertion mode to "in cell" and return.
             if (!last && node->local_name().is_one_of(HTML::TagNames::td, HTML::TagNames::th)) {
                 m_insertion_mode = InsertionMode::InCell;
                 return;
             }
 
-            // 6. If node is a tr element, then switch the insertion mode to "in row" and return.
+            // 5. If node is a tr element, then switch the insertion mode to "in row" and return.
             if (node->local_name() == HTML::TagNames::tr) {
                 m_insertion_mode = InsertionMode::InRow;
                 return;
             }
 
-            // 7. If node is a tbody, thead, or tfoot element, then switch the insertion mode to "in table body" and return.
+            // 6. If node is a tbody, thead, or tfoot element, then switch the insertion mode to "in table body" and return.
             if (node->local_name().is_one_of(HTML::TagNames::tbody, HTML::TagNames::thead, HTML::TagNames::tfoot)) {
                 m_insertion_mode = InsertionMode::InTableBody;
                 return;
             }
 
-            // 8. If node is a caption element, then switch the insertion mode to "in caption" and return.
+            // 7. If node is a caption element, then switch the insertion mode to "in caption" and return.
             if (node->local_name() == HTML::TagNames::caption) {
                 m_insertion_mode = InsertionMode::InCaption;
                 return;
             }
 
-            // 9. If node is a colgroup element, then switch the insertion mode to "in column group" and return.
+            // 8. If node is a colgroup element, then switch the insertion mode to "in column group" and return.
             if (node->local_name() == HTML::TagNames::colgroup) {
                 m_insertion_mode = InsertionMode::InColumnGroup;
                 return;
             }
 
-            // 10. If node is a table element, then switch the insertion mode to "in table" and return.
+            // 9. If node is a table element, then switch the insertion mode to "in table" and return.
             if (node->local_name() == HTML::TagNames::table) {
                 m_insertion_mode = InsertionMode::InTable;
                 return;
             }
 
-            // 11. If node is a template element, then switch the insertion mode to the current template insertion mode and return.
+            // 10. If node is a template element, then switch the insertion mode to the current template insertion mode and return.
             if (node->local_name() == HTML::TagNames::template_) {
                 m_insertion_mode = m_stack_of_template_insertion_modes.last();
                 return;
             }
 
-            // 12. If node is a head element and last is false, then switch the insertion mode to "in head" and return.
+            // 11. If node is a head element and last is false, then switch the insertion mode to "in head" and return.
             if (!last && node->local_name() == HTML::TagNames::head) {
                 m_insertion_mode = InsertionMode::InHead;
                 return;
             }
 
-            // 13. If node is a body element, then switch the insertion mode to "in body" and return.
+            // 12. If node is a body element, then switch the insertion mode to "in body" and return.
             if (node->local_name() == HTML::TagNames::body) {
                 m_insertion_mode = InsertionMode::InBody;
                 return;
             }
 
-            // 14. If node is a frameset element, then switch the insertion mode to "in frameset" and return. (fragment case)
+            // 13. If node is a frameset element, then switch the insertion mode to "in frameset" and return. (fragment case)
             if (node->local_name() == HTML::TagNames::frameset) {
                 VERIFY(m_parsing_fragment);
                 m_insertion_mode = InsertionMode::InFrameset;
                 return;
             }
 
-            // 15. If node is an html element, run these substeps:
+            // 14. If node is an html element, run these substeps:
             if (node->local_name() == HTML::TagNames::html) {
                 // 1. If the head element pointer is null, switch the insertion mode to "before head" and return. (fragment case)
                 if (!m_head_element) {
@@ -4984,15 +4787,15 @@ void HTMLParser::reset_the_insertion_mode_appropriately()
             }
         }
 
-        // 16. If last is true, then switch the insertion mode to "in body" and return. (fragment case)
+        // 15. If last is true, then switch the insertion mode to "in body" and return. (fragment case)
         if (last) {
             VERIFY(m_parsing_fragment);
             m_insertion_mode = InsertionMode::InBody;
             return;
         }
 
-        // 17. Let node now be the node before node in the stack of open elements.
-        // 18. Return to the step labeled loop.
+        // 16. Let node now be the node before node in the stack of open elements.
+        // 17. Return to the step labeled loop.
     }
 
     VERIFY_NOT_REACHED();

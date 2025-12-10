@@ -6,6 +6,7 @@
 
 #include <AK/Enumerate.h>
 #include <LibCore/Process.h>
+#include <LibCore/System.h>
 #include <LibWebView/Application.h>
 #include <LibWebView/HelperProcess.h>
 #include <LibWebView/Utilities.h>
@@ -110,8 +111,8 @@ static ErrorOr<NonnullRefPtr<WebView::WebContentClient>> launch_web_content_proc
         arguments.append("--disable-site-isolation"sv);
     if (web_content_options.enable_idl_tracing == WebView::EnableIDLTracing::Yes)
         arguments.append("--enable-idl-tracing"sv);
-    if (web_content_options.enable_http_cache == WebView::EnableHTTPCache::Yes)
-        arguments.append("--enable-http-cache"sv);
+    if (web_content_options.enable_http_memory_cache == WebView::EnableMemoryHTTPCache::Yes)
+        arguments.append("--enable-http-memory-cache"sv);
     if (web_content_options.expose_internals_object == WebView::ExposeInternalsObject::Yes)
         arguments.append("--expose-internals-object"sv);
     if (web_content_options.force_cpu_painting == WebView::ForceCPUPainting::Yes)
@@ -213,8 +214,19 @@ ErrorOr<NonnullRefPtr<Requests::RequestClient>> launch_request_server_process()
     for (auto const& certificate : request_server_options.certificates)
         arguments.append(ByteString::formatted("--certificate={}", certificate));
 
-    if (request_server_options.enable_http_disk_cache == EnableHTTPDiskCache::Yes)
-        arguments.append("--enable-http-disk-cache"sv);
+    arguments.append("--http-disk-cache-mode"sv);
+
+    switch (request_server_options.http_disk_cache_mode) {
+    case HTTPDiskCacheMode::Disabled:
+        arguments.append("disabled"sv);
+        break;
+    case HTTPDiskCacheMode::Enabled:
+        arguments.append("enabled"sv);
+        break;
+    case HTTPDiskCacheMode::Testing:
+        arguments.append("testing"sv);
+        break;
+    }
 
     if (auto server = mach_server_name(); server.has_value()) {
         arguments.append("--mach-server-name"sv);

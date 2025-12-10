@@ -110,6 +110,12 @@
     "textarea",
     "textfield"
   ],
+  "axis": [
+    "block",
+    "inline",
+    "x",
+    "y"
+  ],
   "background-attachment": [
     "fixed",
     "local",
@@ -300,6 +306,10 @@
   "fill-rule": [
     "nonzero",
     "evenodd"
+  ],
+  "fit-side": [
+    "closest-side",
+    "farthest-side"
   ],
   "flex-direction": [
     "row",
@@ -714,6 +724,11 @@
     "auto",
     "thin",
     "none"
+  ],
+  "scroller": [
+    "root",
+    "nearest",
+    "self"
   ],
   "shape-box": [
     "content-box",

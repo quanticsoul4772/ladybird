@@ -348,7 +348,7 @@ static WebIDL::ExceptionOr<Vector<BaseKeyframe>> process_a_keyframes_argument(JS
 
             // 6. If Type(nextItem) is not Undefined, Null or Object, then throw a TypeError and abort these steps.
             if (!next_item.is_nullish() && !next_item.is_object())
-                return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOrNull, next_item.to_string_without_side_effects());
+                return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOrNull, next_item);
 
             // 7. Append to processed keyframes the result of running the procedure to process a keyframe-like object
             //    passing nextItem as the keyframe input and with the allow lists flag set to false.
@@ -799,6 +799,19 @@ WebIDL::ExceptionOr<void> KeyframeEffect::set_pseudo_element(Optional<String> va
     return {};
 }
 
+Optional<DOM::AbstractElement> KeyframeEffect::target_abstract_element() const
+{
+    if (m_target_element)
+        return DOM::AbstractElement { *m_target_element, pseudo_element_type() };
+    return {};
+}
+
+void KeyframeEffect::set_target(DOM::AbstractElement abstract_element)
+{
+    set_target(&abstract_element.element());
+    m_target_pseudo_selector = abstract_element.pseudo_element().map([](auto it) { return CSS::Selector::PseudoElementSelector { it }; });
+}
+
 Optional<CSS::PseudoElement> KeyframeEffect::pseudo_element_type() const
 {
     if (!m_target_pseudo_selector.has_value())
@@ -922,7 +935,7 @@ void KeyframeEffect::update_computed_properties(AnimationUpdateContext& context)
     DOM::AbstractElement abstract_element { *target, pseudo_element_type() };
     context.elements.ensure(abstract_element, [computed_properties] {
         auto old_animated_properties = computed_properties->animated_property_values();
-        computed_properties->reset_animated_properties({});
+        computed_properties->reset_non_inherited_animated_properties({});
         return make<AnimationUpdateContext::ElementData>(move(old_animated_properties), computed_properties);
     });
 

@@ -230,6 +230,8 @@ void DisplayListPlayerSkia::push_stacking_context(PushStackingContext const& com
     auto new_transform = Gfx::translation_matrix(Vector3<float>(command.transform.origin.x(), command.transform.origin.y(), 0));
     new_transform = new_transform * command.transform.matrix;
     new_transform = new_transform * Gfx::translation_matrix(Vector3<float>(-command.transform.origin.x(), -command.transform.origin.y(), 0));
+    if (command.transform.parent_perspective_matrix.has_value())
+        new_transform = command.transform.parent_perspective_matrix.value() * new_transform;
     auto matrix = to_skia_matrix4x4(new_transform);
 
     surface().canvas().save();
@@ -617,7 +619,7 @@ static SkTileMode to_skia_tile_mode(SVGLinearGradientPaintStyle::SpreadMethod sp
     }
 }
 
-static SkPaint paint_style_to_skia_paint(Painting::SVGGradientPaintStyle const& paint_style, Gfx::FloatRect bounding_rect)
+static SkPaint paint_style_to_skia_paint(Painting::SVGGradientPaintStyle const& paint_style, Gfx::FloatRect const& bounding_rect)
 {
     SkPaint paint;
 
@@ -968,7 +970,7 @@ void DisplayListPlayerSkia::apply_composite_and_blending_operator(ApplyComposite
     canvas.saveLayer(nullptr, &paint);
 }
 
-void DisplayListPlayerSkia::apply_filters(ApplyFilter const& command)
+void DisplayListPlayerSkia::apply_filter(ApplyFilter const& command)
 {
     sk_sp<SkImageFilter> image_filter = to_skia_image_filter(command.filter);
 
@@ -1017,7 +1019,7 @@ void DisplayListPlayerSkia::apply_mask_bitmap(ApplyMaskBitmap const& command)
     auto& cached_runtime_effects = this->cached_runtime_effects();
 
     sk_sp<SkRuntimeEffect> effect;
-    if (command.kind == Gfx::Bitmap::MaskKind::Luminance) {
+    if (command.kind == Gfx::MaskKind::Luminance) {
         char const* sksl_shader = R"(
                 uniform shader mask_image;
                 half4 main(float2 coord) {
@@ -1030,7 +1032,7 @@ void DisplayListPlayerSkia::apply_mask_bitmap(ApplyMaskBitmap const& command)
             cached_runtime_effects.luminance_mask = compile_effect(sksl_shader);
         }
         effect = cached_runtime_effects.luminance_mask;
-    } else if (command.kind == Gfx::Bitmap::MaskKind::Alpha) {
+    } else if (command.kind == Gfx::MaskKind::Alpha) {
         char const* sksl_shader = R"(
                 uniform shader mask_image;
                 half4 main(float2 coord) {

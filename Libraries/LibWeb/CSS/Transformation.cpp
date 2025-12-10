@@ -68,7 +68,7 @@ ErrorOr<Gfx::FloatMatrix4x4> Transformation::to_matrix(Optional<Painting::Painta
     CSSPixels width = 1;
     CSSPixels height = 1;
     if (paintable_box.has_value()) {
-        auto reference_box = paintable_box->transform_box_rect();
+        auto reference_box = paintable_box->transform_reference_box();
         width = reference_box.width();
         height = reference_box.height();
     }
@@ -90,10 +90,7 @@ ErrorOr<Gfx::FloatMatrix4x4> Transformation::to_matrix(Optional<Painting::Painta
                 0, 0, 1, 0,
                 0, 0, -1 / distance, 1);
         }
-        return Gfx::FloatMatrix4x4(1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 1, 0,
-            0, 0, 0, 1);
+        break;
     case CSS::TransformFunction::Matrix:
         if (count == 6)
             return Gfx::FloatMatrix4x4(TRY(value(0)), TRY(value(2)), 0, TRY(value(4)),

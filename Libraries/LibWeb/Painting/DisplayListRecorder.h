@@ -10,7 +10,6 @@
 #include <AK/Vector.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/Forward.h>
-#include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/LineStyle.h>
 #include <LibGfx/PaintStyle.h>
 #include <LibGfx/Palette.h>
@@ -33,8 +32,9 @@ namespace Web::Painting {
 struct StackingContextTransform {
     Gfx::FloatPoint origin;
     Gfx::FloatMatrix4x4 matrix;
+    Optional<Gfx::FloatMatrix4x4> parent_perspective_matrix;
 
-    StackingContextTransform(Gfx::FloatPoint origin, Gfx::FloatMatrix4x4 matrix, float scale);
+    StackingContextTransform(Gfx::FloatPoint origin, Gfx::FloatMatrix4x4 matrix, Optional<Gfx::FloatMatrix4x4> parent_perspective_matrix, float scale);
 
     [[nodiscard]] bool is_identity() const { return matrix.is_identity(); }
 };
@@ -112,8 +112,6 @@ public:
         StackingContextTransform transform;
         Optional<Gfx::Path> clip_path = {};
         Optional<Gfx::IntRect> bounding_rect {};
-
-        bool has_effect() const { return opacity != 1.0f || compositing_and_blending_operator != Gfx::CompositingAndBlendingOperator::Normal || isolate || clip_path.has_value() || !transform.is_identity(); }
     };
     void push_stacking_context(PushStackingContextParams params);
     void pop_stacking_context();
@@ -139,7 +137,7 @@ public:
     void apply_compositing_and_blending_operator(Gfx::CompositingAndBlendingOperator compositing_and_blending_operator);
     void apply_filter(Gfx::Filter filter);
     void apply_transform(Gfx::FloatPoint origin, Gfx::FloatMatrix4x4);
-    void apply_mask_bitmap(Gfx::IntPoint origin, Gfx::ImmutableBitmap const&, Gfx::Bitmap::MaskKind);
+    void apply_mask_bitmap(Gfx::IntPoint origin, Gfx::ImmutableBitmap const&, Gfx::MaskKind);
 
     DisplayListRecorder(DisplayList&);
     ~DisplayListRecorder();

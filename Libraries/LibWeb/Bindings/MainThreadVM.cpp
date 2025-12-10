@@ -535,12 +535,12 @@ void initialize_main_thread_vm(AgentType type)
                     return;
                 }
 
-                // Spec-Note: This step is essentially validating all of the requested module specifiers and type attributes
-                //            when the first call to HostLoadImportedModule for a static module dependency list is made, to
-                //            avoid further loading operations in the case any one of the dependencies has a static error.
-                //            We treat a module with unresolvable module specifiers or unsupported type attributes the same
-                //            as one that cannot be parsed; in both cases, a syntactic issue makes it impossible to ever
-                //            contemplate linking the module later.
+                // NOTE: This step is essentially validating all of the requested module specifiers and type attributes
+                //       when the first call to HostLoadImportedModule for a static module dependency list is made, to
+                //       avoid further loading operations in the case any one of the dependencies has a static error. We
+                //       treat a module with unresolvable module specifiers or unsupported type attributes the same as
+                //       one that cannot be parsed; in both cases, a syntactic issue makes it impossible to ever
+                //       contemplate linking the module later.
             }
         }
 
@@ -723,27 +723,29 @@ void queue_mutation_observer_microtask(DOM::Document const& document)
     surrounding_agent.mutation_observer_microtask_queued = true;
 
     // 3. Queue a microtask to notify mutation observers.
-    // NOTE: This uses the implied document concept. In the case of mutation observers, it is always done in a node context, so document should be that node's document.
+    // NOTE: This uses the implied document concept. In the case of mutation observers, it is always done in a node
+    //       context, so document should be that node's document.
     HTML::queue_a_microtask(&document, GC::create_function(vm.heap(), [&surrounding_agent, &heap = document.heap()]() {
+        // https://dom.spec.whatwg.org/#notify-mutation-observers
         // 1. Set the surrounding agent’s mutation observer microtask queued to false.
         surrounding_agent.mutation_observer_microtask_queued = false;
 
-        // 2. Let notifySet be a clone of the surrounding agent’s mutation observers.
-        GC::RootVector<DOM::MutationObserver*> notify_set(heap);
-        for (auto& observer : surrounding_agent.mutation_observers)
-            notify_set.append(&observer);
+        // 2. Let notifySet be a clone of the surrounding agent’s pending mutation observers.
+        // 3. Empty the surrounding agent’s pending mutation observers.
+        auto notify_set = move(surrounding_agent.pending_mutation_observers);
 
-        // 3. Let signalSet be a clone of the surrounding agent’s signal slots.
-        // 4. Empty the surrounding agent’s signal slots.
+        // 4. Let signalSet be a clone of the surrounding agent’s signal slots.
+        // 5. Empty the surrounding agent’s signal slots.
         auto signal_set = move(surrounding_agent.signal_slots);
 
-        // 5. For each mo of notifySet:
+        // 6. For each mo of notifySet:
         for (auto& mutation_observer : notify_set) {
             // 1. Let records be a clone of mo’s record queue.
             // 2. Empty mo’s record queue.
             auto records = mutation_observer->take_records();
 
-            // 3. For each node of mo’s node list, remove all transient registered observers whose observer is mo from node’s registered observer list.
+            // 3. For each node of mo’s node list, remove all transient registered observers whose observer is mo from
+            //    node’s registered observer list.
             for (auto& node : mutation_observer->node_list()) {
                 // FIXME: Is this correct?
                 if (!node)
@@ -756,7 +758,8 @@ void queue_mutation_observer_microtask(DOM::Document const& document)
                 }
             }
 
-            // 4. If records is not empty, then invoke mo’s callback with « records, mo » and "report", and with callback this value mo.
+            // 4. If records is not empty, then invoke mo’s callback with « records, mo » and "report", and with
+            //    callback this value mo.
             if (!records.is_empty()) {
                 auto& callback = mutation_observer->callback();
                 auto& realm = callback.callback_context;
@@ -772,7 +775,7 @@ void queue_mutation_observer_microtask(DOM::Document const& document)
             }
         }
 
-        // 6. For each slot of signalSet, fire an event named slotchange, with its bubbles attribute set to true, at slot.
+        // 7. For each slot of signalSet, fire an event named slotchange, with its bubbles attribute set to true, at slot.
         for (auto& slot : signal_set) {
             DOM::EventInit event_init;
             event_init.bubbles = true;

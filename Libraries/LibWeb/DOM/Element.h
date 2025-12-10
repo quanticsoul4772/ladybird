@@ -103,6 +103,11 @@ enum class ProximityToTheViewport : u8 {
     NotDetermined,
 };
 
+// https://w3c.github.io/pointerlock/#pointerlockoptions-dictionary
+struct PointerLockOptions {
+    bool unadjusted_movement = false;
+};
+
 class WEB_API Element
     : public ParentNode
     , public ChildNode<Element>
@@ -178,7 +183,8 @@ public:
     GC::Ptr<DOM::Element> get_the_attribute_associated_element(FlyString const& content_attribute, GC::Ptr<DOM::Element> explicitly_set_attribute_element) const;
     Optional<GC::RootVector<GC::Ref<DOM::Element>>> get_the_attribute_associated_elements(FlyString const& content_attribute, Optional<Vector<GC::Weak<DOM::Element>> const&> explicitly_set_attribute_elements) const;
 
-    DOMTokenList* class_list();
+    GC::Ref<DOMTokenList> class_list();
+    GC::Ref<DOMTokenList> part_list();
 
     WebIDL::ExceptionOr<GC::Ref<ShadowRoot>> attach_shadow(ShadowRootInit init);
     WebIDL::ExceptionOr<void> attach_a_shadow_root(Bindings::ShadowRootMode mode, bool clonable, bool serializable, bool delegates_focus, Bindings::SlotAssignmentMode slot_assignment);
@@ -365,7 +371,7 @@ public:
     CustomElementReactionQueue const* custom_element_reaction_queue() const { return m_custom_element_reaction_queue; }
     CustomElementReactionQueue& ensure_custom_element_reaction_queue();
 
-    HTML::CustomStateSet const* custom_state_set() const { return m_custom_state_set; }
+    GC::Ptr<HTML::CustomStateSet const> custom_state_set() const { return m_custom_state_set; }
     HTML::CustomStateSet& ensure_custom_state_set();
 
     JS::ThrowCompletionOr<void> upgrade_element(GC::Ref<HTML::CustomElementDefinition> custom_element_definition);
@@ -484,7 +490,7 @@ public:
     }
 
     i32 number_of_owned_list_items() const;
-    Element* list_owner() const;
+    GC::Ptr<Element> list_owner() const;
     void maybe_invalidate_ordinals_for_list_owner(Optional<Element*> skip_node = {});
     i32 ordinal_value();
 
@@ -510,6 +516,19 @@ public:
     bool had_duplicate_attribute_during_tokenization() const { return m_had_duplicate_attribute_during_tokenization; }
 
     GC::Ref<CSS::StylePropertyMapReadOnly> computed_style_map();
+
+    // https://html.spec.whatwg.org/multipage/dom.html#block-rendering
+    void block_rendering();
+    // https://html.spec.whatwg.org/multipage/dom.html#unblock-rendering
+    void unblock_rendering();
+    // https://html.spec.whatwg.org/multipage/urls-and-fetching.html#potentially-render-blocking
+    bool is_potentially_render_blocking();
+    // https://html.spec.whatwg.org/multipage/urls-and-fetching.html#implicitly-potentially-render-blocking
+    virtual bool is_implicitly_potentially_render_blocking() const { return false; }
+
+    double ensure_css_random_base_value(CSS::RandomCachingKey const&);
+
+    GC::Ref<WebIDL::Promise> request_pointer_lock(Optional<PointerLockOptions>);
 
 protected:
     Element(Document&, DOM::QualifiedName);
@@ -565,6 +584,7 @@ private:
     GC::Ptr<CSS::StylePropertyMap> m_attribute_style_map;
     GC::Ptr<DOMTokenList> m_class_list;
     GC::Ptr<ShadowRoot> m_shadow_root;
+    GC::Ptr<DOMTokenList> m_part_list;
 
     GC::Ptr<CSS::CascadedProperties> m_cascaded_properties;
     GC::Ptr<CSS::ComputedProperties> m_computed_properties;
@@ -647,6 +667,9 @@ private:
     bool m_captured_in_a_view_transition { false };
 
     bool m_is_contained_in_list_subtree { false };
+
+    // https://drafts.csswg.org/css-values-5/#random-caching
+    HashMap<CSS::RandomCachingKey, double> m_element_specific_css_random_base_value_cache;
 };
 
 template<>
