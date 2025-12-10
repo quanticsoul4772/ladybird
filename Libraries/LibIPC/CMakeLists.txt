@@ -1,4 +1,5 @@
 set(SOURCES
+    AutoCloseFileDescriptor.cpp
     BufferedIPCReader.cpp
     BufferedIPCWriter.cpp
     Connection.cpp

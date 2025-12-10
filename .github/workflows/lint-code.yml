@@ -8,7 +8,7 @@ jobs:
     if: github.repository == 'quanticsoul4772/ladybird'
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6.0.1
 
       - name: Set Up Environment
         shell: bash

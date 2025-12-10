@@ -15,9 +15,9 @@
 #include <LibCore/Process.h>
 #include <LibCore/System.h>
 #include <LibFileSystem/FileSystem.h>
+#include <LibHTTP/Cache/DiskCache.h>
 #include <LibIPC/SingleServer.h>
 #include <LibMain/Main.h>
-#include <RequestServer/Cache/DiskCache.h>
 #include <RequestServer/ConnectionFromClient.h>
 #include <RequestServer/Resolver.h>
 #include <RequestServer/SecurityTap.h>
@@ -29,7 +29,7 @@
 
 namespace RequestServer {
 
-extern Optional<DiskCache> g_disk_cache;
+extern Optional<HTTP::DiskCache> g_disk_cache;
 SecurityTap* g_security_tap { nullptr };
 
 }
@@ -40,13 +40,13 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 
     Vector<ByteString> certificates;
     StringView mach_server_name;
-    bool enable_http_disk_cache = false;
+    StringView http_disk_cache_mode;
     bool wait_for_debugger = false;
 
     Core::ArgsParser args_parser;
     args_parser.add_option(certificates, "Path to a certificate file", "certificate", 'C', "certificate");
     args_parser.add_option(mach_server_name, "Mach server name", "mach-server-name", 0, "mach_server_name");
-    args_parser.add_option(enable_http_disk_cache, "Enable HTTP disk cache", "enable-http-disk-cache");
+    args_parser.add_option(http_disk_cache_mode, "HTTP disk cache mode", "http-disk-cache-mode", 0, "mode");
     args_parser.add_option(wait_for_debugger, "Wait for debugger", "wait-for-debugger");
     args_parser.parse(arguments);
 
@@ -64,8 +64,12 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
         Core::Platform::register_with_mach_server(mach_server_name);
 #endif
 
-    if (enable_http_disk_cache) {
-        if (auto cache = RequestServer::DiskCache::create(); cache.is_error())
+    if (http_disk_cache_mode.is_one_of("enabled"sv, "testing"sv)) {
+        auto mode = http_disk_cache_mode == "enabled"sv
+            ? HTTP::DiskCache::Mode::Normal
+            : HTTP::DiskCache::Mode::Testing;
+
+        if (auto cache = HTTP::DiskCache::create(mode); cache.is_error())
             warnln("Unable to create disk cache: {}", cache.error());
         else
             RequestServer::g_disk_cache = cache.release_value();

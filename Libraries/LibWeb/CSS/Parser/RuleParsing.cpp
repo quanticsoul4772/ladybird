@@ -237,21 +237,43 @@ GC::Ptr<CSSImportRule> Parser::convert_to_import_rule(AtRule const& rule)
     }
 
     tokens.discard_whitespace();
-    // FIXME: Implement layer support.
+    Optional<FlyString> layer;
+    // [ layer | layer(<layer-name>) ]?
+    if (tokens.next_token().is_ident("layer"sv)) {
+        tokens.discard_a_token(); // layer
+        layer = FlyString {};
+    } else if (tokens.next_token().is_function("layer"sv)) {
+        auto layer_transaction = tokens.begin_transaction();
+        auto& layer_function = tokens.consume_a_token().function();
+        TokenStream layer_tokens { layer_function.value };
+        auto name = parse_layer_name(layer_tokens, AllowBlankLayerName::No);
+        layer_tokens.discard_whitespace();
+        if (!name.has_value() || layer_tokens.has_next_token()) {
+            ErrorReporter::the().report(CSS::Parser::InvalidRuleError {
+                .rule_name = "@import"_fly_string,
+                .prelude = tokens.dump_string(),
+                .description = MUST(String::formatted("Unable to parse `{}` as a valid layer.", layer_function.original_source_text())),
+            });
+        } else {
+            layer_transaction.commit();
+            layer = name.release_value();
+        }
+    }
+
+    // <import-conditions> = [ supports( [ <supports-condition> | <declaration> ] ) ]?
+    //                      <media-query-list>?
+    tokens.discard_whitespace();
     RefPtr<Supports> supports {};
     if (tokens.next_token().is_function("supports"sv)) {
         auto component_value = tokens.consume_a_token();
         TokenStream supports_tokens { component_value.function().value };
-        if (supports_tokens.next_token().is_block()) {
-            supports = parse_a_supports(supports_tokens);
-        } else {
+        supports = parse_a_supports(supports_tokens);
+        if (!supports) {
             m_rule_context.append(RuleContext::SupportsCondition);
-            auto declaration = consume_a_declaration(supports_tokens);
+            auto supports_declaration = parse_supports_declaration(supports_tokens);
             m_rule_context.take_last();
-            if (declaration.has_value()) {
-                auto supports_declaration = Supports::Declaration::create(declaration->to_string(), convert_to_style_property(*declaration).has_value());
+            if (supports_declaration)
                 supports = Supports::create(supports_declaration.release_nonnull<BooleanExpression>());
-            }
         }
     }
 
@@ -266,7 +288,7 @@ GC::Ptr<CSSImportRule> Parser::convert_to_import_rule(AtRule const& rule)
         return {};
     }
 
-    return CSSImportRule::create(realm(), url.release_value(), const_cast<DOM::Document*>(m_document.ptr()), supports, move(media_query_list));
+    return CSSImportRule::create(realm(), url.release_value(), const_cast<DOM::Document*>(m_document.ptr()), move(layer), move(supports), MediaList::create(realm(), move(media_query_list)));
 }
 
 Optional<FlyString> Parser::parse_layer_name(TokenStream<ComponentValue>& tokens, AllowBlankLayerName allow_blank_layer_name)

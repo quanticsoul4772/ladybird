@@ -57,6 +57,7 @@
 #include <LibWeb/CSS/StyleValues/StringStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
+#include <LibWeb/CSS/StyleValues/TextIndentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TextUnderlinePositionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TransformationStyleValue.h>
@@ -87,7 +88,7 @@ RefPtr<StyleValue const> Parser::parse_all_as_single_keyword_value(TokenStream<C
     return keyword_value;
 }
 
-RefPtr<StyleValue const> Parser::parse_simple_comma_separated_value_list(PropertyID property_id, TokenStream<ComponentValue>& tokens)
+RefPtr<StyleValueList const> Parser::parse_simple_comma_separated_value_list(PropertyID property_id, TokenStream<ComponentValue>& tokens)
 {
     return parse_comma_separated_value_list(tokens, [this, property_id](auto& tokens) -> RefPtr<StyleValue const> {
         if (auto value = parse_css_value_for_property(property_id, tokens))
@@ -97,7 +98,7 @@ RefPtr<StyleValue const> Parser::parse_simple_comma_separated_value_list(Propert
     });
 }
 
-RefPtr<StyleValue const> Parser::parse_coordinating_value_list_shorthand(TokenStream<ComponentValue>& tokens, PropertyID shorthand_id, Vector<PropertyID> const& longhand_ids)
+RefPtr<StyleValue const> Parser::parse_coordinating_value_list_shorthand(TokenStream<ComponentValue>& tokens, PropertyID shorthand_id, Vector<PropertyID> const& longhand_ids, Vector<PropertyID> const& reset_only_longhand_ids = {})
 {
     HashMap<PropertyID, StyleValueVector> longhand_vectors;
 
@@ -125,12 +126,7 @@ RefPtr<StyleValue const> Parser::parse_coordinating_value_list_shorthand(TokenSt
 
         for (auto const& longhand_id : longhand_ids)
             longhand_vectors.ensure(longhand_id).append(*parsed_values.get(longhand_id).value_or_lazy_evaluated([&]() -> ValueComparingNonnullRefPtr<StyleValue const> {
-                auto initial_value = property_initial_value(longhand_id);
-
-                if (initial_value->is_value_list())
-                    return initial_value->as_value_list().values()[0];
-
-                return initial_value;
+                return property_initial_value(longhand_id)->as_value_list().values()[0];
             }));
 
         if (tokens.has_next_token()) {
@@ -143,29 +139,24 @@ RefPtr<StyleValue const> Parser::parse_coordinating_value_list_shorthand(TokenSt
 
     transaction.commit();
 
-    // FIXME: This is for compatibility with parse_comma_separated_value_list(), which returns a single value directly
-    //        instead of a list if there's only one, it would be nicer if we always returned a list.
-    if (longhand_vectors.get(longhand_ids[0])->size() == 1) {
-        StyleValueVector longhand_values {};
-
-        for (auto const& longhand_id : longhand_ids)
-            longhand_values.append((*longhand_vectors.get(longhand_id))[0]);
-
-        return ShorthandStyleValue::create(shorthand_id, longhand_ids, longhand_values);
-    }
-
+    Vector<PropertyID> longhand_ids_including_reset_only_longhands;
+    longhand_ids_including_reset_only_longhands.extend(longhand_ids);
+    longhand_ids_including_reset_only_longhands.extend(reset_only_longhand_ids);
     StyleValueVector longhand_values {};
 
     for (auto const& longhand_id : longhand_ids)
         longhand_values.append(StyleValueList::create(move(*longhand_vectors.get(longhand_id)), StyleValueList::Separator::Comma));
 
-    return ShorthandStyleValue::create(shorthand_id, longhand_ids, longhand_values);
+    for (auto reset_only_longhand_id : reset_only_longhand_ids)
+        longhand_values.append(property_initial_value(reset_only_longhand_id));
+
+    return ShorthandStyleValue::create(shorthand_id, longhand_ids_including_reset_only_longhands, longhand_values);
 }
 
 RefPtr<StyleValue const> Parser::parse_css_value_for_property(PropertyID property_id, TokenStream<ComponentValue>& tokens)
 {
     return parse_css_value_for_properties({ &property_id, 1 }, tokens)
-        .map([](auto& it) { return it.style_value; })
+        .map([](auto&& it) { return it.style_value; })
         .value_or(nullptr);
 }
 
@@ -245,6 +236,8 @@ Optional<Parser::PropertyAndValue> Parser::parse_css_value_for_properties(Readon
         return parsed.release_value();
     if (auto parsed = parse_for_type(ValueType::Rect); parsed.has_value())
         return parsed.release_value();
+    if (auto parsed = parse_for_type(ValueType::ScrollFunction); parsed.has_value())
+        return parsed.release_value();
     if (auto parsed = parse_for_type(ValueType::String); parsed.has_value())
         return parsed.release_value();
     if (auto parsed = parse_for_type(ValueType::TransformFunction); parsed.has_value())
@@ -252,6 +245,10 @@ Optional<Parser::PropertyAndValue> Parser::parse_css_value_for_properties(Readon
     if (auto parsed = parse_for_type(ValueType::TransformList); parsed.has_value())
         return parsed.release_value();
     if (auto parsed = parse_for_type(ValueType::Url); parsed.has_value())
+        return parsed.release_value();
+    if (auto parsed = parse_for_type(ValueType::ViewFunction); parsed.has_value())
+        return parsed.release_value();
+    if (auto parsed = parse_for_type(ValueType::ViewTimelineInset); parsed.has_value())
         return parsed.release_value();
 
     // <integer>/<number> come before <length>, so that 0 is not interpreted as a <length> in case both are allowed.
@@ -526,31 +523,13 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_css_value(Pr
         return parse_all_as(tokens, [this](auto& tokens) { return parse_aspect_ratio_value(tokens); });
     case PropertyID::Animation:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_animation_value(tokens); });
-    case PropertyID::AnimationComposition:
-    case PropertyID::AnimationDelay:
-    case PropertyID::AnimationDirection:
-    case PropertyID::AnimationDuration:
-    case PropertyID::AnimationFillMode:
-    case PropertyID::AnimationIterationCount:
-    case PropertyID::AnimationName:
-    case PropertyID::AnimationPlayState:
-    case PropertyID::AnimationTimingFunction:
-        return parse_all_as(tokens, [this, property_id](auto& tokens) { return parse_simple_comma_separated_value_list(property_id, tokens); });
     case PropertyID::BackdropFilter:
     case PropertyID::Filter:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_filter_value_list_value(tokens); });
     case PropertyID::Background:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_background_value(tokens); });
-    case PropertyID::BackgroundAttachment:
-    case PropertyID::BackgroundBlendMode:
-    case PropertyID::BackgroundClip:
-    case PropertyID::BackgroundImage:
-    case PropertyID::BackgroundOrigin:
-        return parse_all_as(tokens, [this, property_id](auto& tokens) { return parse_simple_comma_separated_value_list(property_id, tokens); });
     case PropertyID::BackgroundPosition:
-        return parse_all_as(tokens, [this](auto& tokens) {
-            return parse_comma_separated_value_list(tokens, [this](auto& tokens) { return parse_position_value(tokens, PositionParsingMode::BackgroundPosition); });
-        });
+        return parse_all_as(tokens, [this](auto& tokens) { return parse_background_position_value(tokens); });
     case PropertyID::BackgroundPositionX:
     case PropertyID::BackgroundPositionY:
         return parse_all_as(tokens, [this, property_id](auto& tokens) {
@@ -662,12 +641,6 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_css_value(Pr
         return parse_all_as(tokens, [this](auto& tokens) { return parse_math_depth_value(tokens); });
     case PropertyID::Mask:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_mask_value(tokens); });
-    case PropertyID::MaskClip:
-    case PropertyID::MaskComposite:
-    case PropertyID::MaskImage:
-    case PropertyID::MaskMode:
-    case PropertyID::MaskOrigin:
-        return parse_all_as(tokens, [this, property_id](auto& tokens) { return parse_simple_comma_separated_value_list(property_id, tokens); });
     case PropertyID::MaskPosition:
         return parse_all_as(tokens, [this](auto& tokens) {
             return parse_comma_separated_value_list(tokens, [this](auto& tokens) {
@@ -686,9 +659,6 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_css_value(Pr
                 return parse_single_background_size_value(PropertyID::MaskSize, tokens);
             });
         });
-    // FIXME: This can be removed once we have generic logic for parsing "positional-value-list-shorthand"s
-    case PropertyID::Overflow:
-        return parse_all_as(tokens, [this](auto& tokens) { return parse_overflow_value(tokens); });
     case PropertyID::PaintOrder:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_paint_order_value(tokens); });
     case PropertyID::PlaceContent:
@@ -721,6 +691,8 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_css_value(Pr
         return parse_all_as(tokens, [this](auto& tokens) { return parse_text_decoration_value(tokens); });
     case PropertyID::TextDecorationLine:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_text_decoration_line_value(tokens); });
+    case PropertyID::TextIndent:
+        return parse_all_as(tokens, [this](auto& tokens) { return parse_text_indent_value(tokens); });
     case PropertyID::TextShadow:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_shadow_value(tokens, ShadowStyleValue::ShadowType::Text); });
     case PropertyID::TextUnderlinePosition:
@@ -731,17 +703,16 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_css_value(Pr
         return parse_all_as(tokens, [this](auto& tokens) { return parse_transform_origin_value(tokens); });
     case PropertyID::Transition:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_transition_value(tokens); });
-    case PropertyID::TransitionDelay:
-    case PropertyID::TransitionDuration:
-        return parse_all_as(tokens, [this, property_id](auto& tokens) { return parse_list_of_time_values(property_id, tokens); });
     case PropertyID::TransitionProperty:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_transition_property_value(tokens); });
-    case PropertyID::TransitionTimingFunction:
-        return parse_all_as(tokens, [this](auto& tokens) { return parse_simple_comma_separated_value_list(PropertyID::TransitionTimingFunction, tokens); });
     case PropertyID::Translate:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_translate_value(tokens); });
     case PropertyID::Scale:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_scale_value(tokens); });
+    case PropertyID::ScrollTimeline:
+        return parse_all_as(tokens, [this](auto& tokens) { return parse_scroll_timeline_value(tokens); });
+    case PropertyID::ViewTimeline:
+        return parse_all_as(tokens, [this](auto& tokens) { return parse_view_timeline_value(tokens); });
     case PropertyID::WhiteSpace:
         return parse_all_as(tokens, [this](auto& tokens) { return parse_white_space_shorthand(tokens); });
     case PropertyID::WhiteSpaceTrim:
@@ -753,12 +724,11 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_css_value(Pr
         break;
     }
 
-    if (property_is_positional_value_list_shorthand(property_id)) {
-        if (auto parsed_value = parse_positional_value_list_shorthand(property_id, tokens); parsed_value && !tokens.has_next_token())
-            return parsed_value.release_nonnull();
+    if (property_multiplicity(property_id) == PropertyMultiplicity::CoordinatingList && !property_is_shorthand(property_id))
+        return parse_all_as(tokens, [this, property_id](auto& tokens) { return parse_simple_comma_separated_value_list(property_id, tokens); });
 
-        return ParseError::SyntaxError;
-    }
+    if (property_is_positional_value_list_shorthand(property_id))
+        return parse_all_as(tokens, [this, property_id](auto& tokens) { return parse_positional_value_list_shorthand(property_id, tokens); });
 
     {
         auto transaction = tokens.begin_transaction();
@@ -1039,7 +1009,7 @@ RefPtr<StyleValue const> Parser::parse_counter_set_value(TokenStream<ComponentVa
 // https://drafts.csswg.org/css-ui-4/#cursor
 RefPtr<StyleValue const> Parser::parse_cursor_value(TokenStream<ComponentValue>& tokens)
 {
-    // <cursor-image>#? <cursor-predefined>
+    // [<cursor-image>,]* <cursor-predefined>
     // <cursor-image> = <url> <number>{2}?
     // So, any number of custom cursor definitions, and then a mandatory cursor name keyword, all comma-separated.
 
@@ -1184,7 +1154,9 @@ RefPtr<StyleValue const> Parser::parse_aspect_ratio_value(TokenStream<ComponentV
 RefPtr<StyleValue const> Parser::parse_animation_value(TokenStream<ComponentValue>& tokens)
 {
     // [<'animation-duration'> || <easing-function> || <'animation-delay'> || <single-animation-iteration-count> || <single-animation-direction> || <single-animation-fill-mode> || <single-animation-play-state> || [ none | <keyframes-name> ] || <single-animation-timeline>]#
-    // FIXME: Support <single-animation-timeline>
+    // NB: While it isn't in the spec the CSSWG resolved to include `animation-timeline` as a reset-only sub-property
+    //     of the `animation` shorthand so we shouldn't actually allow <single-animation-timeline>.
+    //     https://github.com/w3c/csswg-drafts/issues/6946#issuecomment-1233190360
 
     Vector<PropertyID> longhand_ids {
         PropertyID::AnimationDuration,
@@ -1198,7 +1170,27 @@ RefPtr<StyleValue const> Parser::parse_animation_value(TokenStream<ComponentValu
     };
 
     // FIXME: The animation-trigger properties are reset-only sub-properties of the animation shorthand.
-    return parse_coordinating_value_list_shorthand(tokens, PropertyID::Animation, longhand_ids);
+    return parse_coordinating_value_list_shorthand(tokens, PropertyID::Animation, longhand_ids, { PropertyID::AnimationTimeline });
+}
+
+RefPtr<StyleValue const> Parser::parse_background_position_value(TokenStream<ComponentValue>& tokens)
+{
+    auto const& background_position_value = parse_comma_separated_value_list(tokens, [this](auto& tokens) { return parse_position_value(tokens, PositionParsingMode::BackgroundPosition); });
+
+    if (!background_position_value)
+        return nullptr;
+
+    StyleValueVector background_position_x_values;
+    StyleValueVector background_position_y_values;
+
+    for (auto const& background_position : background_position_value->values()) {
+        background_position_x_values.append(background_position->as_position().edge_x());
+        background_position_y_values.append(background_position->as_position().edge_y());
+    }
+
+    return ShorthandStyleValue::create(PropertyID::BackgroundPosition,
+        { PropertyID::BackgroundPositionX, PropertyID::BackgroundPositionY },
+        { StyleValueList::create(move(background_position_x_values), StyleValueList::Separator::Comma), StyleValueList::create(move(background_position_y_values), StyleValueList::Separator::Comma) });
 }
 
 RefPtr<StyleValue const> Parser::parse_background_value(TokenStream<ComponentValue>& tokens)
@@ -1221,14 +1213,14 @@ RefPtr<StyleValue const> Parser::parse_background_value(TokenStream<ComponentVal
     StyleValueVector background_origins;
     RefPtr<StyleValue const> background_color;
 
-    auto initial_background_image = property_initial_value(PropertyID::BackgroundImage);
-    auto initial_background_position_x = property_initial_value(PropertyID::BackgroundPositionX);
-    auto initial_background_position_y = property_initial_value(PropertyID::BackgroundPositionY);
-    auto initial_background_size = property_initial_value(PropertyID::BackgroundSize);
-    auto initial_background_repeat = property_initial_value(PropertyID::BackgroundRepeat);
-    auto initial_background_attachment = property_initial_value(PropertyID::BackgroundAttachment);
-    auto initial_background_clip = property_initial_value(PropertyID::BackgroundClip);
-    auto initial_background_origin = property_initial_value(PropertyID::BackgroundOrigin);
+    auto initial_background_image = property_initial_value(PropertyID::BackgroundImage)->as_value_list().values()[0];
+    auto initial_background_position_x = property_initial_value(PropertyID::BackgroundPositionX)->as_value_list().values()[0];
+    auto initial_background_position_y = property_initial_value(PropertyID::BackgroundPositionY)->as_value_list().values()[0];
+    auto initial_background_size = property_initial_value(PropertyID::BackgroundSize)->as_value_list().values()[0];
+    auto initial_background_repeat = property_initial_value(PropertyID::BackgroundRepeat)->as_value_list().values()[0];
+    auto initial_background_attachment = property_initial_value(PropertyID::BackgroundAttachment)->as_value_list().values()[0];
+    auto initial_background_clip = property_initial_value(PropertyID::BackgroundClip)->as_value_list().values()[0];
+    auto initial_background_origin = property_initial_value(PropertyID::BackgroundOrigin)->as_value_list().values()[0];
     auto initial_background_color = property_initial_value(PropertyID::BackgroundColor);
 
     // Per-layer values
@@ -1241,7 +1233,6 @@ RefPtr<StyleValue const> Parser::parse_background_value(TokenStream<ComponentVal
     RefPtr<StyleValue const> background_clip;
     RefPtr<StyleValue const> background_origin;
 
-    bool has_multiple_layers = false;
     // BackgroundSize is always parsed as part of BackgroundPosition, so we don't include it here.
     Vector<PropertyID> remaining_layer_properties {
         PropertyID::BackgroundAttachment,
@@ -1303,7 +1294,6 @@ RefPtr<StyleValue const> Parser::parse_background_value(TokenStream<ComponentVal
     tokens.discard_whitespace();
     while (tokens.has_next_token()) {
         if (tokens.next_token().is(Token::Type::Comma)) {
-            has_multiple_layers = true;
             if (!background_layer_is_valid(false))
                 return nullptr;
             complete_background_layer();
@@ -1396,62 +1386,23 @@ RefPtr<StyleValue const> Parser::parse_background_value(TokenStream<ComponentVal
     if (!background_layer_is_valid(true))
         return nullptr;
 
-    // We only need to create StyleValueLists if there are multiple layers.
-    // Otherwise, we can pass the single StyleValues directly.
-    if (has_multiple_layers) {
-        complete_background_layer();
-
-        if (!background_color)
-            background_color = initial_background_color;
-        transaction.commit();
-        return make_background_shorthand(
-            background_color.release_nonnull(),
-            StyleValueList::create(move(background_images), StyleValueList::Separator::Comma),
-            ShorthandStyleValue::create(PropertyID::BackgroundPosition,
-                { PropertyID::BackgroundPositionX, PropertyID::BackgroundPositionY },
-                { StyleValueList::create(move(background_position_xs), StyleValueList::Separator::Comma),
-                    StyleValueList::create(move(background_position_ys), StyleValueList::Separator::Comma) }),
-            StyleValueList::create(move(background_sizes), StyleValueList::Separator::Comma),
-            StyleValueList::create(move(background_repeats), StyleValueList::Separator::Comma),
-            StyleValueList::create(move(background_attachments), StyleValueList::Separator::Comma),
-            StyleValueList::create(move(background_origins), StyleValueList::Separator::Comma),
-            StyleValueList::create(move(background_clips), StyleValueList::Separator::Comma));
-    }
+    complete_background_layer();
 
     if (!background_color)
         background_color = initial_background_color;
-    if (!background_image)
-        background_image = initial_background_image;
-    if (!background_position_x)
-        background_position_x = initial_background_position_x;
-    if (!background_position_y)
-        background_position_y = initial_background_position_y;
-    if (!background_size)
-        background_size = initial_background_size;
-    if (!background_repeat)
-        background_repeat = initial_background_repeat;
-    if (!background_attachment)
-        background_attachment = initial_background_attachment;
-
-    if (!background_origin && !background_clip) {
-        background_origin = initial_background_origin;
-        background_clip = initial_background_clip;
-    } else if (!background_clip) {
-        background_clip = background_origin;
-    }
-
     transaction.commit();
     return make_background_shorthand(
         background_color.release_nonnull(),
-        background_image.release_nonnull(),
+        StyleValueList::create(move(background_images), StyleValueList::Separator::Comma),
         ShorthandStyleValue::create(PropertyID::BackgroundPosition,
             { PropertyID::BackgroundPositionX, PropertyID::BackgroundPositionY },
-            { background_position_x.release_nonnull(), background_position_y.release_nonnull() }),
-        background_size.release_nonnull(),
-        background_repeat.release_nonnull(),
-        background_attachment.release_nonnull(),
-        background_origin.release_nonnull(),
-        background_clip.release_nonnull());
+            { StyleValueList::create(move(background_position_xs), StyleValueList::Separator::Comma),
+                StyleValueList::create(move(background_position_ys), StyleValueList::Separator::Comma) }),
+        StyleValueList::create(move(background_sizes), StyleValueList::Separator::Comma),
+        StyleValueList::create(move(background_repeats), StyleValueList::Separator::Comma),
+        StyleValueList::create(move(background_attachments), StyleValueList::Separator::Comma),
+        StyleValueList::create(move(background_origins), StyleValueList::Separator::Comma),
+        StyleValueList::create(move(background_clips), StyleValueList::Separator::Comma));
 }
 
 static Optional<LengthPercentage> style_value_to_length_percentage(auto value)
@@ -2847,9 +2798,7 @@ RefPtr<StyleValue const> Parser::parse_font_value(TokenStream<ComponentValue>& t
 RefPtr<StyleValue const> Parser::parse_font_family_value(TokenStream<ComponentValue>& tokens)
 {
     // [ <family-name> | <generic-family> ]#
-    // FIXME: We currently require font-family to always be a list, even with one item.
-    //        Maybe change that?
-    auto result = parse_comma_separated_value_list(tokens, [this](auto& inner_tokens) -> RefPtr<StyleValue const> {
+    return parse_comma_separated_value_list(tokens, [this](auto& inner_tokens) -> RefPtr<StyleValue const> {
         inner_tokens.discard_whitespace();
 
         // <generic-family>
@@ -2865,22 +2814,13 @@ RefPtr<StyleValue const> Parser::parse_font_family_value(TokenStream<ComponentVa
         // <family-name>
         return parse_family_name_value(inner_tokens);
     });
-
-    if (!result)
-        return nullptr;
-
-    if (result->is_value_list())
-        return result.release_nonnull();
-
-    // It's a single value, so wrap it in a list - see FIXME above.
-    return StyleValueList::create(StyleValueVector { result.release_nonnull() }, StyleValueList::Separator::Comma);
 }
 
 RefPtr<StyleValue const> Parser::parse_font_language_override_value(TokenStream<ComponentValue>& tokens)
 {
     // https://drafts.csswg.org/css-fonts/#propdef-font-language-override
     // This is `normal | <string>` but with the constraint that the string has to be 4 characters long:
-    // Shorter strings are right-padded with spaces, and longer strings are invalid.
+    // Shorter strings are right-padded with spaces before use, and longer strings are invalid.
 
     if (auto normal = parse_all_as_single_keyword_value(tokens, Keyword::Normal))
         return normal;
@@ -2927,9 +2867,20 @@ RefPtr<StyleValue const> Parser::parse_font_language_override_value(TokenStream<
             });
             return nullptr;
         }
+        // We're expected to always serialize without any trailing spaces, so remove them now for convenience.
+        auto trimmed = string_value.bytes_as_string_view().trim_whitespace(TrimMode::Right);
+        if (trimmed.is_empty()) {
+            ErrorReporter::the().report(InvalidPropertyError {
+                .rule_name = "style"_fly_string,
+                .property_name = "font-language-override"_fly_string,
+                .value_string = tokens.dump_string(),
+                .description = MUST(String::formatted("<string> value \"{}\" is only whitespace", string_value)),
+            });
+            return nullptr;
+        }
         transaction.commit();
-        if (length < 4)
-            return StringStyleValue::create(MUST(String::formatted("{:<4}", string_value)));
+        if (trimmed != string_value.bytes_as_string_view())
+            return StringStyleValue::create(FlyString::from_utf8_without_validation(trimmed.bytes()));
         return string;
     }
 
@@ -3679,14 +3630,14 @@ RefPtr<StyleValue const> Parser::parse_mask_value(TokenStream<ComponentValue>& t
     StyleValueVector mask_composites;
     StyleValueVector mask_modes;
 
-    auto initial_mask_image = property_initial_value(PropertyID::MaskImage);
-    auto initial_mask_position = property_initial_value(PropertyID::MaskPosition);
-    auto initial_mask_size = property_initial_value(PropertyID::MaskSize);
-    auto initial_mask_repeat = property_initial_value(PropertyID::MaskRepeat);
-    auto initial_mask_origin = property_initial_value(PropertyID::MaskOrigin);
-    auto initial_mask_clip = property_initial_value(PropertyID::MaskClip);
-    auto initial_mask_composite = property_initial_value(PropertyID::MaskComposite);
-    auto initial_mask_mode = property_initial_value(PropertyID::MaskMode);
+    auto initial_mask_image = property_initial_value(PropertyID::MaskImage)->as_value_list().values()[0];
+    auto initial_mask_position = property_initial_value(PropertyID::MaskPosition)->as_value_list().values()[0];
+    auto initial_mask_size = property_initial_value(PropertyID::MaskSize)->as_value_list().values()[0];
+    auto initial_mask_repeat = property_initial_value(PropertyID::MaskRepeat)->as_value_list().values()[0];
+    auto initial_mask_origin = property_initial_value(PropertyID::MaskOrigin)->as_value_list().values()[0];
+    auto initial_mask_clip = property_initial_value(PropertyID::MaskClip)->as_value_list().values()[0];
+    auto initial_mask_composite = property_initial_value(PropertyID::MaskComposite)->as_value_list().values()[0];
+    auto initial_mask_mode = property_initial_value(PropertyID::MaskMode)->as_value_list().values()[0];
 
     // Per-layer values
     RefPtr<StyleValue const> mask_image;
@@ -3933,24 +3884,6 @@ RefPtr<StyleValue const> Parser::parse_math_depth_value(TokenStream<ComponentVal
     }
 
     return nullptr;
-}
-
-RefPtr<StyleValue const> Parser::parse_overflow_value(TokenStream<ComponentValue>& tokens)
-{
-    auto transaction = tokens.begin_transaction();
-    auto maybe_x_value = parse_css_value_for_property(PropertyID::OverflowX, tokens);
-    if (!maybe_x_value)
-        return nullptr;
-    auto maybe_y_value = parse_css_value_for_property(PropertyID::OverflowY, tokens);
-    transaction.commit();
-    if (maybe_y_value) {
-        return ShorthandStyleValue::create(PropertyID::Overflow,
-            { PropertyID::OverflowX, PropertyID::OverflowY },
-            { maybe_x_value.release_nonnull(), maybe_y_value.release_nonnull() });
-    }
-    return ShorthandStyleValue::create(PropertyID::Overflow,
-        { PropertyID::OverflowX, PropertyID::OverflowY },
-        { *maybe_x_value, *maybe_x_value });
 }
 
 RefPtr<StyleValue const> Parser::parse_paint_order_value(TokenStream<ComponentValue>& tokens)
@@ -4720,6 +4653,51 @@ RefPtr<StyleValue const> Parser::parse_text_decoration_line_value(TokenStream<Co
     return StyleValueList::create(move(style_values), StyleValueList::Separator::Space);
 }
 
+// https://drafts.csswg.org/css-text-3/#text-indent-property
+RefPtr<StyleValue const> Parser::parse_text_indent_value(TokenStream<ComponentValue>& tokens)
+{
+    // [ <length-percentage> ] && hanging? && each-line?
+    auto transaction = tokens.begin_transaction();
+
+    RefPtr<StyleValue const> length_percentage;
+    bool has_hanging = false;
+    bool has_each_line = false;
+
+    tokens.discard_whitespace();
+
+    while (tokens.has_next_token()) {
+        if (!length_percentage) {
+            if (auto parsed = parse_length_percentage_value(tokens)) {
+                length_percentage = parsed.release_nonnull();
+                tokens.discard_whitespace();
+                continue;
+            }
+        }
+
+        if (auto keyword = parse_keyword_value(tokens)) {
+            if (!has_hanging && keyword->to_keyword() == Keyword::Hanging) {
+                has_hanging = true;
+                continue;
+            }
+            if (!has_each_line && keyword->to_keyword() == Keyword::EachLine) {
+                has_each_line = true;
+                continue;
+            }
+            return nullptr;
+        }
+
+        return nullptr;
+    }
+
+    if (!length_percentage)
+        return nullptr;
+
+    transaction.commit();
+    return TextIndentStyleValue::create(length_percentage.release_nonnull(),
+        has_hanging ? TextIndentStyleValue::Hanging::Yes : TextIndentStyleValue::Hanging::No,
+        has_each_line ? TextIndentStyleValue::EachLine::Yes : TextIndentStyleValue::EachLine::No);
+}
+
 // https://drafts.csswg.org/css-text-decor-4/#text-underline-position-property
 RefPtr<StyleValue const> Parser::parse_text_underline_position_value(TokenStream<ComponentValue>& tokens)
 {
@@ -4977,39 +4955,12 @@ RefPtr<StyleValue const> Parser::parse_transition_value(TokenStream<ComponentVal
     // https://drafts.csswg.org/css-transitions-1/#transition-shorthand-property
     // If there is more than one <single-transition> in the shorthand, and any of the transitions has none as the
     // <single-transition-property>, then the declaration is invalid.
-    auto const& transition_properties_style_value = parsed_value->as_shorthand().longhand(PropertyID::TransitionProperty);
-
-    // FIXME: This can be removed once parse_coordinating_value_list_shorthand returns a list for single values too.
-    if (!transition_properties_style_value->is_value_list())
-        return parsed_value;
-
-    auto const& transition_properties = transition_properties_style_value->as_value_list().values();
+    auto const& transition_properties = parsed_value->as_shorthand().longhand(PropertyID::TransitionProperty)->as_value_list().values();
 
     if (transition_properties.size() > 1 && transition_properties.find_first_index_if([](auto const& transition_property) { return transition_property->to_keyword() == Keyword::None; }).has_value())
         return nullptr;
 
     return parsed_value;
-}
-
-RefPtr<StyleValue const> Parser::parse_list_of_time_values(PropertyID property_id, TokenStream<ComponentValue>& tokens)
-{
-    auto transaction = tokens.begin_transaction();
-    auto time_values = parse_a_comma_separated_list_of_component_values(tokens);
-    StyleValueVector time_value_list;
-    for (auto const& value : time_values) {
-        TokenStream time_value_tokens { value };
-        auto time_style_value = parse_time_value(time_value_tokens);
-        if (!time_style_value)
-            return nullptr;
-        if (time_value_tokens.has_next_token())
-            return nullptr;
-        if (!time_style_value->is_calculated() && !property_accepts_time(property_id, time_style_value->as_time().time()))
-            return nullptr;
-        time_value_list.append(*time_style_value);
-    }
-
-    transaction.commit();
-    return StyleValueList::create(move(time_value_list), StyleValueList::Separator::Comma);
 }
 
 RefPtr<StyleValue const> Parser::parse_transition_property_value(TokenStream<ComponentValue>& tokens)
@@ -5019,7 +4970,7 @@ RefPtr<StyleValue const> Parser::parse_transition_property_value(TokenStream<Com
 
     // none
     if (auto none = parse_all_as_single_keyword_value(tokens, Keyword::None))
-        return none;
+        return StyleValueList::create({ none.release_nonnull() }, StyleValueList::Separator::Comma);
 
     // <single-transition-property>#
     // <single-transition-property> = all | <custom-ident>
@@ -5118,6 +5069,75 @@ RefPtr<StyleValue const> Parser::parse_scale_value(TokenStream<ComponentValue>& 
 
     transaction.commit();
     return TransformationStyleValue::create(PropertyID::Scale, TransformFunction::Scale3d, { maybe_x.release_nonnull(), maybe_y.release_nonnull(), maybe_z.release_nonnull() });
+}
+
+// https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-shorthand
+RefPtr<StyleValue const> Parser::parse_scroll_timeline_value(TokenStream<ComponentValue>& tokens)
+{
+    // [ <'scroll-timeline-name'> <'scroll-timeline-axis'>? ]#
+    StyleValueVector names;
+    StyleValueVector axes;
+
+    auto transaction = tokens.begin_transaction();
+
+    do {
+        static auto default_axis = property_initial_value(PropertyID::ScrollTimelineAxis)->as_value_list().values()[0];
+
+        tokens.discard_whitespace();
+
+        auto maybe_name = parse_css_value_for_property(PropertyID::ScrollTimelineName, tokens);
+
+        if (!maybe_name)
+            return nullptr;
+
+        names.append(maybe_name.release_nonnull());
+
+        tokens.discard_whitespace();
+
+        if (tokens.next_token().is(Token::Type::Comma)) {
+            axes.append(default_axis);
+            tokens.discard_a_token();
+
+            // Disallow trailing commas
+            if (!tokens.has_next_token())
+                return nullptr;
+
+            continue;
+        }
+
+        if (!tokens.has_next_token()) {
+            axes.append(default_axis);
+            break;
+        }
+
+        auto maybe_axis = parse_css_value_for_property(PropertyID::ScrollTimelineAxis, tokens);
+
+        if (!maybe_axis)
+            return nullptr;
+
+        axes.append(maybe_axis.release_nonnull());
+
+        tokens.discard_whitespace();
+
+        if (tokens.next_token().is(Token::Type::Comma)) {
+            tokens.discard_a_token();
+
+            // Disallow trailing commas
+            if (!tokens.has_next_token())
+                return nullptr;
+
+            continue;
+        }
+
+        if (tokens.has_next_token())
+            return nullptr;
+    } while (tokens.has_next_token());
+
+    transaction.commit();
+
+    return ShorthandStyleValue::create(PropertyID::ScrollTimeline,
+        { PropertyID::ScrollTimelineName, PropertyID::ScrollTimelineAxis },
+        { StyleValueList::create(move(names), StyleValueList::Separator::Comma), StyleValueList::create(move(axes), StyleValueList::Separator::Comma) });
 }
 
 // https://drafts.csswg.org/css-scrollbars/#propdef-scrollbar-color
@@ -6208,6 +6228,109 @@ RefPtr<StyleValue const> Parser::parse_white_space_shorthand(TokenStream<Compone
     }
 
     return make_whitespace_shorthand(white_space_collapse, text_wrap_mode, white_space_trim);
+}
+
+// https://drafts.csswg.org/scroll-animations-1/#view-timeline-shorthand
+RefPtr<StyleValue const> Parser::parse_view_timeline_value(TokenStream<ComponentValue>& tokens)
+{
+    // [ <'view-timeline-name'> [ <'view-timeline-axis'> || <'view-timeline-inset'> ]? ]#
+    StyleValueVector names;
+    StyleValueVector axes;
+    StyleValueVector insets;
+
+    auto transaction = tokens.begin_transaction();
+
+    do {
+        RefPtr<StyleValue const> name;
+        RefPtr<StyleValue const> axis;
+        RefPtr<StyleValue const> inset;
+
+        auto const append_entry = [&]() {
+            VERIFY(name);
+            names.append(name.release_nonnull());
+
+            static auto default_axis = property_initial_value(PropertyID::ViewTimelineAxis)->as_value_list().values()[0];
+            static auto default_inset = property_initial_value(PropertyID::ViewTimelineInset)->as_value_list().values()[0];
+
+            axes.append(axis ? axis.release_nonnull() : default_axis);
+            insets.append(inset ? inset.release_nonnull() : default_inset);
+        };
+
+        tokens.discard_whitespace();
+
+        auto maybe_name = parse_css_value_for_property(PropertyID::ViewTimelineName, tokens);
+
+        if (!maybe_name)
+            return nullptr;
+
+        name = maybe_name;
+
+        tokens.discard_whitespace();
+
+        if (tokens.next_token().is(Token::Type::Comma)) {
+            tokens.discard_a_token();
+
+            // Disallow trailing commas
+            if (!tokens.has_next_token())
+                return nullptr;
+
+            append_entry();
+            continue;
+        }
+
+        auto remaining_longhands = Vector { PropertyID::ViewTimelineAxis, PropertyID::ViewTimelineInset };
+
+        while (tokens.has_next_token() && !tokens.next_token().is(Token::Type::Comma)) {
+            tokens.discard_whitespace();
+
+            auto property_and_value = parse_css_value_for_properties(remaining_longhands, tokens);
+
+            if (!property_and_value.has_value())
+                return nullptr;
+
+            remove_property(remaining_longhands, property_and_value->property);
+
+            switch (property_and_value->property) {
+            case PropertyID::ViewTimelineAxis:
+                if (axis)
+                    return nullptr;
+
+                axis = property_and_value->style_value;
+                break;
+            case PropertyID::ViewTimelineInset:
+                if (inset)
+                    return nullptr;
+
+                inset = property_and_value->style_value;
+                break;
+            default:
+                VERIFY_NOT_REACHED();
+            }
+        }
+
+        append_entry();
+
+        if (tokens.next_token().is(Token::Type::Comma)) {
+            tokens.discard_a_token();
+
+            // Disallow trailing commas
+            if (!tokens.has_next_token())
+                return nullptr;
+
+            continue;
+        }
+
+        if (tokens.has_next_token())
+            return nullptr;
+    } while (tokens.has_next_token());
+
+    transaction.commit();
+
+    return ShorthandStyleValue::create(PropertyID::ViewTimeline,
+        { PropertyID::ViewTimelineName, PropertyID::ViewTimelineAxis, PropertyID::ViewTimelineInset },
+        { StyleValueList::create(move(names), StyleValueList::Separator::Comma),
+            StyleValueList::create(move(axes), StyleValueList::Separator::Comma),
+            StyleValueList::create(move(insets), StyleValueList::Separator::Comma) });
 }
 
 // https://drafts.csswg.org/css-will-change/#will-change

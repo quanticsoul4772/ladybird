@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <LibCore/System.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::HTML {

@@ -17,18 +17,12 @@
 #include <AK/Math.h>
 #include <AK/NonnullRawPtr.h>
 #include <AK/QuickSort.h>
-#include <LibGfx/Font/Font.h>
 #include <LibGfx/Font/FontDatabase.h>
-#include <LibGfx/Font/FontStyleMapping.h>
-#include <LibGfx/Font/Typeface.h>
-#include <LibGfx/Font/WOFF/Loader.h>
-#include <LibGfx/Font/WOFF2/Loader.h>
 #include <LibWeb/Animations/AnimationEffect.h>
 #include <LibWeb/Animations/DocumentTimeline.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
 #include <LibWeb/CSS/AnimationEvent.h>
 #include <LibWeb/CSS/CSSAnimation.h>
-#include <LibWeb/CSS/CSSFontFaceRule.h>
 #include <LibWeb/CSS/CSSImportRule.h>
 #include <LibWeb/CSS/CSSLayerBlockRule.h>
 #include <LibWeb/CSS/CSSLayerStatementRule.h>
@@ -37,7 +31,7 @@
 #include <LibWeb/CSS/CSSStyleRule.h>
 #include <LibWeb/CSS/CSSTransition.h>
 #include <LibWeb/CSS/ComputedProperties.h>
-#include <LibWeb/CSS/Fetch.h>
+#include <LibWeb/CSS/FontComputer.h>
 #include <LibWeb/CSS/Interpolation.h>
 #include <LibWeb/CSS/InvalidationSet.h>
 #include <LibWeb/CSS/Parser/ArbitrarySubstitutionFunctions.h>
@@ -81,16 +75,12 @@
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/ShadowRoot.h>
-#include <LibWeb/Fetch/Infrastructure/FetchController.h>
-#include <LibWeb/Fetch/Response.h>
 #include <LibWeb/HTML/HTMLBRElement.h>
 #include <LibWeb/HTML/HTMLHtmlElement.h>
 #include <LibWeb/HTML/HTMLSlotElement.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/Layout/Node.h>
-#include <LibWeb/MimeSniff/MimeType.h>
-#include <LibWeb/MimeSniff/Resource.h>
 #include <LibWeb/Namespace.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/PaintableBox.h>
@@ -101,52 +91,6 @@
 namespace Web::CSS {
 
 GC_DEFINE_ALLOCATOR(StyleComputer);
-GC_DEFINE_ALLOCATOR(FontLoader);
-
-struct FontFaceKey {
-    NonnullRawPtr<FlyString const> family_name;
-    int weight { 0 };
-    int slope { 0 };
-};
-
-}
-
-namespace AK {
-
-namespace Detail {
-
-template<>
-inline constexpr bool IsHashCompatible<Web::CSS::FontFaceKey, Web::CSS::OwnFontFaceKey> = true;
-template<>
-inline constexpr bool IsHashCompatible<Web::CSS::OwnFontFaceKey, Web::CSS::FontFaceKey> = true;
-
-}
-
-template<>
-struct Traits<Web::CSS::FontFaceKey> : public DefaultTraits<Web::CSS::FontFaceKey> {
-    static unsigned hash(Web::CSS::FontFaceKey const& key) { return pair_int_hash(key.family_name->hash(), pair_int_hash(key.weight, key.slope)); }
-};
-
-template<>
-struct Traits<Web::CSS::OwnFontFaceKey> : public DefaultTraits<Web::CSS::OwnFontFaceKey> {
-    static unsigned hash(Web::CSS::OwnFontFaceKey const& key) { return pair_int_hash(key.family_name.hash(), pair_int_hash(key.weight, key.slope)); }
-};
-
-template<>
-struct Traits<Web::CSS::FontMatchingAlgorithmCacheKey> : public DefaultTraits<Web::CSS::FontMatchingAlgorithmCacheKey> {
-    static unsigned hash(Web::CSS::FontMatchingAlgorithmCacheKey const& key)
-    {
-        auto hash = key.family_name.hash();
-        hash = pair_int_hash(hash, key.weight);
-        hash = pair_int_hash(hash, key.slope);
-        hash = pair_int_hash(hash, Traits<float>::hash(key.font_size_in_pt));
-        return hash;
-    }
-};
-
-}
-
-namespace Web::CSS {
 
 CSSStyleProperties const& MatchingRule::declaration() const
 {
@@ -175,29 +119,6 @@ FlyString const& MatchingRule::qualified_layer_name() const
     VERIFY_NOT_REACHED();
 }
 
-OwnFontFaceKey::OwnFontFaceKey(FontFaceKey const& other)
-    : family_name(other.family_name)
-    , weight(other.weight)
-    , slope(other.slope)
-{
-}
-
-OwnFontFaceKey::operator FontFaceKey() const
-{
-    return FontFaceKey {
-        family_name,
-        weight,
-        slope
-    };
-}
-
-[[nodiscard]] bool OwnFontFaceKey::operator==(FontFaceKey const& other) const
-{
-    return family_name == other.family_name
-        && weight == other.weight
-        && slope == other.slope;
-}
-
 StyleComputer::StyleComputer(DOM::Document& document)
     : m_document(document)
     , m_default_font_metrics(16, Platform::FontPlugin::the().default_font(16)->pixel_metrics(), InitialValues::line_height())
@@ -212,147 +133,7 @@ void StyleComputer::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_document);
-    visitor.visit(m_loaded_fonts);
 }
-
-FontLoader::FontLoader(StyleComputer& style_computer, GC::Ptr<CSSStyleSheet> parent_style_sheet, FlyString family_name, Vector<Gfx::UnicodeRange> unicode_ranges, Vector<URL> urls, Function<void(RefPtr<Gfx::Typeface const>)> on_load)
-    : m_style_computer(style_computer)
-    , m_parent_style_sheet(parent_style_sheet)
-    , m_family_name(move(family_name))
-    , m_unicode_ranges(move(unicode_ranges))
-    , m_urls(move(urls))
-    , m_on_load(move(on_load))
-{
-}
-
-FontLoader::~FontLoader() = default;
-
-void FontLoader::visit_edges(Visitor& visitor)
-{
-    Base::visit_edges(visitor);
-    visitor.visit(m_style_computer);
-    visitor.visit(m_parent_style_sheet);
-    visitor.visit(m_fetch_controller);
-}
-
-bool FontLoader::is_loading() const
-{
-    return m_fetch_controller && !m_vector_font;
-}
-
-RefPtr<Gfx::Font const> FontLoader::font_with_point_size(float point_size, Gfx::FontVariationSettings const& variations)
-{
-    if (!m_vector_font) {
-        if (!m_fetch_controller)
-            start_loading_next_url();
-        return nullptr;
-    }
-    return m_vector_font->font(point_size, variations);
-}
-
-void FontLoader::start_loading_next_url()
-{
-    // FIXME: Load local() fonts somehow.
-    if (m_fetch_controller && m_fetch_controller->state() == Fetch::Infrastructure::FetchController::State::Ongoing)
-        return;
-    if (m_urls.is_empty())
-        return;
-
-    // https://drafts.csswg.org/css-fonts-4/#fetch-a-font
-    // To fetch a font given a selected <url> url for @font-face rule, fetch url, with stylesheet being rule’s parent
-    // CSS style sheet, destination "font", CORS mode "cors", and processResponse being the following steps given
-    // response res and null, failure or a byte stream stream:
-    auto style_sheet_or_document = m_parent_style_sheet ? StyleSheetOrDocument { *m_parent_style_sheet } : StyleSheetOrDocument { m_style_computer->document() };
-    m_fetch_controller = fetch_a_style_resource(m_urls.take_first(), style_sheet_or_document, Fetch::Infrastructure::Request::Destination::Font, CorsMode::Cors,
-        [loader = this](auto response, auto stream) {
-            // 1. If stream is null, return.
-            // 2. Load a font from stream according to its type.
-
-            // NB: We need to fetch the next source if this one fails to fetch OR decode. So, first try to decode it.
-            RefPtr<Gfx::Typeface const> typeface;
-            if (auto* bytes = stream.template get_pointer<ByteBuffer>()) {
-                if (auto maybe_typeface = loader->try_load_font(response, *bytes); !maybe_typeface.is_error())
-                    typeface = maybe_typeface.release_value();
-            }
-
-            if (!typeface) {
-                // NB: If we have other sources available, try the next one.
-                if (loader->m_urls.is_empty()) {
-                    loader->font_did_load_or_fail(nullptr);
-                } else {
-                    loader->m_fetch_controller = nullptr;
-                    loader->start_loading_next_url();
-                }
-            } else {
-                loader->font_did_load_or_fail(move(typeface));
-            }
-        });
-
-    if (!m_fetch_controller)
-        font_did_load_or_fail(nullptr);
-}
-
-void FontLoader::font_did_load_or_fail(RefPtr<Gfx::Typeface const> typeface)
-{
-    if (typeface) {
-        m_vector_font = typeface.release_nonnull();
-        m_style_computer->did_load_font(m_family_name);
-        if (m_on_load)
-            m_on_load(m_vector_font);
-    } else {
-        if (m_on_load)
-            m_on_load(nullptr);
-    }
-    m_fetch_controller = nullptr;
-}
-
-ErrorOr<NonnullRefPtr<Gfx::Typeface const>> FontLoader::try_load_font(Fetch::Infrastructure::Response const& response, ByteBuffer const& bytes)
-{
-    // FIXME: This could maybe use the format() provided in @font-face as well, since often the mime type is just application/octet-stream and we have to try every format
-    auto mime_type = response.header_list()->extract_mime_type();
-    if (!mime_type.has_value() || !mime_type->is_font()) {
-        mime_type = MimeSniff::Resource::sniff(bytes, MimeSniff::SniffingConfiguration { .sniffing_context = MimeSniff::SniffingContext::Font });
-    }
-    if (mime_type.has_value()) {
-        if (mime_type->essence() == "font/ttf"sv || mime_type->essence() == "application/x-font-ttf"sv || mime_type->essence() == "font/otf"sv) {
-            if (auto result = Gfx::Typeface::try_load_from_temporary_memory(bytes); !result.is_error()) {
-                return result;
-            }
-        }
-        if (mime_type->essence() == "font/woff"sv || mime_type->essence() == "application/font-woff"sv) {
-            if (auto result = WOFF::try_load_from_bytes(bytes); !result.is_error()) {
-                return result;
-            }
-        }
-        if (mime_type->essence() == "font/woff2"sv || mime_type->essence() == "application/font-woff2"sv) {
-            if (auto result = WOFF2::try_load_from_bytes(bytes); !result.is_error()) {
-                return result;
-            }
-        }
-    }
-
-    return Error::from_string_literal("Automatic format detection failed");
-}
-
-struct StyleComputer::MatchingFontCandidate {
-    FontFaceKey key;
-    Variant<FontLoaderList*, Gfx::Typeface const*> loader_or_typeface;
-
-    [[nodiscard]] RefPtr<Gfx::FontCascadeList const> font_with_point_size(float point_size, Gfx::FontVariationSettings const& variations) const
-    {
-        auto font_list = Gfx::FontCascadeList::create();
-        if (auto* loader_list = loader_or_typeface.get_pointer<FontLoaderList*>(); loader_list) {
-            for (auto const& loader : **loader_list) {
-                if (auto font = loader->font_with_point_size(point_size, variations); font)
-                    font_list->add(*font, loader->unicode_ranges());
-            }
-            return font_list;
-        }
-
-        font_list->add(loader_or_typeface.get<Gfx::Typeface const*>()->font(point_size, variations));
-        return font_list;
-    }
-};
 
 Optional<String> StyleComputer::user_agent_style_sheet_source(StringView name)
 {
@@ -618,38 +399,6 @@ void StyleComputer::for_each_property_expanding_shorthands(PropertyID property_i
         return;
     }
 
-    if (property_id == CSS::PropertyID::BackgroundPosition) {
-        if (value.is_position()) {
-            auto const& position = value.as_position();
-            set_longhand_property(CSS::PropertyID::BackgroundPositionX, position.edge_x());
-            set_longhand_property(CSS::PropertyID::BackgroundPositionY, position.edge_y());
-        } else if (value.is_value_list()) {
-            // Expand background-position layer list into separate lists for x and y positions:
-            auto const& values_list = value.as_value_list();
-            StyleValueVector x_positions {};
-            StyleValueVector y_positions {};
-            x_positions.ensure_capacity(values_list.size());
-            y_positions.ensure_capacity(values_list.size());
-            for (auto& layer : values_list.values()) {
-                if (layer->is_position()) {
-                    auto const& position = layer->as_position();
-                    x_positions.unchecked_append(position.edge_x());
-                    y_positions.unchecked_append(position.edge_y());
-                } else {
-                    x_positions.unchecked_append(layer);
-                    y_positions.unchecked_append(layer);
-                }
-            }
-            set_longhand_property(CSS::PropertyID::BackgroundPositionX, StyleValueList::create(move(x_positions), values_list.separator()));
-            set_longhand_property(CSS::PropertyID::BackgroundPositionY, StyleValueList::create(move(y_positions), values_list.separator()));
-        } else {
-            set_longhand_property(CSS::PropertyID::BackgroundPositionX, value);
-            set_longhand_property(CSS::PropertyID::BackgroundPositionY, value);
-        }
-
-        return;
-    }
-
     if (property_is_shorthand(property_id)) {
         // ShorthandStyleValue was handled already, as were unresolved shorthands.
         // That means the only values we should see are the CSS-wide keywords, or the guaranteed-invalid value.
@@ -902,7 +651,7 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
 
         Length::FontMetrics font_metrics {
             computed_properties.font_size(),
-            computed_properties.first_available_computed_font().pixel_metrics(),
+            computed_properties.first_available_computed_font(document().font_computer())->pixel_metrics(),
             computed_properties.line_height()
         };
 
@@ -950,7 +699,7 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
                 auto const& specified_value_with_css_wide_keywords_applied = [&]() -> StyleValue const& {
                     if (longhand_value.is_inherit() || (longhand_value.is_unset() && is_inherited_property(longhand_id))) {
                         if (auto inherited_animated_value = get_animated_inherit_value(longhand_id, abstract_element); inherited_animated_value.has_value())
-                            return inherited_animated_value.value();
+                            return inherited_animated_value->value;
 
                         return get_non_animated_inherit_value(longhand_id, abstract_element);
                     }
@@ -1016,7 +765,7 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
                     .viewport_rect = viewport_rect(),
                     .font_metrics = {
                         computed_properties.font_size(),
-                        computed_properties.first_available_computed_font().pixel_metrics(),
+                        computed_properties.first_available_computed_font(document().font_computer())->pixel_metrics(),
                         inheritance_parent_has_computed_properties ? inheritance_parent->computed_properties()->line_height() : InitialValues::line_height() },
                     .root_font_metrics = m_root_element_font_metrics },
                 .abstract_element = abstract_element
@@ -1070,6 +819,8 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
         VERIFY_NOT_REACHED();
     };
 
+    auto is_result_of_transition = animation->is_css_transition() ? AnimatedPropertyResultOfTransition::Yes : AnimatedPropertyResultOfTransition::No;
+
     auto start_composite_operation = to_composite_operation(keyframe_values.composite);
     auto end_composite_operation = to_composite_operation(keyframe_end_values.composite);
 
@@ -1079,7 +830,7 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
 
         if (!resolved_end_property) {
             if (resolved_start_property) {
-                computed_properties.set_animated_property(it.key, *resolved_start_property);
+                computed_properties.set_animated_property(it.key, *resolved_start_property, is_result_of_transition);
                 dbgln_if(LIBWEB_CSS_ANIMATION_DEBUG, "No end property for property {}, using {}", string_from_property_id(it.key), resolved_start_property->to_string(SerializationMode::Normal));
             }
             continue;
@@ -1094,7 +845,9 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
         auto start = resolved_start_property.release_nonnull();
         auto end = resolved_end_property.release_nonnull();
 
-        if (computed_properties.is_property_important(it.key)) {
+        // OPTIMIZATION: Values resulting from animations other than CSS transitions are overriden by important
+        //               properties so there's no need to calculate them
+        if (!animation->is_css_transition() && computed_properties.is_property_important(it.key)) {
             continue;
         }
 
@@ -1107,11 +860,11 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
 
         if (auto next_value = interpolate_property(*effect->target(), it.key, *start, *end, progress_in_keyframe, AllowDiscrete::Yes)) {
             dbgln_if(LIBWEB_CSS_ANIMATION_DEBUG, "Interpolated value for property {} at {}: {} -> {} = {}", string_from_property_id(it.key), progress_in_keyframe, start->to_string(SerializationMode::Normal), end->to_string(SerializationMode::Normal), next_value->to_string(SerializationMode::Normal));
-            computed_properties.set_animated_property(it.key, *next_value);
+            computed_properties.set_animated_property(it.key, *next_value, is_result_of_transition);
         } else {
             // If interpolate_property() fails, the element should not be rendered
             dbgln_if(LIBWEB_CSS_ANIMATION_DEBUG, "Interpolated value for property {} at {}: {} -> {} is invalid", string_from_property_id(it.key), progress_in_keyframe, start->to_string(SerializationMode::Normal), end->to_string(SerializationMode::Normal));
-            computed_properties.set_animated_property(PropertyID::Visibility, KeywordStyleValue::create(Keyword::Hidden));
+            computed_properties.set_animated_property(PropertyID::Visibility, KeywordStyleValue::create(Keyword::Hidden), is_result_of_transition);
         }
     }
 }
@@ -1130,7 +883,7 @@ static void apply_animation_properties(DOM::Document const& document, ComputedPr
     effect.set_playback_direction(Animations::css_animation_direction_to_bindings_playback_direction(animation_properties.direction));
     effect.set_composite(Animations::css_animation_composition_to_bindings_composite_operation(animation_properties.composition));
 
-    if (animation_properties.play_state != effect.last_css_animation_play_state()) {
+    if (animation_properties.play_state != animation.last_css_animation_play_state()) {
         if (animation_properties.play_state == CSS::AnimationPlayState::Running && animation.play_state() != Bindings::AnimationPlayState::Running) {
             HTML::TemporaryExecutionContext context(document.realm());
             animation.play().release_value_but_fixme_should_propagate_errors();
@@ -1139,7 +892,7 @@ static void apply_animation_properties(DOM::Document const& document, ComputedPr
             animation.pause().release_value_but_fixme_should_propagate_errors();
         }
 
-        effect.set_last_css_animation_play_state(animation_properties.play_state);
+        animation.set_last_css_animation_play_state(animation_properties.play_state);
     }
 }
 
@@ -1148,12 +901,9 @@ void StyleComputer::process_animation_definitions(ComputedProperties const& comp
 {
     auto const& animation_definitions = computed_properties.animations();
 
-    // FIXME: Add some animation helpers to AbstractElement once pseudo-elements are animatable.
-    auto& element = abstract_element.element();
-    auto const& pseudo_element = abstract_element.pseudo_element();
     auto& document = abstract_element.document();
 
-    auto* element_animations = element.css_defined_animations(pseudo_element);
+    auto* element_animations = abstract_element.css_defined_animations();
 
     // If we have a nullptr for element_animations it means that the pseudo element was invalid and thus we shouldn't apply animations
     if (!element_animations)
@@ -1176,23 +926,20 @@ void StyleComputer::process_animation_definitions(ComputedProperties const& comp
         auto animation = CSSAnimation::create(document.realm());
         animation->set_animation_name(animation_properties.name);
         animation->set_timeline(document.timeline());
-        animation->set_owning_element(element);
+        animation->set_owning_element(abstract_element);
 
         auto effect = Animations::KeyframeEffect::create(document.realm());
         animation->set_effect(effect);
 
         apply_animation_properties(document, animation_properties, animation);
 
-        if (pseudo_element.has_value())
-            effect->set_pseudo_element(Selector::PseudoElementSelector { pseudo_element.value() });
-
         if (auto const* rule_cache = rule_cache_for_cascade_origin(CascadeOrigin::Author, {}, {})) {
             if (auto keyframe_set = rule_cache->rules_by_animation_keyframes.get(animation_properties.name); keyframe_set.has_value())
                 effect->set_key_frame_set(keyframe_set.value());
         }
 
-        effect->set_target(&element);
-        element.set_has_css_defined_animations();
+        effect->set_target(abstract_element);
+        abstract_element.set_has_css_defined_animations();
         element_animations->set(animation_properties.name, animation);
     }
 
@@ -1221,19 +968,47 @@ static void apply_dimension_attribute(CascadedProperties& cascaded_properties, D
 
 static void compute_transitioned_properties(ComputedProperties const& style, DOM::AbstractElement abstract_element)
 {
-    auto const source_declaration = style.transition_property_source();
-    if (!source_declaration)
-        return;
+    // FIXME: For now we don't bother registering transitions on the first computation since they can't run (because
+    //        there is nothing to transition from) but this will change once we implement @starting-style
     if (!abstract_element.computed_properties())
         return;
     // FIXME: Add transition helpers on AbstractElement.
     auto& element = abstract_element.element();
     auto pseudo_element = abstract_element.pseudo_element();
-    if (source_declaration == element.cached_transition_property_source(pseudo_element))
+
+    element.clear_registered_transitions(pseudo_element);
+
+    auto const& delay = style.property(PropertyID::TransitionDelay);
+    auto const& duration = style.property(PropertyID::TransitionDuration);
+
+    auto const value_is_list_containing_a_single_time_of_zero_seconds = [](StyleValue const& value) -> bool {
+        if (!value.is_value_list())
+            return false;
+
+        auto const& value_list = value.as_value_list().values();
+
+        if (value_list.size() != 1)
+            return false;
+
+        if (!value_list[0]->is_time())
+            return false;
+
+        return value_list[0]->as_time().time().to_seconds() == 0;
+    };
+
+    // OPTIMIZATION: Registered transitions with a "combined duration" of less than or equal to 0s are equivalent to not
+    //               having a transition registered at all, except in the case that we already have an associated
+    //               transition for that property, so we can skip registering them. This implementation intentionally
+    //               ignores some of those cases (e.g. transitions being registered but for other properties, multiple
+    //               transitions, negative delays, etc) since it covers the common (initial property values) case and
+    //               the other cases are rare enough that the cost of identifying them would likely more than offset any
+    //               gains.
+    if (
+        element.property_ids_with_existing_transitions(pseudo_element).is_empty()
+        && value_is_list_containing_a_single_time_of_zero_seconds(delay)
+        && value_is_list_containing_a_single_time_of_zero_seconds(duration)) {
         return;
-    // Reparse this transition property
-    element.clear_transitions(pseudo_element);
-    element.set_cached_transition_property_source(pseudo_element, *source_declaration);
+    }
 
     auto coordinated_transition_list = style.assemble_coordinated_value_list(
         PropertyID::TransitionProperty,
@@ -1309,8 +1084,8 @@ void StyleComputer::start_needed_transitions(ComputedProperties const& previous_
         auto const& after_change_value = new_style.property(property_id, ComputedProperties::WithAnimationsApplied::No);
 
         auto existing_transition = element.property_transition(pseudo_element, property_id);
-        bool has_running_transition = existing_transition && !existing_transition->is_finished();
-        bool has_completed_transition = existing_transition && existing_transition->is_finished();
+        bool has_running_transition = existing_transition && !existing_transition->is_finished() && !existing_transition->is_idle();
+        bool has_completed_transition = existing_transition && (existing_transition->is_finished() || existing_transition->is_idle());
 
         auto start_a_transition = [&](auto delay, auto start_time, auto end_time, auto const& start_value, auto const& end_value, auto const& reversing_adjusted_start_value, auto reversing_shortening_factor) {
             dbgln_if(CSS_TRANSITIONS_DEBUG, "Starting a transition of {} from {} to {}", string_from_property_id(property_id), start_value.to_string(SerializationMode::Normal), end_value.to_string(SerializationMode::Normal));
@@ -1487,7 +1262,7 @@ void StyleComputer::start_needed_transitions(ComputedProperties const& previous_
         auto const& existing_transition = element.property_transition(pseudo_element, property_id);
 
         dbgln_if(CSS_TRANSITIONS_DEBUG, "Transition step 3.");
-        if (!existing_transition->is_finished())
+        if (!existing_transition->is_finished() && !existing_transition->is_idle())
             existing_transition->cancel();
         else
             element.remove_transition(pseudo_element, property_id);
@@ -1591,7 +1366,7 @@ NonnullRefPtr<StyleValue const> StyleComputer::get_non_animated_inherit_value(Pr
     return parent_element->computed_properties()->property(property_id, ComputedProperties::WithAnimationsApplied::No);
 }
 
-Optional<NonnullRefPtr<StyleValue const>> StyleComputer::get_animated_inherit_value(PropertyID property_id, DOM::AbstractElement abstract_element)
+Optional<StyleComputer::AnimatedInheritValue> StyleComputer::get_animated_inherit_value(PropertyID property_id, DOM::AbstractElement abstract_element)
 {
     auto parent_element = abstract_element.element_to_inherit_style_from();
 
@@ -1599,7 +1374,12 @@ Optional<NonnullRefPtr<StyleValue const>> StyleComputer::get_animated_inherit_va
         return {};
 
     if (auto animated_value = parent_element->computed_properties()->animated_property_values().get(property_id); animated_value.has_value())
-        return *animated_value.value();
+        return AnimatedInheritValue {
+            .value = *animated_value.value(),
+            .is_result_of_transition = parent_element->computed_properties()->is_animated_property_result_of_transition(property_id)
+                ? AnimatedPropertyResultOfTransition::Yes
+                : AnimatedPropertyResultOfTransition::No
+        };
 
     return {};
 }
@@ -1608,121 +1388,12 @@ Length::FontMetrics StyleComputer::calculate_root_element_font_metrics(ComputedP
 {
     auto const& root_value = style.property(CSS::PropertyID::FontSize);
 
-    auto font_pixel_metrics = style.first_available_computed_font().pixel_metrics();
+    auto font_pixel_metrics = style.first_available_computed_font(document().font_computer())->pixel_metrics();
     Length::FontMetrics font_metrics { m_default_font_metrics.font_size, font_pixel_metrics, InitialValues::line_height() };
     font_metrics.font_size = root_value.as_length().length().to_px(viewport_rect(), font_metrics, font_metrics);
     font_metrics.line_height = style.line_height();
 
     return font_metrics;
-}
-
-RefPtr<Gfx::FontCascadeList const> StyleComputer::find_matching_font_weight_ascending(Vector<MatchingFontCandidate> const& candidates, int target_weight, float font_size_in_pt, Gfx::FontVariationSettings const& variations, bool inclusive)
-{
-    using Fn = AK::Function<bool(MatchingFontCandidate const&)>;
-    auto pred = inclusive ? Fn([&](auto const& matching_font_candidate) { return matching_font_candidate.key.weight >= target_weight; })
-                          : Fn([&](auto const& matching_font_candidate) { return matching_font_candidate.key.weight > target_weight; });
-    auto it = find_if(candidates.begin(), candidates.end(), pred);
-    for (; it != candidates.end(); ++it) {
-        if (auto found_font = it->font_with_point_size(font_size_in_pt, variations))
-            return found_font;
-    }
-    return {};
-}
-
-RefPtr<Gfx::FontCascadeList const> StyleComputer::find_matching_font_weight_descending(Vector<MatchingFontCandidate> const& candidates, int target_weight, float font_size_in_pt, Gfx::FontVariationSettings const& variations, bool inclusive)
-{
-    using Fn = AK::Function<bool(MatchingFontCandidate const&)>;
-    auto pred = inclusive ? Fn([&](auto const& matching_font_candidate) { return matching_font_candidate.key.weight <= target_weight; })
-                          : Fn([&](auto const& matching_font_candidate) { return matching_font_candidate.key.weight < target_weight; });
-    auto it = find_if(candidates.rbegin(), candidates.rend(), pred);
-    for (; it != candidates.rend(); ++it) {
-        if (auto found_font = it->font_with_point_size(font_size_in_pt, variations))
-            return found_font;
-    }
-    return {};
-}
-
-RefPtr<Gfx::FontCascadeList const> StyleComputer::font_matching_algorithm(FlyString const& family_name, int weight, int slope, float font_size_in_pt) const
-{
-    FontMatchingAlgorithmCacheKey key { family_name, weight, slope, font_size_in_pt };
-    return m_font_matching_algorithm_cache.ensure(key, [&] {
-        return font_matching_algorithm_impl(family_name, weight, slope, font_size_in_pt);
-    });
-}
-
-// Partial implementation of the font-matching algorithm: https://www.w3.org/TR/css-fonts-4/#font-matching-algorithm
-// FIXME: This should be replaced by the full CSS font selection algorithm.
-RefPtr<Gfx::FontCascadeList const> StyleComputer::font_matching_algorithm_impl(FlyString const& family_name, int weight, int slope, float font_size_in_pt) const
-{
-    // If a font family match occurs, the user agent assembles the set of font faces in that family and then
-    // narrows the set to a single face using other font properties in the order given below.
-    Vector<MatchingFontCandidate> matching_family_fonts;
-    for (auto const& font_key_and_loader : m_loaded_fonts) {
-        if (font_key_and_loader.key.family_name.equals_ignoring_ascii_case(family_name))
-            matching_family_fonts.empend(font_key_and_loader.key, const_cast<FontLoaderList*>(&font_key_and_loader.value));
-    }
-    Gfx::FontDatabase::the().for_each_typeface_with_family_name(family_name, [&](Gfx::Typeface const& typeface) {
-        matching_family_fonts.empend(
-            FontFaceKey {
-                .family_name = typeface.family(),
-                .weight = static_cast<int>(typeface.weight()),
-                .slope = typeface.slope(),
-            },
-            &typeface);
-    });
-    quick_sort(matching_family_fonts, [](auto const& a, auto const& b) {
-        return a.key.weight < b.key.weight;
-    });
-    // FIXME: 1. font-stretch is tried first.
-    // FIXME: 2. font-style is tried next.
-    // We don't have complete support of italic and oblique fonts, so matching on font-style can be simplified to:
-    // If a matching slope is found, all faces which don't have that matching slope are excluded from the matching set.
-    auto style_it = find_if(matching_family_fonts.begin(), matching_family_fonts.end(),
-        [&](auto const& matching_font_candidate) { return matching_font_candidate.key.slope == slope; });
-    if (style_it != matching_family_fonts.end()) {
-        matching_family_fonts.remove_all_matching([&](auto const& matching_font_candidate) {
-            return matching_font_candidate.key.slope != slope;
-        });
-    }
-    // 3. font-weight is matched next.
-    // If the desired weight is inclusively between 400 and 500, weights greater than or equal to the target weight
-    // are checked in ascending order until 500 is hit and checked, followed by weights less than the target weight
-    // in descending order, followed by weights greater than 500, until a match is found.
-
-    Gfx::FontVariationSettings variations;
-    variations.set_weight(weight);
-
-    if (weight >= 400 && weight <= 500) {
-        auto it = find_if(matching_family_fonts.begin(), matching_family_fonts.end(),
-            [&](auto const& matching_font_candidate) { return matching_font_candidate.key.weight >= weight; });
-        for (; it != matching_family_fonts.end() && it->key.weight <= 500; ++it) {
-            if (auto found_font = it->font_with_point_size(font_size_in_pt, variations))
-                return found_font;
-        }
-        if (auto found_font = find_matching_font_weight_descending(matching_family_fonts, weight, font_size_in_pt, variations, false))
-            return found_font;
-        for (; it != matching_family_fonts.end(); ++it) {
-            if (auto found_font = it->font_with_point_size(font_size_in_pt, variations))
-                return found_font;
-        }
-    }
-    // If the desired weight is less than 400, weights less than or equal to the desired weight are checked in descending order
-    // followed by weights above the desired weight in ascending order until a match is found.
-    if (weight < 400) {
-        if (auto found_font = find_matching_font_weight_descending(matching_family_fonts, weight, font_size_in_pt, variations, true))
-            return found_font;
-        if (auto found_font = find_matching_font_weight_ascending(matching_family_fonts, weight, font_size_in_pt, variations, false))
-            return found_font;
-    }
-    // If the desired weight is greater than 500, weights greater than or equal to the desired weight are checked in ascending order
-    // followed by weights below the desired weight in descending order until a match is found.
-    if (weight > 500) {
-        if (auto found_font = find_matching_font_weight_ascending(matching_family_fonts, weight, font_size_in_pt, variations, true))
-            return found_font;
-        if (auto found_font = find_matching_font_weight_descending(matching_family_fonts, weight, font_size_in_pt, variations, false))
-            return found_font;
-    }
-    return {};
 }
 
 CSSPixels StyleComputer::default_user_font_size()
@@ -1781,149 +1452,6 @@ CSSPixels StyleComputer::relative_size_mapping(RelativeSize relative_size, CSSPi
     VERIFY_NOT_REACHED();
 }
 
-RefPtr<Gfx::FontCascadeList const> StyleComputer::compute_font_for_style_values(StyleValue const& font_family, CSSPixels const& font_size, int slope, double font_weight, Percentage const& font_width, HashMap<FlyString, NumberOrCalculated> const& font_variation_settings, Length::ResolutionContext const& length_resolution_context) const
-{
-    // FIXME: We round to int here as that is what is expected by our font infrastructure below
-    auto width = round_to<int>(font_width.value());
-
-    // FIXME: We round to int here as that is what is expected by our font infrastructure below
-    auto weight = round_to<int>(font_weight);
-
-    // FIXME: Implement the full font-matching algorithm: https://www.w3.org/TR/css-fonts-4/#font-matching-algorithm
-
-    float const font_size_in_pt = font_size * 0.75f;
-
-    auto find_font = [&](FlyString const& family) -> RefPtr<Gfx::FontCascadeList const> {
-        FontFaceKey key {
-            .family_name = family,
-            .weight = weight,
-            .slope = slope,
-        };
-        auto result = Gfx::FontCascadeList::create();
-        if (auto it = m_loaded_fonts.find(key); it != m_loaded_fonts.end()) {
-            auto const& loaders = it->value;
-
-            Gfx::FontVariationSettings variation;
-            variation.set_weight(font_weight);
-
-            CalculationResolutionContext context {
-                .length_resolution_context = length_resolution_context,
-            };
-
-            for (auto const& [tag_string, value] : font_variation_settings) {
-                auto string_view = tag_string.bytes_as_string_view();
-                if (string_view.length() != 4)
-                    continue;
-                auto tag = Gfx::FourCC(string_view.characters_without_null_termination());
-
-                auto resolved_value = value.resolved(context);
-                if (!resolved_value.has_value())
-                    continue;
-
-                variation.axes.set(tag, resolved_value.release_value());
-            }
-
-            for (auto const& loader : loaders) {
-                if (auto found_font = loader->font_with_point_size(font_size_in_pt, variation))
-                    result->add(*found_font, loader->unicode_ranges());
-            }
-
-            return result;
-        }
-
-        if (auto found_font = font_matching_algorithm(family, weight, slope, font_size_in_pt); found_font && !found_font->is_empty()) {
-            return found_font;
-        }
-
-        if (auto found_font = Gfx::FontDatabase::the().get(family, font_size_in_pt, weight, width, slope)) {
-            result->add(*found_font);
-            return result;
-        }
-
-        return {};
-    };
-
-    auto find_generic_font = [&](Keyword font_id) -> RefPtr<Gfx::FontCascadeList const> {
-        Platform::GenericFont generic_font {};
-        switch (font_id) {
-        case Keyword::Monospace:
-        case Keyword::UiMonospace:
-            generic_font = Platform::GenericFont::Monospace;
-            break;
-        case Keyword::Serif:
-            generic_font = Platform::GenericFont::Serif;
-            break;
-        case Keyword::Fantasy:
-            generic_font = Platform::GenericFont::Fantasy;
-            break;
-        case Keyword::SansSerif:
-            generic_font = Platform::GenericFont::SansSerif;
-            break;
-        case Keyword::Cursive:
-            generic_font = Platform::GenericFont::Cursive;
-            break;
-        case Keyword::UiSerif:
-            generic_font = Platform::GenericFont::UiSerif;
-            break;
-        case Keyword::UiSansSerif:
-            generic_font = Platform::GenericFont::UiSansSerif;
-            break;
-        case Keyword::UiRounded:
-            generic_font = Platform::GenericFont::UiRounded;
-            break;
-        default:
-            return {};
-        }
-        return find_font(Platform::FontPlugin::the().generic_font_name(generic_font));
-    };
-
-    auto font_list = Gfx::FontCascadeList::create();
-    if (font_family.is_value_list()) {
-        auto const& family_list = static_cast<StyleValueList const&>(font_family).values();
-        for (auto const& family : family_list) {
-            RefPtr<Gfx::FontCascadeList const> other_font_list;
-            if (family->is_keyword()) {
-                other_font_list = find_generic_font(family->to_keyword());
-            } else if (family->is_string()) {
-                other_font_list = find_font(family->as_string().string_value());
-            } else if (family->is_custom_ident()) {
-                other_font_list = find_font(family->as_custom_ident().custom_ident());
-            }
-            if (other_font_list)
-                font_list->extend(*other_font_list);
-        }
-    } else if (font_family.is_keyword()) {
-        if (auto other_font_list = find_generic_font(font_family.to_keyword()))
-            font_list->extend(*other_font_list);
-    } else if (font_family.is_string()) {
-        if (auto other_font_list = find_font(font_family.as_string().string_value()))
-            font_list->extend(*other_font_list);
-    } else if (font_family.is_custom_ident()) {
-        if (auto other_font_list = find_font(font_family.as_custom_ident().custom_ident()))
-            font_list->extend(*other_font_list);
-    }
-
-    auto default_font = Platform::FontPlugin::the().default_font(font_size_in_pt);
-    if (font_list->is_empty()) {
-        // This is needed to make sure we check default font before reaching to emojis.
-        font_list->add(*default_font);
-    }
-
-    // Add emoji and symbol fonts
-    for (auto font_name : Platform::FontPlugin::the().symbol_font_names()) {
-        if (auto other_font_list = find_font(font_name)) {
-            font_list->extend(*other_font_list);
-        }
-    }
-
-    // The default font is already included in the font list, but we explicitly set it
-    // as the last-resort font. This ensures that if none of the specified fonts contain
-    // the requested code point, there is still a font available to provide a fallback glyph.
-    font_list->set_last_resort_font(*default_font);
-
-    return font_list;
-}
-
 void StyleComputer::compute_font(ComputedProperties& style, Optional<DOM::AbstractElement> abstract_element) const
 {
     auto const& inheritance_parent = abstract_element.has_value() ? abstract_element->element_to_inherit_style_from() : OptionalNone {};
@@ -1970,15 +1498,7 @@ void StyleComputer::compute_font(ComputedProperties& style, Optional<DOM::Abstra
         PropertyID::FontVariationSettings,
         compute_font_variation_settings(font_variation_settings_value, font_computation_context));
 
-    auto const& font_family = style.property(CSS::PropertyID::FontFamily);
-
-    auto font_list = compute_font_for_style_values(font_family, style.font_size(), style.font_slope(), style.font_weight(), style.font_width(), style.font_variation_settings().value_or({}), font_computation_context.length_resolution_context);
-    VERIFY(font_list);
-    VERIFY(!font_list->is_empty());
-
-    RefPtr<Gfx::Font const> const found_font = font_list->first();
-
-    style.set_computed_font_list(*font_list);
+    RefPtr<Gfx::Font const> const found_font = style.first_available_computed_font(m_document->font_computer());
 
     Length::FontMetrics line_height_font_metrics {
         style.font_size(),
@@ -2045,18 +1565,11 @@ LogicalAliasMappingContext StyleComputer::compute_logical_alias_mapping_context(
     };
 }
 
-Gfx::Font const& StyleComputer::initial_font() const
-{
-    // FIXME: This is not correct.
-    static auto font = ComputedProperties::font_fallback(false, false, 12);
-    return font;
-}
-
 void StyleComputer::compute_property_values(ComputedProperties& style, Optional<DOM::AbstractElement> abstract_element) const
 {
     Length::FontMetrics font_metrics {
         style.font_size(),
-        style.first_available_computed_font().pixel_metrics(),
+        style.first_available_computed_font(document().font_computer())->pixel_metrics(),
         style.line_height()
     };
 
@@ -2407,14 +1920,12 @@ GC::Ptr<ComputedProperties> StyleComputer::compute_style_impl(DOM::AbstractEleme
 
 static bool is_monospace(StyleValue const& value)
 {
-    if (value.to_keyword() == Keyword::Monospace)
-        return true;
-    if (value.is_value_list()) {
-        auto const& values = value.as_value_list().values();
-        if (values.size() == 1 && values[0]->to_keyword() == Keyword::Monospace)
-            return true;
-    }
-    return false;
+    if (!value.is_value_list())
+        return false;
+
+    auto const& values = value.as_value_list().values();
+
+    return values.size() == 1 && values[0]->to_keyword() == Keyword::Monospace;
 }
 
 // HACK: This function implements time-travelling inheritance for the font-size property
@@ -2488,7 +1999,7 @@ RefPtr<StyleValue const> StyleComputer::recascade_font_size_if_needed(DOM::Abstr
 
         VERIFY(font_size_value->is_length());
 
-        auto inherited_line_height = ancestor.element_to_inherit_style_from().map([](auto& parent_element) { return parent_element.computed_properties()->line_height(); }).value_or(InitialValues::line_height());
+        auto inherited_line_height = ancestor.element_to_inherit_style_from().map([](auto&& parent_element) { return parent_element.computed_properties()->line_height(); }).value_or(InitialValues::line_height());
 
         current_size_in_px = font_size_value->as_length().length().to_px(viewport_rect(), Length::FontMetrics { current_size_in_px, monospace_font->with_size(current_size_in_px * 0.75f)->pixel_metrics(), inherited_line_height }, m_root_element_font_metrics);
     };
@@ -2508,7 +2019,6 @@ GC::Ref<ComputedProperties> StyleComputer::compute_properties(DOM::AbstractEleme
         auto property_id = static_cast<CSS::PropertyID>(i);
         auto value = cascaded_properties.property(property_id);
         auto inherited = ComputedProperties::Inherited::No;
-        Optional<NonnullRefPtr<StyleValue const>> animated_value;
 
         // NOTE: We've already handled font-size above.
         if (property_id == PropertyID::FontSize && !value && new_font_size)
@@ -2530,21 +2040,17 @@ GC::Ref<ComputedProperties> StyleComputer::compute_properties(DOM::AbstractEleme
 
         // FIXME: Logical properties should inherit from their parent's equivalent unmapped logical property.
         if (should_inherit) {
-            value = get_non_animated_inherit_value(property_id, abstract_element);
-            animated_value = get_animated_inherit_value(property_id, abstract_element);
             inherited = ComputedProperties::Inherited::Yes;
+            value = get_non_animated_inherit_value(property_id, abstract_element);
+
+            if (auto animated_value = get_animated_inherit_value(property_id, abstract_element); animated_value.has_value())
+                computed_style->set_animated_property(property_id, animated_value->value, animated_value->is_result_of_transition, ComputedProperties::Inherited::Yes);
         }
 
         if (!value || value->is_initial() || value->is_unset())
             value = property_initial_value(property_id);
 
         computed_style->set_property(property_id, value.release_nonnull(), inherited, cascaded_properties.is_property_important(property_id) ? Important::Yes : Important::No);
-        if (animated_value.has_value())
-            computed_style->set_animated_property(property_id, animated_value.value(), inherited);
-
-        if (property_id == PropertyID::TransitionProperty) {
-            computed_style->set_transition_property_source(cascaded_properties.property_source(property_id));
-        }
     }
 
     // Compute the value of custom properties
@@ -2562,7 +2068,9 @@ GC::Ref<ComputedProperties> StyleComputer::compute_properties(DOM::AbstractEleme
     // 5. Add or modify CSS-defined animations
     process_animation_definitions(computed_style, abstract_element);
 
-    auto animations = abstract_element.element().get_animations_internal(Animations::GetAnimationsOptions { .subtree = false });
+    auto animations = abstract_element.element().get_animations_internal(
+        Animations::Animatable::GetAnimationsSorted::Yes,
+        Animations::GetAnimationsOptions { .subtree = false });
     if (animations.is_exception()) {
         dbgln("Error getting animations for element {}", abstract_element.debug_description());
     } else {
@@ -2630,77 +2138,6 @@ static Optional<SimplifiedSelectorForBucketing> is_roundabout_selector_bucketabl
     }
 
     return {};
-}
-
-void StyleComputer::did_load_font(FlyString const&)
-{
-    m_font_matching_algorithm_cache = {};
-    document().invalidate_style(DOM::StyleInvalidationReason::CSSFontLoaded);
-}
-
-GC::Ptr<FontLoader> StyleComputer::load_font_face(ParsedFontFace const& font_face, Function<void(RefPtr<Gfx::Typeface const>)> on_load)
-{
-    if (font_face.sources().is_empty()) {
-        if (on_load)
-            on_load({});
-        return {};
-    }
-
-    FontFaceKey key {
-        .family_name = font_face.font_family(),
-        .weight = font_face.weight().value_or(0),
-        .slope = font_face.slope().value_or(0),
-    };
-
-    // FIXME: Pass the sources directly, so the font loader can make use of the format information, or load local fonts.
-    Vector<URL> urls;
-    for (auto const& source : font_face.sources()) {
-        if (source.local_or_url.has<URL>())
-            urls.append(source.local_or_url.get<URL>());
-        // FIXME: Handle local()
-    }
-
-    if (urls.is_empty()) {
-        if (on_load)
-            on_load({});
-        return {};
-    }
-
-    auto loader = heap().allocate<FontLoader>(*this, font_face.parent_style_sheet(), font_face.font_family(), font_face.unicode_ranges(), move(urls), move(on_load));
-    auto& loader_ref = *loader;
-    auto maybe_font_loaders_list = m_loaded_fonts.get(key);
-    if (maybe_font_loaders_list.has_value()) {
-        maybe_font_loaders_list->append(move(loader));
-    } else {
-        FontLoaderList loaders;
-        loaders.append(loader);
-        m_loaded_fonts.set(OwnFontFaceKey(key), move(loaders));
-    }
-    // Actual object owned by font loader list inside m_loaded_fonts, this isn't use-after-move/free
-    return loader_ref;
-}
-
-void StyleComputer::load_fonts_from_sheet(CSSStyleSheet& sheet)
-{
-    for (auto const& rule : sheet.rules()) {
-        if (!is<CSSFontFaceRule>(*rule))
-            continue;
-        auto const& font_face_rule = static_cast<CSSFontFaceRule const&>(*rule);
-        if (!font_face_rule.is_valid())
-            continue;
-        if (auto font_loader = load_font_face(font_face_rule.font_face())) {
-            sheet.add_associated_font_loader(*font_loader);
-        }
-    }
-}
-
-void StyleComputer::unload_fonts_from_sheet(CSSStyleSheet& sheet)
-{
-    for (auto& [_, font_loader_list] : m_loaded_fonts) {
-        font_loader_list.remove_all_matching([&](auto& font_loader) {
-            return sheet.has_associated_font_loader(*font_loader);
-        });
-    }
 }
 
 NonnullRefPtr<StyleValue const> StyleComputer::compute_value_of_custom_property(DOM::AbstractElement abstract_element, FlyString const& name, Optional<Parser::GuardedSubstitutionContexts&> guarded_contexts)
@@ -2799,16 +2236,28 @@ static CSSPixels snap_a_length_as_a_border_width(double device_pixels_per_css_pi
 
 static NonnullRefPtr<StyleValue const> compute_style_value_list(NonnullRefPtr<StyleValue const> const& style_value, Function<NonnullRefPtr<StyleValue const>(NonnullRefPtr<StyleValue const> const&)> const& compute_entry)
 {
-    if (style_value->is_value_list()) {
-        StyleValueVector computed_entries;
+    StyleValueVector computed_entries;
 
-        for (auto const& entry : style_value->as_value_list().values())
-            computed_entries.append(compute_entry(entry));
+    for (auto const& entry : style_value->as_value_list().values())
+        computed_entries.append(compute_entry(entry));
 
-        return StyleValueList::create(move(computed_entries), StyleValueList::Separator::Comma);
-    }
+    return StyleValueList::create(move(computed_entries), StyleValueList::Separator::Comma);
+}
 
-    return compute_entry(style_value);
+static NonnullRefPtr<StyleValue const> repeat_style_value_list_to_n_elements(NonnullRefPtr<StyleValue const> const& style_value, size_t n)
+{
+    auto const& value_list = style_value->as_value_list();
+
+    if (value_list.size() == n)
+        return style_value;
+
+    StyleValueVector repeated_values;
+    repeated_values.ensure_capacity(n);
+
+    for (size_t i = 0; i < n; ++i)
+        repeated_values.unchecked_append(value_list.value_at(i, true));
+
+    return StyleValueList::create(move(repeated_values), value_list.separator());
 }
 
 NonnullRefPtr<StyleValue const> StyleComputer::compute_value_of_property(
@@ -2823,6 +2272,16 @@ NonnullRefPtr<StyleValue const> StyleComputer::compute_value_of_property(
     switch (property_id) {
     case PropertyID::AnimationName:
         return compute_animation_name(absolutized_value);
+    // NB: The background properties are coordinated at compute time rather than use time, unlike other coordinating list property groups
+    case PropertyID::BackgroundAttachment:
+    case PropertyID::BackgroundClip:
+    case PropertyID::BackgroundImage:
+    case PropertyID::BackgroundOrigin:
+    case PropertyID::BackgroundPositionX:
+    case PropertyID::BackgroundPositionY:
+    case PropertyID::BackgroundRepeat:
+    case PropertyID::BackgroundSize:
+        return repeat_style_value_list_to_n_elements(absolutized_value, get_property_specified_value(PropertyID::BackgroundImage)->as_value_list().size());
     case PropertyID::BorderBottomWidth:
         return compute_border_or_outline_width(absolutized_value, get_property_specified_value(PropertyID::BorderBottomStyle), device_pixels_per_css_pixel);
     case PropertyID::BorderLeftWidth:
@@ -3426,18 +2885,6 @@ void StyleComputer::pop_ancestor(DOM::Element const& element)
     for_each_element_hash(element, [&](u32 hash) {
         m_ancestor_filter->decrement(hash);
     });
-}
-
-size_t StyleComputer::number_of_css_font_faces_with_loading_in_progress() const
-{
-    size_t count = 0;
-    for (auto const& [_, loaders] : m_loaded_fonts) {
-        for (auto const& loader : loaders) {
-            if (loader->is_loading())
-                ++count;
-        }
-    }
-    return count;
 }
 
 void RuleCache::add_rule(MatchingRule const& matching_rule, Optional<PseudoElement> pseudo_element, bool contains_root_pseudo_class)

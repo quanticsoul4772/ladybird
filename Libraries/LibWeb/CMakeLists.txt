@@ -164,6 +164,7 @@ set(SOURCES
     CSS/EdgeRect.cpp
     CSS/Fetch.cpp
     CSS/Flex.cpp
+    CSS/FontComputer.cpp
     CSS/FontFace.cpp
     CSS/FontFaceSet.cpp
     CSS/Frequency.cpp
@@ -267,19 +268,23 @@ set(SOURCES
     CSS/StyleValues/PositionStyleValue.cpp
     CSS/StyleValues/RGBColorStyleValue.cpp
     CSS/StyleValues/RadialGradientStyleValue.cpp
+    CSS/StyleValues/RandomValueSharingStyleValue.cpp
     CSS/StyleValues/RectStyleValue.cpp
     CSS/StyleValues/RepeatStyleStyleValue.cpp
     CSS/StyleValues/ScrollbarColorStyleValue.cpp
+    CSS/StyleValues/ScrollFunctionStyleValue.cpp
     CSS/StyleValues/ShadowStyleValue.cpp
     CSS/StyleValues/ShorthandStyleValue.cpp
     CSS/StyleValues/StyleValue.cpp
     CSS/StyleValues/StyleValueList.cpp
     CSS/StyleValues/SuperellipseStyleValue.cpp
+    CSS/StyleValues/TextIndentStyleValue.cpp
     CSS/StyleValues/TextUnderlinePositionStyleValue.cpp
     CSS/StyleValues/TransformationStyleValue.cpp
     CSS/StyleValues/TreeCountingFunctionStyleValue.cpp
     CSS/StyleValues/UnicodeRangeStyleValue.cpp
     CSS/StyleValues/UnresolvedStyleValue.cpp
+    CSS/StyleValues/ViewFunctionStyleValue.cpp
     CSS/Supports.cpp
     CSS/SyntaxHighlighter/SyntaxHighlighter.cpp
     CSS/SystemColor.cpp
@@ -380,8 +385,8 @@ set(SOURCES
     Fetch/Infrastructure/FetchTimingInfo.cpp
     Fetch/Infrastructure/HTTP.cpp
     Fetch/Infrastructure/HTTP/Bodies.cpp
-    Fetch/Infrastructure/HTTP/Headers.cpp
-    Fetch/Infrastructure/HTTP/Methods.cpp
+    Fetch/Infrastructure/HTTP/CORS.cpp
+    Fetch/Infrastructure/HTTP/MIME.cpp
     Fetch/Infrastructure/HTTP/Requests.cpp
     Fetch/Infrastructure/HTTP/Responses.cpp
     Fetch/Infrastructure/HTTP/Statuses.cpp
@@ -473,6 +478,7 @@ set(SOURCES
     HTML/ElementInternals.cpp
     HTML/EmbedderPolicy.cpp
     HTML/ErrorEvent.cpp
+    HTML/ErrorInformation.cpp
     HTML/EventHandler.cpp
     HTML/EventLoop/EventLoop.cpp
     HTML/EventLoop/Task.cpp
@@ -590,6 +596,7 @@ set(SOURCES
     HTML/Navigator.cpp
     HTML/NavigatorBeacon.cpp
     HTML/NavigatorConcurrentHardware.cpp
+    HTML/NavigatorDeviceMemory.cpp
     HTML/NavigatorID.cpp
     HTML/NavigatorLanguage.cpp
     HTML/Numbers.cpp
@@ -607,7 +614,7 @@ set(SOURCES
     HTML/Plugin.cpp
     HTML/PluginArray.cpp
     HTML/PolicyContainers.cpp
-    HTML/PopoverInvokerElement.cpp
+    HTML/PopoverTargetAttributes.cpp
     HTML/PopStateEvent.cpp
     HTML/PotentialCORSRequest.cpp
     HTML/PromiseRejectionEvent.cpp
@@ -761,7 +768,6 @@ set(SOURCES
     Loader/ContentFilter.cpp
     Loader/FileRequest.cpp
     Loader/GeneratedPagesLoader.cpp
-    Loader/LoadRequest.cpp
     Loader/ProxyMappings.cpp
     Loader/ResourceLoader.cpp
     MathML/AttributeNames.cpp
@@ -904,6 +910,7 @@ set(SOURCES
     SVG/SVGAElement.cpp
     SVG/SVGAnimatedEnumeration.cpp
     SVG/SVGAnimatedLength.cpp
+    SVG/SVGAnimatedLengthList.cpp
     SVG/SVGAnimatedNumber.cpp
     SVG/SVGAnimatedNumberList.cpp
     SVG/SVGAnimatedRect.cpp
@@ -943,6 +950,7 @@ set(SOURCES
     SVG/SVGGraphicsElement.cpp
     SVG/SVGImageElement.cpp
     SVG/SVGLength.cpp
+    SVG/SVGLengthList.cpp
     SVG/SVGLinearGradientElement.cpp
     SVG/SVGLineElement.cpp
     SVG/SVGList.cpp
@@ -1017,6 +1025,7 @@ set(SOURCES
     WebAudio/DynamicsCompressorNode.cpp
     WebAudio/GainNode.cpp
     WebAudio/MediaElementAudioSourceNode.cpp
+    WebAudio/OfflineAudioCompletionEvent.cpp
     WebAudio/OfflineAudioContext.cpp
     WebAudio/OscillatorNode.cpp
     WebAudio/PannerNode.cpp

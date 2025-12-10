@@ -6,6 +6,7 @@
  */
 
 #include <AK/JsonObject.h>
+#include <LibGfx/Cursor.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibUnicode/TimeZone.h>
@@ -19,6 +20,7 @@
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/DOM/NodeList.h>
 #include <LibWeb/DOMURL/DOMURL.h>
+#include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/HTML/HTMLElement.h>
 #include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/Window.h>
@@ -235,6 +237,20 @@ void Internals::pinch(double x, double y, double scale_delta)
     page.handle_pinch_event(position, scale_delta);
 }
 
+String Internals::current_cursor()
+{
+    auto& page = this->page();
+
+    return page.current_cursor().visit(
+        [](Gfx::StandardCursor cursor) {
+            auto cursor_string = Gfx::standard_cursor_to_string(cursor);
+            return String::from_utf8_without_validation(cursor_string.bytes());
+        },
+        [](Gfx::ImageCursor const&) {
+            return "Image"_string;
+        });
+}
+
 WebIDL::ExceptionOr<bool> Internals::dispatch_user_activated_event(DOM::EventTarget& target, DOM::Event& event)
 {
     event.set_is_trusted(true);
@@ -296,6 +312,13 @@ void Internals::enable_cookies_on_file_domains()
 void Internals::expire_cookies_with_time_offset(WebIDL::LongLong seconds)
 {
     page().client().page_did_expire_cookies_with_time_offset(AK::Duration::from_seconds(seconds));
+}
+
+bool Internals::set_http_memory_cache_enabled(bool enabled)
+{
+    auto was_enabled = Web::Fetch::Fetching::http_memory_cache_enabled();
+    Web::Fetch::Fetching::set_http_memory_cache_enabled(enabled);
+    return was_enabled;
 }
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static

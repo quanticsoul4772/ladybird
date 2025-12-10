@@ -13,6 +13,8 @@
 #include <LibCore/Proxy.h>
 #include <LibCore/Socket.h>
 #include <LibCore/StandardPaths.h>
+#include <LibCore/System.h>
+#include <LibHTTP/Cache/DiskCache.h>
 #include <LibIPC/IPFSAPIClient.h>
 #include <LibIPC/IPFSVerifier.h>
 #include <LibIPC/Limits.h>
@@ -25,7 +27,6 @@
 #include <LibWebSocket/Message.h>
 #include <LibWebView/SentinelConfig.h>
 #include <RequestServer/CURL.h>
-#include <RequestServer/Cache/DiskCache.h>
 #include <RequestServer/ConnectionFromClient.h>
 #include <RequestServer/Quarantine.h>
 #include <RequestServer/Request.h>
@@ -42,7 +43,7 @@ static IDAllocator s_client_ids;
 [[maybe_unused]] static long s_gateway_connect_timeout_seconds = 10L;  // Connect timeout for gateway requests
 [[maybe_unused]] static long s_gateway_request_timeout_seconds = 30L;  // Total request timeout for gateway requests
 
-Optional<DiskCache> g_disk_cache;
+Optional<HTTP::DiskCache> g_disk_cache;
 extern SecurityTap* g_security_tap;
 
 // Static storage for NetworkIdentity shared across all ConnectionFromClient instances
@@ -666,7 +667,7 @@ void ConnectionFromClient::set_use_system_dns()
 }
 
 #ifdef AK_OS_WINDOWS
-void ConnectionFromClient::start_request(i32, ByteString, URL::URL, HTTP::HeaderMap, ByteBuffer, Core::ProxyData, u64)
+void ConnectionFromClient::start_request(i32, ByteString, URL::URL, Vector<HTTP::Header>, ByteBuffer, Core::ProxyData, u64)
 {
     VERIFY(0 && "RequestServer::ConnectionFromClient::start_request is not implemented");
 }
@@ -1010,7 +1011,7 @@ void ConnectionFromClient::remove_cache_entries_accessed_since(UnixDateTime sinc
         g_disk_cache->remove_entries_accessed_since(since);
 }
 
-void ConnectionFromClient::websocket_connect(i64 websocket_id, URL::URL url, ByteString origin, Vector<ByteString> protocols, Vector<ByteString> extensions, HTTP::HeaderMap additional_request_headers)
+void ConnectionFromClient::websocket_connect(i64 websocket_id, URL::URL url, ByteString origin, Vector<ByteString> protocols, Vector<ByteString> extensions, Vector<HTTP::Header> additional_request_headers)
 {
     // Security: Rate limiting
     if (!check_rate_limit())
@@ -1054,7 +1055,7 @@ void ConnectionFromClient::websocket_connect(i64 websocket_id, URL::URL url, Byt
             connection_info.set_origin(move(origin));
             connection_info.set_protocols(move(protocols));
             connection_info.set_extensions(move(extensions));
-            connection_info.set_headers(move(additional_request_headers));
+            connection_info.set_headers(HTTP::HeaderList::create(move(additional_request_headers)));
             connection_info.set_dns_result(move(dns_result));
 
             if (auto const& path = default_certificate_path(); !path.is_empty())

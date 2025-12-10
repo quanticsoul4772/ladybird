@@ -35,7 +35,7 @@
 #include <LibWeb/HTML/HTMLLabelElement.h>
 #include <LibWeb/HTML/HTMLObjectElement.h>
 #include <LibWeb/HTML/HTMLParagraphElement.h>
-#include <LibWeb/HTML/PopoverInvokerElement.h>
+#include <LibWeb/HTML/PopoverTargetAttributes.h>
 #include <LibWeb/HTML/ToggleEvent.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Infra/CharacterTypes.h>
@@ -73,39 +73,8 @@ void HTMLElement::visit_edges(Cell::Visitor& visitor)
     HTMLOrSVGElement::visit_edges(visitor);
     visitor.visit(m_labels);
     visitor.visit(m_attached_internals);
-    visitor.visit(m_popover_invoker);
+    visitor.visit(m_popover_trigger);
     visitor.visit(m_popover_close_watcher);
-}
-
-// https://html.spec.whatwg.org/multipage/dom.html#block-rendering
-void HTMLElement::block_rendering()
-{
-    // 1. Let document be el's node document.
-    auto& document = this->document();
-
-    // 2. If document allows adding render-blocking elements, then append el to document's render-blocking element set.
-    if (document.allows_adding_render_blocking_elements()) {
-        document.add_render_blocking_element(*this);
-    }
-}
-
-// https://html.spec.whatwg.org/multipage/dom.html#unblock-rendering
-void HTMLElement::unblock_rendering()
-{
-    // 1. Let document be el's node document.
-    auto& document = this->document();
-
-    // 2. Remove el from document's render-blocking element set.
-    document.remove_render_blocking_element(*this);
-}
-
-// https://html.spec.whatwg.org/multipage/urls-and-fetching.html#potentially-render-blocking
-bool HTMLElement::is_potentially_render_blocking()
-{
-    // An element is potentially render-blocking if
-    // FIXME: its blocking tokens set contains "render",
-    // or if it is implicitly potentially render-blocking, which will be defined at the individual elements.
-    return is_implicitly_potentially_render_blocking();
 }
 
 // https://html.spec.whatwg.org/multipage/dom.html#dom-translate
@@ -1255,15 +1224,15 @@ WebIDL::ExceptionOr<bool> HTMLElement::check_popover_validity(ExpectedToBeShowin
 // https://html.spec.whatwg.org/multipage/popover.html#dom-showpopover
 WebIDL::ExceptionOr<void> HTMLElement::show_popover_for_bindings(ShowPopoverOptions const& options)
 {
-    // 1. Let invoker be options["source"] if it exists; otherwise, null.
-    auto invoker = options.source;
-    // 2. Run show popover given this, true, and invoker.
-    return show_popover(ThrowExceptions::Yes, invoker);
+    // 1. Let source be options["source"] if it exists; otherwise, null.
+    auto source = options.source;
+    // 2. Run show popover given this, true, and source.
+    return show_popover(ThrowExceptions::Yes, source);
 }
 
 // https://html.spec.whatwg.org/multipage/popover.html#show-popover
 // https://whatpr.org/html/9457/popover.html#show-popover
-WebIDL::ExceptionOr<void> HTMLElement::show_popover(ThrowExceptions throw_exceptions, GC::Ptr<HTMLElement> invoker)
+WebIDL::ExceptionOr<void> HTMLElement::show_popover(ThrowExceptions throw_exceptions, GC::Ptr<HTMLElement> source)
 {
     // 1. If the result of running check popover validity given element, false, throwExceptions, null and false is false, then return.
     if (!TRY(check_popover_validity(ExpectedToBeShowing::No, throw_exceptions, nullptr, IgnoreDomState::No)))
@@ -1272,8 +1241,8 @@ WebIDL::ExceptionOr<void> HTMLElement::show_popover(ThrowExceptions throw_except
     // 2. Let document be element's node document.
     auto& document = this->document();
 
-    // 3. Assert: element's popover invoker is null.
-    VERIFY(!m_popover_invoker);
+    // 3. Assert: element's popover trigger is null.
+    VERIFY(!m_popover_trigger);
 
     // 4. Assert: element is not in document's top layer.
     VERIFY(!in_top_layer());
@@ -1294,12 +1263,16 @@ WebIDL::ExceptionOr<void> HTMLElement::show_popover(ThrowExceptions throw_except
             m_popover_showing_or_hiding = false;
     };
 
-    // 9. If the result of firing an event named beforetoggle, using ToggleEvent, with the cancelable attribute initialized to true, the oldState attribute initialized to "closed", the newState attribute initialized to "open" at element, and the source attribute initialized to invoker at element is false, then run cleanupShowingFlag and return.
+    // 9. If the result of firing an event named beforetoggle, using ToggleEvent, with the cancelable attribute
+    //    initialized to true, the oldState attribute initialized to "closed", the newState attribute initialized to
+    //    "open" at element, and the source attribute initialized to source at element is false,
+    //    then run cleanupShowingFlag and return.
     ToggleEventInit event_init {};
     event_init.old_state = "closed"_string;
     event_init.new_state = "open"_string;
     event_init.cancelable = true;
-    if (!dispatch_event(ToggleEvent::create(realm(), HTML::EventNames::beforetoggle, move(event_init), invoker))) {
+    event_init.source = source;
+    if (!dispatch_event(ToggleEvent::create(realm(), HTML::EventNames::beforetoggle, move(event_init)))) {
         cleanup_showing_flag();
         return {};
     }
@@ -1324,13 +1297,15 @@ WebIDL::ExceptionOr<void> HTMLElement::show_popover(ThrowExceptions throw_except
     };
     StackToAppendTo stack_to_append_to = StackToAppendTo::Null;
 
-    // 16. If originalType is the auto state, then:
+    // NB: Steps 14 and 15 are implemented inside step 17 instead, see note below.
+
+    // 16. If originalType is the Auto state, then:
     if (original_type == "auto"sv) {
         // 1. Run close entire popover list given document's showing hint popover list, shouldRestoreFocus, and fireEvents.
         close_entire_popover_list(document.showing_hint_popover_list(), should_restore_focus, fire_events);
 
-        // 2. Let ancestor be the result of running the topmost popover ancestor algorithm given element, document's showing auto popover list, invoker, and true.
-        Variant<GC::Ptr<HTMLElement>, GC::Ptr<DOM::Document>> ancestor = topmost_popover_ancestor(this, document.showing_auto_popover_list(), invoker, IsPopover::Yes);
+        // 2. Let ancestor be the result of running the topmost popover ancestor algorithm given element, document's showing auto popover list, source, and true.
+        Variant<GC::Ptr<HTMLElement>, GC::Ptr<DOM::Document>> ancestor = topmost_popover_ancestor(this, document.showing_auto_popover_list(), source, IsPopover::Yes);
 
         // 3. If ancestor is null, then set ancestor to document.
         if (!ancestor.get<GC::Ptr<HTMLElement>>())
@@ -1349,10 +1324,10 @@ WebIDL::ExceptionOr<void> HTMLElement::show_popover(ThrowExceptions throw_except
         // AD-HOC: Steps 14 and 15 have been moved here to avoid hitting the `popover != manual` assertion in the topmost popover ancestor algorithm.
         // Spec issue: https://github.com/whatwg/html/issues/10988.
         // 14. Let autoAncestor be the result of running the topmost popover ancestor algorithm given element, document's showing auto popover list, invoker, and true.
-        auto auto_ancestor = topmost_popover_ancestor(this, document.showing_auto_popover_list(), invoker, IsPopover::Yes);
+        auto auto_ancestor = topmost_popover_ancestor(this, document.showing_auto_popover_list(), source, IsPopover::Yes);
 
         // 15. Let hintAncestor be the result of running the topmost popover ancestor algorithm given element, document's showing hint popover list, invoker, and true.
-        auto hint_ancestor = topmost_popover_ancestor(this, document.showing_hint_popover_list(), invoker, IsPopover::Yes);
+        auto hint_ancestor = topmost_popover_ancestor(this, document.showing_hint_popover_list(), source, IsPopover::Yes);
 
         // 1. If hintAncestor is not null, then:
         if (hint_ancestor) {
@@ -1434,9 +1409,8 @@ WebIDL::ExceptionOr<void> HTMLElement::show_popover(ThrowExceptions throw_except
         }
 
         // 6. Set element's popover close watcher to the result of establishing a close watcher given element's relevant global object, with:
-        m_popover_close_watcher = CloseWatcher::establish(*document.window());
         // - cancelAction being to return true.
-        // We simply don't add an event listener for the cancel action.
+        // NB: We simply don't add an event listener for the cancel action.
         // - closeAction being to hide a popover given element, true, true, false, and null.
         auto close_callback_function = JS::NativeFunction::create(
             realm(), [this](JS::VM&) {
@@ -1446,9 +1420,11 @@ WebIDL::ExceptionOr<void> HTMLElement::show_popover(ThrowExceptions throw_except
             },
             0, Utf16FlyString {}, &realm());
         auto close_callback = realm().heap().allocate<WebIDL::CallbackType>(*close_callback_function, realm());
-        m_popover_close_watcher->add_event_listener_without_options(HTML::EventNames::close, DOM::IDLEventListener::create(realm(), close_callback));
         // - getEnabledState being to return true.
-        m_popover_close_watcher->set_enabled(true);
+        auto get_enabled_state = GC::create_function(heap(), [] { return true; });
+
+        m_popover_close_watcher = CloseWatcher::establish(*document.window(), move(get_enabled_state));
+        m_popover_close_watcher->add_event_listener_without_options(HTML::EventNames::close, DOM::IDLEventListener::create(realm(), close_callback));
     }
     // FIXME: 19. Set element's previously focused element to null.
     // FIXME: 20. Let originallyFocusedElement be document's focused area of the document's DOM anchor.
@@ -1456,13 +1432,13 @@ WebIDL::ExceptionOr<void> HTMLElement::show_popover(ThrowExceptions throw_except
     document.add_an_element_to_the_top_layer(*this);
     // 22. Set element's popover visibility state to showing.
     m_popover_visibility_state = PopoverVisibilityState::Showing;
-    // 23. Set element's popover invoker to invoker.
-    m_popover_invoker = invoker;
-    // FIXME: 24. Set element's implicit anchor element to invoker.
+    // 23. Set element's popover trigger to source.
+    m_popover_trigger = source;
+    // FIXME: 24. Set element's implicit anchor element to source.
     // FIXME: 25. Run the popover focusing steps given element.
     // FIXME: 26. If shouldRestoreFocus is true and element's popover attribute is not in the No Popover state, then set element's previously focused element to originallyFocusedElement.
-    // 27. Queue a popover toggle event task given element, "closed", "open", and invoker.
-    queue_a_popover_toggle_event_task("closed"_string, "open"_string, invoker);
+    // 27. Queue a popover toggle event task given element, "closed", "open", and source.
+    queue_a_popover_toggle_event_task("closed"_string, "open"_string, source);
     // 28. Run cleanupShowingFlag.
     cleanup_showing_flag();
 
@@ -1529,25 +1505,30 @@ WebIDL::ExceptionOr<void> HTMLElement::hide_popover(FocusPreviousElement focus_p
 
     // 9. If fireEvents is true:
     if (fire_events == FireEvents::Yes) {
-        // 9.1. Fire an event named beforetoggle, using ToggleEvent, with the oldState attribute initialized to "open", the newState attribute initialized to "closed", and the source attribute set to source at element.
+        // 1. Fire an event named beforetoggle, using ToggleEvent, with the oldState attribute initialized to "open",
+        //    the newState attribute initialized to "closed", and the source attribute set to source at element.
         ToggleEventInit event_init {};
         event_init.old_state = "open"_string;
         event_init.new_state = "closed"_string;
-        dispatch_event(ToggleEvent::create(realm(), HTML::EventNames::beforetoggle, move(event_init), source));
+        event_init.source = source;
+        dispatch_event(ToggleEvent::create(realm(), HTML::EventNames::beforetoggle, move(event_init)));
 
-        // 9.2. If autoPopoverListContainsElement is true and document's showing auto popover list's last item is not element, then run hide all popovers until given element, focusPreviousElement, and false.
+        // 2. If autoPopoverListContainsElement is true and document's showing auto popover list's last item is not
+        //    element, then run hide all popovers until given element, focusPreviousElement, and false.
         if (auto_popover_list_contains_element && (showing_popovers.is_empty() || showing_popovers.last() != this))
             hide_all_popovers_until(GC::Ptr(this), focus_previous_element, FireEvents::No);
 
-        // 9.3. If the result of running check popover validity given element, true, throwExceptions, null, and ignoreDomState is false, then run cleanupSteps and return.
+        // 3. If the result of running check popover validity given element, true, throwExceptions, null, and
+        //    ignoreDomState is false, then run cleanupSteps and return.
         if (!TRY(check_popover_validity(ExpectedToBeShowing::Yes, throw_exceptions, nullptr, ignore_dom_state))) {
             cleanup_steps();
             return {};
         }
         // 9.4. Request an element to be removed from the top layer given element.
         document.request_an_element_to_be_remove_from_the_top_layer(*this);
-    } else {
-        // 10. Otherwise, remove an element from the top layer immediately given element.
+    }
+    // 10. Otherwise, remove an element from the top layer immediately given element.
+    else {
         document.remove_an_element_from_the_top_layer_immediately(*this);
     }
 
@@ -1576,8 +1557,8 @@ WebIDL::ExceptionOr<void> HTMLElement::hide_popover(FocusPreviousElement focus_p
         }
     }
 
-    // 11. Set element's popover invoker to null.
-    m_popover_invoker = nullptr;
+    // 11. Set element's popover trigger to null.
+    m_popover_trigger = nullptr;
 
     // 12. Set element's opened in popover mode to null.
     m_opened_in_popover_mode = {};
@@ -1607,26 +1588,26 @@ WebIDL::ExceptionOr<bool> HTMLElement::toggle_popover(TogglePopoverOptionsOrForc
 {
     // 1. Let force be null.
     Optional<bool> force;
-    GC::Ptr<HTMLElement> invoker;
+    GC::Ptr<HTMLElement> source;
 
     // 2. If options is a boolean, set force to options.
     options.visit(
         [&force](bool forceBool) {
             force = forceBool;
         },
-        [&force, &invoker](TogglePopoverOptions options) {
+        [&force, &source](TogglePopoverOptions options) {
             // 3. Otherwise, if options["force"] exists, set force to options["force"].
             force = options.force;
-            // 4. Let invoker be options["source"] if it exists; otherwise, null.
-            invoker = options.source;
+            // 4. Let source be options["source"] if it exists; otherwise, null.
+            source = options.source;
         });
 
     // 5. If this's popover visibility state is showing, and force is null or false, then run the hide popover algorithm given this, true, true, true, false, and null.
     if (popover_visibility_state() == PopoverVisibilityState::Showing && (!force.has_value() || !force.value()))
         TRY(hide_popover(FocusPreviousElement::Yes, FireEvents::Yes, ThrowExceptions::Yes, IgnoreDomState::No, nullptr));
-    // 6. Otherwise, if force is not present or true, then run show popover given this true, and invoker.
+    // 6. Otherwise, if force is not present or true, then run show popover given this true, and source.
     else if (!force.has_value() || force.value())
-        TRY(show_popover(ThrowExceptions::Yes, invoker));
+        TRY(show_popover(ThrowExceptions::Yes, source));
     // 7. Otherwise:
     else {
         // 7.1 Let expectedToBeShowing be true if this's popover visibility state is showing; otherwise false.
@@ -1759,9 +1740,10 @@ void HTMLElement::close_entire_popover_list(Vector<GC::Ref<HTMLElement>> const& 
 }
 
 // https://html.spec.whatwg.org/multipage/popover.html#topmost-popover-ancestor
-GC::Ptr<HTMLElement> HTMLElement::topmost_popover_ancestor(GC::Ptr<DOM::Node> new_popover_or_top_layer_element, Vector<GC::Ref<HTMLElement>> const& popover_list, GC::Ptr<HTMLElement> invoker, IsPopover is_popover)
+GC::Ptr<HTMLElement> HTMLElement::topmost_popover_ancestor(GC::Ptr<DOM::Node> new_popover_or_top_layer_element, Vector<GC::Ref<HTMLElement>> const& popover_list, GC::Ptr<HTMLElement> source, IsPopover is_popover)
 {
-    // To find the topmost popover ancestor, given a Node newPopoverOrTopLayerElement, a list popoverList, an HTML element or null invoker, and a boolean isPopover, perform the following steps. They return an HTML element or null.
+    // To find the topmost popover ancestor, given a Node newPopoverOrTopLayerElement, a list popoverList, an HTML
+    // element or null source, and a boolean isPopover, perform the following steps. They return an HTML element or null.
 
     // 1. If isPopover is true:
     auto* new_popover = as_if<HTML::HTMLElement>(*new_popover_or_top_layer_element);
@@ -1777,8 +1759,8 @@ GC::Ptr<HTMLElement> HTMLElement::topmost_popover_ancestor(GC::Ptr<DOM::Node> ne
     }
     // 2. Otherwise:
     else {
-        // 1. Assert: invoker is null.
-        VERIFY(!invoker);
+        // 1. Assert: source is null.
+        VERIFY(!source);
     }
 
     // 3. Let popoverPositions be an empty ordered map.
@@ -1850,8 +1832,8 @@ GC::Ptr<HTMLElement> HTMLElement::topmost_popover_ancestor(GC::Ptr<DOM::Node> ne
     // 10. Run checkAncestor given newPopoverOrTopLayerElement's parent node within the flat tree.
     check_ancestor(new_popover_or_top_layer_element->shadow_including_first_ancestor_of_type<HTMLElement>());
 
-    // 11. Run checkAncestor given invoker.
-    check_ancestor(invoker.ptr());
+    // 11. Run checkAncestor given source.
+    check_ancestor(source.ptr());
 
     // 12. Return topmostPopoverAncestor.
     return topmost_popover_ancestor;
@@ -1879,10 +1861,10 @@ GC::Ptr<HTMLElement> HTMLElement::nearest_inclusive_open_popover()
     return {};
 }
 
-// https://html.spec.whatwg.org/multipage/popover.html#nearest-inclusive-target-popover-for-invoker
-GC::Ptr<HTMLElement> HTMLElement::nearest_inclusive_target_popover_for_invoker()
+// https://html.spec.whatwg.org/multipage/popover.html#nearest-inclusive-target-popover
+GC::Ptr<HTMLElement> HTMLElement::nearest_inclusive_target_popover()
 {
-    // To find the nearest inclusive target popover for invoker given a Node node:
+    // To find the nearest inclusive target popover given a Node node:
 
     // 1. Let currentNode be node.
     auto* current_node = this;
@@ -1890,7 +1872,7 @@ GC::Ptr<HTMLElement> HTMLElement::nearest_inclusive_target_popover_for_invoker()
     // 2. While currentNode is not null:
     while (current_node) {
         // 1. Let targetPopover be currentNode's popover target element.
-        auto target_popover = PopoverInvokerElement::get_the_popover_target_element(*current_node);
+        auto target_popover = PopoverTargetAttributes::get_the_popover_target_element(*current_node);
 
         // 2. If targetPopover is not null and targetPopover's popover attribute is in the Auto state or the Hint state, and targetPopover's popover visibility state is showing, then return targetPopover.
         if (target_popover) {
@@ -1929,8 +1911,9 @@ void HTMLElement::queue_a_popover_toggle_event_task(String old_state, String new
         ToggleEventInit event_init {};
         event_init.old_state = move(old_state);
         event_init.new_state = move(new_state);
+        event_init.source = source;
 
-        dispatch_event(ToggleEvent::create(realm(), HTML::EventNames::toggle, move(event_init), source));
+        dispatch_event(ToggleEvent::create(realm(), HTML::EventNames::toggle, move(event_init)));
 
         // 2. Set element's popover toggle task tracker to null.
         m_popover_toggle_task_tracker = {};
@@ -2028,21 +2011,22 @@ GC::Ptr<HTMLElement> HTMLElement::topmost_clicked_popover(GC::Ptr<DOM::Node> nod
     // 1. Let clickedPopover be the result of running nearest inclusive open popover given node.
     auto clicked_popover = nearest_element->nearest_inclusive_open_popover();
 
-    // 2. Let invokerPopover be the result of running nearest inclusive target popover for invoker given node.
-    auto invoker_popover = nearest_element->nearest_inclusive_target_popover_for_invoker();
+    // 2. Let targetPopover be the result of running nearest inclusive target popover given node.
+    auto target_popover = nearest_element->nearest_inclusive_target_popover();
 
     if (!clicked_popover)
-        return invoker_popover;
+        return target_popover;
 
-    if (!invoker_popover)
+    if (!target_popover)
         return clicked_popover;
 
-    // 3. If the result of getting the popover stack position given clickedPopover is greater than the result of getting the popover stack position given invokerPopover, then return clickedPopover.
-    if (clicked_popover->popover_stack_position() > invoker_popover->popover_stack_position())
+    // 3. If the result of getting the popover stack position given clickedPopover is greater than the result of
+    //    getting the popover stack position given targetPopover, then return clickedPopover.
+    if (clicked_popover->popover_stack_position() > target_popover->popover_stack_position())
         return clicked_popover;
 
-    // 4. Return invokerPopover.
-    return invoker_popover;
+    // 4. Return targetPopover.
+    return target_popover;
 }
 
 void HTMLElement::did_receive_focus()
@@ -2251,15 +2235,15 @@ HTMLElement::AutocapitalizationHint HTMLElement::own_autocapitalization_hint() c
 {
     // The autocapitalization processing model is based on selecting among five autocapitalization hints, defined as follows:
     //
-    // default
+    // Default
     //     The user agent and input method should make their own determination of whether or not to enable autocapitalization.
     // none
     //     No autocapitalization should be applied (all letters should default to lowercase).
-    // sentences
+    // Sentences
     //     The first letter of each sentence should default to a capital letter; all other letters should default to lowercase.
-    // words
+    // Words
     //     The first letter of each word should default to a capital letter; all other letters should default to lowercase.
-    // characters
+    // Characters
     //     All letters should default to uppercase.
 
     // The autocapitalize attribute is an enumerated attribute whose states are the possible autocapitalization hints.
@@ -2268,14 +2252,14 @@ HTMLElement::AutocapitalizationHint HTMLElement::own_autocapitalization_hint() c
     // their state mappings are as follows:
 
     // Keyword    | State
-    // off        | none
+    // off        | None
     // none       |
-    // on         | sentences
+    // on         | Sentences
     // sentences  |
-    // words      | words
-    // characters | characters
+    // words      | Words
+    // characters | Characters
 
-    // The attribute's missing value default is the default state, and its invalid value default is the sentences state.
+    // The attribute's missing value default is the Default state, and its invalid value default is the Sentences state.
 
     // To compute the own autocapitalization hint of an element element, run the following steps:
     // 1. If the autocapitalize content attribute is present on element, and its value is not the empty string, return the
@@ -2297,12 +2281,13 @@ HTMLElement::AutocapitalizationHint HTMLElement::own_autocapitalization_hint() c
         return AutocapitalizationHint::Sentences;
     }
 
-    // If element is an autocapitalize-and-autocorrect inheriting element and has a non-null form owner, return the own autocapitalization hint of element's form owner.
+    // 2. If element is an autocapitalize-and-autocorrect inheriting element and has a non-null form owner, return the
+    //    own autocapitalization hint of element's form owner.
     auto const* form_associated_element = as_if<FormAssociatedElement>(this);
     if (form_associated_element && form_associated_element->is_autocapitalize_and_autocorrect_inheriting() && form_associated_element->form())
         return form_associated_element->form()->own_autocapitalization_hint();
 
-    // 3. Return default.
+    // 3. Return Default.
     return AutocapitalizationHint::Default;
 }
 
@@ -2313,9 +2298,9 @@ String HTMLElement::autocapitalize() const
     // 1. Let state be the own autocapitalization hint of this.
     auto state = own_autocapitalization_hint();
 
-    // 2. If state is default, then return the empty string.
-    // 3. If state is none, then return "none".
-    // 4. If state is sentences, then return "sentences".
+    // 2. If state is Default, then return the empty string.
+    // 3. If state is None, then return "none".
+    // 4. If state is Sentences, then return "sentences".
     // 5. Return the keyword value corresponding to state.
     switch (state) {
     case AutocapitalizationHint::Default:
@@ -2344,12 +2329,12 @@ HTMLElement::AutocorrectionState HTMLElement::used_autocorrection_state() const
 {
     // The autocorrect attribute is an enumerated attribute with the following keywords and states:
     // Keyword            | State | Brief description
-    // on                 | on    | The user agent is permitted to automatically correct spelling errors while the user
+    // on                 | On    | The user agent is permitted to automatically correct spelling errors while the user
     // (the empty string) |       | types. Whether spelling is automatically corrected while typing left is for the user
     //                    |       | agent to decide, and may depend on the element as well as the user's preferences.
-    // off                | off   | The user agent is not allowed to automatically correct spelling while the user types.
+    // off                | Off   | The user agent is not allowed to automatically correct spelling while the user types.
 
-    // The attribute's invalid value default and missing value default are both the on state.
+    // The attribute's invalid value default and missing value default are both the On state.
 
     auto autocorrect_attribute_state = [](Optional<String> attribute) {
         if (attribute.has_value() && attribute.value().equals_ignoring_ascii_case("off"sv))
@@ -2359,7 +2344,8 @@ HTMLElement::AutocorrectionState HTMLElement::used_autocorrection_state() const
     };
 
     // To compute the used autocorrection state of an element element, run these steps:
-    // 1. If element is an input element whose type attribute is in one of the URL, E-mail, or Password states, then return off.
+    // 1. If element is an input element whose type attribute is in one of the URL, E-mail, or Password states, then
+    //    return Off.
     if (auto const* input_element = as_if<HTMLInputElement>(this)) {
         if (first_is_one_of(input_element->type_state(), HTMLInputElement::TypeAttributeState::URL, HTMLInputElement::TypeAttributeState::Email, HTMLInputElement::TypeAttributeState::Password))
             return AutocorrectionState::Off;
@@ -2378,21 +2364,23 @@ HTMLElement::AutocorrectionState HTMLElement::used_autocorrection_state() const
             return autocorrect_attribute_state(form_associated_element->form()->attribute(HTML::AttributeNames::autocorrect));
     }
 
-    // 4. Return on.
+    // 4. Return On.
     return AutocorrectionState::On;
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-autocorrect
 bool HTMLElement::autocorrect() const
 {
-    // The autocorrect getter steps are: return true if the element's used autocorrection state is on and false if the element's used autocorrection state is off.
+    // The autocorrect getter steps are: return true if the element's used autocorrection state is On and false if the
+    // element's used autocorrection state is Off.
     return used_autocorrection_state() == AutocorrectionState::On;
 }
 
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-autocorrect
 void HTMLElement::set_autocorrect(bool given_value)
 {
-    // The setter steps are: if the given value is true, then the element's autocorrect attribute must be set to "on"; otherwise it must be set to "off".
+    // The setter steps are: if the given value is true, then the element's autocorrect attribute must be set to "on";
+    // otherwise it must be set to "off".
     if (given_value)
         set_attribute_value(HTML::AttributeNames::autocorrect, "on"_string);
     else

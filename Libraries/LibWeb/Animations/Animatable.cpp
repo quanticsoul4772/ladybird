@@ -13,7 +13,7 @@
 #include <LibWeb/Animations/PseudoElementParsing.h>
 #include <LibWeb/CSS/CSSTransition.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
-#include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
+#include <LibWeb/CSS/Time.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
 
@@ -22,7 +22,6 @@ namespace Web::Animations {
 struct Animatable::Transition {
     HashMap<CSS::PropertyID, size_t> transition_attribute_indices;
     Vector<TransitionAttributes> transition_attributes;
-    GC::Ptr<CSS::CSSStyleDeclaration const> cached_transition_property_source;
     HashMap<CSS::PropertyID, GC::Ref<CSS::CSSTransition>> associated_transitions;
 };
 
@@ -73,10 +72,10 @@ WebIDL::ExceptionOr<GC::Ref<Animation>> Animatable::animate(Optional<GC::Root<JS
 WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations(Optional<GetAnimationsOptions> options)
 {
     as<DOM::Element>(*this).document().update_style();
-    return get_animations_internal(options);
+    return get_animations_internal(GetAnimationsSorted::Yes, options);
 }
 
-WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations_internal(Optional<GetAnimationsOptions> options)
+WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations_internal(GetAnimationsSorted sorted, Optional<GetAnimationsOptions> options)
 {
     // 1. Let object be the object on which this method was called.
 
@@ -108,18 +107,20 @@ WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> Animatable::get_animations_inter
     if (options.has_value() && options->subtree) {
         Optional<WebIDL::Exception> exception;
         TRY(target->for_each_child_of_type_fallible<DOM::Element>([&](auto& child) -> WebIDL::ExceptionOr<IterationDecision> {
-            relevant_animations.extend(TRY(child.get_animations(options)));
+            relevant_animations.extend(TRY(child.get_animations_internal(GetAnimationsSorted::No, options)));
             return IterationDecision::Continue;
         }));
     }
 
     // The returned list is sorted using the composite order described for the associated animations of effects in
     // §5.4.2 The effect stack.
-    quick_sort(relevant_animations, [](GC::Ref<Animation>& a, GC::Ref<Animation>& b) {
-        auto& a_effect = as<KeyframeEffect>(*a->effect());
-        auto& b_effect = as<KeyframeEffect>(*b->effect());
-        return KeyframeEffect::composite_order(a_effect, b_effect) < 0;
-    });
+    if (sorted == GetAnimationsSorted::Yes) {
+        quick_sort(relevant_animations, [](GC::Ref<Animation>& a, GC::Ref<Animation>& b) {
+            auto& a_effect = as<KeyframeEffect>(*a->effect());
+            auto& b_effect = as<KeyframeEffect>(*b->effect());
+            return KeyframeEffect::composite_order(a_effect, b_effect) < 0;
+        });
+    }
 
     return relevant_animations;
 }
@@ -151,25 +152,8 @@ void Animatable::add_transitioned_properties(Optional<CSS::PseudoElement> pseudo
     auto& transition = *maybe_transition;
     for (size_t i = 0; i < properties.size(); i++) {
         size_t index_of_this_transition = transition.transition_attributes.size();
-        double delay = 0.0;
-        if (delays[i]->is_time()) {
-            delay = delays[i]->as_time().time().to_milliseconds();
-        } else if (delays[i]->is_calculated() && delays[i]->as_calculated().resolves_to_time()) {
-            auto resolved_time = delays[i]->as_calculated().resolve_time({});
-            if (resolved_time.has_value()) {
-                delay = resolved_time.value().to_milliseconds();
-            }
-        }
-
-        double duration = 0.0;
-        if (durations[i]->is_time()) {
-            duration = durations[i]->as_time().time().to_milliseconds();
-        } else if (durations[i]->is_calculated() && durations[i]->as_calculated().resolves_to_time()) {
-            auto resolved_time = durations[i]->as_calculated().resolve_time({});
-            if (resolved_time.has_value()) {
-                duration = resolved_time.value().to_milliseconds();
-            }
-        }
+        auto delay = CSS::Time::from_style_value(delays[i], {}).to_milliseconds();
+        auto duration = CSS::Time::from_style_value(durations[i], {}).to_milliseconds();
         auto timing_function = CSS::EasingFunction::from_style_value(timing_functions[i]);
         auto transition_behavior = CSS::keyword_to_transition_behavior(transition_behaviors[i]->to_keyword()).value_or(CSS::TransitionBehavior::Normal);
         transition.transition_attributes.empend(delay, duration, timing_function, transition_behavior);
@@ -241,14 +225,13 @@ void Animatable::remove_transition(Optional<CSS::PseudoElement> pseudo_element, 
     transition.associated_transitions.remove(property_id);
 }
 
-void Animatable::clear_transitions(Optional<CSS::PseudoElement> pseudo_element)
+void Animatable::clear_registered_transitions(Optional<CSS::PseudoElement> pseudo_element)
 {
     auto maybe_transition = ensure_transition(pseudo_element);
     if (!maybe_transition)
         return;
 
     auto& transition = *maybe_transition;
-    transition.associated_transitions.clear();
     transition.transition_attribute_indices.clear();
     transition.transition_attributes.clear();
 }
@@ -273,7 +256,6 @@ void Animatable::visit_edges(JS::Cell::Visitor& visitor)
 
     for (auto const& transition : impl.transitions) {
         if (transition) {
-            visitor.visit(transition->cached_transition_property_source);
             visitor.visit(transition->associated_transitions);
         }
     }
@@ -307,22 +289,6 @@ HashMap<FlyString, GC::Ref<Animation>>* Animatable::css_defined_animations(Optio
         impl.css_defined_animations[index] = make<HashMap<FlyString, GC::Ref<Animation>>>();
 
     return impl.css_defined_animations[index];
-}
-
-GC::Ptr<CSS::CSSStyleDeclaration const> Animatable::cached_transition_property_source(Optional<CSS::PseudoElement> pseudo_element) const
-{
-    auto* maybe_transition = ensure_transition(pseudo_element);
-    if (!maybe_transition)
-        return {};
-    return maybe_transition->cached_transition_property_source;
-}
-
-void Animatable::set_cached_transition_property_source(Optional<CSS::PseudoElement> pseudo_element, GC::Ptr<CSS::CSSStyleDeclaration const> value)
-{
-    auto* maybe_transition = ensure_transition(pseudo_element);
-    if (!maybe_transition)
-        return;
-    maybe_transition->cached_transition_property_source = value;
 }
 
 Animatable::Impl& Animatable::ensure_impl() const

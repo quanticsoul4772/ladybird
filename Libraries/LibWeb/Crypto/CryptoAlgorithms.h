@@ -26,6 +26,22 @@ using AlgorithmIdentifier = Variant<GC::Root<JS::Object>, String>;
 using NamedCurve = String;
 using KeyDataType = Variant<GC::Root<WebIDL::BufferSource>, Bindings::JsonWebKey>;
 
+// https://wicg.github.io/webcrypto-modern-algos/#encapsulation
+struct EncapsulatedKey {
+    Optional<GC::Root<CryptoKey>> shared_key;
+    Optional<ByteBuffer> ciphertext;
+
+    JS::ThrowCompletionOr<GC::Ref<JS::Object>> to_object(JS::Realm&);
+};
+
+// https://wicg.github.io/webcrypto-modern-algos/#encapsulation
+struct EncapsulatedBits {
+    Optional<ByteBuffer> shared_key;
+    Optional<ByteBuffer> ciphertext;
+
+    JS::ThrowCompletionOr<GC::Ref<JS::Object>> to_object(JS::Realm&);
+};
+
 struct HashAlgorithmIdentifier : public AlgorithmIdentifier {
     using AlgorithmIdentifier::AlgorithmIdentifier;
 
@@ -146,7 +162,7 @@ struct RsaKeyGenParams : public AlgorithmParams {
     }
 
     u32 modulus_length;
-    // NOTE that the raw data is going to be in Big Endian u8[] format
+    // NOTE: The raw data is going to be in Big Endian u8[] format
     ::Crypto::UnsignedBigInteger public_exponent;
 
     static JS::ThrowCompletionOr<NonnullOwnPtr<AlgorithmParams>> from_value(JS::VM&, JS::Value);
@@ -359,6 +375,11 @@ public:
     virtual WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> unwrap_key(AlgorithmParams const&, GC::Ref<CryptoKey>, ByteBuffer const&)
     {
         return WebIDL::NotSupportedError::create(m_realm, "unwwrapKey is not supported"_utf16);
+    }
+
+    virtual WebIDL::ExceptionOr<GC::Ref<EncapsulatedBits>> encapsulate(AlgorithmParams const&, GC::Ref<CryptoKey>)
+    {
+        return WebIDL::NotSupportedError::create(m_realm, "encapsulate is not supported"_utf16);
     }
 
     static NonnullOwnPtr<AlgorithmMethods> create(JS::Realm& realm) { return adopt_own(*new AlgorithmMethods(realm)); }

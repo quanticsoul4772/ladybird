@@ -22,28 +22,30 @@ jobs:
           rm -rf "${{ github.workspace }}/*"
 
       - name: Checkout quanticsoul4772/ladybird
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
+        with:
+          persist-credentials: false
 
       - name: Checkout LadybirdBrowser/libjs-test262
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
         with:
           repository: LadybirdBrowser/libjs-test262
           path: libjs-test262
 
       - name: Checkout LadybirdBrowser/libjs-data
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
         with:
           repository: LadybirdBrowser/libjs-data
           path: libjs-data
 
       - name: Checkout tc39/test262
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
         with:
           repository: tc39/test262
           path: test262
 
       - name: Checkout tc39/test262-parser-tests
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
         with:
           repository: tc39/test262-parser-tests
           path: test262-parser-tests
@@ -148,7 +150,7 @@ jobs:
         run: ./libjs-test262/per_file_result_diff.py -o old-libjs-data/wasm/per-file-master.json -n libjs-data/wasm/per-file-master.json
 
       - name: Deploy to GitHub
-        uses: JamesIves/github-pages-deploy-action@v4.7.4
+        uses: JamesIves/github-pages-deploy-action@v4.7.6
         with:
           git-config-name: LadybirdBot
           git-config-email: ladybirdbot@ladybird.org

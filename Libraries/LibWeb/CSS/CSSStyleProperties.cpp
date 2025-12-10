@@ -21,6 +21,7 @@
 #include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ShorthandStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
+#include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TransformationStyleValue.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
@@ -414,6 +415,10 @@ WebIDL::ExceptionOr<void> CSSStyleProperties::set_property_style_value(PropertyN
                 Important::No,
                 PropertyID::Custom,
                 style_value });
+
+        update_style_attribute();
+        invalidate_owners(DOM::StyleInvalidationReason::CSSStylePropertiesSetPropertyStyleValue);
+
         return {};
     }
 
@@ -437,6 +442,9 @@ WebIDL::ExceptionOr<void> CSSStyleProperties::set_property_style_value(PropertyN
             .value = longhand_value,
         });
     });
+
+    update_style_attribute();
+    invalidate_owners(DOM::StyleInvalidationReason::CSSStylePropertiesSetPropertyStyleValue);
 
     return {};
 }
@@ -555,7 +563,7 @@ Optional<StyleProperty> CSSStyleProperties::get_direct_property(PropertyNameAndI
     }
 
     if (property_name_and_id.is_custom_property())
-        return custom_property(property_name_and_id.name()).map([](auto& it) { return it; });
+        return custom_property(property_name_and_id.name()).copy();
 
     for (auto const& property : m_properties) {
         if (property.property_id == property_id)
@@ -869,6 +877,30 @@ RefPtr<StyleValue const> CSSStyleProperties::style_value_for_computed_property(L
             };
             return TransformationStyleValue::create(PropertyID::Transform, TransformFunction::Matrix3d, move(parameters));
         }
+    }
+    case PropertyID::AnimationDuration: {
+        // https://drafts.csswg.org/css-animations-2/#animation-duration
+        // For backwards-compatibility with Level 1, when the computed value of animation-timeline is auto (i.e. only
+        // one list value, and that value being auto), the resolved value of auto for animation-duration is 0s whenever
+        // its used value would also be 0s.
+        auto const& animation_timeline_computed_value = get_computed_value(PropertyID::AnimationTimeline);
+        auto const& animation_duration_computed_value = get_computed_value(PropertyID::AnimationDuration);
+
+        if (animation_timeline_computed_value.as_value_list().size() == 1 && animation_timeline_computed_value.as_value_list().values()[0]->to_keyword() == Keyword::Auto) {
+            StyleValueVector resolved_durations;
+
+            for (auto const& duration : animation_duration_computed_value.as_value_list().values()) {
+                if (duration->to_keyword() == Keyword::Auto) {
+                    resolved_durations.append(TimeStyleValue::create(Time::make_seconds(0)));
+                } else {
+                    resolved_durations.append(duration);
+                }
+            }
+
+            return StyleValueList::create(move(resolved_durations), StyleValueList::Separator::Comma);
+        }
+
+        return animation_duration_computed_value;
     }
 
         // -> Any other property

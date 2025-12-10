@@ -28,6 +28,7 @@ namespace JS {
 GC::Ref<DeclarativeEnvironment> new_declarative_environment(Environment&);
 JS_API GC::Ref<ObjectEnvironment> new_object_environment(Object&, bool is_with_environment, Environment*);
 GC::Ref<FunctionEnvironment> new_function_environment(ECMAScriptFunctionObject&, Object* new_target);
+GC::Ref<FunctionEnvironment> new_function_environment(NativeJavaScriptBackedFunction&, Object* new_target);
 GC::Ref<PrivateEnvironment> new_private_environment(VM& vm, PrivateEnvironment* outer);
 GC::Ref<Environment> get_this_environment(VM&);
 JS_API bool can_be_held_weakly(Value);
@@ -211,7 +212,7 @@ ThrowCompletionOr<GroupsType> group_by(VM& vm, Value items, Value callback_funct
 
     // 2. If IsCallable(callbackfn) is false, throw a TypeError exception.
     if (!callback_function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback_function.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, callback_function);
 
     // 3. Let groups be a new empty List.
     GroupsType groups;

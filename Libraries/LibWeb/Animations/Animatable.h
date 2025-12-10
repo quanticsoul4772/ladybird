@@ -45,9 +45,14 @@ public:
 
     virtual ~Animatable() = default;
 
+    enum class GetAnimationsSorted {
+        No,
+        Yes
+    };
+
     WebIDL::ExceptionOr<GC::Ref<Animation>> animate(Optional<GC::Root<JS::Object>> keyframes, Variant<Empty, double, KeyframeAnimationOptions> options = {});
     WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> get_animations(Optional<GetAnimationsOptions> options = {});
-    WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> get_animations_internal(Optional<GetAnimationsOptions> options = {});
+    WebIDL::ExceptionOr<Vector<GC::Ref<Animation>>> get_animations_internal(GetAnimationsSorted sorted, Optional<GetAnimationsOptions> options = {});
 
     void associate_with_animation(GC::Ref<Animation>);
     void disassociate_with_animation(GC::Ref<Animation>);
@@ -58,9 +63,6 @@ public:
     void add_css_animation(FlyString name, Optional<CSS::PseudoElement>, GC::Ref<Animation>);
     void remove_css_animation(FlyString name, Optional<CSS::PseudoElement>);
 
-    GC::Ptr<CSS::CSSStyleDeclaration const> cached_transition_property_source(Optional<CSS::PseudoElement>) const;
-    void set_cached_transition_property_source(Optional<CSS::PseudoElement>, GC::Ptr<CSS::CSSStyleDeclaration const> value);
-
     void add_transitioned_properties(Optional<CSS::PseudoElement>, Vector<Vector<CSS::PropertyID>> properties, CSS::StyleValueVector delays, CSS::StyleValueVector durations, CSS::StyleValueVector timing_functions, CSS::StyleValueVector transition_behaviors);
     Vector<CSS::PropertyID> property_ids_with_matching_transition_property_entry(Optional<CSS::PseudoElement>) const;
     Optional<TransitionAttributes const&> property_transition_attributes(Optional<CSS::PseudoElement>, CSS::PropertyID) const;
@@ -68,7 +70,7 @@ public:
     void remove_transition(Optional<CSS::PseudoElement>, CSS::PropertyID);
     Vector<CSS::PropertyID> property_ids_with_existing_transitions(Optional<CSS::PseudoElement>) const;
     GC::Ptr<CSS::CSSTransition> property_transition(Optional<CSS::PseudoElement>, CSS::PropertyID) const;
-    void clear_transitions(Optional<CSS::PseudoElement>);
+    void clear_registered_transitions(Optional<CSS::PseudoElement>);
 
     void remove_animations_from_timeline();
 

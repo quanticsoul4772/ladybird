@@ -3,6 +3,7 @@ set(SOURCES
     NetworkError.h
     Request.cpp
     RequestClient.cpp
+    RequestTimingInfo.cpp
     WebSocket.cpp
 )
 
@@ -12,4 +13,4 @@ set(GENERATED_SOURCES
 )
 
 ladybird_lib(LibRequests requests)
-target_link_libraries(LibRequests PRIVATE LibCore LibIPC)
+target_link_libraries(LibRequests PRIVATE LibCore LibHTTP LibIPC)

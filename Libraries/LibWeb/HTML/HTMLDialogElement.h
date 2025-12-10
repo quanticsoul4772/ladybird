@@ -47,8 +47,8 @@ public:
     bool is_modal() const { return m_is_modal; }
     void set_is_modal(bool);
 
-    bool is_valid_invoker_command(String&) override;
-    void invoker_command_steps(DOM::Element&, String&) override;
+    bool is_valid_command(String&) override;
+    void command_steps(DOM::Element&, String&) override;
 
 private:
     HTMLDialogElement(DOM::Document&, DOM::QualifiedName);
@@ -56,8 +56,13 @@ private:
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
+    virtual void inserted() override;
+    virtual void attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
+
     void queue_a_dialog_toggle_event_task(String old_state, String new_state, GC::Ptr<DOM::Element> source);
 
+    void run_dialog_setup_steps();
+    void run_dialog_cleanup_steps();
     void run_dialog_focusing_steps();
 
     void set_close_watcher();
@@ -69,6 +74,9 @@ private:
     Optional<String> m_request_close_return_value;
     GC::Ptr<DOM::Element> m_request_close_source_element;
     GC::Ptr<CloseWatcher> m_close_watcher;
+
+    // https://html.spec.whatwg.org/multipage/interactive-elements.html#enable-close-watcher-for-requestclose()
+    bool m_enable_close_watcher_for_request_close { false };
 
     // https://html.spec.whatwg.org/multipage/interactive-elements.html#dialog-toggle-task-tracker
     Optional<ToggleTaskTracker> m_dialog_toggle_task_tracker;

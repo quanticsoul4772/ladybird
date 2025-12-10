@@ -10,6 +10,7 @@
 #include <LibCore/LocalServer.h>
 #include <LibCore/Process.h>
 #include <LibCore/Resource.h>
+#include <LibCore/System.h>
 #include <LibCore/SystemServerTakeover.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Font/PathFontProvider.h>
@@ -82,7 +83,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     // FIXME: Temporarily disable site isolation by default due to IPC race condition
     bool disable_site_isolation = true;
     bool enable_idl_tracing = false;
-    bool enable_http_cache = false;
+    bool enable_http_memory_cache = false;
     bool force_cpu_painting = false;
     bool force_fontconfig = false;
     bool collect_garbage_on_every_allocation = false;
@@ -105,7 +106,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     args_parser.add_option(log_all_js_exceptions, "Log all JavaScript exceptions", "log-all-js-exceptions");
     args_parser.add_option(disable_site_isolation, "Disable site isolation", "disable-site-isolation");
     args_parser.add_option(enable_idl_tracing, "Enable IDL tracing", "enable-idl-tracing");
-    args_parser.add_option(enable_http_cache, "Enable HTTP cache", "enable-http-cache");
+    args_parser.add_option(enable_http_memory_cache, "Enable HTTP cache", "enable-http-memory-cache");
     args_parser.add_option(force_cpu_painting, "Force CPU painting", "force-cpu-painting");
     args_parser.add_option(force_fontconfig, "Force using fontconfig for font loading", "force-fontconfig");
     args_parser.add_option(collect_garbage_on_every_allocation, "Collect garbage after every JS heap allocation", "collect-garbage-on-every-allocation");
@@ -148,10 +149,8 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     if (disable_site_isolation)
         WebView::disable_site_isolation();
 
-    if (enable_http_cache) {
-
-        Web::Fetch::Fetching::set_http_cache_enabled(true);
-    }
+    if (enable_http_memory_cache)
+        Web::Fetch::Fetching::set_http_memory_cache_enabled(true);
 
     Web::Painting::set_paint_viewport_scrollbars(!disable_scrollbar_painting);
 

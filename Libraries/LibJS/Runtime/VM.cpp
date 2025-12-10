@@ -37,8 +37,22 @@
 
 namespace JS {
 
+VM* VM::s_the = nullptr;
+static size_t s_vm_count = 0;
+
+VM& VM::the()
+{
+    return *s_the;
+}
+
 NonnullRefPtr<VM> VM::create()
 {
+    // NOTE: We only allow a single VM instance per process.
+    //       However, test262-runner needs to create and destroy VMs repeatedly,
+    //       so we allow recreating the VM as long as the previous one was destroyed.
+    VERIFY(s_vm_count == 0);
+    ++s_vm_count;
+
     ErrorMessages error_messages {};
     error_messages[to_underlying(ErrorMessage::OutOfMemory)] = ErrorType::OutOfMemory.message();
 
@@ -62,14 +76,14 @@ static constexpr auto make_single_ascii_character_strings(IndexSequence<code_poi
 }
 
 static constexpr auto single_ascii_character_strings = make_single_ascii_character_strings(MakeIndexSequence<128>());
-
 VM::VM(ErrorMessages error_messages)
-    : m_heap(this, [this](HashMap<GC::Cell*, GC::HeapRoot>& roots) {
+    : m_heap([this](HashMap<GC::Cell*, GC::HeapRoot>& roots) {
         gather_roots(roots);
     })
     , m_error_messages(move(error_messages))
 {
-    m_bytecode_interpreter = make<Bytecode::Interpreter>(*this);
+    s_the = this;
+    m_bytecode_interpreter = make<Bytecode::Interpreter>();
 
     m_empty_string = m_heap.allocate<PrimitiveString>(String {});
 
@@ -214,7 +228,11 @@ VM::VM(ErrorMessages error_messages)
     };
 }
 
-VM::~VM() = default;
+VM::~VM()
+{
+    --s_vm_count;
+    VERIFY(s_vm_count == 0);
+}
 
 Utf16String const& VM::error_message(ErrorMessage type) const
 {
@@ -774,11 +792,11 @@ static GC::Ptr<CachedSourceRange> get_source_range(ExecutionContext* context)
     return context->rare_data()->cached_source_range;
 }
 
-Vector<StackTraceElement> VM::stack_trace() const
+GC::ConservativeVector<StackTraceElement> VM::stack_trace() const
 {
-    Vector<StackTraceElement> stack_trace;
-    for (ssize_t i = m_execution_context_stack.size() - 1; i >= 0; i--) {
-        auto* context = m_execution_context_stack[i];
+    GC::ConservativeVector<StackTraceElement> stack_trace(heap());
+    stack_trace.ensure_capacity(m_execution_context_stack.size());
+    for (auto* context : m_execution_context_stack.in_reverse()) {
         stack_trace.append({
             .execution_context = context,
             .source_range = get_source_range(context),

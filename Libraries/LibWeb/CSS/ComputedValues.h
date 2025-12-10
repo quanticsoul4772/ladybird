@@ -63,11 +63,22 @@ struct QuotesData {
     Vector<Array<FlyString, 2>> strings {};
 };
 
-struct ObjectPosition {
+struct Position {
     PositionEdge edge_x { PositionEdge::Left };
     LengthPercentage offset_x { Percentage(50) };
     PositionEdge edge_y { PositionEdge::Top };
     LengthPercentage offset_y { Percentage(50) };
+
+    CSSPixelPoint resolved(Layout::Node const& node, CSSPixelRect const& rect) const
+    {
+        CSSPixels x = offset_x.to_px(node, rect.width());
+        CSSPixels y = offset_y.to_px(node, rect.height());
+        if (edge_x == PositionEdge::Right)
+            x = rect.width() - x;
+        if (edge_y == PositionEdge::Bottom)
+            y = rect.height() - y;
+        return CSSPixelPoint { rect.x() + x, rect.y() + y };
+    }
 };
 
 // https://drafts.csswg.org/css-contain-2/#containment-types
@@ -92,6 +103,12 @@ struct ContainerType {
 struct ScrollbarColorData {
     Color thumb_color { Color::Transparent };
     Color track_color { Color::Transparent };
+};
+
+struct TextIndentData {
+    LengthPercentage length_percentage;
+    bool each_line { false };
+    bool hanging { false };
 };
 
 struct TextUnderlinePosition {
@@ -159,7 +176,7 @@ public:
     static TextDecorationStyle text_decoration_style() { return TextDecorationStyle::Solid; }
     static TextTransform text_transform() { return TextTransform::None; }
     static TextOverflow text_overflow() { return TextOverflow::Clip; }
-    static LengthPercentage text_indent() { return Length::make_px(0); }
+    static TextIndentData text_indent() { return { Length::make_px(0) }; }
     static TextWrapMode text_wrap_mode() { return TextWrapMode::Wrap; }
     static CSSPixels text_underline_offset() { return 2; }
     static TextUnderlinePosition text_underline_position() { return { .horizontal = TextUnderlinePositionHorizontal::Auto, .vertical = TextUnderlinePositionVertical::Auto }; }
@@ -232,7 +249,7 @@ public:
     static Vector<Vector<String>> grid_template_areas() { return {}; }
     static Time transition_delay() { return Time::make_seconds(0); }
     static ObjectFit object_fit() { return ObjectFit::Fill; }
-    static ObjectPosition object_position() { return {}; }
+    static Position object_position() { return {}; }
     static Color outline_color() { return Color::Black; }
     static Length outline_offset() { return Length::make_px(0); }
     static OutlineStyle outline_style() { return OutlineStyle::None; }
@@ -497,7 +514,7 @@ public:
     Variant<Length, double> tab_size() const { return m_inherited.tab_size; }
     TextAlign text_align() const { return m_inherited.text_align; }
     TextJustify text_justify() const { return m_inherited.text_justify; }
-    LengthPercentage const& text_indent() const { return m_inherited.text_indent; }
+    TextIndentData const& text_indent() const { return m_inherited.text_indent; }
     TextWrapMode text_wrap_mode() const { return m_inherited.text_wrap_mode; }
     CSSPixels text_underline_offset() const { return m_inherited.text_underline_offset; }
     TextUnderlinePosition text_underline_position() const { return m_inherited.text_underline_position; }
@@ -560,7 +577,7 @@ public:
     EmptyCells empty_cells() const { return m_inherited.empty_cells; }
     Vector<Vector<String>> const& grid_template_areas() const { return m_noninherited.grid_template_areas; }
     ObjectFit object_fit() const { return m_noninherited.object_fit; }
-    ObjectPosition object_position() const { return m_noninherited.object_position; }
+    Position object_position() const { return m_noninherited.object_position; }
     Direction direction() const { return m_inherited.direction; }
     UnicodeBidi unicode_bidi() const { return m_noninherited.unicode_bidi; }
     WritingMode writing_mode() const { return m_inherited.writing_mode; }
@@ -639,13 +656,14 @@ public:
     Optional<Transformation> const& translate() const { return m_noninherited.translate; }
     Optional<Transformation> const& scale() const { return m_noninherited.scale; }
     Optional<CSSPixels> const& perspective() const { return m_noninherited.perspective; }
+    Position const& perspective_origin() const { return m_noninherited.perspective_origin; }
 
     Gfx::FontCascadeList const& font_list() const { return *m_inherited.font_list; }
     CSSPixels font_size() const { return m_inherited.font_size; }
     double font_weight() const { return m_inherited.font_weight; }
     Gfx::ShapeFeatures font_features() const { return m_inherited.font_features; }
     Optional<FlyString> font_language_override() const { return m_inherited.font_language_override; }
-    Optional<HashMap<FlyString, NumberOrCalculated>> font_variation_settings() const { return m_inherited.font_variation_settings; }
+    HashMap<FlyString, double> font_variation_settings() const { return m_inherited.font_variation_settings; }
     CSSPixels line_height() const { return m_inherited.line_height; }
     Time transition_delay() const { return m_noninherited.transition_delay; }
 
@@ -682,7 +700,7 @@ protected:
         double font_weight { InitialValues::font_weight() };
         Gfx::ShapeFeatures font_features { InitialValues::font_features() };
         Optional<FlyString> font_language_override;
-        Optional<HashMap<FlyString, NumberOrCalculated>> font_variation_settings;
+        HashMap<FlyString, double> font_variation_settings;
         CSSPixels line_height { InitialValues::line_height() };
         BorderCollapse border_collapse { InitialValues::border_collapse() };
         EmptyCells empty_cells { InitialValues::empty_cells() };
@@ -702,7 +720,7 @@ protected:
         TextAlign text_align { InitialValues::text_align() };
         TextJustify text_justify { InitialValues::text_justify() };
         TextTransform text_transform { InitialValues::text_transform() };
-        LengthPercentage text_indent { InitialValues::text_indent() };
+        TextIndentData text_indent { InitialValues::text_indent() };
         TextWrapMode text_wrap_mode { InitialValues::text_wrap_mode() };
         CSSPixels text_underline_offset { InitialValues::text_underline_offset() };
         TextUnderlinePosition text_underline_position { InitialValues::text_underline_position() };
@@ -827,7 +845,7 @@ protected:
         CSSPixels outline_width { InitialValues::outline_width() };
         TableLayout table_layout { InitialValues::table_layout() };
         ObjectFit object_fit { InitialValues::object_fit() };
-        ObjectPosition object_position { InitialValues::object_position() };
+        Position object_position { InitialValues::object_position() };
         UnicodeBidi unicode_bidi { InitialValues::unicode_bidi() };
         UserSelect user_select { InitialValues::user_select() };
         Isolation isolation { InitialValues::isolation() };
@@ -842,6 +860,7 @@ protected:
         Optional<Transformation> translate;
         Optional<Transformation> scale;
         Optional<CSSPixels> perspective;
+        Position perspective_origin;
 
         Optional<MaskReference> mask;
         MaskType mask_type { InitialValues::mask_type() };
@@ -887,7 +906,7 @@ public:
     void set_font_weight(double font_weight) { m_inherited.font_weight = font_weight; }
     void set_font_features(Gfx::ShapeFeatures font_features) { m_inherited.font_features = move(font_features); }
     void set_font_language_override(Optional<FlyString> font_language_override) { m_inherited.font_language_override = move(font_language_override); }
-    void set_font_variation_settings(Optional<HashMap<FlyString, NumberOrCalculated>> value) { m_inherited.font_variation_settings = move(value); }
+    void set_font_variation_settings(HashMap<FlyString, double> value) { m_inherited.font_variation_settings = move(value); }
     void set_line_height(CSSPixels line_height) { m_inherited.line_height = line_height; }
     void set_border_spacing_horizontal(Length border_spacing_horizontal) { m_inherited.border_spacing_horizontal = move(border_spacing_horizontal); }
     void set_border_spacing_vertical(Length border_spacing_vertical) { m_inherited.border_spacing_vertical = move(border_spacing_vertical); }
@@ -915,7 +934,7 @@ public:
     void set_text_decoration_color(Color value) { m_noninherited.text_decoration_color = value; }
     void set_text_transform(TextTransform value) { m_inherited.text_transform = value; }
     void set_text_shadow(Vector<ShadowData>&& value) { m_inherited.text_shadow = move(value); }
-    void set_text_indent(LengthPercentage value) { m_inherited.text_indent = move(value); }
+    void set_text_indent(TextIndentData value) { m_inherited.text_indent = move(value); }
     void set_text_wrap_mode(TextWrapMode value) { m_inherited.text_wrap_mode = value; }
     void set_text_overflow(TextOverflow value) { m_noninherited.text_overflow = value; }
     void set_text_underline_offset(CSSPixels value) { m_inherited.text_underline_offset = value; }
@@ -995,6 +1014,7 @@ public:
     void set_rotate(Transformation value) { m_noninherited.rotate = move(value); }
     void set_scale(Transformation value) { m_noninherited.scale = move(value); }
     void set_perspective(Optional<CSSPixels> value) { m_noninherited.perspective = move(value); }
+    void set_perspective_origin(Position value) { m_noninherited.perspective_origin = move(value); }
     void set_transformations(Vector<Transformation> value) { m_noninherited.transformations = move(value); }
     void set_transform_box(TransformBox value) { m_noninherited.transform_box = value; }
     void set_transform_origin(TransformOrigin value) { m_noninherited.transform_origin = move(value); }
@@ -1025,7 +1045,7 @@ public:
     void set_table_layout(TableLayout value) { m_noninherited.table_layout = value; }
     void set_quotes(QuotesData value) { m_inherited.quotes = move(value); }
     void set_object_fit(ObjectFit value) { m_noninherited.object_fit = value; }
-    void set_object_position(ObjectPosition value) { m_noninherited.object_position = move(value); }
+    void set_object_position(Position value) { m_noninherited.object_position = move(value); }
     void set_direction(Direction value) { m_inherited.direction = value; }
     void set_unicode_bidi(UnicodeBidi value) { m_noninherited.unicode_bidi = value; }
     void set_writing_mode(WritingMode value) { m_inherited.writing_mode = value; }
