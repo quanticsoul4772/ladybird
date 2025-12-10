@@ -10,6 +10,7 @@ set(TEST_SOURCES
     TestHash.cpp
     TestHKDF.cpp
     TestHMAC.cpp
+    TestMLDSA.cpp
     TestOAEP.cpp
     TestPBKDF2.cpp
     TestPSS.cpp
