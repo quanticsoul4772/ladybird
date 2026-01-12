@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FormMonitor Overhead Performance Test</title>
+</head>
+<body>
+  <h1>FormMonitor Overhead Performance Test</h1>
+
+  <form id="test-form" action="https://example.com/submit" method="POST">
+    <label>Username: <input type="text" name="username" value="testuser"></label><br>
+    <label>Password: <input type="password" name="password" value="testpass"></label><br>
+    <button type="submit">Submit</button>
+  </form>
+
+  <script>
+    // Prevent actual form submission
+    document.getElementById('test-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+    });
+
+    console.log('Ready for FormMonitor overhead benchmark');
+  </script>
+</body>
+</html>

@@ -7,6 +7,7 @@
 
 #include <LibCore/Timer.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/ImmutableBitmap.h>
 #include <LibWeb/ARIA/Roles.h>
 #include <LibWeb/Bindings/HTMLImageElementPrototype.h>
 #include <LibWeb/CSS/ComputedProperties.h>
@@ -242,11 +243,11 @@ WebIDL::UnsignedLong HTMLImageElement::width() const
     return 0;
 }
 
-WebIDL::ExceptionOr<void> HTMLImageElement::set_width(WebIDL::UnsignedLong width)
+void HTMLImageElement::set_width(WebIDL::UnsignedLong width)
 {
     if (width > 2147483647)
         width = 0;
-    return set_attribute(HTML::AttributeNames::width, String::number(width));
+    set_attribute_value(HTML::AttributeNames::width, String::number(width));
 }
 
 // https://html.spec.whatwg.org/multipage/embedded-content.html#dom-img-height
@@ -273,11 +274,11 @@ WebIDL::UnsignedLong HTMLImageElement::height() const
     return 0;
 }
 
-WebIDL::ExceptionOr<void> HTMLImageElement::set_height(WebIDL::UnsignedLong height)
+void HTMLImageElement::set_height(WebIDL::UnsignedLong height)
 {
     if (height > 2147483647)
         height = 0;
-    return set_attribute(HTML::AttributeNames::height, String::number(height));
+    set_attribute_value(HTML::AttributeNames::height, String::number(height));
 }
 
 // https://html.spec.whatwg.org/multipage/embedded-content.html#dom-img-naturalwidth
@@ -499,6 +500,7 @@ static BatchingDispatcher& batching_dispatcher()
 void HTMLImageElement::update_the_image_data(bool restart_animations, bool maybe_omit_events)
 {
     auto& realm = this->realm();
+    auto update_the_image_data_count = ++m_update_the_image_data_count;
 
     // 1. If the element's node document is not fully active, then:
     if (!document().is_fully_active()) {
@@ -510,21 +512,21 @@ void HTMLImageElement::update_the_image_data(bool restart_animations, bool maybe
             return;
 
         m_document_observer = realm.create<DOM::DocumentObserver>(realm, document());
-        m_document_observer->set_document_became_active([this, restart_animations, maybe_omit_events]() {
+        m_document_observer->set_document_became_active([this, restart_animations, maybe_omit_events, update_the_image_data_count]() {
             // 4. Queue a microtask to continue this algorithm.
-            queue_a_microtask(&document(), GC::create_function(this->heap(), [this, restart_animations, maybe_omit_events]() {
-                update_the_image_data_impl(restart_animations, maybe_omit_events);
+            queue_a_microtask(&document(), GC::create_function(this->heap(), [this, restart_animations, maybe_omit_events, update_the_image_data_count]() {
+                update_the_image_data_impl(restart_animations, maybe_omit_events, update_the_image_data_count);
             }));
         });
 
         return;
     }
 
-    update_the_image_data_impl(restart_animations, maybe_omit_events);
+    update_the_image_data_impl(restart_animations, maybe_omit_events, update_the_image_data_count);
 }
 
 // https://html.spec.whatwg.org/multipage/images.html#update-the-image-data
-void HTMLImageElement::update_the_image_data_impl(bool restart_animations, bool maybe_omit_events)
+void HTMLImageElement::update_the_image_data_impl(bool restart_animations, bool maybe_omit_events, u64 update_the_image_data_count)
 {
     // 1. If the element's node document is not fully active, then:
     // FIXME: This step and it's substeps is implemented by the calling `update_the_image_data` function.
@@ -621,9 +623,11 @@ void HTMLImageElement::update_the_image_data_impl(bool restart_animations, bool 
     }
 after_step_7:
     // 8. Queue a microtask to perform the rest of this algorithm, allowing the task that invoked this algorithm to continue.
-    queue_a_microtask(&document(), GC::create_function(this->heap(), [this, restart_animations, maybe_omit_events, previous_url]() mutable {
-        // FIXME: 9. If another instance of this algorithm for this img element was started after this instance
-        //           (even if it aborted and is no longer running), then return.
+    queue_a_microtask(&document(), GC::create_function(this->heap(), [this, update_the_image_data_count, restart_animations, maybe_omit_events, previous_url]() mutable {
+        // 9. If another instance of this algorithm for this img element was started after this instance
+        //    (even if it aborted and is no longer running), then return.
+        if (update_the_image_data_count != m_update_the_image_data_count)
+            return;
 
         // 10. Let selected source and selected pixel density be
         //    the URL and pixel density that results from selecting an image source, respectively.
@@ -1036,7 +1040,7 @@ void HTMLImageElement::upgrade_pending_request_to_current_request()
 
 void HTMLImageElement::handle_failed_fetch()
 {
-    // AD-HOC
+    // AD-HOC: This should be closer to the spec
     dispatch_event(DOM::Event::create(realm(), HTML::EventNames::error));
 }
 
@@ -1279,6 +1283,13 @@ bool HTMLImageElement::allows_auto_sizes() const
     return sizes.has_value()
         && (sizes->equals_ignoring_ascii_case("auto"sv)
             || sizes->starts_with_bytes("auto,"sv, AK::CaseSensitivity::CaseInsensitive));
+}
+
+GC::Ptr<DecodedImageData> HTMLImageElement::decoded_image_data() const
+{
+    if (!m_current_request)
+        return nullptr;
+    return m_current_request->image_data();
 }
 
 }

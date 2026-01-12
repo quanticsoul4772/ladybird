@@ -16,7 +16,7 @@
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
-#include <LibWeb/Fetch/Infrastructure/HTTP/Headers.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/Fetch/Infrastructure/URL.h>
@@ -157,7 +157,8 @@ WebIDL::ExceptionOr<URL::URL> resolve_module_specifier(Optional<Script&> referri
         result = TRY(resolve_imports_match(normalized_specifier.to_byte_string(), as_url, import_map.imports()));
 
     // 12. If result is null, set it to asURL.
-    // Spec-Note: By this point, if result was null, specifier wasn't remapped to anything by importMap, but it might have been able to be turned into a URL.
+    // NOTE: By this point, if result was null, specifier wasn't remapped to anything by importMap, but it might have
+    //       been able to be turned into a URL.
     if (!result.has_value())
         result = as_url;
 
@@ -325,7 +326,7 @@ String resolve_a_module_integrity_metadata(URL::URL const& url, EnvironmentSetti
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-classic-script
-WebIDL::ExceptionOr<void> fetch_classic_script(GC::Ref<HTMLScriptElement> element, URL::URL const& url, EnvironmentSettingsObject& settings_object, ScriptFetchOptions options, CORSSettingAttribute cors_setting, String character_encoding, OnFetchScriptComplete on_complete)
+void fetch_classic_script(GC::Ref<HTMLScriptElement> element, URL::URL const& url, EnvironmentSettingsObject& settings_object, ScriptFetchOptions options, CORSSettingAttribute cors_setting, String character_encoding, OnFetchScriptComplete on_complete)
 {
     auto& realm = element->realm();
     auto& vm = realm.vm();
@@ -359,7 +360,7 @@ WebIDL::ExceptionOr<void> fetch_classic_script(GC::Ref<HTMLScriptElement> elemen
         }
 
         // 3. Let potentialMIMETypeForEncoding be the result of extracting a MIME type given response's header list.
-        auto potential_mime_type_for_encoding = response->header_list()->extract_mime_type();
+        auto potential_mime_type_for_encoding = Fetch::Infrastructure::extract_mime_type(response->header_list());
 
         // 4. Set character encoding to the result of legacy extracting an encoding given potentialMIMETypeForEncoding
         //    and character encoding.
@@ -385,8 +386,7 @@ WebIDL::ExceptionOr<void> fetch_classic_script(GC::Ref<HTMLScriptElement> elemen
         on_complete->function()(script);
     };
 
-    TRY(Fetch::Fetching::fetch(element->realm(), request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input))));
-    return {};
+    Fetch::Fetching::fetch(element->realm(), request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-classic-worker-script
@@ -427,7 +427,7 @@ WebIDL::ExceptionOr<void> fetch_classic_worker_script(URL::URL const& url, Envir
         // 3. If all of the following are true:
         // - response's URL's scheme is an HTTP(S) scheme; and
         // - the result of extracting a MIME type from response's header list is not a JavaScript MIME type,
-        auto maybe_mime_type = response->header_list()->extract_mime_type();
+        auto maybe_mime_type = Fetch::Infrastructure::extract_mime_type(response->header_list());
         auto mime_type_is_javascript = maybe_mime_type.has_value() && maybe_mime_type->is_javascript();
 
         if (response->url().has_value() && Fetch::Infrastructure::is_http_or_https_scheme(response->url()->scheme()) && !mime_type_is_javascript) {
@@ -464,7 +464,7 @@ WebIDL::ExceptionOr<void> fetch_classic_worker_script(URL::URL const& url, Envir
     else {
         Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
         fetch_algorithms_input.process_response_consume_body = move(process_response_consume_body);
-        TRY(Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input))));
+        Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
     }
     return {};
 }
@@ -507,7 +507,7 @@ WebIDL::ExceptionOr<GC::Ref<ClassicScript>> fetch_a_classic_worker_imported_scri
     else {
         Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
         fetch_algorithms_input.process_response_consume_body = move(process_response_consume_body);
-        TRY(Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input))));
+        Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
     }
 
     // 5. Pause until response is not null.
@@ -527,7 +527,7 @@ WebIDL::ExceptionOr<GC::Ref<ClassicScript>> fetch_a_classic_worker_imported_scri
     //    then throw a "NetworkError" DOMException.
     if (body_bytes.template has<Empty>() || body_bytes.template has<Fetch::Infrastructure::FetchAlgorithms::ConsumeBodyFailureTag>()
         || !Fetch::Infrastructure::is_ok_status(response->status())
-        || !response->header_list()->extract_mime_type().has_value() || !response->header_list()->extract_mime_type()->is_javascript()) {
+        || !Fetch::Infrastructure::extract_mime_type(response->header_list()).has_value() || !Fetch::Infrastructure::extract_mime_type(response->header_list())->is_javascript()) {
         return WebIDL::NetworkError::create(realm, "Network error"_utf16);
     }
 
@@ -702,7 +702,7 @@ void fetch_single_module_script(JS::Realm& realm,
         auto source_text = TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, body_bytes.get<ByteBuffer>()).release_value_but_fixme_should_propagate_errors();
 
         // 3. Let mimeType be the result of extracting a MIME type from response's header list.
-        auto mime_type = response->header_list()->extract_mime_type();
+        auto mime_type = Fetch::Infrastructure::extract_mime_type(response->header_list());
 
         // 4. Let moduleScript be null.
         GC::Ptr<JavaScriptModuleScript> module_script;
@@ -728,7 +728,7 @@ void fetch_single_module_script(JS::Realm& realm,
     } else {
         Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
         fetch_algorithms_input.process_response_consume_body = move(process_response_consume_body);
-        Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(realm.vm(), move(fetch_algorithms_input))).release_value_but_fixme_should_propagate_errors();
+        Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(realm.vm(), move(fetch_algorithms_input)));
     }
 }
 

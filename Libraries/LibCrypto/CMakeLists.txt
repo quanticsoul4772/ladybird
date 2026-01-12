@@ -11,6 +11,7 @@ set(SOURCES
     BigInt/UnsignedBigInteger.cpp
     Certificate/Certificate.cpp
     Cipher/AES.cpp
+    ConstantTimeComparison.cpp
     Curves/EdwardsCurve.cpp
     Curves/SECPxxxr1.cpp
     Hash/BLAKE2b.cpp
@@ -19,8 +20,10 @@ set(SOURCES
     Hash/PBKDF2.cpp
     Hash/SHA1.cpp
     Hash/SHA2.cpp
-    PK/RSA.cpp
+    Hash/SHA3.cpp
     PK/EC.cpp
+    PK/MLDSA.cpp
+    PK/RSA.cpp
     SecureRandom.cpp
 )
 

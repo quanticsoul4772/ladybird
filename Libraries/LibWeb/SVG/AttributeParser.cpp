@@ -11,7 +11,6 @@
 #include <AK/StringBuilder.h>
 #include <AK/StringConversions.h>
 #include <LibWeb/SVG/AttributeParser.h>
-#include <ctype.h>
 
 namespace Web::SVG {
 
@@ -560,6 +559,27 @@ Optional<SpreadMethod> AttributeParser::parse_spread_method(StringView input)
     return {};
 }
 
+// https://drafts.fxtf.org/filter-effects-1/#element-attrdef-fecomponenttransfer-tablevalues
+Vector<float> AttributeParser::parse_table_values(StringView input)
+{
+    Vector<float> table_values;
+
+    AttributeParser parser { input };
+    while (!parser.done()) {
+        parser.parse_whitespace();
+        auto table_value = parser.parse_nonnegative_number();
+        if (table_value.is_error())
+            return {};
+
+        table_values.append(table_value.release_value());
+        parser.parse_whitespace();
+        if (parser.match(','))
+            parser.consume();
+    }
+
+    return table_values;
+}
+
 // https://drafts.csswg.org/css-transforms/#svg-syntax
 Optional<Vector<Transform>> AttributeParser::parse_transform()
 {
@@ -779,7 +799,7 @@ bool AttributeParser::match_length() const
     if (ch(offset) == '.')
         offset++;
 
-    return !done() && isdigit(ch(offset));
+    return !done() && is_ascii_digit(ch(offset));
 }
 
 }

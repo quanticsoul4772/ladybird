@@ -9,15 +9,14 @@
 #include <AK/Demangle.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/AbstractImageStyleValue.h>
-#include <LibWeb/CSS/StyleValues/BackgroundSizeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BorderRadiusStyleValue.h>
 #include <LibWeb/CSS/StyleValues/IntegerStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/CSS/StyleValues/LengthStyleValue.h>
 #include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
 #include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
+#include <LibWeb/CSS/StyleValues/PositionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RatioStyleValue.h>
-#include <LibWeb/CSS/StyleValues/RepeatStyleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/URLStyleValue.h>
@@ -96,6 +95,12 @@ bool Node::can_contain_boxes_with_position_absolute() const
     if (computed_values().rotate().has_value())
         return true;
     if (computed_values().scale().has_value())
+        return true;
+
+    // https://drafts.csswg.org/css-transforms-2/#propdef-perspective
+    // The use of this property with any value other than 'none' establishes a stacking context. It also establishes
+    // a containing block for all descendants, just like the 'transform' property does.
+    if (computed_values().perspective().has_value())
         return true;
 
     // https://drafts.csswg.org/css-contain-2/#containment-types
@@ -284,6 +289,18 @@ bool Node::establishes_stacking_context() const
     if (computed_values.view_transition_name().has_value() || will_change_property(CSS::PropertyID::ViewTransitionName))
         return true;
 
+    // https://drafts.csswg.org/css-transforms-2/#propdef-perspective
+    // The use of this property with any value other than 'none' establishes a stacking context.
+    if (computed_values.perspective().has_value() || will_change_property(CSS::PropertyID::Perspective))
+        return true;
+
+    // https://drafts.csswg.org/css-transforms-2/#transform-style-property
+    // A computed value of 'preserve-3d' for 'transform-style' on a transformable element establishes both a
+    // stacking context and a containing block for all descendants.
+    // FIXME: Check that the element is a transformable element.
+    if (computed_values.transform_style() == CSS::TransformStyle::Preserve3d || will_change_property(CSS::PropertyID::TransformStyle))
+        return true;
+
     return computed_values.opacity() < 1.0f || will_change_property(CSS::PropertyID::Opacity);
 }
 
@@ -379,170 +396,38 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     // NOTE: We have to be careful that font-related properties get set in the right order.
     //       m_font is used by Length::to_px() when resolving sizes against this layout node.
     //       That's why it has to be set before everything else.
-    computed_values.set_font_list(computed_style.computed_font_list());
+    computed_values.set_font_list(computed_style.computed_font_list(document().font_computer()));
     computed_values.set_font_size(computed_style.font_size());
     computed_values.set_font_weight(computed_style.font_weight());
-    computed_values.set_font_kerning(computed_style.font_kerning());
     computed_values.set_line_height(computed_style.line_height());
 
     // NOTE: color must be set after color-scheme to ensure currentColor can be resolved in other properties (e.g. background-color).
     // NOTE: color must be set after font_size as `CalculatedStyleValue`s can rely on it being set for resolving lengths.
     computed_values.set_color(computed_style.color_or_fallback(CSS::PropertyID::Color, CSS::ColorResolutionContext::for_layout_node_with_style(*this), CSS::InitialValues::color()));
 
+    // NOTE: This color resolution context must be created after we set color above so that currentColor resolves correctly
+    // FIXME: We should resolve colors to their absolute forms at compute time (i.e. by implementing the relevant absolutized methods)
+    auto color_resolution_context = CSS::ColorResolutionContext::for_layout_node_with_style(*this);
+
     computed_values.set_vertical_align(computed_style.vertical_align());
 
-    {
-        // FIXME: Use `ComputedProperties::assemble_coordinated_value_list()` for this
-        auto const& attachments = computed_style.property(CSS::PropertyID::BackgroundAttachment);
-        auto const& clips = computed_style.property(CSS::PropertyID::BackgroundClip);
-        auto const& images = computed_style.property(CSS::PropertyID::BackgroundImage);
-        auto const& origins = computed_style.property(CSS::PropertyID::BackgroundOrigin);
-        auto const& x_positions = computed_style.property(CSS::PropertyID::BackgroundPositionX);
-        auto const& y_positions = computed_style.property(CSS::PropertyID::BackgroundPositionY);
-        auto const& repeats = computed_style.property(CSS::PropertyID::BackgroundRepeat);
-        auto const& sizes = computed_style.property(CSS::PropertyID::BackgroundSize);
-        auto const& background_blend_modes = computed_style.property(CSS::PropertyID::BackgroundBlendMode);
+    auto background_layers = computed_style.background_layers();
 
-        auto count_layers = [](auto const& maybe_style_value) -> size_t {
-            if (maybe_style_value.is_value_list())
-                return maybe_style_value.as_value_list().size();
-            else
-                return 1;
-        };
-
-        auto value_for_layer = [](auto const& style_value, size_t layer_index) -> RefPtr<CSS::StyleValue const> {
-            if (style_value.is_value_list())
-                return style_value.as_value_list().value_at(layer_index, true);
-            return style_value;
-        };
-
-        size_t layer_count = 1;
-        layer_count = max(layer_count, count_layers(attachments));
-        layer_count = max(layer_count, count_layers(clips));
-        layer_count = max(layer_count, count_layers(images));
-        layer_count = max(layer_count, count_layers(origins));
-        layer_count = max(layer_count, count_layers(x_positions));
-        layer_count = max(layer_count, count_layers(y_positions));
-        layer_count = max(layer_count, count_layers(repeats));
-        layer_count = max(layer_count, count_layers(sizes));
-
-        Vector<CSS::BackgroundLayerData> layers;
-        layers.ensure_capacity(layer_count);
-
-        for (size_t layer_index = 0; layer_index < layer_count; layer_index++) {
-            CSS::BackgroundLayerData layer;
-
-            if (auto image_value = value_for_layer(images, layer_index); image_value) {
-                if (image_value->is_abstract_image()) {
-                    layer.background_image = image_value->as_abstract_image();
-                    const_cast<CSS::AbstractImageStyleValue&>(*layer.background_image).load_any_resources(document());
-                }
-            }
-
-            if (auto attachment_value = value_for_layer(attachments, layer_index); attachment_value && attachment_value->is_keyword()) {
-                switch (attachment_value->to_keyword()) {
-                case CSS::Keyword::Fixed:
-                    layer.attachment = CSS::BackgroundAttachment::Fixed;
-                    break;
-                case CSS::Keyword::Local:
-                    layer.attachment = CSS::BackgroundAttachment::Local;
-                    break;
-                case CSS::Keyword::Scroll:
-                    layer.attachment = CSS::BackgroundAttachment::Scroll;
-                    break;
-                default:
-                    break;
-                }
-            }
-
-            auto as_box = [](auto keyword) {
-                switch (keyword) {
-                case CSS::Keyword::BorderBox:
-                    return CSS::BackgroundBox::BorderBox;
-                case CSS::Keyword::ContentBox:
-                    return CSS::BackgroundBox::ContentBox;
-                case CSS::Keyword::PaddingBox:
-                    return CSS::BackgroundBox::PaddingBox;
-                case CSS::Keyword::Text:
-                    return CSS::BackgroundBox::Text;
-                default:
-                    VERIFY_NOT_REACHED();
-                }
-            };
-
-            if (auto origin_value = value_for_layer(origins, layer_index); origin_value && origin_value->is_keyword()) {
-                layer.origin = as_box(origin_value->to_keyword());
-            }
-
-            if (auto clip_value = value_for_layer(clips, layer_index); clip_value && clip_value->is_keyword()) {
-                layer.clip = as_box(clip_value->to_keyword());
-            }
-
-            if (auto position_value = value_for_layer(x_positions, layer_index); position_value && position_value->is_edge()) {
-                auto& position = position_value->as_edge();
-                layer.position_edge_x = position.edge().value_or(CSS::PositionEdge::Left);
-                layer.position_offset_x = position.offset();
-            }
-
-            if (auto position_value = value_for_layer(y_positions, layer_index); position_value && position_value->is_edge()) {
-                auto& position = position_value->as_edge();
-                layer.position_edge_y = position.edge().value_or(CSS::PositionEdge::Top);
-                layer.position_offset_y = position.offset();
-            };
-
-            if (auto size_value = value_for_layer(sizes, layer_index); size_value) {
-                if (size_value->is_background_size()) {
-                    auto& size = size_value->as_background_size();
-                    layer.size_type = CSS::BackgroundSize::LengthPercentage;
-                    layer.size_x = CSS::LengthPercentageOrAuto::from_style_value(size.size_x());
-                    layer.size_y = CSS::LengthPercentageOrAuto::from_style_value(size.size_y());
-                } else if (size_value->is_keyword()) {
-                    switch (size_value->to_keyword()) {
-                    case CSS::Keyword::Contain:
-                        layer.size_type = CSS::BackgroundSize::Contain;
-                        break;
-                    case CSS::Keyword::Cover:
-                        layer.size_type = CSS::BackgroundSize::Cover;
-                        break;
-                    default:
-                        break;
-                    }
-                }
-            }
-
-            if (auto repeat_value = value_for_layer(repeats, layer_index); repeat_value && repeat_value->is_repeat_style()) {
-                layer.repeat_x = repeat_value->as_repeat_style().repeat_x();
-                layer.repeat_y = repeat_value->as_repeat_style().repeat_y();
-            }
-
-            layer.blend_mode = CSS::keyword_to_mix_blend_mode(value_for_layer(background_blend_modes, layer_index)->to_keyword()).value_or(CSS::MixBlendMode::Normal);
-
-            layers.append(move(layer));
-        }
-
-        computed_values.set_background_layers(move(layers));
+    for (auto const& layer : background_layers) {
+        if (layer.background_image)
+            const_cast<CSS::AbstractImageStyleValue&>(*layer.background_image).load_any_resources(document());
     }
-    computed_values.set_background_color(computed_style.color_or_fallback(CSS::PropertyID::BackgroundColor, CSS::ColorResolutionContext::for_layout_node_with_style(*this), CSS::InitialValues::background_color()));
+
+    computed_values.set_background_layers(move(background_layers));
+
+    computed_values.set_background_color(computed_style.color_or_fallback(CSS::PropertyID::BackgroundColor, color_resolution_context, CSS::InitialValues::background_color()));
 
     computed_values.set_box_sizing(computed_style.box_sizing());
 
     if (auto maybe_font_language_override = computed_style.font_language_override(); maybe_font_language_override.has_value())
         computed_values.set_font_language_override(maybe_font_language_override.release_value());
-    if (auto maybe_font_feature_settings = computed_style.font_feature_settings(); maybe_font_feature_settings.has_value())
-        computed_values.set_font_feature_settings(maybe_font_feature_settings.release_value());
-    if (auto maybe_font_variant_alternates = computed_style.font_variant_alternates(); maybe_font_variant_alternates.has_value())
-        computed_values.set_font_variant_alternates(maybe_font_variant_alternates.release_value());
-    computed_values.set_font_variant_caps(computed_style.font_variant_caps());
-    if (auto maybe_font_variant_east_asian = computed_style.font_variant_east_asian(); maybe_font_variant_east_asian.has_value())
-        computed_values.set_font_variant_east_asian(maybe_font_variant_east_asian.release_value());
-    computed_values.set_font_variant_emoji(computed_style.font_variant_emoji());
-    if (auto maybe_font_variant_ligatures = computed_style.font_variant_ligatures(); maybe_font_variant_ligatures.has_value())
-        computed_values.set_font_variant_ligatures(maybe_font_variant_ligatures.release_value());
-    if (auto maybe_font_variant_numeric = computed_style.font_variant_numeric(); maybe_font_variant_numeric.has_value())
-        computed_values.set_font_variant_numeric(maybe_font_variant_numeric.release_value());
-    computed_values.set_font_variant_position(computed_style.font_variant_position());
-    if (auto maybe_font_variation_settings = computed_style.font_variation_settings(); maybe_font_variation_settings.has_value())
-        computed_values.set_font_variation_settings(maybe_font_variation_settings.release_value());
+    computed_values.set_font_features(computed_style.font_features());
+    computed_values.set_font_variation_settings(computed_style.font_variation_settings());
 
     auto const& border_bottom_left_radius = computed_style.property(CSS::PropertyID::BorderBottomLeftRadius);
     if (border_bottom_left_radius.is_border_radius()) {
@@ -588,7 +473,7 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     if (computed_style.filter().has_filters())
         computed_values.set_filter(computed_style.filter());
 
-    computed_values.set_flood_color(computed_style.color_or_fallback(CSS::PropertyID::FloodColor, CSS::ColorResolutionContext::for_layout_node_with_style(*this), CSS::InitialValues::flood_color()));
+    computed_values.set_flood_color(computed_style.color_or_fallback(CSS::PropertyID::FloodColor, color_resolution_context, CSS::InitialValues::flood_color()));
     computed_values.set_flood_opacity(computed_style.flood_opacity());
 
     computed_values.set_justify_content(computed_style.justify_content());
@@ -610,13 +495,10 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     computed_values.set_text_align(computed_style.text_align());
     computed_values.set_text_justify(computed_style.text_justify());
     computed_values.set_text_overflow(computed_style.text_overflow());
-    computed_values.set_text_rendering(computed_style.text_rendering());
     computed_values.set_text_underline_offset(computed_style.text_underline_offset());
     computed_values.set_text_underline_position(computed_style.text_underline_position());
 
-    if (auto text_indent = computed_style.length_percentage(CSS::PropertyID::TextIndent, *this, CSS::ComputedProperties::ClampNegativeLengths::No); text_indent.has_value())
-        computed_values.set_text_indent(text_indent.release_value());
-
+    computed_values.set_text_indent(computed_style.text_indent());
     computed_values.set_text_wrap_mode(computed_style.text_wrap_mode());
     computed_values.set_tab_size(computed_style.tab_size());
 
@@ -654,10 +536,10 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     // FIXME: The default text decoration color value is `currentcolor`, but since we can't resolve that easily,
     //        we just manually grab the value from `color`. This makes it dependent on `color` being
     //        specified first, so it's far from ideal.
-    computed_values.set_text_decoration_color(computed_style.color_or_fallback(CSS::PropertyID::TextDecorationColor, CSS::ColorResolutionContext::for_layout_node_with_style(*this), computed_values.color()));
+    computed_values.set_text_decoration_color(computed_style.color_or_fallback(CSS::PropertyID::TextDecorationColor, color_resolution_context, computed_values.color()));
     computed_values.set_text_decoration_thickness(computed_style.text_decoration_thickness());
 
-    computed_values.set_webkit_text_fill_color(computed_style.color_or_fallback(CSS::PropertyID::WebkitTextFillColor, CSS::ColorResolutionContext::for_layout_node_with_style(*this), computed_values.color()));
+    computed_values.set_webkit_text_fill_color(computed_style.color_or_fallback(CSS::PropertyID::WebkitTextFillColor, color_resolution_context, computed_values.color()));
 
     computed_values.set_text_shadow(computed_style.text_shadow(*this));
 
@@ -692,6 +574,9 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     computed_values.set_transformations(computed_style.transformations());
     computed_values.set_transform_box(computed_style.transform_box());
     computed_values.set_transform_origin(computed_style.transform_origin());
+    computed_values.set_transform_style(computed_style.transform_style());
+    computed_values.set_perspective(computed_style.perspective());
+    computed_values.set_perspective_origin(computed_style.perspective_origin());
 
     auto const& transition_delay_property = computed_style.property(CSS::PropertyID::TransitionDelay);
     if (transition_delay_property.is_time()) {
@@ -706,7 +591,7 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
         // FIXME: The default border color value is `currentcolor`, but since we can't resolve that easily,
         //        we just manually grab the value from `color`. This makes it dependent on `color` being
         //        specified first, so it's far from ideal.
-        border.color = computed_style.color_or_fallback(color_property, CSS::ColorResolutionContext::for_layout_node_with_style(*this), computed_values.color());
+        border.color = computed_style.color_or_fallback(color_property, color_resolution_context, computed_values.color());
         border.line_style = computed_style.line_style(style_property);
 
         // FIXME: Interpolation can cause negative values - we clamp here but should instead clamp as part of interpolation
@@ -719,7 +604,7 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     do_border_style(computed_values.border_bottom(), CSS::PropertyID::BorderBottomWidth, CSS::PropertyID::BorderBottomColor, CSS::PropertyID::BorderBottomStyle);
 
     if (auto const& outline_color = computed_style.property(CSS::PropertyID::OutlineColor); outline_color.has_color())
-        computed_values.set_outline_color(outline_color.to_color(CSS::ColorResolutionContext::for_layout_node_with_style(*this)).value());
+        computed_values.set_outline_color(outline_color.to_color(color_resolution_context).value());
     if (auto const& outline_offset = computed_style.property(CSS::PropertyID::OutlineOffset); outline_offset.is_length())
         computed_values.set_outline_offset(outline_offset.as_length().length());
     computed_values.set_outline_style(computed_style.outline_style());
@@ -755,16 +640,16 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
 
     auto const& fill = computed_style.property(CSS::PropertyID::Fill);
     if (fill.has_color())
-        computed_values.set_fill(fill.to_color(CSS::ColorResolutionContext::for_layout_node_with_style(*this)).value());
+        computed_values.set_fill(fill.to_color(color_resolution_context).value());
     else if (fill.is_url())
         computed_values.set_fill(fill.as_url().url());
     auto const& stroke = computed_style.property(CSS::PropertyID::Stroke);
     if (stroke.has_color())
-        computed_values.set_stroke(stroke.to_color(CSS::ColorResolutionContext::for_layout_node_with_style(*this)).value());
+        computed_values.set_stroke(stroke.to_color(color_resolution_context).value());
     else if (stroke.is_url())
         computed_values.set_stroke(stroke.as_url().url());
 
-    computed_values.set_stop_color(computed_style.color_or_fallback(CSS::PropertyID::StopColor, CSS::ColorResolutionContext::for_layout_node_with_style(*this), CSS::InitialValues::stop_color()));
+    computed_values.set_stop_color(computed_style.color_or_fallback(CSS::PropertyID::StopColor, color_resolution_context, CSS::InitialValues::stop_color()));
 
     auto const& stroke_width = computed_style.property(CSS::PropertyID::StrokeWidth);
     // FIXME: Converting to pixels isn't really correct - values should be in "user units"
@@ -778,7 +663,15 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     computed_values.set_shape_rendering(computed_style.shape_rendering());
     computed_values.set_paint_order(computed_style.paint_order());
 
-    auto const& mask_image = computed_style.property(CSS::PropertyID::MaskImage);
+    // FIXME: We should actually support more than one mask image rather than just using the first
+    auto const& mask_image = [&] -> CSS::StyleValue const& {
+        auto const& value = computed_style.property(CSS::PropertyID::MaskImage);
+
+        if (value.is_value_list())
+            return value.as_value_list().values()[0];
+
+        return value;
+    }();
     if (mask_image.is_url()) {
         computed_values.set_mask(mask_image.as_url().url());
     } else if (mask_image.is_abstract_image()) {
@@ -913,6 +806,15 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
         box_node->propagate_style_along_continuation(computed_style);
 }
 
+void NodeWithStyle::propagate_non_inherit_values(NodeWithStyle& target_node) const
+{
+    // NOTE: These properties are not inherited, but we still have to propagate them to anonymous wrappers.
+    target_node.mutable_computed_values().set_text_decoration_line(computed_values().text_decoration_line());
+    target_node.mutable_computed_values().set_text_decoration_thickness(computed_values().text_decoration_thickness());
+    target_node.mutable_computed_values().set_text_decoration_color(computed_values().text_decoration_color());
+    target_node.mutable_computed_values().set_text_decoration_style(computed_values().text_decoration_style());
+}
+
 void NodeWithStyle::propagate_style_to_anonymous_wrappers()
 {
     // Update the style of any anonymous wrappers that inherit from this node.
@@ -931,6 +833,8 @@ void NodeWithStyle::propagate_style_to_anonymous_wrappers()
         if (child.is_anonymous() && !is<TableWrapper>(child)) {
             auto& child_computed_values = static_cast<CSS::MutableComputedValues&>(static_cast<CSS::ComputedValues&>(const_cast<CSS::ImmutableComputedValues&>(child.computed_values())));
             child_computed_values.inherit_from(computed_values());
+            propagate_non_inherit_values(child);
+            child.propagate_style_to_anonymous_wrappers();
         }
         return IterationDecision::Continue;
     });
@@ -1010,13 +914,7 @@ GC::Ref<NodeWithStyle> NodeWithStyle::create_anonymous_wrapper() const
 {
     auto wrapper = heap().allocate<BlockContainer>(const_cast<DOM::Document&>(document()), nullptr, computed_values().clone_inherited_values());
     wrapper->mutable_computed_values().set_display(CSS::Display(CSS::DisplayOutside::Block, CSS::DisplayInside::Flow));
-
-    // NOTE: These properties are not inherited, but we still have to propagate them to anonymous wrappers.
-    wrapper->mutable_computed_values().set_text_decoration_line(computed_values().text_decoration_line());
-    wrapper->mutable_computed_values().set_text_decoration_thickness(computed_values().text_decoration_thickness());
-    wrapper->mutable_computed_values().set_text_decoration_color(computed_values().text_decoration_color());
-    wrapper->mutable_computed_values().set_text_decoration_style(computed_values().text_decoration_style());
-
+    propagate_non_inherit_values(*wrapper);
     // CSS 2.2 9.2.1.1 creates anonymous block boxes, but 9.4.1 states inline-block creates a BFC.
     // Set wrapper to inline-block to participate correctly in the IFC within the parent inline-block.
     if (display().is_inline_block() && !has_children()) {

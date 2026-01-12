@@ -13,6 +13,16 @@
 
 namespace Core {
 
+enum class NotificationType : u8 {
+    None = 0,
+    Read = 1,
+    Write = 2,
+    HangUp = 4,
+    Error = 8,
+};
+
+AK_ENUM_BITWISE_OPERATORS(NotificationType);
+
 class Notifier final : public EventReceiver {
     C_OBJECT(Notifier);
 
@@ -39,10 +49,10 @@ public:
 private:
     Notifier(int fd, Type type);
 
-    int m_fd { -1 };
-    bool m_is_enabled { false };
     pthread_t m_owner_thread {};
+    int m_fd { -1 };
     Type m_type { Type::None };
+    bool m_is_enabled { false };
 };
 
 }

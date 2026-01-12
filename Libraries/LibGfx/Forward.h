@@ -19,9 +19,6 @@ class GlyphRun;
 class ImageDecoder;
 struct FontPixelMetrics;
 
-template<typename T>
-class Line;
-
 class Painter;
 class PaintingSurface;
 class Palette;
@@ -46,9 +43,6 @@ class Rect;
 template<typename T>
 class Quad;
 
-using IntLine = Line<int>;
-using FloatLine = Line<float>;
-
 using IntRect = Rect<int>;
 using FloatRect = Rect<float>;
 
@@ -62,6 +56,7 @@ using FloatQuad = Quad<float>;
 
 enum class BitmapFormat;
 enum class ColorRole;
+enum class MaskKind;
 enum class TextAlignment;
 
 }

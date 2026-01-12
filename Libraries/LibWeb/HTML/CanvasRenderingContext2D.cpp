@@ -10,7 +10,9 @@
  */
 
 #include <AK/OwnPtr.h>
+#include <LibGfx/Bitmap.h>
 #include <LibGfx/CompositingAndBlendingOperator.h>
+#include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/PainterSkia.h>
 #include <LibGfx/Rect.h>
 #include <LibJS/Runtime/TypedArray.h>
@@ -18,6 +20,7 @@
 #include <LibUnicode/Segmenter.h>
 #include <LibWeb/Bindings/CanvasRenderingContext2DPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/HTML/CanvasRenderingContext2D.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
@@ -188,7 +191,7 @@ WebIDL::ExceptionOr<void> CanvasRenderingContext2D::draw_image_internal(CanvasIm
     auto scaling_mode = Gfx::ScalingMode::NearestNeighbor;
     if (drawing_state().image_smoothing_enabled) {
         // FIXME: Honor drawing_state().image_smoothing_quality
-        scaling_mode = Gfx::ScalingMode::BilinearBlend;
+        scaling_mode = Gfx::ScalingMode::BilinearMipmap;
     }
 
     if (auto* painter = this->painter()) {
@@ -501,6 +504,9 @@ WebIDL::ExceptionOr<GC::Ref<ImageData>> CanvasRenderingContext2D::create_image_d
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-getimagedata
 WebIDL::ExceptionOr<GC::Ptr<ImageData>> CanvasRenderingContext2D::get_image_data(int x, int y, int width, int height, Optional<ImageDataSettings> const& settings) const
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    canvas_element().document().page().client().page_did_call_fingerprinting_api("canvas"sv, "getImageData"sv);
+
     // 1. If either the sw or sh arguments are zero, then throw an "IndexSizeError" DOMException.
     if (width == 0 || height == 0)
         return WebIDL::IndexSizeError::create(realm(), "Width and height must not be zero"_utf16);

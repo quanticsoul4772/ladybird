@@ -38,10 +38,8 @@ public:
 
     virtual void run(AvailableSpace const&) = 0;
 
-    // This function returns the automatic content height of the context's root box.
+    // These functions return the automatic content dimensions of the context's root box.
     virtual CSSPixels automatic_content_width() const = 0;
-
-    // This function returns the automatic content height of the context's root box.
     virtual CSSPixels automatic_content_height() const = 0;
 
     Box const& context_box() const { return m_context_box; }
@@ -64,6 +62,7 @@ public:
     CSSPixels compute_height_for_replaced_element(Box const&, AvailableSpace const&) const;
 
     OwnPtr<FormattingContext> create_independent_formatting_context_if_needed(LayoutState&, LayoutMode, Box const& child_box);
+    NonnullOwnPtr<FormattingContext> create_independent_formatting_context(LayoutState&, LayoutMode, Box const& child_box);
 
     virtual void parent_context_did_dimension_child_root_box() { }
 

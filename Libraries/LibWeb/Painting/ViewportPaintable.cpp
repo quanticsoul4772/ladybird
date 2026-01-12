@@ -41,9 +41,9 @@ void ViewportPaintable::build_stacking_context_tree()
     set_stacking_context(make<StackingContext>(*this, nullptr, 0));
 
     size_t index_in_tree_order = 1;
-    for_each_in_subtree_of_type<PaintableBox>([&](auto const& paintable_box) {
-        const_cast<PaintableBox&>(paintable_box).invalidate_stacking_context();
-        auto* parent_context = const_cast<PaintableBox&>(paintable_box).enclosing_stacking_context();
+    for_each_in_subtree_of_type<PaintableBox>([&](auto& paintable_box) {
+        paintable_box.invalidate_stacking_context();
+        auto* parent_context = paintable_box.enclosing_stacking_context();
         auto establishes_stacking_context = paintable_box.layout_node().establishes_stacking_context();
         if ((paintable_box.is_positioned() || establishes_stacking_context) && paintable_box.computed_values().z_index().value_or(0) == 0)
             parent_context->m_positioned_descendants_and_stacking_contexts_with_stack_level_0.append(paintable_box);
@@ -54,7 +54,7 @@ void ViewportPaintable::build_stacking_context_tree()
             return TraversalDecision::Continue;
         }
         VERIFY(parent_context);
-        const_cast<PaintableBox&>(paintable_box).set_stacking_context(make<Painting::StackingContext>(const_cast<PaintableBox&>(paintable_box), parent_context, index_in_tree_order++));
+        paintable_box.set_stacking_context(make<StackingContext>(paintable_box, parent_context, index_in_tree_order++));
         return TraversalDecision::Continue;
     });
 
@@ -127,7 +127,7 @@ void ViewportPaintable::assign_clip_frames()
         auto has_hidden_overflow = overflow_x != CSS::Overflow::Visible || overflow_y != CSS::Overflow::Visible;
         if (has_hidden_overflow || paintable_box.get_clip_rect().has_value() || paintable_box.layout_node().has_paint_containment()) {
             auto clip_frame = adopt_ref(*new ClipFrame());
-            clip_state.set(paintable_box, move(clip_frame));
+            m_clip_state.set(paintable_box, move(clip_frame));
         }
         return TraversalDecision::Continue;
     });
@@ -135,25 +135,26 @@ void ViewportPaintable::assign_clip_frames()
     for_each_in_subtree([&](auto& paintable) {
         if (paintable.is_paintable_box()) {
             auto& paintable_box = static_cast<PaintableBox&>(paintable);
-            if (auto clip_frame = clip_state.get(paintable_box); clip_frame.has_value()) {
+            if (auto clip_frame = m_clip_state.get(paintable_box); clip_frame.has_value()) {
                 paintable_box.set_own_clip_frame(clip_frame.value());
             }
         }
         for (auto block = paintable.containing_block(); !block->is_viewport_paintable(); block = block->containing_block()) {
-            if (auto clip_frame = clip_state.get(block); clip_frame.has_value()) {
+            if (auto clip_frame = m_clip_state.get(block); clip_frame.has_value()) {
                 if (paintable.is_paintable_box()) {
                     auto& paintable_box = static_cast<PaintableBox&>(paintable);
                     paintable_box.set_enclosing_clip_frame(clip_frame.value());
                 }
                 break;
             }
-            if (!block->transform().is_identity())
+            if (block->has_css_transform()) {
                 break;
+            }
         }
         return TraversalDecision::Continue;
     });
 
-    for (auto& it : clip_state) {
+    for (auto& it : m_clip_state) {
         auto const& paintable_box = *it.key;
         auto& clip_frame = *it.value;
         for (auto const* block = &paintable_box.layout_node_with_style_and_box_metrics(); !block->is_viewport(); block = block->containing_block()) {
@@ -167,6 +168,7 @@ void ViewportPaintable::assign_clip_frames()
 
             auto clip_rect = block_paintable_box.overflow_clip_edge_rect();
             if (block_paintable_box.get_clip_rect().has_value()) {
+                clip_frame.includes_rect_from_clip_property = true;
                 clip_rect.intersect(block_paintable_box.get_clip_rect().value());
                 clip_x = true;
                 clip_y = true;
@@ -212,8 +214,9 @@ void ViewportPaintable::assign_clip_frames()
                     clip_frame.add_clip_rect(clip_rect, {}, block_paintable_box.enclosing_scroll_frame());
                 }
             }
-            if (!block_paintable_box.transform().is_identity())
+            if (block->has_css_transform()) {
                 break;
+            }
         }
     }
 }
@@ -332,7 +335,7 @@ void ViewportPaintable::resolve_paint_only_properties()
 
 GC::Ptr<Selection::Selection> ViewportPaintable::selection() const
 {
-    return const_cast<DOM::Document&>(document()).get_selection();
+    return document().get_selection();
 }
 
 void ViewportPaintable::recompute_selection_states(DOM::Range& range)
@@ -404,7 +407,7 @@ bool ViewportPaintable::handle_mousewheel(Badge<EventHandler>, CSSPixelPoint, un
 void ViewportPaintable::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    visitor.visit(clip_state);
+    visitor.visit(m_clip_state);
     visitor.visit(m_paintable_boxes_with_auto_content_visibility);
 }
 

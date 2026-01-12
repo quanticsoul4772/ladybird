@@ -1,0 +1,6 @@
+Content value: "→ "
+String without quotes: →
+String length: 2
+Character 0: U+2192 (→)
+Character 1: U+0020 ( )
+First char is arrow (U+2192): true

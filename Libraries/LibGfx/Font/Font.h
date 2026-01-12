@@ -55,7 +55,7 @@ constexpr float text_shaping_resolution = 64;
 
 class Font : public RefCounted<Font> {
 public:
-    Font(NonnullRefPtr<Typeface const>, float point_width, float point_height, unsigned dpi_x = DEFAULT_DPI, unsigned dpi_y = DEFAULT_DPI);
+    Font(NonnullRefPtr<Typeface const>, float point_width, float point_height, unsigned dpi_x = DEFAULT_DPI, unsigned dpi_y = DEFAULT_DPI, FontVariationSettings const variations = {});
     ScaledFontMetrics metrics() const;
     ~Font();
 
@@ -95,17 +95,22 @@ public:
     };
     ShapingCache& shaping_cache() const { return m_shaping_cache; }
 
+    bool is_emoji_font() const;
+
 private:
     mutable RefPtr<Font const> m_bold_variant;
     mutable hb_font_t* m_harfbuzz_font { nullptr };
 
     mutable ShapingCache m_shaping_cache;
 
+    mutable TriState m_is_emoji_font { TriState::Unknown };
+
     NonnullRefPtr<Typeface const> m_typeface;
     float m_x_scale { 0.0f };
     float m_y_scale { 0.0f };
     float m_point_width { 0.0f };
     float m_point_height { 0.0f };
+    FontVariationSettings const m_font_variation_settings;
     FontPixelMetrics m_pixel_metrics;
 
     float m_pixel_size { 0.0f };

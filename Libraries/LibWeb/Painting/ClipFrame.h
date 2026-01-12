@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/AtomicRefCounted.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Painting/BorderRadiiData.h>
 #include <LibWeb/Painting/ScrollFrame.h>
@@ -25,6 +26,8 @@ struct WEB_API ClipFrame : public AtomicRefCounted<ClipFrame> {
     void add_clip_rect(CSSPixelRect rect, BorderRadiiData radii, RefPtr<ScrollFrame const> enclosing_scroll_frame);
 
     CSSPixelRect clip_rect_for_hit_testing() const;
+
+    bool includes_rect_from_clip_property { false };
 
 private:
     Vector<ClipRectWithScrollFrame> m_clip_rects;

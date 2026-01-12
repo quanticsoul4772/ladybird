@@ -38,7 +38,7 @@ void Environment::visit_edges(Cell::Visitor& visitor)
 EnvironmentSettingsObject::EnvironmentSettingsObject(NonnullOwnPtr<JS::ExecutionContext> realm_execution_context)
     : m_realm_execution_context(move(realm_execution_context))
 {
-    m_realm_execution_context->context_owner = this;
+    m_realm_execution_context->ensure_rare_data()->context_owner = this;
 
     // Register with the responsible event loop so we can perform step 4 of "perform a microtask checkpoint".
     responsible_event_loop().register_environment_settings_object({}, *this);
@@ -125,8 +125,14 @@ EventLoop& EnvironmentSettingsObject::responsible_event_loop()
 RunScriptDecision can_run_script(JS::Realm const& realm)
 {
     // 1. If the global object specified by realm is a Window object whose Document object is not fully active, then return "do not run".
-    if (is<HTML::Window>(realm.global_object()) && !as<HTML::Window>(realm.global_object()).associated_document().is_fully_active())
-        return RunScriptDecision::DoNotRun;
+    if (auto const* window = as_if<HTML::Window>(realm.global_object())) {
+        auto const& document = window->associated_document();
+        // AD-HOC: We allow tasks for destroyed documents to run so that microtasks queued during the fetch of a new
+        //         document in a navigation can still be processed, even after the previous document, the one that
+        //         initiated the fetch, has been destroyed.
+        if (!document.has_been_destroyed() && !document.is_fully_active())
+            return RunScriptDecision::DoNotRun;
+    }
 
     // 2. If scripting is disabled for realm, then return "do not run".
     if (is_scripting_disabled(realm))
@@ -207,8 +213,9 @@ void prepare_to_run_callback(JS::Realm& realm)
     auto* context = top_most_script_having_execution_context(vm);
 
     // 3. If context is not null, increment context's skip-when-determining-incumbent counter.
-    if (context)
+    if (context) {
         context->skip_when_determining_incumbent_counter++;
+    }
 }
 
 // https://html.spec.whatwg.org/multipage/urls-and-fetching.html#parse-a-url
@@ -265,8 +272,9 @@ void clean_up_after_running_callback(JS::Realm const& realm)
     auto* context = top_most_script_having_execution_context(vm);
 
     // 2. If context is not null, decrement context's skip-when-determining-incumbent counter.
-    if (context)
+    if (context) {
         context->skip_when_determining_incumbent_counter--;
+    }
 
     // 3. Assert: the topmost entry of the backup incumbent realm stack is realm.
     auto& event_loop = HTML::main_thread_event_loop();

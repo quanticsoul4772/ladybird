@@ -226,6 +226,19 @@ OwnPtr<FormattingContext> FormattingContext::create_independent_formatting_conte
     }
 }
 
+NonnullOwnPtr<FormattingContext> FormattingContext::create_independent_formatting_context(LayoutState& state, LayoutMode layout_mode, Box const& child_box)
+{
+    if (auto context = create_independent_formatting_context_if_needed(state, layout_mode, child_box))
+        return context.release_nonnull();
+
+    if (auto child_block_container = as_if<BlockContainer>(child_box))
+        return make<BlockFormattingContext>(state, layout_mode, *child_block_container, nullptr);
+
+    // HACK: Instead of crashing in scenarios that assume the formatting context can be created, create a dummy formatting context that does nothing.
+    dbgln("FIXME: An independent formatting context was requested from a Box that does not have a formatting context type. A dummy formatting context will be created instead.");
+    return make<DummyFormattingContext>(state, layout_mode, child_box);
+}
+
 OwnPtr<FormattingContext> FormattingContext::layout_inside(Box const& child_box, LayoutMode layout_mode, AvailableSpace const& available_space)
 {
     {
@@ -1167,7 +1180,8 @@ CSSPixelRect FormattingContext::content_box_rect_in_static_position_ancestor_coo
 {
     auto box_used_values = m_state.get(box);
     CSSPixelRect rect = { { 0, 0 }, box_used_values.content_size() };
-    VERIFY(box_used_values.offset.is_zero()); // Set as result of this calculation
+    // FIXME: ListItemMarkerBox's should also run this assertion once it has a supported FormattingContext type
+    VERIFY(box_used_values.offset.is_zero() || box.is_list_item_marker_box()); // Set as result of this calculation
     for (auto const* current = box.static_position_containing_block(); current; current = current->containing_block()) {
         if (current == box.containing_block())
             return rect;
@@ -1454,10 +1468,7 @@ CSSPixels FormattingContext::calculate_min_content_width(Layout::Box const& box)
     box_state.width_constraint = SizeConstraint::MinContent;
     box_state.set_indefinite_content_width();
 
-    auto context = const_cast<FormattingContext*>(this)->create_independent_formatting_context_if_needed(throwaway_state, LayoutMode::IntrinsicSizing, box);
-    if (!context) {
-        context = make<BlockFormattingContext>(throwaway_state, LayoutMode::IntrinsicSizing, as<BlockContainer>(box), nullptr);
-    }
+    auto context = const_cast<FormattingContext*>(this)->create_independent_formatting_context(throwaway_state, LayoutMode::IntrinsicSizing, box);
 
     auto available_width = AvailableSize::make_min_content();
     auto available_height = box_state.has_definite_height()
@@ -1494,10 +1505,7 @@ CSSPixels FormattingContext::calculate_max_content_width(Layout::Box const& box)
     box_state.border_right = actual_box_state.border_right;
     box_state.padding_right = actual_box_state.padding_right;
 
-    auto context = const_cast<FormattingContext*>(this)->create_independent_formatting_context_if_needed(throwaway_state, LayoutMode::IntrinsicSizing, box);
-    if (!context) {
-        context = make<BlockFormattingContext>(throwaway_state, LayoutMode::IntrinsicSizing, as<BlockContainer>(box), nullptr);
-    }
+    auto context = const_cast<FormattingContext*>(this)->create_independent_formatting_context(throwaway_state, LayoutMode::IntrinsicSizing, box);
 
     auto available_width = AvailableSize::make_max_content();
     auto available_height = box_state.has_definite_height()
@@ -1535,10 +1543,7 @@ CSSPixels FormattingContext::calculate_min_content_height(Layout::Box const& box
     box_state.set_indefinite_content_height();
     box_state.set_content_width(width);
 
-    auto context = const_cast<FormattingContext*>(this)->create_independent_formatting_context_if_needed(throwaway_state, LayoutMode::IntrinsicSizing, box);
-    if (!context) {
-        context = make<BlockFormattingContext>(throwaway_state, LayoutMode::IntrinsicSizing, as<BlockContainer>(box), nullptr);
-    }
+    auto context = const_cast<FormattingContext*>(this)->create_independent_formatting_context(throwaway_state, LayoutMode::IntrinsicSizing, box);
 
     context->run(AvailableSpace(AvailableSize::make_definite(width), AvailableSize::make_min_content()));
 
@@ -1566,10 +1571,7 @@ CSSPixels FormattingContext::calculate_max_content_height(Layout::Box const& box
     box_state.set_indefinite_content_height();
     box_state.set_content_width(width);
 
-    auto context = const_cast<FormattingContext*>(this)->create_independent_formatting_context_if_needed(throwaway_state, LayoutMode::IntrinsicSizing, box);
-    if (!context) {
-        context = make<BlockFormattingContext>(throwaway_state, LayoutMode::IntrinsicSizing, as<BlockContainer>(box), nullptr);
-    }
+    auto context = const_cast<FormattingContext*>(this)->create_independent_formatting_context(throwaway_state, LayoutMode::IntrinsicSizing, box);
 
     context->run(AvailableSpace(AvailableSize::make_definite(width), AvailableSize::make_max_content()));
 
@@ -1709,8 +1711,7 @@ bool FormattingContext::should_treat_width_as_auto(Box const& box, AvailableSpac
             return true;
     }
     // AD-HOC: If the box has a preferred aspect ratio and an intrinsic keyword for width...
-    if (box.has_preferred_aspect_ratio()
-        && (computed_width.is_min_content() || computed_width.is_max_content() || computed_width.is_fit_content())) {
+    if (box.has_preferred_aspect_ratio() && computed_width.is_intrinsic_sizing_constraint()) {
         // If the box has no natural height to resolve the aspect ratio, we treat the width as auto.
         if (!box.has_natural_height())
             return true;
@@ -1742,8 +1743,7 @@ bool FormattingContext::should_treat_height_as_auto(Box const& box, AvailableSpa
     }
 
     // AD-HOC: If the box has a preferred aspect ratio and an intrinsic keyword for height...
-    if (box.has_preferred_aspect_ratio()
-        && (computed_height.is_min_content() || computed_height.is_max_content() || computed_height.is_fit_content())) {
+    if (box.has_preferred_aspect_ratio() && computed_height.is_intrinsic_sizing_constraint()) {
         // If the box has no natural width to resolve the aspect ratio, we treat the height as auto.
         if (!box.has_natural_width())
             return true;

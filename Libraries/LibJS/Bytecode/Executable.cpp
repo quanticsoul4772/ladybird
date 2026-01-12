@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024, Andreas Kling <andreas@ladybird.org>
+ * Copyright (c) 2021-2025, Andreas Kling <andreas@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -25,7 +25,7 @@ Executable::Executable(
     size_t number_of_property_lookup_caches,
     size_t number_of_global_variable_caches,
     size_t number_of_registers,
-    bool is_strict_mode)
+    Strict strict)
     : bytecode(move(bytecode))
     , string_table(move(string_table))
     , identifier_table(move(identifier_table))
@@ -33,7 +33,7 @@ Executable::Executable(
     , constants(move(constants))
     , source_code(move(source_code))
     , number_of_registers(number_of_registers)
-    , is_strict_mode(is_strict_mode)
+    , is_strict_mode(strict == Strict::Yes)
 {
     property_lookup_caches.resize(number_of_property_lookup_caches);
     global_variable_caches.resize(number_of_global_variable_caches);
@@ -113,6 +113,17 @@ UnrealizedSourceRange Executable::source_range_at(size_t offset) const
         .start_offset = mapping->source_start_offset,
         .end_offset = mapping->source_end_offset,
     };
+}
+
+Operand Executable::original_operand_from_raw(u32 raw) const
+{
+    if (raw < number_of_registers)
+        return Operand { Operand::Type::Register, raw };
+    if (raw < local_index_base)
+        return Operand { Operand::Type::Constant, raw - static_cast<u32>(number_of_registers) };
+    if (raw < argument_index_base)
+        return Operand { Operand::Type::Local, raw - static_cast<u32>(local_index_base) };
+    return Operand { Operand::Type::Argument, raw - static_cast<u32>(argument_index_base) };
 }
 
 }

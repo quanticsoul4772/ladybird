@@ -110,6 +110,12 @@
     "textarea",
     "textfield"
   ],
+  "axis": [
+    "block",
+    "inline",
+    "x",
+    "y"
+  ],
   "background-attachment": [
     "fixed",
     "local",
@@ -300,6 +306,10 @@
   "fill-rule": [
     "nonzero",
     "evenodd"
+  ],
+  "fit-side": [
+    "closest-side",
+    "farthest-side"
   ],
   "flex-direction": [
     "row",
@@ -715,6 +725,11 @@
     "thin",
     "none"
   ],
+  "scroller": [
+    "root",
+    "nearest",
+    "self"
+  ],
   "shape-box": [
     "content-box",
     "padding-box",
@@ -844,7 +859,11 @@
     "border-box",
     "fill-box",
     "stroke-box",
-    "view-box "
+    "view-box"
+  ],
+  "transform-style": [
+    "flat",
+    "preserve-3d"
   ],
   "transition-behavior": [
     "normal",

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whitelist Test</title>
+</head>
+<body>
+    <h1>Domain Whitelist Test</h1>
+    <p>This page tests that whitelisted domains bypass network monitoring.</p>
+    <div id="status">Making requests to test domain...</div>
+    <ul id="request-log"></ul>
+
+    <script>
+        const testDomain = 'trusted-but-unusual.example.com';
+        const log = document.getElementById('request-log');
+
+        // Make requests that would normally trigger alerts
+        // but should be allowed if domain is whitelisted
+
+        // 1. DGA-like subdomain structure (but whitelisted)
+        const suspiciousSubdomains = [
+            `api-${Math.random().toString(36).substring(7)}.${testDomain}`,
+            `cdn-${Math.random().toString(36).substring(7)}.${testDomain}`,
+            `svc-${Math.random().toString(36).substring(7)}.${testDomain}`
+        ];
+
+        suspiciousSubdomains.forEach((domain, i) => {
+            setTimeout(() => {
+                fetch(`http://${domain}/data`, { mode: 'no-cors' })
+                    .then(() => {
+                        const li = document.createElement('li');
+                        li.textContent = `Request to ${domain} - should be allowed if whitelisted`;
+                        log.appendChild(li);
+                    })
+                    .catch(() => {
+                        const li = document.createElement('li');
+                        li.textContent = `Request to ${domain} failed`;
+                        log.appendChild(li);
+                    });
+            }, i * 1000);
+        });
+
+        // 2. Beaconing pattern (but to whitelisted domain)
+        let beaconCount = 0;
+        const beaconInterval = setInterval(() => {
+            if (beaconCount >= 3) {
+                clearInterval(beaconInterval);
+                document.getElementById('status').textContent = 'Whitelist test complete';
+                return;
+            }
+
+            fetch(`http://${testDomain}/beacon`, { mode: 'no-cors' })
+                .catch(() => {});
+
+            const li = document.createElement('li');
+            li.textContent = `Beacon ${beaconCount + 1} to whitelisted domain`;
+            log.appendChild(li);
+
+            beaconCount++;
+        }, 5000);
+    </script>
+</body>
+</html>

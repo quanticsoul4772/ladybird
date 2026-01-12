@@ -10,6 +10,7 @@
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/SVGElementPrototype.h>
 #include <LibWeb/CSS/ComputedProperties.h>
+#include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/SVG/SVGDescElement.h>
@@ -135,12 +136,8 @@ void SVGElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cas
             if (!property.supported_elements.is_empty() && !property.supported_elements.contains_slow(local_name()))
                 continue;
             if (property.id == CSS::PropertyID::Mask) {
-                // Mask is a shorthand property in CSS, but parse_css_value does not take that into account. For now,
-                // just parse as 'mask-image' as anything else is currently not supported.
-                // FIXME: properly parse longhand 'mask' property
-                if (auto style_value = parse_css_value(parsing_context, value, CSS::PropertyID::MaskImage)) {
-                    cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::MaskImage, style_value.release_nonnull());
-                }
+                if (auto style_value = parse_css_value(parsing_context, value, CSS::PropertyID::Mask))
+                    cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::Mask, style_value.release_nonnull());
             } else {
                 if (auto style_value = parse_css_value(parsing_context, value, property.id))
                     cascaded_properties->set_property_from_presentational_hint(property.id, style_value.release_nonnull());
@@ -279,7 +276,7 @@ GC::Ref<SVGAnimatedString> SVGElement::class_name()
 {
     // The className IDL attribute reflects the ‘class’ attribute.
     if (!m_class_name_animated_string)
-        m_class_name_animated_string = SVGAnimatedString::create(realm(), *this, AttributeNames::class_);
+        m_class_name_animated_string = SVGAnimatedString::create(realm(), *this, DOM::QualifiedName { AttributeNames::class_, OptionalNone {}, OptionalNone {} });
 
     return *m_class_name_animated_string;
 }

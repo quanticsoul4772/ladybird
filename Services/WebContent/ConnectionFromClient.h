@@ -157,6 +157,9 @@ private:
     // Network audit log retrieval
     virtual Messages::WebContentServer::GetNetworkAuditResponse get_network_audit(u64 page_id) override;
 
+    // Security policy enforcement
+    virtual void enforce_security_policy(i32 request_id, ByteString action) override;
+
     virtual void take_document_screenshot(u64 page_id) override;
     virtual void take_dom_node_screenshot(u64 page_id, Web::UniqueNodeID node_id) override;
 
@@ -173,6 +176,10 @@ private:
 
     virtual void system_time_zone_changed() override;
     virtual void cookies_changed(Vector<Web::Cookie::Cookie>) override;
+
+    virtual void form_submission_detected(u64 page_id, String form_origin, String action_origin, bool has_password, bool has_email, bool uses_https) override;
+    virtual void credential_alert_action(u64 page_id, String form_origin, String action_origin, String action) override;
+    virtual void grant_autofill_override(u64 page_id, String form_origin, String action_origin) override;
 
     NonnullOwnPtr<PageHost> m_page_host;
 

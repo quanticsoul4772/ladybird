@@ -5,10 +5,12 @@
  */
 
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/ImmutableBitmap.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Statuses.h>
 #include <LibWeb/HTML/AnimatedBitmapDecodedImageData.h>
@@ -87,7 +89,7 @@ void SharedResourceRequest::fetch_resource(JS::Realm& realm, GC::Ref<Fetch::Infr
         response = response->unsafe_response();
 
         auto process_body = GC::create_function(heap(), [this, request, response](ByteBuffer data) {
-            auto extracted_mime_type = response->header_list()->extract_mime_type();
+            auto extracted_mime_type = Fetch::Infrastructure::extract_mime_type(response->header_list());
             auto mime_type = extracted_mime_type.has_value() ? extracted_mime_type.value().essence().bytes_as_string_view() : StringView {};
             handle_successful_fetch(request->url(), mime_type, move(data));
         });
@@ -109,8 +111,7 @@ void SharedResourceRequest::fetch_resource(JS::Realm& realm, GC::Ref<Fetch::Infr
     auto fetch_controller = Fetch::Fetching::fetch(
         realm,
         request,
-        Fetch::Infrastructure::FetchAlgorithms::create(realm.vm(), move(fetch_algorithms_input)))
-                                .release_value_but_fixme_should_propagate_errors();
+        Fetch::Infrastructure::FetchAlgorithms::create(realm.vm(), move(fetch_algorithms_input)));
 
     set_fetch_controller(fetch_controller);
 }
@@ -160,7 +161,7 @@ void SharedResourceRequest::handle_successful_fetch(URL::URL const& url_string, 
         Vector<AnimatedBitmapDecodedImageData::Frame> frames;
         for (auto& frame : result.frames) {
             frames.append(AnimatedBitmapDecodedImageData::Frame {
-                .bitmap = Gfx::ImmutableBitmap::create(*frame.bitmap, Gfx::AlphaType::Premultiplied, result.color_space),
+                .bitmap = Gfx::ImmutableBitmap::create(*frame.bitmap, result.color_space),
                 .duration = static_cast<int>(frame.duration),
             });
         }

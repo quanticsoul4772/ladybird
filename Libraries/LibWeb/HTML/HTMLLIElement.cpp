@@ -33,7 +33,7 @@ void HTMLLIElement::attribute_changed(FlyString const& local_name, Optional<Stri
     Base::attribute_changed(local_name, old_value, value, namespace_);
 
     if (local_name == HTML::AttributeNames::value) {
-        if (auto* owner = list_owner()) {
+        if (auto owner = list_owner()) {
             owner->set_needs_layout_tree_update(true, DOM::SetNeedsLayoutTreeUpdateReason::HTMLOListElementOrdinalValues);
             maybe_invalidate_ordinals_for_list_owner();
         }
@@ -50,6 +50,11 @@ WebIDL::Long HTMLLIElement::value()
     if (auto maybe_number = HTML::parse_integer(content_attribute_value); maybe_number.has_value())
         return *maybe_number;
     return 0;
+}
+
+void HTMLLIElement::set_value(WebIDL::Long value)
+{
+    set_attribute_value(AttributeNames::value, String::number(value));
 }
 
 bool HTMLLIElement::is_presentational_hint(FlyString const& name) const

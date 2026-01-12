@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARIA Attributes Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        main {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        h2 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:focus {
+            outline: 2px solid #0066cc;
+            outline-offset: 2px;
+        }
+        .aria-label-demo {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .close-button {
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            font-size: 16px;
+        }
+        .description {
+            background-color: #f0f0f0;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 4px solid #4CAF50;
+            font-size: 14px;
+        }
+        .hidden-content {
+            padding: 20px;
+            background-color: #ffe6e6;
+            margin: 10px 0;
+            border-radius: 4px;
+            display: none;
+        }
+        .hidden-content.visible {
+            display: block;
+        }
+        .live-region {
+            background-color: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            min-height: 40px;
+        }
+        .dialog-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+        }
+        .dialog-overlay.open {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .dialog {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .tabs {
+            display: flex;
+            gap: 10px;
+            border-bottom: 2px solid #ddd;
+            margin: 20px 0;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 16px;
+            color: #333;
+        }
+        .tab[aria-selected="true"] {
+            border-bottom: 3px solid #4CAF50;
+            font-weight: bold;
+        }
+        .tab-panel {
+            display: none;
+            padding: 20px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        .tab-panel[aria-selected="true"] {
+            display: block;
+        }
+        .checkbox {
+            margin: 10px 0;
+        }
+        .checkbox input[type="checkbox"] {
+            margin-right: 10px;
+            width: auto;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>ARIA Attributes Testing</h1>
+
+        <!-- TEST 1: aria-label and aria-labelledby -->
+        <section id="test-aria-labels">
+            <h2>Test 1: aria-label and aria-labelledby</h2>
+            <p>Testing ARIA label functionality for labeling interactive elements.</p>
+
+            <div class="aria-label-demo">
+                <button aria-label="Close notification">×</button>
+                <button aria-label="Settings menu">⚙</button>
+                <button aria-label="Help and information">?</button>
+            </div>
+
+            <div>
+                <h3 id="form-title">User Account Settings</h3>
+                <div aria-labelledby="form-title" style="border: 1px solid #ddd; padding: 15px; margin: 10px 0;">
+                    <label>
+                        <input type="checkbox"> Enable notifications
+                    </label>
+                    <label>
+                        <input type="checkbox"> Enable dark mode
+                    </label>
+                </div>
+            </div>
+
+            <div class="description">
+                ✓ aria-label provides accessible names for icon buttons
+                <br>✓ aria-labelledby links elements to their headings
+            </div>
+        </section>
+
+        <!-- TEST 2: aria-describedby -->
+        <section id="test-aria-describedby">
+            <h2>Test 2: aria-describedby</h2>
+            <p>Testing descriptions for form fields and interactive elements.</p>
+
+            <div class="form-group">
+                <label for="password-field">Password</label>
+                <input
+                    type="password"
+                    id="password-field"
+                    aria-describedby="password-hint"
+                    placeholder="Enter your password"
+                >
+                <div id="password-hint" class="description">
+                    Password must be at least 8 characters long and include uppercase, lowercase, and numbers.
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="file-upload">Upload Document</label>
+                <input
+                    type="file"
+                    id="file-upload"
+                    aria-describedby="file-info"
+                    accept=".pdf,.doc,.docx"
+                >
+                <div id="file-info" class="description">
+                    Accepted formats: PDF, DOC, DOCX. Maximum file size: 10MB.
+                </div>
+            </div>
+
+            <div class="description">
+                ✓ aria-describedby provides additional help text for form fields
+                <br>✓ Descriptions supplement labels with important constraints
+            </div>
+        </section>
+
+        <!-- TEST 3: aria-hidden and inert content -->
+        <section id="test-aria-hidden">
+            <h2>Test 3: aria-hidden and Inert Content</h2>
+            <p>Testing how to hide content from accessibility tree while keeping it visible.</p>
+
+            <div style="display: flex; gap: 20px;">
+                <div>
+                    <p>Visible and accessible:</p>
+                    <span>This text is announced</span>
+                </div>
+
+                <div>
+                    <p>Hidden from screen readers:</p>
+                    <span aria-hidden="true">This text is NOT announced</span>
+                </div>
+
+                <div>
+                    <p>Inert region:</p>
+                    <div inert style="padding: 10px; background-color: #f0f0f0; border-radius: 4px;">
+                        <button>This button cannot be focused</button>
+                        <a href="#">This link cannot be clicked</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="description">
+                ✓ aria-hidden="true" removes decorative elements from accessibility tree
+                <br>✓ inert attribute disables all interactions (buttons, links, etc.)
+            </div>
+        </section>
+
+        <!-- TEST 4: ARIA Roles (button, tab, dialog) -->
+        <section id="test-aria-roles">
+            <h2>Test 4: ARIA Roles</h2>
+            <p>Testing semantic ARIA roles for interactive components.</p>
+
+            <!-- Button role -->
+            <div>
+                <h3>Button Role</h3>
+                <div role="button" tabindex="0" style="padding: 10px; background-color: #e3f2fd; border-radius: 4px; cursor: pointer;">
+                    This DIV acts as a button
+                </div>
+            </div>
+
+            <!-- Tab role -->
+            <div>
+                <h3>Tab Role</h3>
+                <div class="tabs" role="tablist">
+                    <button id="tab-1" class="tab" role="tab" aria-selected="true" aria-controls="panel-1">
+                        Tab 1
+                    </button>
+                    <button id="tab-2" class="tab" role="tab" aria-selected="false" aria-controls="panel-2">
+                        Tab 2
+                    </button>
+                    <button id="tab-3" class="tab" role="tab" aria-selected="false" aria-controls="panel-3">
+                        Tab 3
+                    </button>
+                </div>
+                <div id="panel-1" class="tab-panel" role="tabpanel" aria-labelledby="tab-1">
+                    Content for Tab 1
+                </div>
+                <div id="panel-2" class="tab-panel" role="tabpanel" aria-labelledby="tab-2">
+                    Content for Tab 2
+                </div>
+                <div id="panel-3" class="tab-panel" role="tabpanel" aria-labelledby="tab-3">
+                    Content for Tab 3
+                </div>
+            </div>
+
+            <!-- Dialog role -->
+            <div>
+                <h3>Dialog Role</h3>
+                <button onclick="openDialog()">Open Dialog</button>
+                <div id="dialog-overlay" class="dialog-overlay">
+                    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+                        <h2 id="dialog-title">Confirm Action</h2>
+                        <p>Are you sure you want to proceed?</p>
+                        <button onclick="closeDialog()">Cancel</button>
+                        <button onclick="closeDialog()">Confirm</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="description">
+                ✓ role="button" makes DIVs semantically button-like
+                <br>✓ role="tab" creates accessible tab interfaces
+                <br>✓ role="dialog" with aria-modal creates modal dialogs
+            </div>
+        </section>
+
+        <!-- TEST 5: Live Regions (aria-live) -->
+        <section id="test-live-regions">
+            <h2>Test 5: Live Regions (aria-live)</h2>
+            <p>Testing dynamic content updates announced to screen readers.</p>
+
+            <button onclick="addNotification()">Add Notification</button>
+            <button onclick="updateCounter()">Update Counter</button>
+
+            <div aria-live="polite" aria-atomic="true" class="live-region" id="notifications-region">
+                Notifications will appear here
+            </div>
+
+            <div>
+                <h3>assertive region (urgent updates):</h3>
+                <button onclick="showAlert()">Show Alert</button>
+                <div aria-live="assertive" class="live-region" id="alert-region">
+                    Click the button to see urgent alerts
+                </div>
+            </div>
+
+            <div class="description">
+                ✓ aria-live="polite" announces updates without interrupting user
+                <br>✓ aria-live="assertive" announces urgent updates immediately
+                <br>✓ aria-atomic="true" reads entire region on updates
+            </div>
+        </section>
+
+        <script>
+            // Test data
+            window.__aria_test_data = {
+                testId: 'A11Y-006-to-A11Y-010',
+                testType: 'aria-attributes',
+                ariaLabelsCount: 3,
+                ariaDescribedByCount: 2,
+                ariaHiddenCount: 1,
+                inertCount: 1,
+                ariaRolesCount: 3,
+                liveRegionsCount: 2
+            };
+
+            // Dialog functions
+            function openDialog() {
+                document.getElementById('dialog-overlay').classList.add('open');
+                document.querySelector('[aria-modal="true"]').focus();
+            }
+
+            function closeDialog() {
+                document.getElementById('dialog-overlay').classList.remove('open');
+            }
+
+            // Live region functions
+            function addNotification() {
+                const region = document.getElementById('notifications-region');
+                const timestamp = new Date().toLocaleTimeString();
+                region.textContent = `Notification added at ${timestamp}`;
+            }
+
+            function updateCounter() {
+                const region = document.getElementById('notifications-region');
+                const count = Math.floor(Math.random() * 100);
+                region.textContent = `Counter updated: ${count}`;
+            }
+
+            function showAlert() {
+                const region = document.getElementById('alert-region');
+                region.textContent = `ALERT: Important event at ${new Date().toLocaleTimeString()}`;
+            }
+        </script>
+    </main>
+</body>
+</html>

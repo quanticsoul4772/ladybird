@@ -18,7 +18,9 @@ class JS_API Cell : public GC::Cell {
 public:
     virtual void initialize(Realm&);
 
-    ALWAYS_INLINE VM& vm() const { return *reinterpret_cast<VM*>(private_data()); }
+    virtual bool is_generator_result() const { return false; }
+
+    ALWAYS_INLINE VM& vm() const;
 };
 
 }

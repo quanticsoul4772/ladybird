@@ -32,7 +32,10 @@ constexpr SkColorType to_skia_color_type(Gfx::BitmapFormat format)
     case Gfx::BitmapFormat::Invalid:
         return kUnknown_SkColorType;
     case Gfx::BitmapFormat::BGRA8888:
+        return kBGRA_8888_SkColorType;
     case Gfx::BitmapFormat::BGRx8888:
+        // FIXME: This is not fully correct, since our bitmap's alpha component might contain garbage data.
+        // If the alpha component does not contain 0xFF, Skia might wrongly use that value as alpha.
         return kBGRA_8888_SkColorType;
     case Gfx::BitmapFormat::RGBA8888:
         return kRGBA_8888_SkColorType;
@@ -118,19 +121,19 @@ constexpr SkPathFillType to_skia_path_fill_type(Gfx::WindingRule winding_rule)
     VERIFY_NOT_REACHED();
 }
 
-constexpr SkSamplingOptions to_skia_sampling_options(Gfx::ScalingMode scaling_mode)
+constexpr SkSamplingOptions to_skia_sampling_options(ScalingMode scaling_mode)
 {
     switch (scaling_mode) {
-    case Gfx::ScalingMode::NearestNeighbor:
-    case Gfx::ScalingMode::SmoothPixels:
-        return SkSamplingOptions(SkFilterMode::kNearest);
-    case Gfx::ScalingMode::BilinearBlend:
+    case ScalingMode::None:
+        return SkSamplingOptions();
+    case ScalingMode::Bilinear:
         return SkSamplingOptions(SkFilterMode::kLinear);
-    case Gfx::ScalingMode::BoxSampling:
-        return SkSamplingOptions(SkCubicResampler::Mitchell());
-    default:
-        VERIFY_NOT_REACHED();
+    case ScalingMode::BilinearMipmap:
+        return SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kLinear);
+    case ScalingMode::NearestNeighbor:
+        return SkSamplingOptions(SkFilterMode::kNearest);
     }
+    VERIFY_NOT_REACHED();
 }
 
 SkPath to_skia_path(Path const& path);

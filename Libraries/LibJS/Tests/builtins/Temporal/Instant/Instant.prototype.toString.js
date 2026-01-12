@@ -35,9 +35,7 @@ describe("correct behavior", () => {
         }
 
         // Ignored when smallestUnit is given
-        expect(instant.toString({ smallestUnit: "minute", fractionalSecondDigits: 9 })).toBe(
-            "2021-07-06T23:42Z"
-        );
+        expect(instant.toString({ smallestUnit: "minute", fractionalSecondDigits: 9 })).toBe("2021-07-06T23:42Z");
     });
 
     test("smallestUnit option", () => {
@@ -52,6 +50,22 @@ describe("correct behavior", () => {
         for (const [smallestUnit, expected] of values) {
             const options = { smallestUnit };
             expect(instant.toString(options)).toBe(expected);
+        }
+    });
+
+    test("rounding", () => {
+        const instant = new Temporal.Instant(-999999999999999990n);
+        const roundedDown = "1938-04-24T22:13:20.000Z";
+        const roundedUp = "1938-04-24T22:13:20.001Z";
+
+        for (const roundingMode of ["halfCeil", "halfFloor", "halfExpand", "halfTrunc", "halfEven", "floor", "trunc"]) {
+            const options = { smallestUnit: "millisecond", roundingMode };
+            expect(instant.toString(options)).toBe(roundedDown);
+        }
+
+        for (const roundingMode of ["ceil", "expand"]) {
+            const options = { smallestUnit: "millisecond", roundingMode };
+            expect(instant.toString(options)).toBe(roundedUp);
         }
     });
 });

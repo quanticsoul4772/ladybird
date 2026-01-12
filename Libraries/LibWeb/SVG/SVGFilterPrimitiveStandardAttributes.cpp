@@ -9,11 +9,13 @@
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/SVG/SVGFEBlendElement.h>
 #include <LibWeb/SVG/SVGFEColorMatrixElement.h>
+#include <LibWeb/SVG/SVGFEComponentTransferElement.h>
 #include <LibWeb/SVG/SVGFECompositeElement.h>
 #include <LibWeb/SVG/SVGFEFloodElement.h>
 #include <LibWeb/SVG/SVGFEGaussianBlurElement.h>
 #include <LibWeb/SVG/SVGFEImageElement.h>
 #include <LibWeb/SVG/SVGFEMergeElement.h>
+#include <LibWeb/SVG/SVGFEMorphologyElement.h>
 #include <LibWeb/SVG/SVGFEOffsetElement.h>
 
 namespace Web::SVG {
@@ -46,18 +48,20 @@ template<typename IncludingClass>
 GC::Ref<SVGAnimatedString> SVGFilterPrimitiveStandardAttributes<IncludingClass>::result()
 {
     if (!m_result_animated_string)
-        m_result_animated_string = SVGAnimatedString::create(this_svg_element()->realm(), *this_svg_element(), AttributeNames::result);
+        m_result_animated_string = SVGAnimatedString::create(this_svg_element()->realm(), *this_svg_element(), DOM::QualifiedName { AttributeNames::result, OptionalNone {}, OptionalNone {} });
 
     return *m_result_animated_string;
 }
 
 template class SVGFilterPrimitiveStandardAttributes<SVGFEBlendElement>;
 template class SVGFilterPrimitiveStandardAttributes<SVGFEColorMatrixElement>;
+template class SVGFilterPrimitiveStandardAttributes<SVGFEComponentTransferElement>;
 template class SVGFilterPrimitiveStandardAttributes<SVGFECompositeElement>;
 template class SVGFilterPrimitiveStandardAttributes<SVGFEFloodElement>;
 template class SVGFilterPrimitiveStandardAttributes<SVGFEGaussianBlurElement>;
 template class SVGFilterPrimitiveStandardAttributes<SVGFEImageElement>;
 template class SVGFilterPrimitiveStandardAttributes<SVGFEMergeElement>;
+template class SVGFilterPrimitiveStandardAttributes<SVGFEMorphologyElement>;
 template class SVGFilterPrimitiveStandardAttributes<SVGFEOffsetElement>;
 
 }

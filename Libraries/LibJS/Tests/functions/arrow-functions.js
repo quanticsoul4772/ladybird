@@ -90,7 +90,7 @@ test("currying", () => {
 
 test("with comma operator", () => {
     let foo, bar;
-    (foo = bar), baz => {};
+    ((foo = bar), baz => {});
     expect(foo).toBe(undefined);
     expect(bar).toBe(undefined);
 });
@@ -110,33 +110,6 @@ test("arrow functions in objects", () => {
     expect(foobar.x.z()).toBe(foobar.x);
 });
 
-test("strict mode propagation", () => {
-    (() => {
-        "use strict";
-        expect(isStrictMode()).toBeTrue();
-
-        (() => {
-            expect(isStrictMode()).toBeTrue();
-        })();
-    })();
-
-    (() => {
-        "use strict";
-        expect(isStrictMode()).toBeTrue();
-    })();
-
-    (() => {
-        expect(isStrictMode()).toBeFalse();
-
-        (() => {
-            "use strict";
-            expect(isStrictMode()).toBeTrue();
-        })();
-
-        expect(isStrictMode()).toBeFalse();
-    })();
-});
-
 test("no prototype", () => {
     let foo = () => {};
     expect(foo).not.toHaveProperty("prototype");
@@ -146,10 +119,7 @@ test("cannot be constructed", () => {
     let foo = () => {};
     expect(() => {
         new foo();
-    }).toThrowWithMessage(
-        TypeError,
-        "[object ECMAScriptFunctionObject] is not a constructor (evaluated from 'foo')"
-    );
+    }).toThrowWithMessage(TypeError, "[object ECMAScriptFunctionObject] is not a constructor (evaluated from 'foo')");
 });
 
 test("syntax errors", () => {

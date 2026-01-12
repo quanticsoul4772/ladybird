@@ -18,6 +18,7 @@
 #include <LibWeb/HTML/ActivateTab.h>
 #include <LibWeb/HTML/HistoryHandlingBehavior.h>
 #include <LibWeb/HTML/InitialInsertion.h>
+#include <LibWeb/HTML/NavigationObserver.h>
 #include <LibWeb/HTML/NavigationParams.h>
 #include <LibWeb/HTML/POSTResource.h>
 #include <LibWeb/HTML/RenderingThread.h>
@@ -118,11 +119,12 @@ public:
     Variant<Empty, Traversal, String> ongoing_navigation() const { return m_ongoing_navigation; }
     void set_ongoing_navigation(Variant<Empty, Traversal, String> ongoing_navigation);
 
-    WebIDL::ExceptionOr<void> populate_session_history_entry_document(
+    void populate_session_history_entry_document(
         GC::Ptr<SessionHistoryEntry> entry,
         SourceSnapshotParams const& source_snapshot_params,
         TargetSnapshotParams const& target_snapshot_params,
         UserNavigationInvolvement user_involvement,
+        NonnullRefPtr<Core::Promise<Empty>> signal_to_continue_session_history_processing,
         Optional<String> navigation_id = {},
         NavigationParamsVariant navigation_params = Navigable::NullOrError {},
         ContentSecurityPolicy::Directives::Directive::NavigationType csp_navigation_type = ContentSecurityPolicy::Directives::Directive::NavigationType::Other,
@@ -263,7 +265,7 @@ private:
 
     GC::Ref<Page> m_page;
 
-    HashTable<GC::Ref<NavigationObserver>> m_navigation_observers;
+    NavigationObserver::NavigationObserversList m_navigation_observers;
 
     bool m_has_been_destroyed { false };
 

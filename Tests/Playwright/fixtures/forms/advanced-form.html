@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Form Features</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .test-section h2 {
+            font-size: 18px;
+            color: #667eea;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            padding: 8px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        input:disabled,
+        select:disabled,
+        textarea:disabled {
+            background: #f5f5f5;
+            cursor: not-allowed;
+            color: #999;
+        }
+
+        input[readonly],
+        textarea[readonly] {
+            background: #f9f9f9;
+            cursor: default;
+        }
+
+        fieldset {
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        fieldset[disabled] {
+            opacity: 0.6;
+            pointer-events: none;
+        }
+
+        legend {
+            padding: 0 10px;
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .fieldset-group {
+            margin-bottom: 15px;
+        }
+
+        .fieldset-group input {
+            margin-bottom: 10px;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-right: 10px;
+        }
+
+        button:hover {
+            background: #764ba2;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .result {
+            background: #f9f9f9;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .result.success {
+            border-left: 4px solid #51cf66;
+            background: #f1fdf4;
+        }
+
+        .note {
+            background: #e7f5ff;
+            padding: 10px;
+            border-left: 4px solid #0066cc;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #333;
+        }
+
+        .form-controls-section {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .form-controls-section button {
+            flex: 1;
+            min-width: 120px;
+            margin: 0;
+        }
+
+        .data-display {
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Advanced Form Features Test Suite</h1>
+
+        <!-- Fieldset and Legend -->
+        <div class="test-section">
+            <h2>Fieldset and Legend</h2>
+            <form id="form-fieldset">
+                <fieldset id="fieldset-enabled">
+                    <legend>Contact Information</legend>
+                    <div class="fieldset-group">
+                        <label for="fs-name">Name:</label>
+                        <input type="text" id="fs-name" name="name" value="">
+                    </div>
+                    <div class="fieldset-group">
+                        <label for="fs-email">Email:</label>
+                        <input type="email" id="fs-email" name="email" value="">
+                    </div>
+                </fieldset>
+
+                <fieldset id="fieldset-disabled" disabled>
+                    <legend>Address (Disabled)</legend>
+                    <div class="fieldset-group">
+                        <label for="fs-street">Street:</label>
+                        <input type="text" id="fs-street" name="street" value="">
+                    </div>
+                    <div class="fieldset-group">
+                        <label for="fs-city">City:</label>
+                        <input type="text" id="fs-city" name="city" value="">
+                    </div>
+                </fieldset>
+
+                <div class="form-controls-section">
+                    <button type="button" id="toggle-fieldset">Toggle Address Fieldset</button>
+                    <button type="submit">Submit</button>
+                </div>
+                <div id="fieldset-result" class="result"></div>
+            </form>
+            <div class="note">The Address fieldset is initially disabled - try toggling it above.</div>
+        </div>
+
+        <!-- Disabled and Readonly -->
+        <div class="test-section">
+            <h2>Disabled and Readonly Attributes</h2>
+            <form id="form-disabled">
+                <div class="form-group">
+                    <label for="disabled-input">Disabled Input (cannot interact):</label>
+                    <input type="text" id="disabled-input" name="disabled" value="Cannot change this" disabled>
+                </div>
+
+                <div class="form-group">
+                    <label for="readonly-input">Readonly Input (can select, cannot edit):</label>
+                    <input type="text" id="readonly-input" name="readonly" value="Can select but not edit" readonly>
+                </div>
+
+                <div class="form-group">
+                    <label for="normal-input">Normal Input (fully interactive):</label>
+                    <input type="text" id="normal-input" name="normal" value="Fully editable">
+                </div>
+
+                <button type="submit" id="disabled-submit">Submit</button>
+                <div id="disabled-result" class="result"></div>
+            </form>
+            <div class="note">Disabled fields are not submitted; readonly fields are submitted with their value.</div>
+        </div>
+
+        <!-- Form Attribute Binding -->
+        <div class="test-section">
+            <h2>Form Attribute Binding (Elements Outside Form)</h2>
+            <form id="main-form"></form>
+
+            <!-- These elements are outside the form but associated via form attribute -->
+            <div class="form-group">
+                <label for="outside-text">Text Field (outside form):</label>
+                <input type="text" id="outside-text" name="outside_field" value="Associated via form attribute" form="main-form">
+            </div>
+
+            <div class="form-group">
+                <label for="outside-email">Email Field (outside form):</label>
+                <input type="email" id="outside-email" name="outside_email" value="test@example.com" form="main-form">
+            </div>
+
+            <!-- Buttons outside form associated via form attribute -->
+            <div class="form-controls-section">
+                <button type="submit" form="main-form" id="outside-submit">Submit Form</button>
+                <button type="reset" form="main-form" id="outside-reset">Reset Form</button>
+            </div>
+
+            <div id="form-binding-result" class="result"></div>
+            <div class="note">The inputs and buttons are defined OUTSIDE the form element but are associated using form="main-form".</div>
+        </div>
+
+        <!-- FormAction Override -->
+        <div class="test-section">
+            <h2>FormAction Override (Different Submit Actions)</h2>
+            <form id="form-actions" action="/default-action">
+                <div class="form-group">
+                    <label for="action-field">Field:</label>
+                    <input type="text" id="action-field" name="data" value="test-data">
+                </div>
+
+                <div class="form-controls-section">
+                    <button type="submit" id="save-btn" formaction="/save-action" name="action" value="save">Save (formaction=/save-action)</button>
+                    <button type="submit" id="delete-btn" formaction="/delete-action" name="action" value="delete">Delete (formaction=/delete-action)</button>
+                    <button type="submit" id="publish-btn" formaction="/publish-action" name="action" value="publish">Publish (formaction=/publish-action)</button>
+                    <button type="submit" id="default-btn">Default Action</button>
+                </div>
+
+                <div id="actions-result" class="result"></div>
+            </form>
+            <div class="note">Each button can override the form action - useful for multi-action forms.</div>
+        </div>
+
+        <!-- FormMethod Override -->
+        <div class="test-section">
+            <h2>FormMethod Override</h2>
+            <form id="form-methods" method="POST">
+                <div class="form-group">
+                    <label for="method-field">Field:</label>
+                    <input type="text" id="method-field" name="data" value="test">
+                </div>
+
+                <div class="form-controls-section">
+                    <button type="submit" id="post-btn" formmethod="POST">POST (default)</button>
+                    <button type="submit" id="get-btn" formmethod="GET">GET (override)</button>
+                </div>
+
+                <div id="methods-result" class="result"></div>
+            </form>
+            <div class="note">The form uses POST by default, but individual buttons can override it.</div>
+        </div>
+
+        <!-- FormData API -->
+        <div class="test-section">
+            <h2>FormData API</h2>
+            <form id="form-data">
+                <div class="form-group">
+                    <label for="fd-name">Name:</label>
+                    <input type="text" id="fd-name" name="name" value="John Doe">
+                </div>
+
+                <div class="form-group">
+                    <label for="fd-email">Email:</label>
+                    <input type="email" id="fd-email" name="email" value="john@example.com">
+                </div>
+
+                <div class="form-group">
+                    <label>Interests:</label>
+                    <label><input type="checkbox" name="interests" value="sports" checked> Sports</label>
+                    <label><input type="checkbox" name="interests" value="music" checked> Music</label>
+                    <label><input type="checkbox" name="interests" value="reading"> Reading</label>
+                </div>
+
+                <input type="hidden" name="csrf_token" value="abc123xyz">
+
+                <div class="form-controls-section">
+                    <button type="button" id="form-data-btn">Get Form Data</button>
+                    <button type="button" id="form-data-entries-btn">Get Entries</button>
+                </div>
+
+                <div id="formdata-result" class="data-display"></div>
+            </form>
+            <div class="note">Click buttons above to see FormData API in action (doesn't require form submission).</div>
+        </div>
+
+        <!-- Autocomplete -->
+        <div class="test-section">
+            <h2>Autocomplete Attribute</h2>
+            <form id="form-autocomplete">
+                <div class="form-group">
+                    <label for="ac-name">Full Name:</label>
+                    <input type="text" id="ac-name" name="name" autocomplete="name">
+                </div>
+
+                <div class="form-group">
+                    <label for="ac-email">Email:</label>
+                    <input type="email" id="ac-email" name="email" autocomplete="email">
+                </div>
+
+                <div class="form-group">
+                    <label for="ac-username">Username:</label>
+                    <input type="text" id="ac-username" name="username" autocomplete="username">
+                </div>
+
+                <div class="form-group">
+                    <label for="ac-password">Password:</label>
+                    <input type="password" id="ac-password" name="password" autocomplete="current-password">
+                </div>
+
+                <div class="form-group">
+                    <label for="ac-tel">Phone:</label>
+                    <input type="tel" id="ac-tel" name="tel" autocomplete="tel">
+                </div>
+
+                <div class="form-group">
+                    <label for="ac-url">Website:</label>
+                    <input type="url" id="ac-url" name="url" autocomplete="url">
+                </div>
+
+                <div class="form-group">
+                    <label for="ac-cc">Credit Card:</label>
+                    <input type="text" id="ac-cc" name="cc" autocomplete="cc-number" placeholder="1234 5678 9012 3456">
+                </div>
+
+                <button type="submit">Submit</button>
+                <div id="autocomplete-result" class="result"></div>
+            </form>
+            <div class="note">Autocomplete hints help browsers and password managers fill in the correct information.</div>
+        </div>
+
+        <!-- Multiple Forms in One Page -->
+        <div class="test-section">
+            <h2>Multiple Independent Forms</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div>
+                    <h3 style="color: #667eea; font-size: 14px; margin-bottom: 10px;">Form A</h3>
+                    <form id="form-a">
+                        <div class="form-group">
+                            <label for="a-field">Field A:</label>
+                            <input type="text" id="a-field" name="field_a" value="">
+                        </div>
+                        <button type="submit">Submit Form A</button>
+                        <div id="a-result" class="result"></div>
+                    </form>
+                </div>
+
+                <div>
+                    <h3 style="color: #764ba2; font-size: 14px; margin-bottom: 10px;">Form B</h3>
+                    <form id="form-b">
+                        <div class="form-group">
+                            <label for="b-field">Field B:</label>
+                            <input type="text" id="b-field" name="field_b" value="">
+                        </div>
+                        <button type="submit">Submit Form B</button>
+                        <div id="b-result" class="result"></div>
+                    </form>
+                </div>
+            </div>
+            <div class="note">Each form is independent and can be submitted separately.</div>
+        </div>
+    </div>
+
+    <script>
+        // Fieldset toggle
+        document.getElementById('toggle-fieldset').addEventListener('click', function() {
+            const fieldset = document.getElementById('fieldset-disabled');
+            fieldset.disabled = !fieldset.disabled;
+            this.textContent = fieldset.disabled ? 'Enable Address' : 'Disable Address';
+        });
+
+        // Fieldset form submission
+        document.getElementById('form-fieldset').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const resultDiv = document.getElementById('fieldset-result');
+            resultDiv.className = 'result success';
+            resultDiv.textContent = '✓ Form submitted successfully!';
+        });
+
+        // Disabled form submission
+        document.getElementById('form-disabled').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const data = Object.fromEntries(formData);
+            const resultDiv = document.getElementById('disabled-result');
+            resultDiv.className = 'result success';
+            resultDiv.textContent = '✓ Submitted data:\n' + JSON.stringify(data, null, 2);
+        });
+
+        // Form binding
+        document.getElementById('main-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const data = Object.fromEntries(formData);
+            const resultDiv = document.getElementById('form-binding-result');
+            resultDiv.className = 'result success';
+            resultDiv.textContent = '✓ Form binding works! Data:\n' + JSON.stringify(data, null, 2);
+        });
+
+        // Form actions
+        document.getElementById('form-actions').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const resultDiv = document.getElementById('actions-result');
+            const submitter = e.submitter;
+            const action = submitter?.getAttribute('formaction') || this.action;
+            resultDiv.className = 'result success';
+            resultDiv.textContent = `✓ Submitted to action: ${action}`;
+        });
+
+        // Form methods
+        document.getElementById('form-methods').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const resultDiv = document.getElementById('methods-result');
+            const submitter = e.submitter;
+            const method = submitter?.getAttribute('formmethod') || this.method;
+            resultDiv.className = 'result success';
+            resultDiv.textContent = `✓ Using method: ${method}`;
+        });
+
+        // FormData API
+        document.getElementById('form-data-btn').addEventListener('click', function() {
+            const form = document.getElementById('form-data');
+            const formData = new FormData(form);
+            const result = {};
+
+            formData.forEach((value, key) => {
+                if (result[key]) {
+                    if (Array.isArray(result[key])) {
+                        result[key].push(value);
+                    } else {
+                        result[key] = [result[key], value];
+                    }
+                } else {
+                    result[key] = value;
+                }
+            });
+
+            document.getElementById('formdata-result').textContent = JSON.stringify(result, null, 2);
+        });
+
+        document.getElementById('form-data-entries-btn').addEventListener('click', function() {
+            const form = document.getElementById('form-data');
+            const formData = new FormData(form);
+            const entries = Array.from(formData.entries());
+            document.getElementById('formdata-result').textContent = JSON.stringify(entries, null, 2);
+        });
+
+        // Autocomplete form
+        document.getElementById('form-autocomplete').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const resultDiv = document.getElementById('autocomplete-result');
+            resultDiv.className = 'result success';
+            resultDiv.textContent = '✓ Form submitted with autocomplete hints!';
+        });
+
+        // Multiple forms
+        document.getElementById('form-a').addEventListener('submit', function(e) {
+            e.preventDefault();
+            document.getElementById('a-result').className = 'result success';
+            document.getElementById('a-result').textContent = '✓ Form A submitted!';
+        });
+
+        document.getElementById('form-b').addEventListener('submit', function(e) {
+            e.preventDefault();
+            document.getElementById('b-result').className = 'result success';
+            document.getElementById('b-result').textContent = '✓ Form B submitted!';
+        });
+
+        // Store state for testing
+        window.__advancedFormState = {
+            formCount: document.querySelectorAll('form').length,
+            fieldsetCount: document.querySelectorAll('fieldset').length,
+            disabledFieldsetCount: document.querySelectorAll('fieldset[disabled]').length,
+            disabledInputCount: document.querySelectorAll('input[disabled]').length,
+            readonlyInputCount: document.querySelectorAll('input[readonly]').length,
+            buttonsWithFormaction: document.querySelectorAll('[formaction]').length,
+            buttonsWithFormmethod: document.querySelectorAll('[formmethod]').length,
+            fieldsWithFormAttribute: document.querySelectorAll('[form]').length
+        };
+
+        console.log('Advanced form state:', window.__advancedFormState);
+    </script>
+</body>
+</html>

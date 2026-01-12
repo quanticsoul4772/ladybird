@@ -123,7 +123,7 @@ ThrowCompletionOr<Value> perform_shadow_realm_eval(VM& vm, Value source, Realm& 
     // 2. Perform the following substeps in an implementation-defined order, possibly interleaving parsing and error detection:
 
     // a. Let script be ParseText(StringToCodePoints(sourceText), Script).
-    auto parser = Parser(Lexer(source_text->utf8_string_view()), Program::Type::Script, Parser::EvalInitialState {});
+    auto parser = Parser(Lexer(SourceCode::create({}, source_text->utf16_string())), Program::Type::Script, Parser::EvalInitialState {});
     auto program = parser.parse_program();
 
     // b. If script is a List of errors, throw a SyntaxError exception.
@@ -175,12 +175,11 @@ ThrowCompletionOr<Value> perform_shadow_realm_eval(VM& vm, Value source, Realm& 
     // 11. If result.[[Type]] is normal, then
     if (!eval_result.is_throw_completion()) {
         // a. Set result to the result of evaluating body.
-        auto result_and_return_register = vm.bytecode_interpreter().run_executable(*executable, {});
-        if (result_and_return_register.value.is_error()) {
-            result = result_and_return_register.value.release_error();
+        auto result_or_error = vm.bytecode_interpreter().run_executable(*eval_context, *executable, {});
+        if (result_or_error.is_error()) {
+            result = result_or_error.release_error();
         } else {
-            // Resulting value is in the accumulator.
-            result = result_and_return_register.return_register_value.is_special_empty_value() ? js_undefined() : result_and_return_register.return_register_value;
+            result = result_or_error.value();
         }
     }
 
@@ -341,9 +340,6 @@ NonnullOwnPtr<ExecutionContext> get_shadow_realm_context(Realm& shadow_realm, bo
 
     // 10. Set context's PrivateEnvironment to null.
     context->private_environment = nullptr;
-
-    // Non-standard
-    context->is_strict_mode = strict_eval;
 
     // 11. Return context.
     return context;

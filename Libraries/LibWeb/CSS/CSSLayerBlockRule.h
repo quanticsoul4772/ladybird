@@ -24,13 +24,14 @@ public:
 
     FlyString const& name() const { return m_name; }
     FlyString const& internal_name() const { return m_name_internal; }
-    FlyString internal_qualified_name(Badge<StyleComputer>) const;
+    FlyString internal_qualified_name(Badge<StyleScope>) const;
 
 private:
     CSSLayerBlockRule(JS::Realm&, FlyString name, CSSRuleList&);
 
     virtual void initialize(JS::Realm&) override;
     virtual String serialized() const override;
+    virtual void dump(StringBuilder&, int indent_levels) const override;
 
     FlyString m_name;
     FlyString m_name_internal;

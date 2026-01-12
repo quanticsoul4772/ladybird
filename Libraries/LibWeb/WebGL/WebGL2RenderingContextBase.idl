@@ -292,7 +292,7 @@ interface mixin WebGL2RenderingContextBase {
     // MapBufferRange, in particular its read-only and write-only modes,
     // can not be exposed safely to JavaScript. GetBufferSubData
     // replaces it for the purpose of fetching data back from the GPU.
-    [FIXME] undefined getBufferSubData(GLenum target, GLintptr srcByteOffset, [AllowShared] ArrayBufferView dstBuffer, optional unsigned long long dstOffset = 0, optional GLuint length = 0);
+    undefined getBufferSubData(GLenum target, GLintptr srcByteOffset, [AllowShared] ArrayBufferView dstBuffer, optional unsigned long long dstOffset = 0, optional GLuint length = 0);
 
     // Framebuffer objects
     undefined blitFramebuffer(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
@@ -418,7 +418,7 @@ interface mixin WebGL2RenderingContextBase {
     undefined bindBufferBase(GLenum target, GLuint index, WebGLBuffer? buffer);
     undefined bindBufferRange(GLenum target, GLuint index, WebGLBuffer? buffer, GLintptr offset, GLsizeiptr size);
     [FIXME] any getIndexedParameter(GLenum target, GLuint index);
-    [FIXME] sequence<GLuint>? getUniformIndices(WebGLProgram program, sequence<DOMString> uniformNames);
+    sequence<GLuint>? getUniformIndices(WebGLProgram program, sequence<DOMString> uniformNames);
     any getActiveUniforms(WebGLProgram program, sequence<GLuint> uniformIndices, GLenum pname);
     GLuint getUniformBlockIndex(WebGLProgram program, DOMString uniformBlockName);
     any getActiveUniformBlockParameter(WebGLProgram program, GLuint uniformBlockIndex, GLenum pname);

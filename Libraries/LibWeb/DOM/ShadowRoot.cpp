@@ -23,6 +23,7 @@ GC_DEFINE_ALLOCATOR(ShadowRoot);
 ShadowRoot::ShadowRoot(Document& document, Element& host, Bindings::ShadowRootMode mode)
     : DocumentFragment(document)
     , m_mode(mode)
+    , m_style_scope(*this)
 {
     document.register_shadow_root({}, *this);
     set_host(&host);
@@ -79,7 +80,7 @@ WebIDL::ExceptionOr<void> ShadowRoot::set_inner_html(TrustedTypes::TrustedHTMLOr
         TrustedTypes::TrustedTypeName::TrustedHTML,
         HTML::relevant_global_object(*this),
         value,
-        TrustedTypes::InjectionSink::ShadowRootinnerHTML,
+        TrustedTypes::InjectionSink::ShadowRoot_innerHTML,
         TrustedTypes::Script.to_string()));
 
     // 2. Let context be this's host.
@@ -127,7 +128,7 @@ WebIDL::ExceptionOr<void> ShadowRoot::set_html_unsafe(TrustedTypes::TrustedHTMLO
         TrustedTypes::TrustedTypeName::TrustedHTML,
         HTML::relevant_global_object(*this),
         html,
-        TrustedTypes::InjectionSink::ShadowRootsetHTMLUnsafe,
+        TrustedTypes::InjectionSink::ShadowRoot_setHTMLUnsafe,
         TrustedTypes::Script.to_string()));
 
     // 2. Unsafely set HTML given this, this's shadow host, and compliantHTML.
@@ -156,6 +157,7 @@ CSS::StyleSheetList const& ShadowRoot::style_sheets() const
 void ShadowRoot::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
+    m_style_scope.visit_edges(visitor);
     visitor.visit(m_style_sheets);
     visitor.visit(m_adopted_style_sheets);
 }
@@ -196,14 +198,25 @@ void ShadowRoot::for_each_css_style_sheet(Function<void(CSS::CSSStyleSheet&)>&& 
     }
 }
 
+void ShadowRoot::for_each_active_css_style_sheet(Function<void(CSS::CSSStyleSheet&)>&& callback) const
+{
+    for (auto& style_sheet : style_sheets().sheets()) {
+        if (!style_sheet->disabled())
+            callback(*style_sheet);
+    }
+
+    if (m_adopted_style_sheets) {
+        m_adopted_style_sheets->for_each<CSS::CSSStyleSheet>([&](auto& style_sheet) {
+            if (!style_sheet.disabled())
+                callback(style_sheet);
+        });
+    }
+}
+
 WebIDL::ExceptionOr<Vector<GC::Ref<Animations::Animation>>> ShadowRoot::get_animations()
 {
-    Vector<GC::Ref<Animations::Animation>> relevant_animations;
-    TRY(for_each_child_of_type_fallible<Element>([&](auto& child) -> WebIDL::ExceptionOr<IterationDecision> {
-        relevant_animations.extend(TRY(child.get_animations(Animations::GetAnimationsOptions { .subtree = true })));
-        return IterationDecision::Continue;
-    }));
-    return relevant_animations;
+    document().update_style();
+    return calculate_get_animations(*this);
 }
 
 ElementByIdMap& ShadowRoot::element_by_id() const

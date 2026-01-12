@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021-2023, Andreas Kling <andreas@ladybird.org>
+ * Copyright (c) 2025, Jelle Raaijmakers <jelle@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -11,6 +12,7 @@
 namespace Web::SVG::AttributeNames {
 
 #define ENUMERATE_SVG_ATTRIBUTES                                          \
+    __ENUMERATE_SVG_ATTRIBUTE(amplitude, "amplitude")                     \
     __ENUMERATE_SVG_ATTRIBUTE(attributeName, "attributeName")             \
     __ENUMERATE_SVG_ATTRIBUTE(attributeType, "attributeType")             \
     __ENUMERATE_SVG_ATTRIBUTE(baseFrequency, "baseFrequency")             \
@@ -22,10 +24,13 @@ namespace Web::SVG::AttributeNames {
     __ENUMERATE_SVG_ATTRIBUTE(contentStyleType, "contentStyleType")       \
     __ENUMERATE_SVG_ATTRIBUTE(cx, "cx")                                   \
     __ENUMERATE_SVG_ATTRIBUTE(cy, "cy")                                   \
+    __ENUMERATE_SVG_ATTRIBUTE(d, "d")                                     \
     __ENUMERATE_SVG_ATTRIBUTE(diffuseConstant, "diffuseConstant")         \
     __ENUMERATE_SVG_ATTRIBUTE(dx, "dx")                                   \
     __ENUMERATE_SVG_ATTRIBUTE(dy, "dy")                                   \
     __ENUMERATE_SVG_ATTRIBUTE(edgeMode, "edgeMode")                       \
+    __ENUMERATE_SVG_ATTRIBUTE(fill, "fill")                               \
+    __ENUMERATE_SVG_ATTRIBUTE(exponent, "exponent")                       \
     __ENUMERATE_SVG_ATTRIBUTE(filterUnits, "filterUnits")                 \
     __ENUMERATE_SVG_ATTRIBUTE(fr, "fr")                                   \
     __ENUMERATE_SVG_ATTRIBUTE(fx, "fx")                                   \
@@ -37,6 +42,7 @@ namespace Web::SVG::AttributeNames {
     __ENUMERATE_SVG_ATTRIBUTE(href, "href")                               \
     __ENUMERATE_SVG_ATTRIBUTE(in, "in")                                   \
     __ENUMERATE_SVG_ATTRIBUTE(in2, "in2")                                 \
+    __ENUMERATE_SVG_ATTRIBUTE(intercept, "intercept")                     \
     __ENUMERATE_SVG_ATTRIBUTE(kernelMatrix, "kernelMatrix")               \
     __ENUMERATE_SVG_ATTRIBUTE(kernelUnitLength, "kernelUnitLength")       \
     __ENUMERATE_SVG_ATTRIBUTE(k1, "k1")                                   \
@@ -70,6 +76,7 @@ namespace Web::SVG::AttributeNames {
     __ENUMERATE_SVG_ATTRIBUTE(preserveAspectRatio, "preserveAspectRatio") \
     __ENUMERATE_SVG_ATTRIBUTE(primitiveUnits, "primitiveUnits")           \
     __ENUMERATE_SVG_ATTRIBUTE(r, "r")                                     \
+    __ENUMERATE_SVG_ATTRIBUTE(radius, "radius")                           \
     __ENUMERATE_SVG_ATTRIBUTE(refX, "refX")                               \
     __ENUMERATE_SVG_ATTRIBUTE(refY, "refY")                               \
     __ENUMERATE_SVG_ATTRIBUTE(repeatCount, "repeatCount")                 \
@@ -77,8 +84,10 @@ namespace Web::SVG::AttributeNames {
     __ENUMERATE_SVG_ATTRIBUTE(requiredExtensions, "requiredExtensions")   \
     __ENUMERATE_SVG_ATTRIBUTE(requiredFeatures, "requiredFeatures")       \
     __ENUMERATE_SVG_ATTRIBUTE(result, "result")                           \
+    __ENUMERATE_SVG_ATTRIBUTE(rotate, "rotate")                           \
     __ENUMERATE_SVG_ATTRIBUTE(rx, "rx")                                   \
     __ENUMERATE_SVG_ATTRIBUTE(ry, "ry")                                   \
+    __ENUMERATE_SVG_ATTRIBUTE(slope, "slope")                             \
     __ENUMERATE_SVG_ATTRIBUTE(specularConstant, "specularConstant")       \
     __ENUMERATE_SVG_ATTRIBUTE(specularExponent, "specularExponent")       \
     __ENUMERATE_SVG_ATTRIBUTE(spreadMethod, "spreadMethod")               \
@@ -104,6 +113,7 @@ namespace Web::SVG::AttributeNames {
     __ENUMERATE_SVG_ATTRIBUTE(x2, "x2")                                   \
     __ENUMERATE_SVG_ATTRIBUTE(xChannelSelector, "xChannelSelector")       \
     __ENUMERATE_SVG_ATTRIBUTE(xlink_href, "xlink:href")                   \
+    __ENUMERATE_SVG_ATTRIBUTE(xmlns, "xmlns")                             \
     __ENUMERATE_SVG_ATTRIBUTE(y, "y")                                     \
     __ENUMERATE_SVG_ATTRIBUTE(y1, "y1")                                   \
     __ENUMERATE_SVG_ATTRIBUTE(y2, "y2")                                   \

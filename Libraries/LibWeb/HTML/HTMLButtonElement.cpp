@@ -5,6 +5,8 @@
  */
 
 #include <LibWeb/Bindings/HTMLButtonElementPrototype.h>
+#include <LibWeb/CSS/ComputedProperties.h>
+#include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/HTML/CommandEvent.h>
@@ -27,6 +29,23 @@ void HTMLButtonElement::initialize(JS::Realm& realm)
 {
     WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLButtonElement);
     Base::initialize(realm);
+}
+
+void HTMLButtonElement::adjust_computed_style(CSS::ComputedProperties& style)
+{
+    // https://html.spec.whatwg.org/multipage/rendering.html#button-layout
+    // If the computed value of 'display' is 'inline-grid', 'grid', 'inline-flex', 'flex', 'none', or 'contents', then behave as the computed value.
+    auto display = style.display();
+    if (display.is_flex_inside() || display.is_grid_inside() || display.is_none() || display.is_contents()) {
+        // No-op
+    } else if (display.is_inline_outside()) {
+        // Otherwise, if the computed value of 'display' is a value such that the outer display type is 'inline', then behave as 'inline-block'.
+        // AD-HOC: See https://github.com/whatwg/html/issues/11857
+        style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::InlineBlock)));
+    } else {
+        // Otherwise, behave as 'flow-root'.
+        style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::FlowRoot)));
+    }
 }
 
 HTMLButtonElement::TypeAttributeState HTMLButtonElement::type_state() const
@@ -74,21 +93,21 @@ String HTMLButtonElement::type_for_bindings() const
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-button-type
-WebIDL::ExceptionOr<void> HTMLButtonElement::set_type_for_bindings(String const& type)
+void HTMLButtonElement::set_type_for_bindings(String const& type)
 {
     // The type setter steps are to set the type content attribute to the given value.
-    return set_attribute(HTML::AttributeNames::type, type);
+    set_attribute_value(HTML::AttributeNames::type, type);
 }
 
 void HTMLButtonElement::form_associated_element_attribute_changed(FlyString const& name, Optional<String> const&, Optional<String> const& value, Optional<FlyString> const& namespace_)
 {
-    PopoverInvokerElement::associated_attribute_changed(name, value, namespace_);
+    PopoverTargetAttributes::associated_attribute_changed(name, value, namespace_);
 }
 
 void HTMLButtonElement::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    PopoverInvokerElement::visit_edges(visitor);
+    PopoverTargetAttributes::visit_edges(visitor);
     visitor.visit(m_command_for_element);
 }
 
@@ -135,9 +154,9 @@ bool HTMLButtonElement::has_activation_behavior() const
     return true;
 }
 
+// https://html.spec.whatwg.org/multipage/form-elements.html#the-button-element:activation-behaviour
 void HTMLButtonElement::activation_behavior(DOM::Event const& event)
 {
-    // https://html.spec.whatwg.org/multipage/form-elements.html#the-button-element:activation-behaviour
     // 1. If element is disabled, then return.
     if (!enabled())
         return;
@@ -198,19 +217,22 @@ void HTMLButtonElement::activation_behavior(DOM::Event const& event)
             // 1. Assert: target's namespace is the HTML namespace.
             VERIFY(target->namespace_uri() == Namespace::HTML);
 
-            // 2. If this standard does not define is valid invoker command steps for target's local name, then return.
-            // 3. Otherwise, if the result of running target's corresponding is valid invoker command steps given command is false, then return.
-            if (!target->is_valid_invoker_command(command))
+            // 2. If this standard does not define is valid command steps for target's local name, then return.
+            // 3. Otherwise, if the result of running target's corresponding is valid command steps given command is false, then return.
+            if (!target->is_valid_command(command))
                 return;
         }
 
-        // 5. Let continue be the result of firing an event named command at target, using CommandEvent, with its command attribute initialized to command, its source attribute initialized to element, and its cancelable and composed attributes initialized to true.
-        // SPEC-NOTE: DOM standard issue #1328 tracks how to better standardize associated event data in a way which makes sense on Events. Currently an event attribute initialized to a value cannot also have a getter, and so an internal slot (or map of additional fields) is required to properly specify this.
+        // 5. Let continue be the result of firing an event named command at target, using CommandEvent, with its
+        //    command attribute initialized to command, its source attribute initialized to element, and its cancelable
+        //    attribute initialized to true.
+        // NOTE: DOM standard issue #1328 tracks how to better standardize associated event data in a way which makes
+        //       sense on Events. Currently an event attribute initialized to a value cannot also have a getter, and so
+        //       an internal slot (or map of additional fields) is required to properly specify this.
         CommandEventInit event_init {};
         event_init.command = command;
         event_init.source = this;
         event_init.cancelable = true;
-        event_init.composed = true;
 
         auto event = CommandEvent::create(realm(), HTML::EventNames::command, move(event_init));
         event->set_is_trusted(true);
@@ -261,16 +283,16 @@ void HTMLButtonElement::activation_behavior(DOM::Event const& event)
             }
         }
 
-        // 12. Otherwise, if this standard defines invoker command steps for target's local name,
-        //     then run the corresponding invoker command steps given target, element, and command.
+        // 12. Otherwise, if this standard defines command steps for target's local name,
+        //     then run the corresponding command steps given target, element, and command.
         else {
-            target->invoker_command_steps(*this, command);
+            target->command_steps(*this, command);
         }
     }
 
     // 6. Otherwise, run the popover target attribute activation behavior given element and event's target.
     else if (event.target() && event.target()->is_dom_node())
-        PopoverInvokerElement::popover_target_activation_behaviour(*this, as<DOM::Node>(*event.target()));
+        PopoverTargetAttributes::popover_target_activation_behaviour(*this, as<DOM::Node>(*event.target()));
 }
 
 bool HTMLButtonElement::is_focusable() const
@@ -320,9 +342,9 @@ String HTMLButtonElement::command() const
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#the-button-element:dom-button-command-2
-WebIDL::ExceptionOr<void> HTMLButtonElement::set_command(String const& value)
+void HTMLButtonElement::set_command(String const& value)
 {
-    return set_attribute(AttributeNames::command, value);
+    set_attribute_value(AttributeNames::command, value);
 }
 
 }

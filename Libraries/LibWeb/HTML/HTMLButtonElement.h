@@ -9,7 +9,7 @@
 #include <LibWeb/ARIA/Roles.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/HTMLElement.h>
-#include <LibWeb/HTML/PopoverInvokerElement.h>
+#include <LibWeb/HTML/PopoverTargetAttributes.h>
 
 namespace Web::HTML {
 
@@ -22,7 +22,7 @@ namespace Web::HTML {
 class HTMLButtonElement final
     : public HTMLElement
     , public FormAssociatedElement
-    , public PopoverInvokerElement {
+    , public PopoverTargetAttributes {
     WEB_PLATFORM_OBJECT(HTMLButtonElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLButtonElement);
     FORM_ASSOCIATED_ELEMENT(HTMLElement, HTMLButtonElement)
@@ -31,6 +31,7 @@ public:
     virtual ~HTMLButtonElement() override;
 
     virtual void initialize(JS::Realm&) override;
+    virtual void adjust_computed_style(CSS::ComputedProperties&) override;
 
     enum class TypeAttributeState {
 #define __ENUMERATE_HTML_BUTTON_TYPE_ATTRIBUTE(_, state) state,
@@ -40,7 +41,7 @@ public:
 
     TypeAttributeState type_state() const;
     String type_for_bindings() const;
-    WebIDL::ExceptionOr<void> set_type_for_bindings(String const&);
+    void set_type_for_bindings(String const&);
 
     virtual void form_associated_element_attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
 
@@ -80,7 +81,7 @@ public:
     virtual void activation_behavior(DOM::Event const&) override;
 
     String command() const;
-    WebIDL::ExceptionOr<void> set_command(String const&);
+    void set_command(String const&);
 
     GC::Ptr<DOM::Element> command_for_element() { return m_command_for_element; }
     void set_command_for_element(GC::Ptr<DOM::Element> value) { m_command_for_element = value; }

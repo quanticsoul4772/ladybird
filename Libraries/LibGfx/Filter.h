@@ -9,7 +9,7 @@
 #include <AK/NonnullOwnPtr.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/CompositingAndBlendingOperator.h>
-#include <LibGfx/ImmutableBitmap.h>
+#include <LibGfx/Forward.h>
 #include <LibGfx/Rect.h>
 #include <LibGfx/ScalingMode.h>
 
@@ -42,11 +42,14 @@ public:
     static Filter blur(float radius_x, float radius_y, Optional<Filter const&> input = {});
     static Filter color(ColorFilterType type, float amount, Optional<Filter const&> input = {});
     static Filter color_matrix(float matrix[20], Optional<Filter const&> input = {});
+    static Filter color_table(Optional<ReadonlyBytes> a, Optional<ReadonlyBytes> r, Optional<ReadonlyBytes> g, Optional<ReadonlyBytes> b, Optional<Filter const&> input = {});
     static Filter saturate(float value, Optional<Filter const&> input = {});
     static Filter hue_rotate(float angle_degrees, Optional<Filter const&> input = {});
     static Filter image(Gfx::ImmutableBitmap const& bitmap, Gfx::IntRect const& src_rect, Gfx::IntRect const& dest_rect, Gfx::ScalingMode scaling_mode);
     static Filter merge(Vector<Optional<Filter>> const&);
     static Filter offset(float dx, float dy, Optional<Filter const&> input = {});
+    static Filter erode(float radius_x, float radius_y, Optional<Filter> const& input = {});
+    static Filter dilate(float radius_x, float radius_y, Optional<Filter> const& input = {});
 
     FilterImpl const& impl() const;
 

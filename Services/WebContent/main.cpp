@@ -10,6 +10,7 @@
 #include <LibCore/LocalServer.h>
 #include <LibCore/Process.h>
 #include <LibCore/Resource.h>
+#include <LibCore/System.h>
 #include <LibCore/SystemServerTakeover.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Font/PathFontProvider.h>
@@ -35,6 +36,7 @@
 #include <LibWebView/Utilities.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/PageClient.h>
+#include <WebContent/PageHost.h>
 #include <WebContent/WebDriverConnection.h>
 
 #if defined(AK_OS_MACOS)
@@ -45,8 +47,8 @@
 
 static ErrorOr<void> load_content_filters(StringView config_path);
 
-static ErrorOr<void> initialize_resource_loader(GC::Heap&, int request_server_socket);
-static ErrorOr<void> reinitialize_resource_loader(IPC::File const& image_decoder_socket);
+static ErrorOr<void> initialize_resource_loader(GC::Heap&, int request_server_socket, WebContent::ConnectionFromClient* webcontent_client);
+static ErrorOr<void> reinitialize_resource_loader(IPC::File const& image_decoder_socket, WebContent::ConnectionFromClient* webcontent_client);
 
 static ErrorOr<void> initialize_image_decoder(int image_decoder_socket);
 static ErrorOr<void> reinitialize_image_decoder(IPC::File const& image_decoder_socket);
@@ -78,9 +80,10 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     bool expose_internals_object = false;
     bool wait_for_debugger = false;
     bool log_all_js_exceptions = false;
-    bool disable_site_isolation = false;
+    // FIXME: Temporarily disable site isolation by default due to IPC race condition
+    bool disable_site_isolation = true;
     bool enable_idl_tracing = false;
-    bool enable_http_cache = false;
+    bool enable_http_memory_cache = false;
     bool force_cpu_painting = false;
     bool force_fontconfig = false;
     bool collect_garbage_on_every_allocation = false;
@@ -103,7 +106,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     args_parser.add_option(log_all_js_exceptions, "Log all JavaScript exceptions", "log-all-js-exceptions");
     args_parser.add_option(disable_site_isolation, "Disable site isolation", "disable-site-isolation");
     args_parser.add_option(enable_idl_tracing, "Enable IDL tracing", "enable-idl-tracing");
-    args_parser.add_option(enable_http_cache, "Enable HTTP cache", "enable-http-cache");
+    args_parser.add_option(enable_http_memory_cache, "Enable HTTP cache", "enable-http-memory-cache");
     args_parser.add_option(force_cpu_painting, "Force CPU painting", "force-cpu-painting");
     args_parser.add_option(force_fontconfig, "Force using fontconfig for font loading", "force-fontconfig");
     args_parser.add_option(collect_garbage_on_every_allocation, "Collect garbage after every JS heap allocation", "collect-garbage-on-every-allocation");
@@ -146,10 +149,8 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     if (disable_site_isolation)
         WebView::disable_site_isolation();
 
-    if (enable_http_cache) {
-
-        Web::Fetch::Fetching::set_http_cache_enabled(true);
-    }
+    if (enable_http_memory_cache)
+        Web::Fetch::Fetching::set_http_memory_cache_enabled(true);
 
     Web::Painting::set_paint_viewport_scrollbars(!disable_scrollbar_painting);
 
@@ -183,7 +184,12 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     if (collect_garbage_on_every_allocation)
         Web::Bindings::main_thread_vm().heap().set_should_collect_on_every_allocation(true);
 
-    TRY(initialize_resource_loader(Web::Bindings::main_thread_vm().heap(), request_server_socket));
+    // TODO: Mach IPC
+
+    auto webcontent_socket = TRY(Core::take_over_socket_from_system_server("WebContent"sv));
+    auto webcontent_client = WebContent::ConnectionFromClient::construct(make<IPC::Transport>(move(webcontent_socket)));
+
+    TRY(initialize_resource_loader(Web::Bindings::main_thread_vm().heap(), request_server_socket, webcontent_client.ptr()));
 
     if (log_all_js_exceptions) {
         JS::set_log_all_js_exceptions(true);
@@ -197,13 +203,8 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     if (maybe_content_filter_error.is_error())
         dbgln("Failed to load content filters: {}", maybe_content_filter_error.error());
 
-    // TODO: Mach IPC
-
-    auto webcontent_socket = TRY(Core::take_over_socket_from_system_server("WebContent"sv));
-    auto webcontent_client = WebContent::ConnectionFromClient::construct(make<IPC::Transport>(move(webcontent_socket)));
-
-    webcontent_client->on_request_server_connection = [&](auto const& socket_file) {
-        if (auto result = reinitialize_resource_loader(socket_file); result.is_error())
+    webcontent_client->on_request_server_connection = [&, wc_ptr = webcontent_client.ptr()](auto const& socket_file) {
+        if (auto result = reinitialize_resource_loader(socket_file, wc_ptr); result.is_error())
             dbgln("Failed to reinitialize resource loader: {}", result.error());
     };
     webcontent_client->on_image_decoder_connection = [&](auto const& socket_file) {
@@ -238,7 +239,7 @@ static ErrorOr<void> load_content_filters(StringView config_path)
     return {};
 }
 
-ErrorOr<void> initialize_resource_loader(GC::Heap& heap, int request_server_socket)
+ErrorOr<void> initialize_resource_loader(GC::Heap& heap, int request_server_socket, WebContent::ConnectionFromClient* webcontent_client)
 {
     // TODO: Mach IPC
     auto socket = TRY(Core::LocalSocket::adopt_fd(request_server_socket));
@@ -250,17 +251,42 @@ ErrorOr<void> initialize_resource_loader(GC::Heap& heap, int request_server_sock
     request_client->transport().set_peer_pid(response->peer_pid());
 #endif
 
+    // Set up traffic alert callback to route to WebContent PageClient
+    if (webcontent_client) {
+        request_client->on_traffic_alert = [wc_ptr = webcontent_client](u64 page_id, ByteString alert_json) {
+            // Find the page and dispatch the alert
+            if (auto page = wc_ptr->page_host().page(page_id); page.has_value()) {
+                page->page().client().page_did_detect_traffic_alert(alert_json);
+            } else {
+                dbgln("Traffic alert received for non-existent page {}", page_id);
+            }
+        };
+    }
+
     Web::ResourceLoader::initialize(heap, move(request_client));
     return {};
 }
 
-ErrorOr<void> reinitialize_resource_loader(IPC::File const& request_server_socket)
+ErrorOr<void> reinitialize_resource_loader(IPC::File const& request_server_socket, WebContent::ConnectionFromClient* webcontent_client)
 {
     // TODO: Mach IPC
     auto socket = TRY(Core::LocalSocket::adopt_fd(request_server_socket.take_fd()));
     TRY(socket->set_blocking(true));
 
     auto request_client = TRY(try_make_ref_counted<Requests::RequestClient>(make<IPC::Transport>(move(socket))));
+
+    // Set up traffic alert callback to route to WebContent PageClient
+    if (webcontent_client) {
+        request_client->on_traffic_alert = [wc_ptr = webcontent_client](u64 page_id, ByteString alert_json) {
+            // Find the page and dispatch the alert
+            if (auto page = wc_ptr->page_host().page(page_id); page.has_value()) {
+                page->page().client().page_did_detect_traffic_alert(alert_json);
+            } else {
+                dbgln("Traffic alert received for non-existent page {}", page_id);
+            }
+        };
+    }
+
     Web::ResourceLoader::the().set_client(move(request_client));
 
     return {};

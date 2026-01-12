@@ -750,7 +750,7 @@ ThrowCompletionOr<GC::RootVector<Value>> ProxyObject::internal_own_property_keys
     for (auto& key : target_nonconfigurable_keys) {
         // a. If key is not an element of uncheckedResultKeys, throw a TypeError exception.
         if (!unchecked_result_keys.contains_slow(key))
-            return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysSkippedNonconfigurableProperty, key.to_string_without_side_effects());
+            return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysSkippedNonconfigurableProperty, key);
 
         // b. Remove key from uncheckedResultKeys.
         unchecked_result_keys.remove_first_matching([&](auto& value) {
@@ -766,7 +766,7 @@ ThrowCompletionOr<GC::RootVector<Value>> ProxyObject::internal_own_property_keys
     for (auto& key : target_configurable_keys) {
         // a. If key is not an element of uncheckedResultKeys, throw a TypeError exception.
         if (!unchecked_result_keys.contains_slow(key))
-            return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysNonExtensibleSkippedProperty, key.to_string_without_side_effects());
+            return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysNonExtensibleSkippedProperty, key);
 
         // b. Remove key from uncheckedResultKeys.
         unchecked_result_keys.remove_first_matching([&](auto& value) {
@@ -776,7 +776,7 @@ ThrowCompletionOr<GC::RootVector<Value>> ProxyObject::internal_own_property_keys
 
     // 22. If uncheckedResultKeys is not empty, throw a TypeError exception.
     if (!unchecked_result_keys.is_empty())
-        return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysNonExtensibleNewProperty, unchecked_result_keys[0].to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::ProxyOwnPropertyKeysNonExtensibleNewProperty, unchecked_result_keys[0]);
 
     // 23. Return trapResult.
     return { move(trap_result) };
@@ -893,6 +893,11 @@ void ProxyObject::visit_edges(Cell::Visitor& visitor)
 ThrowCompletionOr<void> ProxyObject::get_stack_frame_size(size_t& registers_and_constants_and_locals_count, size_t& argument_count)
 {
     return as<FunctionObject>(*m_target).get_stack_frame_size(registers_and_constants_and_locals_count, argument_count);
+}
+
+Utf16String ProxyObject::name_for_call_stack() const
+{
+    return "(Proxy)"_utf16;
 }
 
 }

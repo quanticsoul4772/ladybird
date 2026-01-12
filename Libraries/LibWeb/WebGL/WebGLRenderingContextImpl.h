@@ -9,9 +9,9 @@
 
 #include <AK/NonnullOwnPtr.h>
 #include <LibGC/Ptr.h>
-#include <LibGfx/Bitmap.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
+#include <LibWeb/WebGL/Types.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 #include <LibWeb/WebIDL/Types.h>
 
@@ -27,28 +27,7 @@ public:
 
     virtual void present() = 0;
     virtual void needs_to_present() = 0;
-    virtual void set_error(GLenum) = 0;
-    void buffer_data(WebIDL::UnsignedLong target, WebIDL::LongLong size, WebIDL::UnsignedLong usage);
-    void buffer_data(WebIDL::UnsignedLong target, GC::Root<WebIDL::BufferSource> data, WebIDL::UnsignedLong usage);
-    void buffer_sub_data(WebIDL::UnsignedLong target, WebIDL::LongLong offset, GC::Root<WebIDL::BufferSource> data);
-    void compressed_tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::UnsignedLong internalformat, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border, GC::Root<WebIDL::ArrayBufferView> data);
-    void compressed_tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, GC::Root<WebIDL::ArrayBufferView> data);
-    void read_pixels(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels);
-    void tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels);
-    void tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source);
-    void tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels);
-    void tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source);
-    void uniform1fv(GC::Root<WebGLUniformLocation> location, Float32List v);
-    void uniform2fv(GC::Root<WebGLUniformLocation> location, Float32List v);
-    void uniform3fv(GC::Root<WebGLUniformLocation> location, Float32List v);
-    void uniform4fv(GC::Root<WebGLUniformLocation> location, Float32List v);
-    void uniform1iv(GC::Root<WebGLUniformLocation> location, Int32List v);
-    void uniform2iv(GC::Root<WebGLUniformLocation> location, Int32List v);
-    void uniform3iv(GC::Root<WebGLUniformLocation> location, Int32List v);
-    void uniform4iv(GC::Root<WebGLUniformLocation> location, Int32List v);
-    void uniform_matrix2fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List value);
-    void uniform_matrix3fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List value);
-    void uniform_matrix4fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List value);
+
     void active_texture(WebIDL::UnsignedLong texture);
     void attach_shader(GC::Root<WebGLProgram> program, GC::Root<WebGLShader> shader);
     void bind_attrib_location(GC::Root<WebGLProgram> program, WebIDL::UnsignedLong index, String name);
@@ -108,10 +87,15 @@ public:
     WebIDL::UnsignedLong get_error();
     JS::Value get_program_parameter(GC::Root<WebGLProgram> program, WebIDL::UnsignedLong pname);
     Optional<String> get_program_info_log(GC::Root<WebGLProgram> program);
+    JS::Value get_renderbuffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname);
     JS::Value get_shader_parameter(GC::Root<WebGLShader> shader, WebIDL::UnsignedLong pname);
     GC::Root<WebGLShaderPrecisionFormat> get_shader_precision_format(WebIDL::UnsignedLong shadertype, WebIDL::UnsignedLong precisiontype);
     Optional<String> get_shader_info_log(GC::Root<WebGLShader> shader);
+    Optional<String> get_shader_source(GC::Root<WebGLShader> shader);
+    JS::Value get_uniform(GC::Root<WebGLProgram> program, GC::Root<WebGLUniformLocation> location);
     GC::Root<WebGLUniformLocation> get_uniform_location(GC::Root<WebGLProgram> program, String name);
+    JS::Value get_vertex_attrib(WebIDL::UnsignedLong index, WebIDL::UnsignedLong pname);
+    WebIDL::LongLong get_vertex_attrib_offset(WebIDL::UnsignedLong index, WebIDL::UnsignedLong pname);
     void hint(WebIDL::UnsignedLong target, WebIDL::UnsignedLong mode);
     bool is_buffer(GC::Root<WebGLBuffer> buffer);
     bool is_enabled(WebIDL::UnsignedLong cap);
@@ -160,7 +144,6 @@ public:
 protected:
     virtual void visit_edges(JS::Cell::Visitor&) override;
 
-private:
     GC::Ref<JS::Realm> m_realm;
     GC::Ptr<WebGLBuffer> m_array_buffer_binding;
     GC::Ptr<WebGLBuffer> m_element_array_buffer_binding;
@@ -169,6 +152,18 @@ private:
     GC::Ptr<WebGLRenderbuffer> m_renderbuffer_binding;
     GC::Ptr<WebGLTexture> m_texture_binding_2d;
     GC::Ptr<WebGLTexture> m_texture_binding_cube_map;
+
+    // FIXME: Those are WebGL2 only but those need to be accessible from shared methods
+    GC::Ptr<WebGLBuffer> m_uniform_buffer_binding;
+    GC::Ptr<WebGLBuffer> m_copy_read_buffer_binding;
+    GC::Ptr<WebGLBuffer> m_copy_write_buffer_binding;
+    GC::Ptr<WebGLBuffer> m_transform_feedback_buffer_binding;
+    GC::Ptr<WebGLBuffer> m_pixel_pack_buffer_binding;
+    GC::Ptr<WebGLBuffer> m_pixel_unpack_buffer_binding;
+    GC::Ptr<WebGLTexture> m_texture_binding_2d_array;
+    GC::Ptr<WebGLTexture> m_texture_binding_3d;
+    GC::Ptr<WebGLTransformFeedback> m_transform_feedback_binding;
+    GC::Ptr<WebGLVertexArrayObject> m_current_vertex_array;
 
     NonnullOwnPtr<OpenGLContext> m_context;
 };

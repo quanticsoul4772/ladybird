@@ -18,7 +18,7 @@ class TransportSocketWindows {
     AK_MAKE_DEFAULT_MOVABLE(TransportSocketWindows);
 
 public:
-    explicit TransportSocketWindows(NonnullOwnPtr<Core::LocalSocket> socket);
+    explicit TransportSocketWindows(NonnullOwnPtr<Core::Socket> socket);
 
     void set_peer_pid(int pid);
     void set_up_read_hook(Function<void()>);
@@ -50,7 +50,7 @@ private:
     ErrorOr<void> transfer(ReadonlyBytes);
 
 private:
-    NonnullOwnPtr<Core::LocalSocket> m_socket;
+    NonnullOwnPtr<Core::Socket> m_socket;
     ByteBuffer m_unprocessed_bytes;
     int m_peer_pid = -1;
 };

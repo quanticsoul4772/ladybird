@@ -4,10 +4,25 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibCore/File.h>
 #include <LibRequests/Request.h>
 #include <LibRequests/RequestClient.h>
 
 namespace Requests {
+
+ErrorOr<NonnullOwnPtr<ReadStream>> ReadStream::create(int reader_fd)
+{
+#if defined(AK_OS_WINDOWS)
+    auto local_socket = TRY(Core::LocalSocket::adopt_fd(reader_fd));
+    auto notifier = local_socket->notifier();
+    VERIFY(notifier);
+    return adopt_own(*new ReadStream(move(local_socket), notifier.release_nonnull()));
+#else
+    auto file = TRY(Core::File::adopt_fd(reader_fd, Core::File::OpenMode::Read));
+    auto notifier = Core::Notifier::construct(reader_fd, Core::Notifier::Type::Read);
+    return adopt_own(*new ReadStream(move(file), move(notifier)));
+#endif
+}
 
 Request::Request(RequestClient& client, i32 request_id)
     : m_client(client)
@@ -37,11 +52,11 @@ void Request::set_request_fd(Badge<Requests::RequestClient>, int fd)
     VERIFY(m_fd == -1);
     m_fd = fd;
 
-    auto notifier = Core::Notifier::construct(fd, Core::Notifier::Type::Read);
-    auto stream = MUST(Core::File::adopt_fd(fd, Core::File::OpenMode::Read));
+    auto read_stream = MUST(ReadStream::create(fd));
+    auto notifier = read_stream->notifier();
     notifier->on_activation = move(m_internal_stream_data->read_notifier->on_activation);
-    m_internal_stream_data->read_notifier = move(notifier);
-    m_internal_stream_data->read_stream = move(stream);
+    m_internal_stream_data->read_notifier = notifier;
+    m_internal_stream_data->read_stream = move(read_stream);
 }
 
 void Request::set_buffered_request_finished_callback(BufferedRequestFinished on_buffered_request_finished)
@@ -51,8 +66,8 @@ void Request::set_buffered_request_finished_callback(BufferedRequestFinished on_
 
     m_internal_buffered_data = make<InternalBufferedData>();
 
-    on_headers_received = [this](auto& headers, auto response_code, auto const& reason_phrase) {
-        m_internal_buffered_data->response_headers = headers;
+    on_headers_received = [this](auto headers, auto response_code, auto const& reason_phrase) {
+        m_internal_buffered_data->response_headers = move(headers);
         m_internal_buffered_data->response_code = move(response_code);
         m_internal_buffered_data->reason_phrase = reason_phrase;
     };
@@ -94,10 +109,10 @@ void Request::did_finish(Badge<RequestClient>, u64 total_size, RequestTimingInfo
         on_finish(total_size, timing_info, network_error);
 }
 
-void Request::did_receive_headers(Badge<RequestClient>, HTTP::HeaderMap const& response_headers, Optional<u32> response_code, Optional<String> const& reason_phrase)
+void Request::did_receive_headers(Badge<RequestClient>, NonnullRefPtr<HTTP::HeaderList> response_headers, Optional<u32> response_code, Optional<String> const& reason_phrase)
 {
     if (on_headers_received)
-        on_headers_received(response_headers, response_code, reason_phrase);
+        on_headers_received(move(response_headers), response_code, reason_phrase);
 }
 
 void Request::did_request_certificates(Badge<RequestClient>)
@@ -117,7 +132,7 @@ void Request::set_up_internal_stream_data(DataReceived on_data_available)
     m_internal_stream_data = make<InternalStreamData>();
     m_internal_stream_data->read_notifier = Core::Notifier::construct(fd(), Core::Notifier::Type::Read);
     if (fd() != -1)
-        m_internal_stream_data->read_stream = MUST(Core::File::adopt_fd(fd(), Core::File::OpenMode::Read));
+        m_internal_stream_data->read_stream = MUST(ReadStream::create(fd()));
 
     auto user_on_finish = move(on_finish);
     on_finish = [this](auto total_size, auto const& timing_info, auto network_error) {
@@ -171,6 +186,11 @@ void Request::set_up_internal_stream_data(DataReceived on_data_available)
         if (m_internal_stream_data->request_done)
             m_internal_stream_data->on_finish();
     };
+}
+
+Request::InternalBufferedData::InternalBufferedData()
+    : response_headers(HTTP::HeaderList::create())
+{
 }
 
 }

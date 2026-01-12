@@ -7,6 +7,9 @@
 
 #pragma once
 
+#include <AK/String.h>
+#include <AK/Time.h>
+#include <AK/Vector.h>
 #include <LibIPC/ProxyConfig.h>
 #include <LibWeb/HTML/AudioPlayState.h>
 #include <UI/Qt/FindInPageWidget.h>
@@ -97,6 +100,7 @@ private:
     LocationEdit* m_location_edit { nullptr };
     WebContentView* m_view { nullptr };
     FindInPageWidget* m_find_in_page { nullptr };
+    QWidget* m_autofill_blocked_banner { nullptr };
     BrowserWindow* m_window { nullptr };
     QString m_title;
     HyperlinkLabel* m_hover_label { nullptr };
@@ -130,6 +134,17 @@ private:
     void open_network_audit_dialog();
 
     QPointer<QDialog> m_dialog;
+
+    // Rate limiting for policy creation
+    struct PolicyCreationEntry {
+        UnixDateTime timestamp;
+        String file_hash;
+    };
+    Vector<PolicyCreationEntry> m_policy_creation_history;
+    static constexpr size_t MAX_POLICIES_PER_MINUTE = 5;
+    static constexpr i64 RATE_LIMIT_WINDOW_SECONDS = 60;
+
+    bool check_policy_rate_limit(String const& file_hash);
 };
 
 }

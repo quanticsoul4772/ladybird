@@ -12,10 +12,12 @@
 #include <AK/JsonObject.h>
 #include <AK/QuickSort.h>
 #include <LibCore/EventLoop.h>
+#include <LibCore/System.h>
 #include <LibGC/Heap.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/SystemTheme.h>
+#include <LibIPC/Limits.h>
 #include <LibJS/Runtime/ConsoleObject.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibUnicode/TimeZone.h>
@@ -33,6 +35,7 @@
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
 #include <LibWeb/Dump.h>
+#include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/SelectedFile.h>
@@ -166,10 +169,15 @@ void ConnectionFromClient::update_screen_rects(u64 page_id, Vector<Web::DevicePi
 
 void ConnectionFromClient::load_url(u64 page_id, URL::URL url)
 {
-    auto page = this->page(page_id);
-    if (!page.has_value())
-        return;
+    dbgln("WebContent::load_url: page_id={}, url={}", page_id, url);
 
+    auto page = this->page(page_id);
+    if (!page.has_value()) {
+        dbgln("WebContent::load_url: ERROR - page_id {} not found!", page_id);
+        return;
+    }
+
+    dbgln("WebContent::load_url: calling page->page().load()");
     page->page().load(url);
 }
 
@@ -387,7 +395,7 @@ void ConnectionFromClient::debug_request(u64 page_id, ByteString request, ByteSt
     }
 
     if (request == "clear-cache") {
-        Web::ResourceLoader::the().clear_cache();
+        Web::Fetch::Fetching::clear_http_memory_cache();
         return;
     }
 
@@ -540,7 +548,7 @@ void ConnectionFromClient::inspect_dom_node(u64 page_id, WebView::DOMNodePropert
     auto serialize_used_fonts = [&]() {
         JsonArray serialized;
 
-        properties->computed_font_list().for_each_font_entry([&](Gfx::FontCascadeList::Entry const& entry) {
+        properties->computed_font_list(node->document().font_computer())->for_each_font_entry([&](Gfx::FontCascadeList::Entry const& entry) {
             auto const& font = *entry.font;
 
             JsonObject font_object;
@@ -770,7 +778,7 @@ void ConnectionFromClient::add_dom_node_attributes(u64 page_id, Web::UniqueNodeI
 
     for (auto const& attribute : attributes) {
         // NOTE: We ignore invalid attributes for now, but we may want to send feedback to the user that this failed.
-        (void)element.set_attribute(attribute.name, attribute.value);
+        element.set_attribute_value(attribute.name, attribute.value);
     }
 
     async_did_finish_editing_dom_node(page_id, element.unique_id());
@@ -792,7 +800,7 @@ void ConnectionFromClient::replace_dom_node_attribute(u64 page_id, Web::UniqueNo
             should_remove_attribute = false;
 
         // NOTE: We ignore invalid attributes for now, but we may want to send feedback to the user that this failed.
-        (void)element.set_attribute(attribute.name, attribute.value);
+        element.set_attribute_value(attribute.name, attribute.value);
     }
 
     if (should_remove_attribute)
@@ -1299,7 +1307,7 @@ void ConnectionFromClient::retrieved_clipboard_entries(u64 page_id, u64 request_
 void ConnectionFromClient::toggle_media_play_state(u64 page_id)
 {
     if (auto page = this->page(page_id); page.has_value())
-        page->page().toggle_media_play_state().release_value_but_fixme_should_propagate_errors();
+        page->page().toggle_media_play_state();
 }
 
 void ConnectionFromClient::toggle_media_mute_state(u64 page_id)
@@ -1311,13 +1319,13 @@ void ConnectionFromClient::toggle_media_mute_state(u64 page_id)
 void ConnectionFromClient::toggle_media_loop_state(u64 page_id)
 {
     if (auto page = this->page(page_id); page.has_value())
-        page->page().toggle_media_loop_state().release_value_but_fixme_should_propagate_errors();
+        page->page().toggle_media_loop_state();
 }
 
 void ConnectionFromClient::toggle_media_controls_state(u64 page_id)
 {
     if (auto page = this->page(page_id); page.has_value())
-        page->page().toggle_media_controls_state().release_value_but_fixme_should_propagate_errors();
+        page->page().toggle_media_controls_state();
 }
 
 void ConnectionFromClient::toggle_page_mute_state(u64 page_id)
@@ -1356,6 +1364,26 @@ void ConnectionFromClient::enable_tor(u64 page_id, ByteString circuit_id)
         return;
     }
 
+    // SECURITY: Validate circuit_id length at IPC boundary to prevent DoS attacks
+    // Defense in depth: validate before forwarding to RequestServer
+    if (circuit_id.length() > IPC::Limits::MaxCircuitIDLength) {
+        dbgln("WebContent::ConnectionFromClient::enable_tor: SECURITY: Circuit ID too long ({} bytes, max {})",
+            circuit_id.length(), IPC::Limits::MaxCircuitIDLength);
+        return;
+    }
+
+    // SECURITY: Validate circuit_id contains only safe characters (alphanumeric, dash, underscore)
+    // Prevents injection attacks and ensures compatibility with Tor
+    if (!circuit_id.is_empty()) {
+        for (char c : circuit_id) {
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '-' || c == '_')) {
+                dbgln("WebContent::ConnectionFromClient::enable_tor: SECURITY: Circuit ID contains invalid character: {}", c);
+                return;
+            }
+        }
+    }
+
     // Forward the Tor enable request to RequestServer via ResourceLoader
     auto request_client = Web::ResourceLoader::the().request_client();
     if (!request_client) {
@@ -1365,6 +1393,7 @@ void ConnectionFromClient::enable_tor(u64 page_id, ByteString circuit_id)
 
     // Call enable_tor on RequestServer via IPC with page_id for per-tab isolation
     // SECURITY: Passing page_id ensures each tab has independent Tor circuit
+    // Note: RequestServer also validates circuit_id (defense in depth)
     request_client->async_enable_tor(page_id, move(circuit_id));
 
     dbgln("WebContent: Enabled Tor for page {} with circuit {}", page_id, circuit_id);
@@ -1479,6 +1508,101 @@ Messages::WebContentServer::GetNetworkAuditResponse ConnectionFromClient::get_ne
     dbgln("WebContent: Retrieved {} audit entries for page {}", response.audit_entries().size(), page_id);
 
     return { response.audit_entries(), response.total_bytes_sent(), response.total_bytes_received() };
+}
+
+void ConnectionFromClient::enforce_security_policy(i32 request_id, ByteString action)
+{
+    // Forward the security policy enforcement to RequestServer via ResourceLoader
+    auto request_client = Web::ResourceLoader::the().request_client();
+    if (!request_client) {
+        dbgln("WebContent::ConnectionFromClient::enforce_security_policy: No RequestClient available");
+        return;
+    }
+
+    // Call enforce_security_policy on RequestServer via IPC
+    // SECURITY: This enforces the user's security decision (block/allow/quarantine)
+    request_client->async_enforce_security_policy(request_id, move(action));
+
+    dbgln("WebContent: Enforced security policy for request {} with action '{}'", request_id, action);
+}
+
+void ConnectionFromClient::form_submission_detected(u64 page_id, String form_origin, String action_origin, bool has_password, bool has_email, bool uses_https)
+{
+    dbgln("WebContent: Form submission detected on page {}", page_id);
+    dbgln("  Form origin: {}", form_origin);
+    dbgln("  Action origin: {}", action_origin);
+    dbgln("  Has password: {}", has_password);
+    dbgln("  Has email: {}", has_email);
+    dbgln("  Uses HTTPS: {}", uses_https);
+
+    // TODO: Send form submission alert to Sentinel via IPC for monitoring
+    // This would typically call into a Sentinel connection to report the form submission
+}
+
+void ConnectionFromClient::credential_alert_action(u64 page_id, String form_origin, String action_origin, String action)
+{
+    dbgln("WebContent: Credential alert action received on page {}", page_id);
+    dbgln("  Form origin: {}", form_origin);
+    dbgln("  Action origin: {}", action_origin);
+    dbgln("  User action: {}", action);
+
+    auto maybe_page = page(page_id);
+    if (!maybe_page.has_value()) {
+        dbgln("WebContent: Cannot find page {} for credential alert action", page_id);
+        return;
+    }
+
+    auto& page_client = maybe_page.value();
+
+    // Check if FormMonitor is initialized
+    auto* monitor = page_client.form_monitor();
+    if (!monitor) {
+        dbgln("WebContent: FormMonitor not initialized, cannot process alert response");
+        return;
+    }
+
+    if (action == "block"sv) {
+        dbgln("WebContent: User chose to BLOCK credential submission from {} to {}", form_origin, action_origin);
+        monitor->block_submission(form_origin, action_origin);
+    } else if (action == "trust"sv) {
+        dbgln("WebContent: User chose to TRUST relationship from {} to {}", form_origin, action_origin);
+        // Store trusted relationship in FormMonitor
+        // FormMonitor will learn this as a trusted relationship
+        monitor->learn_trusted_relationship(form_origin, action_origin);
+    } else if (action == "learn_more"sv) {
+        dbgln("WebContent: User requested LEARN MORE for alert from {} to {}", form_origin, action_origin);
+        // Open help documentation or show detailed alert information
+        // For now, just log the action
+    } else {
+        dbgln("WebContent: Unknown credential alert action: {}", action);
+    }
+}
+
+void ConnectionFromClient::grant_autofill_override(u64 page_id, String form_origin, String action_origin)
+{
+    dbgln("WebContent: Grant autofill override received on page {}", page_id);
+    dbgln("  Form origin: {}", form_origin);
+    dbgln("  Action origin: {}", action_origin);
+
+    auto maybe_page = page(page_id);
+    if (!maybe_page.has_value()) {
+        dbgln("WebContent: Cannot find page {} for autofill override", page_id);
+        return;
+    }
+
+    auto& page_client = maybe_page.value();
+
+    // Check if FormMonitor is initialized
+    auto* monitor = page_client.form_monitor();
+    if (!monitor) {
+        dbgln("WebContent: FormMonitor not initialized, cannot grant autofill override");
+        return;
+    }
+
+    // Grant one-time autofill permission in FormMonitor
+    monitor->grant_autofill_override(form_origin, action_origin);
+
+    dbgln("WebContent: Autofill override granted - next autofill attempt will succeed");
 }
 
 }

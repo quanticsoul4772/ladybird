@@ -10,9 +10,11 @@
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/WebGL2RenderingContextPrototype.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Infra/Strings.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/WebGL/EventNames.h>
 #include <LibWeb/WebGL/Extensions/EXTColorBufferFloat.h>
@@ -58,7 +60,7 @@ JS::ThrowCompletionOr<GC::Ptr<WebGL2RenderingContext>> WebGL2RenderingContext::c
 
 WebGL2RenderingContext::WebGL2RenderingContext(JS::Realm& realm, HTML::HTMLCanvasElement& canvas_element, NonnullOwnPtr<OpenGLContext> context, WebGLContextAttributes context_creation_parameters, WebGLContextAttributes actual_context_parameters)
     : PlatformObject(realm)
-    , WebGL2RenderingContextImpl(realm, move(context))
+    , WebGL2RenderingContextOverloads(realm, move(context))
     , m_canvas_element(canvas_element)
     , m_context_creation_parameters(context_creation_parameters)
     , m_actual_context_parameters(actual_context_parameters)
@@ -109,15 +111,6 @@ void WebGL2RenderingContext::needs_to_present()
     m_canvas_element->paintable()->set_needs_display();
 }
 
-void WebGL2RenderingContext::set_error(GLenum error)
-{
-    auto context_error = glGetError();
-    if (context_error != GL_NO_ERROR)
-        m_error = context_error;
-    else
-        m_error = error;
-}
-
 bool WebGL2RenderingContext::is_context_lost() const
 {
     dbgln_if(WEBGL_CONTEXT_DEBUG, "WebGLRenderingContext::is_context_lost()");
@@ -155,11 +148,15 @@ void WebGL2RenderingContext::allocate_painting_surface_if_needed()
 
 Optional<Vector<String>> WebGL2RenderingContext::get_supported_extensions()
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    m_canvas_element->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getSupportedExtensions"sv);
     return context().get_supported_extensions();
 }
 
 JS::Object* WebGL2RenderingContext::get_extension(String const& name)
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    m_canvas_element->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getExtension"sv);
     // Returns an object if, and only if, name is an ASCII case-insensitive match [HTML] for one of the names returned
     // from getSupportedExtensions; otherwise, returns null. The object returned from getExtension contains any constants
     // or functions provided by the extension. A returned object may have no constants or functions if the extension does
@@ -175,6 +172,11 @@ JS::Object* WebGL2RenderingContext::get_extension(String const& name)
     if (name.equals_ignoring_ascii_case("WEBGL_compressed_texture_s3tc"sv)) {
         if (!m_webgl_compressed_texture_s3tc_extension) {
             m_webgl_compressed_texture_s3tc_extension = MUST(Extensions::WebGLCompressedTextureS3tc::create(realm(), this));
+
+            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_RGB_S3TC_DXT1_EXT);
+            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_RGBA_S3TC_DXT1_EXT);
+            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);
+            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);
         }
 
         VERIFY(m_webgl_compressed_texture_s3tc_extension);
@@ -184,6 +186,11 @@ JS::Object* WebGL2RenderingContext::get_extension(String const& name)
     if (name.equals_ignoring_ascii_case("WEBGL_compressed_texture_s3tc_srgb"sv)) {
         if (!m_webgl_compressed_texture_s3tc_srgb_extension) {
             m_webgl_compressed_texture_s3tc_srgb_extension = MUST(Extensions::WebGLCompressedTextureS3tcSrgb::create(realm(), this));
+
+            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_SRGB_S3TC_DXT1_EXT);
+            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT);
+            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT);
+            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT);
         }
 
         VERIFY(m_webgl_compressed_texture_s3tc_srgb_extension);
@@ -244,6 +251,26 @@ WebIDL::Long WebGL2RenderingContext::drawing_buffer_height() const
 bool WebGL2RenderingContext::ext_texture_filter_anisotropic_extension_enabled() const
 {
     return !!m_ext_texture_filter_anisotropic;
+}
+
+bool WebGL2RenderingContext::angle_instanced_arrays_extension_enabled() const
+{
+    return false;
+}
+
+bool WebGL2RenderingContext::oes_standard_derivatives_extension_enabled() const
+{
+    return false;
+}
+
+bool WebGL2RenderingContext::webgl_draw_buffers_extension_enabled() const
+{
+    return false;
+}
+
+ReadonlySpan<WebIDL::UnsignedLong> WebGL2RenderingContext::enabled_compressed_texture_formats() const
+{
+    return m_enabled_compressed_texture_formats;
 }
 
 }

@@ -152,6 +152,11 @@
 
 namespace JS {
 
+enum class Strict : u8 {
+    No,
+    Yes,
+};
+
 class ASTNode;
 class Accessor;
 class Agent;
@@ -159,7 +164,7 @@ struct AsyncGeneratorRequest;
 class BigInt;
 class BoundFunction;
 class BuiltinIterator;
-struct CachedSourceRange;
+class CachedSourceRange;
 class Cell;
 class ClassExpression;
 struct ClassFieldDefinition;
@@ -196,6 +201,7 @@ class ModuleEnvironment;
 class Module;
 struct ModuleRequest;
 class NativeFunction;
+class NativeJavaScriptBackedFunction;
 class ObjectEnvironment;
 class Parser;
 struct ParserError;
@@ -211,6 +217,7 @@ class Reference;
 class ScopeNode;
 class Script;
 class Shape;
+class SharedFunctionInstanceData;
 class Statement;
 class StringOrSymbol;
 class SourceCode;
@@ -309,7 +316,6 @@ struct ISOYearMonth;
 struct ParseResult;
 struct PartialDuration;
 struct Time;
-struct TimeZone;
 struct TimeZoneOffset;
 
 };

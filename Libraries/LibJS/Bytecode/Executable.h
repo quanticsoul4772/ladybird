@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024, Andreas Kling <andreas@ladybird.org>
+ * Copyright (c) 2021-2025, Andreas Kling <andreas@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,6 +15,7 @@
 #include <LibGC/WeakInlines.h>
 #include <LibJS/Bytecode/IdentifierTable.h>
 #include <LibJS/Bytecode/Label.h>
+#include <LibJS/Bytecode/Operand.h>
 #include <LibJS/Bytecode/StringTable.h>
 #include <LibJS/Export.h>
 #include <LibJS/Forward.h>
@@ -75,7 +76,7 @@ public:
         size_t number_of_property_lookup_caches,
         size_t number_of_global_variable_caches,
         size_t number_of_registers,
-        bool is_strict_mode);
+        Strict);
 
     virtual ~Executable() override;
 
@@ -91,6 +92,8 @@ public:
     NonnullRefPtr<SourceCode const> source_code;
     size_t number_of_registers { 0 };
     bool is_strict_mode { false };
+
+    size_t registers_and_constants_and_locals_count { 0 };
 
     struct ExceptionHandlers {
         size_t start_offset;
@@ -120,11 +123,13 @@ public:
         return get_identifier(*index);
     }
 
-    [[nodiscard]] Optional<ExceptionHandlers const&> exception_handlers_for_offset(size_t offset) const;
+    [[nodiscard]] COLD Optional<ExceptionHandlers const&> exception_handlers_for_offset(size_t offset) const;
 
     [[nodiscard]] UnrealizedSourceRange source_range_at(size_t offset) const;
 
     void dump() const;
+
+    [[nodiscard]] Operand original_operand_from_raw(u32) const;
 
 private:
     virtual void visit_edges(Visitor&) override;

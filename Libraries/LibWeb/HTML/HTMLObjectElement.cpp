@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGfx/Bitmap.h>
+#include <LibGfx/ImmutableBitmap.h>
 #include <LibWeb/Bindings/HTMLObjectElementPrototype.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleComputer.h>
@@ -18,6 +18,7 @@
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/HTML/DecodedImageData.h>
 #include <LibWeb/HTML/HTMLMediaElement.h>
@@ -180,6 +181,11 @@ String HTMLObjectElement::data() const
     return maybe_url->to_string();
 }
 
+void HTMLObjectElement::set_data(String const& data)
+{
+    set_attribute_value(HTML::AttributeNames::data, data);
+}
+
 GC::Ptr<Layout::Node> HTMLObjectElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
 {
     switch (m_representation) {
@@ -310,11 +316,7 @@ void HTMLObjectElement::queue_element_task_to_run_object_representation_steps()
             };
 
             // 5. Fetch request.
-            auto result = Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
-            if (result.is_error()) {
-                resource_did_fail();
-                return;
-            }
+            (void)Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
 
             //    Fetching the resource must delay the load event of the element's node document until the task that is
             //    queued by the networking task source once the resource has been fetched (defined next) has been run.
@@ -360,7 +362,7 @@ void HTMLObjectElement::resource_did_load(Fetch::Infrastructure::Response const&
 
     // 3. Run the appropriate set of steps from the following list:
     // -> If the resource has associated Content-Type metadata
-    if (auto content_type = response.header_list()->extract_mime_type(); content_type.has_value()) {
+    if (auto content_type = Fetch::Infrastructure::extract_mime_type(response.header_list()); content_type.has_value()) {
         // 1. Let binary be false.
         bool binary = false;
 

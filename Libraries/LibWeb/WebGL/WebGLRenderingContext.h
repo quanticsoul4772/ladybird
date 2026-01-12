@@ -12,12 +12,12 @@
 #include <LibWeb/Forward.h>
 #include <LibWeb/WebGL/Types.h>
 #include <LibWeb/WebGL/WebGLContextAttributes.h>
-#include <LibWeb/WebGL/WebGLRenderingContextImpl.h>
+#include <LibWeb/WebGL/WebGLRenderingContextOverloads.h>
 
 namespace Web::WebGL {
 
 class WebGLRenderingContext final : public Bindings::PlatformObject
-    , public WebGLRenderingContextImpl {
+    , public WebGLRenderingContextOverloads {
     WEB_PLATFORM_OBJECT(WebGLRenderingContext, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(WebGLRenderingContext);
 
@@ -33,7 +33,7 @@ public:
     void present() override;
     void needs_to_present() override;
 
-    GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const;
+    virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const override;
 
     bool is_context_lost() const;
     Optional<WebGLContextAttributes> get_context_attributes();
@@ -51,6 +51,10 @@ public:
     WebIDL::Long drawing_buffer_height() const;
 
     virtual bool ext_texture_filter_anisotropic_extension_enabled() const override;
+    virtual bool angle_instanced_arrays_extension_enabled() const override;
+    virtual bool oes_standard_derivatives_extension_enabled() const override;
+    virtual bool webgl_draw_buffers_extension_enabled() const override;
+    virtual ReadonlySpan<WebIDL::UnsignedLong> enabled_compressed_texture_formats() const override;
 
 private:
     virtual void initialize(JS::Realm&) override;
@@ -79,19 +83,18 @@ private:
     // - clear, drawArrays, or drawElements has been called while the drawing buffer is the currently bound framebuffer
     bool m_should_present { true };
 
-    GLenum m_error { 0 };
+    Vector<WebIDL::UnsignedLong> m_enabled_compressed_texture_formats;
 
     // Extensions
     // "Multiple calls to getExtension with the same extension string, taking into account case-insensitive comparison, must return the same object as long as the extension is enabled."
     GC::Ptr<Extensions::ANGLEInstancedArrays> m_angle_instanced_arrays_extension;
     GC::Ptr<Extensions::EXTBlendMinMax> m_ext_blend_min_max_extension;
     GC::Ptr<Extensions::EXTTextureFilterAnisotropic> m_ext_texture_filter_anisotropic;
+    GC::Ptr<Extensions::OESStandardDerivatives> m_oes_standard_derivatives_object_extension;
     GC::Ptr<Extensions::OESVertexArrayObject> m_oes_vertex_array_object_extension;
     GC::Ptr<Extensions::WebGLCompressedTextureS3tc> m_webgl_compressed_texture_s3tc_extension;
     GC::Ptr<Extensions::WebGLCompressedTextureS3tcSrgb> m_webgl_compressed_texture_s3tc_srgb_extension;
     GC::Ptr<Extensions::WebGLDrawBuffers> m_webgl_draw_buffers_extension;
-
-    virtual void set_error(GLenum error) override;
 };
 
 void fire_webgl_context_event(HTML::HTMLCanvasElement& canvas_element, FlyString const& type);

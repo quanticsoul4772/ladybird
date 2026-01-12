@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Insecure HTTP Form Test</title>
+</head>
+<body>
+    <h1>Insecure HTTP Form</h1>
+    <p>This SHOULD trigger an alert (insecure credential submission over HTTP)</p>
+
+    <form action="http://insecure.example.com/login" method="POST">
+        <label>Username: <input type="text" name="username" value="user"></label><br>
+        <label>Password: <input type="password" name="password" value="weak"></label><br>
+        <button type="submit">Login Insecurely</button>
+    </form>
+</body>
+</html>

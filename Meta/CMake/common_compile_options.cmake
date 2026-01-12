@@ -49,10 +49,7 @@ macro(add_swift_link_options)
     add_link_options($<$<LINK_LANGUAGE:Swift>:${args}>)
 endmacro()
 
-if (MSVC)
-    # On Windows, we always target the same architecture since there is no -march=native equivalent.
-    add_cxx_compile_options(/arch:AVX2)
-elseif (ENABLE_CI_BASELINE_CPU)
+if (ENABLE_CI_BASELINE_CPU)
     # In CI, we want to target a common architecture so different runners can share ccache caches effectively.
     if (APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
         add_cxx_compile_options(-mcpu=apple-m1)
@@ -138,6 +135,10 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT CMAKE_CXX_SIMULATE_ID  MATCHES
     add_cxx_compile_options(-Wno-implicit-const-int-float-conversion)
     add_cxx_compile_options(-Wno-user-defined-literals)
     add_cxx_compile_options(-Wno-unqualified-std-cast-call)
+
+    # Used for the #embed directive.
+    # FIXME: Remove this once #embed is no longer an extension.
+    add_cxx_compile_options(-Wno-c23-extensions)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     # Only ignore expansion-to-defined for g++, clang's implementation doesn't complain about function-like macros
     add_cxx_compile_options(-Wno-expansion-to-defined)
@@ -157,6 +158,11 @@ elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang$" AND CMAKE_CXX_SIMULATE_ID MATCHES
     add_cxx_compile_options(-Wno-reserved-identifier)
     add_cxx_compile_options(-Wno-user-defined-literals)
     add_cxx_compile_options(-Wno-unqualified-std-cast-call)
+
+    # Used for the #embed directive.
+    # FIXME: Remove this once #embed is no longer an extension.
+    add_cxx_compile_options(-Wno-c23-extensions)
+
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 
     # TODO: this seems wrong, but we use this kind of code too much
@@ -173,8 +179,12 @@ if (NOT WIN32)
     add_cxx_link_options(-fstack-protector-strong)
 endif()
 
+# -fstrict-flex-arrays=2 requires GCC 13+ or Clang 16+
 if (NOT MSVC)
-    add_cxx_compile_options(-fstrict-flex-arrays=2)
+    if ((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "13") OR
+        (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16"))
+        add_cxx_compile_options(-fstrict-flex-arrays=2)
+    endif()
 endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/sanitizers.cmake)

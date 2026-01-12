@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scroll Test Page</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+    }
+    .section {
+      height: 800px;
+      border: 2px solid #ccc;
+      margin: 20px 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .section h2 {
+      margin-top: 0;
+    }
+    #target {
+      background: #ffe0e0;
+      border-color: #dc3545;
+    }
+    .nav-links {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: white;
+      padding: 10px;
+      border: 2px solid #007bff;
+      border-radius: 5px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    }
+    .nav-links a {
+      display: block;
+      margin: 5px 0;
+      color: #007bff;
+      text-decoration: none;
+    }
+    .nav-links a:hover {
+      text-decoration: underline;
+    }
+    .scroll-info {
+      position: fixed;
+      bottom: 10px;
+      right: 10px;
+      background: white;
+      padding: 10px;
+      border: 2px solid #28a745;
+      border-radius: 5px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Scroll Test Page</h1>
+  <p>This page tests scrolling behavior and anchor navigation (not possible with data: URLs)</p>
+
+  <div class="nav-links">
+    <strong>Jump to:</strong>
+    <a href="#section1">Section 1</a>
+    <a href="#section2">Section 2</a>
+    <a href="#target">Target Section</a>
+    <a href="#section4">Section 4</a>
+    <a href="#section5">Section 5</a>
+  </div>
+
+  <div class="scroll-info">
+    ScrollY: <strong id="scroll-y">0</strong>px<br>
+    Page Height: <strong id="page-height">0</strong>px<br>
+    Viewport: <strong id="viewport-height">0</strong>px
+  </div>
+
+  <div class="section" id="section1">
+    <h2>Section 1</h2>
+    <p>This is the first section. Scroll down or use the navigation links to jump to different sections.</p>
+    <p>Current scroll position: <span class="current-scroll">0</span>px</p>
+  </div>
+
+  <div class="section" id="section2">
+    <h2>Section 2</h2>
+    <p>Second section content. Keep scrolling!</p>
+    <p>Current scroll position: <span class="current-scroll">0</span>px</p>
+  </div>
+
+  <div class="section" id="target">
+    <h2>Target Section 🎯</h2>
+    <p><strong>This is the target section for anchor navigation tests.</strong></p>
+    <p>If you arrived here via anchor link (#target), scrolling should have occurred automatically.</p>
+    <p>Current scroll position: <span class="current-scroll">0</span>px</p>
+  </div>
+
+  <div class="section" id="section4">
+    <h2>Section 4</h2>
+    <p>Fourth section content.</p>
+    <p>Current scroll position: <span class="current-scroll">0</span>px</p>
+  </div>
+
+  <div class="section" id="section5">
+    <h2>Section 5 (Bottom)</h2>
+    <p>This is the last section at the bottom of the page.</p>
+    <p>Current scroll position: <span class="current-scroll">0</span>px</p>
+    <p><a href="#section1">Back to top</a></p>
+  </div>
+
+  <script>
+    // Update scroll information
+    function updateScrollInfo() {
+      const scrollY = window.scrollY || window.pageYOffset;
+      const pageHeight = document.body.scrollHeight;
+      const viewportHeight = window.innerHeight;
+
+      // Update fixed display
+      document.getElementById('scroll-y').textContent = Math.round(scrollY);
+      document.getElementById('page-height').textContent = pageHeight;
+      document.getElementById('viewport-height').textContent = viewportHeight;
+
+      // Update all section scroll displays
+      document.querySelectorAll('.current-scroll').forEach(el => {
+        el.textContent = Math.round(scrollY);
+      });
+    }
+
+    // Initialize
+    updateScrollInfo();
+
+    // Update on scroll
+    window.addEventListener('scroll', updateScrollInfo);
+    window.addEventListener('resize', updateScrollInfo);
+
+    // Test data for Playwright
+    window.__scrollTestData = {
+      initialScrollY: window.scrollY,
+      pageHeight: document.body.scrollHeight,
+      viewportHeight: window.innerHeight,
+      sections: [
+        { id: 'section1', offsetTop: document.getElementById('section1').offsetTop },
+        { id: 'section2', offsetTop: document.getElementById('section2').offsetTop },
+        { id: 'target', offsetTop: document.getElementById('target').offsetTop },
+        { id: 'section4', offsetTop: document.getElementById('section4').offsetTop },
+        { id: 'section5', offsetTop: document.getElementById('section5').offsetTop },
+      ]
+    };
+
+    // Log anchor navigation
+    window.addEventListener('hashchange', () => {
+      console.log('Hash changed to:', window.location.hash);
+      console.log('Scroll position:', window.scrollY);
+    });
+
+    console.log('Scroll test page loaded:', window.__scrollTestData);
+  </script>
+</body>
+</html>

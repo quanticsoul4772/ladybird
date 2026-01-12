@@ -12,7 +12,6 @@
 #include <AK/SegmentedVector.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/Forward.h>
-#include <LibGfx/ImmutableBitmap.h>
 #include <LibGfx/PaintStyle.h>
 #include <LibWeb/CSS/Enums.h>
 #include <LibWeb/Forward.h>
@@ -68,7 +67,7 @@ private:
     virtual void paint_scrollbar(PaintScrollBar const&) = 0;
     virtual void apply_opacity(ApplyOpacity const&) = 0;
     virtual void apply_composite_and_blending_operator(ApplyCompositeAndBlendingOperator const&) = 0;
-    virtual void apply_filters(ApplyFilter const&) = 0;
+    virtual void apply_filter(ApplyFilter const&) = 0;
     virtual void apply_transform(ApplyTransform const&) = 0;
     virtual void apply_mask_bitmap(ApplyMaskBitmap const&) = 0;
     virtual bool would_be_fully_clipped_by_painter(Gfx::IntRect) const = 0;

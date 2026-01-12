@@ -306,6 +306,14 @@ void StackingContext::paint(DisplayListRecordingContext& context) const
     auto source_paintable_rect = context.enclosing_device_rect(paintable_box().absolute_paint_rect()).to_type<int>();
 
     auto transform_matrix = paintable_box().transform();
+    // https://drafts.csswg.org/css-transforms-2/#perspective
+    // Second, the 'perspective' and 'perspective-origin' properties can be applied to an element to influence the
+    // rendering of its 3d-transformed children, giving them a shared perspective that provides the impression of
+    // them living in the same three-dimensional scene.
+    Optional<Gfx::FloatMatrix4x4> parent_perspective_matrix;
+    if (auto const* parent = as_if<PaintableBox>(paintable_box().parent()))
+        parent_perspective_matrix = parent->perspective_matrix();
+
     auto transform_origin = paintable_box().transform_origin().to_type<float>();
 
     Gfx::CompositingAndBlendingOperator compositing_and_blending_operator = mix_blend_mode_to_compositing_and_blending_operator(paintable_box().computed_values().mix_blend_mode());
@@ -314,7 +322,7 @@ void StackingContext::paint(DisplayListRecordingContext& context) const
         .opacity = opacity,
         .compositing_and_blending_operator = compositing_and_blending_operator,
         .isolate = paintable_box().computed_values().isolation() == CSS::Isolation::Isolate,
-        .transform = StackingContextTransform(transform_origin, transform_matrix, to_device_pixels_scale),
+        .transform = StackingContextTransform(transform_origin, transform_matrix, parent_perspective_matrix, to_device_pixels_scale),
     };
 
     auto const& computed_values = paintable_box().computed_values();
@@ -330,18 +338,26 @@ void StackingContext::paint(DisplayListRecordingContext& context) const
         push_stacking_context_params.bounding_rect = context.enclosing_device_rect(paintable_box().overflow_clip_edge_rect());
     }
 
-    if (!transform_matrix.is_identity())
+    auto has_css_transform = paintable_box().has_css_transform();
+    if (has_css_transform) {
         paintable_box().apply_clip_overflow_rect(context, PaintPhase::Foreground);
+    }
     paintable_box().apply_scroll_offset(context);
 
     auto mask_image = computed_values.mask_image();
     Optional<Gfx::Filter> resolved_filter;
     if (computed_values.filter().has_filters())
-        resolved_filter = paintable_box().resolve_filter(computed_values.filter());
+        resolved_filter = paintable_box().resolve_filter(context, computed_values.filter());
 
     bool needs_to_save_state = mask_image || paintable_box().get_masking_area().has_value();
 
-    if (push_stacking_context_params.has_effect()) {
+    bool needs_to_push_stacking_context = push_stacking_context_params.opacity != 1.0f
+        || push_stacking_context_params.compositing_and_blending_operator != Gfx::CompositingAndBlendingOperator::Normal
+        || push_stacking_context_params.isolate
+        || push_stacking_context_params.clip_path.has_value()
+        || has_css_transform;
+
+    if (needs_to_push_stacking_context) {
         context.display_list_recorder().push_stacking_context(push_stacking_context_params);
     } else if (needs_to_save_state) {
         context.display_list_recorder().save();
@@ -372,13 +388,13 @@ void StackingContext::paint(DisplayListRecordingContext& context) const
     if (resolved_filter.has_value())
         context.display_list_recorder().restore();
 
-    if (push_stacking_context_params.has_effect()) {
+    if (needs_to_push_stacking_context) {
         context.display_list_recorder().pop_stacking_context();
     } else if (needs_to_save_state) {
         context.display_list_recorder().restore();
     }
     paintable_box().reset_scroll_offset(context);
-    if (!transform_matrix.is_identity())
+    if (has_css_transform)
         paintable_box().clear_clip_overflow_rect(context, PaintPhase::Foreground);
 }
 

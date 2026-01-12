@@ -208,6 +208,29 @@ WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(GC::Ref<HTMLElement> subm
     if (cannot_navigate())
         return {};
 
+    // SECURITY: Notify form monitor about submission for credential exfil detection
+    // This must happen before the actual submission so we can potentially block it
+    auto action_url = action_from_form_element(submitter);
+    if (action_url.is_empty())
+        action_url = form_document->url_string();
+    auto parsed_action_for_monitoring = submitter->document().encoding_parse_url(action_url);
+    if (parsed_action_for_monitoring.has_value()) {
+        auto method_state = method_state_from_form_element(submitter);
+        String method_str;
+        switch (method_state) {
+        case MethodAttributeState::GET:
+            method_str = "GET"_string;
+            break;
+        case MethodAttributeState::POST:
+            method_str = "POST"_string;
+            break;
+        case MethodAttributeState::Dialog:
+            method_str = "Dialog"_string;
+            break;
+        }
+        document().page().client().page_did_submit_form(*this, method_str, parsed_action_for_monitoring.value());
+    }
+
     // 10. Let method be the submitter element's method.
     auto method = method_state_from_form_element(submitter);
 
@@ -692,10 +715,10 @@ GC::Ref<DOM::DOMTokenList> HTMLFormElement::rel_list()
 }
 
 // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-fs-method
-WebIDL::ExceptionOr<void> HTMLFormElement::set_method(String const& method)
+void HTMLFormElement::set_method(String const& method)
 {
     // The method and enctype IDL attributes must reflect the respective content attributes of the same name, limited to only known values.
-    return set_attribute(AttributeNames::method, method);
+    set_attribute_value(AttributeNames::method, method);
 }
 
 // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-fs-action
@@ -715,9 +738,9 @@ String HTMLFormElement::action() const
 }
 
 // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#dom-fs-action
-WebIDL::ExceptionOr<void> HTMLFormElement::set_action(String const& value)
+void HTMLFormElement::set_action(String const& value)
 {
-    return set_attribute(AttributeNames::action, value);
+    set_attribute_value(AttributeNames::action, value);
 }
 
 void HTMLFormElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
@@ -861,7 +884,8 @@ ErrorOr<void> HTMLFormElement::submit_as_entity_body(URL::URL parsed_action, Vec
         auto pairs = TRY(convert_to_list_of_name_value_pairs(entry_list));
 
         // 2. Let body be the result of running the application/x-www-form-urlencoded serializer with pairs and encoding.
-        body = TRY(ByteBuffer::copy(url_encode(pairs, encoding).bytes()));
+        auto query = url_encode(pairs, encoding);
+        body = TRY(ByteBuffer::copy(query.bytes()));
 
         // 3. Set body to the result of encoding body.
         // NOTE: `encoding` refers to `UTF-8 encode`, which body already is encoded as because it uses AK::String.
@@ -888,7 +912,8 @@ ErrorOr<void> HTMLFormElement::submit_as_entity_body(URL::URL parsed_action, Vec
         auto pairs = TRY(convert_to_list_of_name_value_pairs(entry_list));
 
         // 2. Let body be the result of running the text/plain encoding algorithm with pairs.
-        body = TRY(ByteBuffer::copy(TRY(plain_text_encode(pairs)).bytes()));
+        auto serialized_body = TRY(plain_text_encode(pairs));
+        body = TRY(ByteBuffer::copy(serialized_body.bytes()));
 
         // FIXME: 3. Set body to the result of encoding body using encoding.
 

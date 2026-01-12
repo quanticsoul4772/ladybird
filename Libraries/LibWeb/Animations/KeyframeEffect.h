@@ -93,6 +93,9 @@ public:
     Optional<String> pseudo_element() const;
     WebIDL::ExceptionOr<void> set_pseudo_element(Optional<String>);
 
+    Optional<DOM::AbstractElement> target_abstract_element() const;
+    void set_target(DOM::AbstractElement);
+
     Optional<CSS::PseudoElement> pseudo_element_type() const;
     void set_pseudo_element(Optional<CSS::Selector::PseudoElementSelector> pseudo_element) { m_target_pseudo_selector = pseudo_element; }
 
@@ -108,9 +111,6 @@ public:
     virtual bool is_keyframe_effect() const override { return true; }
 
     virtual void update_computed_properties(AnimationUpdateContext&) override;
-
-    Optional<CSS::AnimationPlayState> last_css_animation_play_state() const { return m_last_css_animation_play_state; }
-    void set_last_css_animation_play_state(CSS::AnimationPlayState state) { m_last_css_animation_play_state = state; }
 
 private:
     KeyframeEffect(JS::Realm&);
@@ -135,8 +135,6 @@ private:
     Vector<GC::Ref<JS::Object>> m_keyframe_objects {};
 
     RefPtr<KeyFrameSet const> m_key_frame_set {};
-
-    Optional<CSS::AnimationPlayState> m_last_css_animation_play_state;
 };
 
 }

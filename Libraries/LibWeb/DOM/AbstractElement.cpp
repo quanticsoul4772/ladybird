@@ -209,4 +209,22 @@ String AbstractElement::debug_description() const
     return m_element->debug_description();
 }
 
+CSS::StyleScope const& AbstractElement::style_scope() const
+{
+    auto& root = m_element->root();
+    if (root.is_shadow_root())
+        return as<DOM::ShadowRoot>(root).style_scope();
+    return root.document().style_scope();
+}
+
+HashMap<FlyString, GC::Ref<Animations::Animation>>* AbstractElement::css_defined_animations() const
+{
+    return m_element->css_defined_animations(m_pseudo_element);
+}
+
+void AbstractElement::set_has_css_defined_animations()
+{
+    m_element->set_has_css_defined_animations();
+}
+
 }

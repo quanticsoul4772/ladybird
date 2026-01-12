@@ -25,6 +25,7 @@
 #include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/NativeJavaScriptBackedFunction.h>
 #include <LibJS/Runtime/Object.h>
 #include <LibJS/Runtime/ObjectEnvironment.h>
 #include <LibJS/Runtime/PromiseCapability.h>
@@ -44,7 +45,7 @@ namespace JS {
 ThrowCompletionOr<Value> require_object_coercible(VM& vm, Value value)
 {
     if (value.is_nullish())
-        return vm.throw_completion<TypeError>(ErrorType::NotObjectCoercible, value.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotObjectCoercible, value);
     return value;
 }
 
@@ -55,7 +56,7 @@ ThrowCompletionOr<Value> call_impl(VM& vm, Value function, Value this_value, Rea
 
     // 2. If IsCallable(F) is false, throw a TypeError exception.
     if (!function.is_function())
-        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAFunction, function);
 
     // 3. Return ? F.[[Call]](V, argumentsList).
     ExecutionContext* callee_context = nullptr;
@@ -138,7 +139,7 @@ ThrowCompletionOr<GC::RootVector<Value>> create_list_from_array_like(VM& vm, Val
 
     // 2. If Type(obj) is not Object, throw a TypeError exception.
     if (!value.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, value.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, value);
 
     auto& array_like = value.as_object();
 
@@ -183,7 +184,7 @@ ThrowCompletionOr<FunctionObject*> species_constructor(VM& vm, Object const& obj
 
     // 3. If Type(C) is not Object, throw a TypeError exception.
     if (!constructor.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, constructor.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, constructor);
 
     // 4. Let S be ? Get(C, @@species).
     static Bytecode::PropertyLookupCache cache2;
@@ -198,7 +199,7 @@ ThrowCompletionOr<FunctionObject*> species_constructor(VM& vm, Object const& obj
         return &species.as_function();
 
     // 7. Throw a TypeError exception.
-    return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, species.to_string_without_side_effects());
+    return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, species);
 }
 
 // 7.3.25 GetFunctionRealm ( obj ), https://tc39.es/ecma262/#sec-getfunctionrealm
@@ -236,30 +237,6 @@ ThrowCompletionOr<Realm*> get_function_realm(VM& vm, FunctionObject const& funct
 
     // 4. Return the current Realm Record.
     return vm.current_realm();
-}
-
-// 8.5.2.1 InitializeBoundName ( name, value, environment ), https://tc39.es/ecma262/#sec-initializeboundname
-ThrowCompletionOr<void> initialize_bound_name(VM& vm, Utf16FlyString const& name, Value value, Environment* environment)
-{
-    // 1. If environment is not undefined, then
-    if (environment) {
-        // FIXME: The normal is not included in the explicit resource management spec yet, so there is no spec link for it.
-        // a. Perform ! environment.InitializeBinding(name, value, normal).
-        MUST(environment->initialize_binding(vm, name, value, Environment::InitializeBindingHint::Normal));
-
-        // b. Return unused.
-        return {};
-    }
-    // 2. Else,
-    else {
-        // a. Let lhs be ? ResolveBinding(name).
-        auto lhs = TRY(vm.resolve_binding(name));
-
-        // b. Return ? PutValue(lhs, value).
-        return TRY(lhs.put_value(vm, value));
-    }
-
-    VERIFY_NOT_REACHED();
 }
 
 // 10.1.6.2 IsCompatiblePropertyDescriptor ( Extensible, Desc, Current ), https://tc39.es/ecma262/#sec-iscompatiblepropertydescriptor
@@ -482,6 +459,36 @@ GC::Ref<FunctionEnvironment> new_function_environment(ECMAScriptFunctionObject& 
     return env;
 }
 
+// 9.1.2.4 NewFunctionEnvironment ( F, newTarget ), https://tc39.es/ecma262/#sec-newfunctionenvironment
+// 4.1.2.2 NewFunctionEnvironment ( F, newTarget ), https://tc39.es/proposal-explicit-resource-management/#sec-newfunctionenvironment
+GC::Ref<FunctionEnvironment> new_function_environment(NativeJavaScriptBackedFunction& function, Object* new_target)
+{
+    auto& heap = function.heap();
+
+    // 1. Let env be a new function Environment Record containing no bindings.
+    auto env = heap.allocate<FunctionEnvironment>(nullptr);
+
+    // 2. Set env.[[FunctionObject]] to F.
+    env->set_function_object(function);
+
+    // 3. If F.[[ThisMode]] is lexical, set env.[[ThisBindingStatus]] to lexical.
+    if (function.this_mode() == ThisMode::Lexical)
+        env->set_this_binding_status(FunctionEnvironment::ThisBindingStatus::Lexical);
+    // 4. Else, set env.[[ThisBindingStatus]] to uninitialized.
+    else
+        env->set_this_binding_status(FunctionEnvironment::ThisBindingStatus::Uninitialized);
+
+    // 5. Set env.[[NewTarget]] to newTarget.
+    env->set_new_target(new_target ?: js_undefined());
+
+    // 6. Set env.[[OuterEnv]] to F.[[Environment]].
+    // 7. Set env.[[DisposeCapability]] to NewDisposeCapability().
+    // NOTE: Done in step 1 via the FunctionEnvironment constructor.
+
+    // 8. Return env.
+    return env;
+}
+
 // 9.2.1.1 NewPrivateEnvironment ( outerPrivEnv ), https://tc39.es/ecma262/#sec-newprivateenvironment
 GC::Ref<PrivateEnvironment> new_private_environment(VM& vm, PrivateEnvironment* outer)
 {
@@ -610,7 +617,7 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
             auto& this_function_environment_record = static_cast<FunctionEnvironment&>(*this_environment_record);
 
             // i. Let F be thisEnvRec.[[FunctionObject]].
-            auto& function = this_function_environment_record.function_object();
+            auto& function = as<ECMAScriptFunctionObject>(this_function_environment_record.function_object());
 
             // ii. Set inFunction to true.
             in_function = true;
@@ -647,7 +654,7 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
         .in_class_field_initializer = in_class_field_initializer,
     };
 
-    Parser parser { Lexer { code_string->utf8_string_view() }, Program::Type::Script, move(initial_state) };
+    Parser parser(Lexer(SourceCode::create({}, code_string->utf16_string())), Program::Type::Script, move(initial_state));
     auto program = parser.parse_program(strict_caller == CallerMode::Strict);
 
     //     b. If script is a List of errors, throw a SyntaxError exception.
@@ -747,9 +754,6 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
     // 28. Set evalContext's PrivateEnvironment to privateEnv.
     eval_context->private_environment = private_environment;
 
-    // NOTE: This isn't in the spec, but we require it.
-    eval_context->is_strict_mode = strict_eval;
-
     // 29. Push evalContext onto the execution context stack; evalContext is now the running execution context.
     TRY(vm.push_execution_context(*eval_context, {}));
 
@@ -762,11 +766,7 @@ ThrowCompletionOr<Value> perform_eval(VM& vm, Value x, CallerMode strict_caller,
 
     Optional<Value> eval_result;
 
-    auto result_or_error = vm.bytecode_interpreter().run_executable(*executable, {});
-    if (result_or_error.value.is_error())
-        return result_or_error.value.release_error();
-
-    eval_result = result_or_error.return_register_value;
+    eval_result = TRY(vm.bytecode_interpreter().run_executable(*eval_context, *executable, {}));
 
     // 32. If result.[[Type]] is normal and result.[[Value]] is empty, then
     //     a. Set result to NormalCompletion(undefined).
@@ -2009,7 +2009,7 @@ ThrowCompletionOr<u64> get_rounding_increment_option(VM& vm, Object const& optio
     return static_cast<u64>(integer_increment);
 }
 
-// AD-HOC
+// AD-HOC:
 // FIXME: We should add a generic floor() method to our BigInt classes. But for now, since we know we are only dividing
 //        by powers of 10, we can implement a very situationally specific method to compute the floor of a division.
 Crypto::SignedBigInteger big_floor(Crypto::SignedBigInteger const& numerator, Crypto::UnsignedBigInteger const& denominator)

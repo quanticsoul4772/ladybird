@@ -11,7 +11,6 @@
 #include <LibWeb/CSS/Interpolation.h>
 #include <LibWeb/CSS/PseudoElement.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
-#include <LibWeb/CSS/Time.h>
 
 namespace Web::CSS {
 
@@ -27,7 +26,7 @@ public:
     StringView transition_property() const;
 
     virtual Animations::AnimationClass animation_class() const override;
-    virtual Optional<int> class_specific_composite_order(GC::Ref<Animations::Animation> other) const override;
+    virtual int class_specific_composite_order(GC::Ref<Animations::Animation> other) const override;
 
     double transition_start_time() const { return m_start_time; }
     double transition_end_time() const { return m_end_time; }

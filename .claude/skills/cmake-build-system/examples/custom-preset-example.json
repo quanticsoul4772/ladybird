@@ -1,0 +1,217 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "MyCustomPreset",
+      "inherits": "unix_base",
+      "displayName": "My Custom Development Build",
+      "description": "Custom preset with specific features enabled",
+      "binaryDir": "${fileDir}/Build/mycustom",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_OVERLAY_TRIPLETS": "${fileDir}/Meta/CMake/vcpkg/debug-triplets",
+
+        "ENABLE_MY_FEATURE": "ON",
+        "ENABLE_EXTRA_LOGGING": "ON",
+        "CUSTOM_OPTIMIZATION_LEVEL": "2"
+      }
+    },
+    {
+      "name": "MyFastDebug",
+      "inherits": "unix_base",
+      "displayName": "Fast Debug Build",
+      "description": "Debug build with some optimizations for faster iteration",
+      "binaryDir": "${fileDir}/Build/fastdebug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS": "-O1 -g",
+        "VCPKG_OVERLAY_TRIPLETS": "${fileDir}/Meta/CMake/vcpkg/debug-triplets"
+      }
+    },
+    {
+      "name": "MyProfile",
+      "inherits": "unix_base",
+      "displayName": "Profile Build",
+      "description": "Optimized build with profiling symbols",
+      "binaryDir": "${fileDir}/Build/profile",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS": "-O2 -g -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fno-omit-frame-pointer"
+      }
+    },
+    {
+      "name": "MyMinimal",
+      "inherits": "unix_base",
+      "displayName": "Minimal Build",
+      "description": "Minimal build with optional features disabled",
+      "binaryDir": "${fileDir}/Build/minimal",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENABLE_QT": "OFF",
+        "ENABLE_LAGOM_LADYBIRD": "OFF",
+        "BUILD_TESTING": "OFF"
+      }
+    },
+    {
+      "name": "MyClangTidy",
+      "inherits": "unix_base",
+      "displayName": "Clang-Tidy Analysis",
+      "description": "Build with clang-tidy static analysis",
+      "binaryDir": "${fileDir}/Build/clang-tidy",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_CLANG_TIDY": "clang-tidy;-checks=*,-modernize-use-trailing-return-type"
+      }
+    },
+    {
+      "name": "MyThreadSanitizer",
+      "inherits": "unix_base",
+      "displayName": "Thread Sanitizer Build",
+      "description": "Build with ThreadSanitizer (TSAN) for race detection",
+      "binaryDir": "${fileDir}/Build/tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
+      "name": "MyMemorySanitizer",
+      "inherits": "unix_base",
+      "displayName": "Memory Sanitizer Build",
+      "description": "Build with MemorySanitizer (MSAN) for uninitialized memory",
+      "binaryDir": "${fileDir}/Build/msan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-fsanitize=memory -fsanitize-memory-track-origins -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=memory"
+      }
+    },
+    {
+      "name": "MyLTO",
+      "inherits": "unix_base",
+      "displayName": "Link-Time Optimization Build",
+      "description": "Release build with LTO enabled",
+      "binaryDir": "${fileDir}/Build/lto",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON",
+        "CMAKE_CXX_FLAGS": "-flto=thin"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "MyCustomPreset",
+      "inherits": "unix_base",
+      "configurePreset": "MyCustomPreset",
+      "displayName": "My Custom Build",
+      "description": "Build my custom preset"
+    },
+    {
+      "name": "MyFastDebug",
+      "inherits": "unix_base",
+      "configurePreset": "MyFastDebug",
+      "displayName": "Fast Debug Build"
+    },
+    {
+      "name": "MyProfile",
+      "inherits": "unix_base",
+      "configurePreset": "MyProfile",
+      "displayName": "Profile Build"
+    },
+    {
+      "name": "MyMinimal",
+      "inherits": "unix_base",
+      "configurePreset": "MyMinimal",
+      "displayName": "Minimal Build"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "MyCustomPreset",
+      "inherits": "unix_base",
+      "configurePreset": "MyCustomPreset"
+    },
+    {
+      "name": "MyFastDebug",
+      "inherits": "unix_base",
+      "configurePreset": "MyFastDebug"
+    }
+  ]
+}
+
+/*
+Usage:
+
+1. Merge this with existing CMakePresets.json:
+   - Copy configurePresets into "configurePresets" array
+   - Copy buildPresets into "buildPresets" array
+   - Copy testPresets into "testPresets" array
+
+2. Or save as separate file and use:
+   cmake --preset MyCustomPreset
+
+3. Use with ladybird.py:
+   ./Meta/ladybird.py build --preset MyCustomPreset
+   ./Meta/ladybird.py run --preset MyFastDebug
+   ./Meta/ladybird.py test --preset MyCustomPreset
+
+4. Key customization points:
+   - "binaryDir": Where build artifacts go
+   - "CMAKE_BUILD_TYPE": Debug, Release, RelWithDebInfo, MinSizeRel
+   - "CMAKE_CXX_FLAGS": Compiler flags
+   - "CMAKE_EXE_LINKER_FLAGS": Linker flags
+   - "ENABLE_*": Feature flags
+   - "VCPKG_OVERLAY_TRIPLETS": vcpkg triplet selection
+
+5. Common use cases:
+   - Fast iteration: MyFastDebug (some optimization, quick builds)
+   - Performance analysis: MyProfile (profiling symbols)
+   - Static analysis: MyClangTidy (clang-tidy integration)
+   - Race detection: MyThreadSanitizer (TSAN)
+   - Memory checks: MyMemorySanitizer (MSAN)
+   - Optimal release: MyLTO (link-time optimization)
+   - Minimal build: MyMinimal (disable optional features)
+
+6. Preset inheritance:
+   - "unix_base": Linux/macOS base configuration
+   - "windows_base": Windows base configuration
+   - Custom presets inherit common settings
+
+7. Adding custom CMake variables:
+   Add to "cacheVariables":
+   {
+     "MY_CUSTOM_OPTION": "ON",
+     "MY_CUSTOM_PATH": "/path/to/resource"
+   }
+
+8. Environment variables in presets:
+   {
+     "environment": {
+       "MY_VAR": "value",
+       "PATH": "/custom/path:$penv{PATH}"
+     }
+   }
+
+9. Platform-specific presets:
+   {
+     "condition": {
+       "type": "equals",
+       "lhs": "${hostSystemName}",
+       "rhs": "Linux"
+     }
+   }
+
+10. Vendor-specific settings (IDE integration):
+    {
+      "vendor": {
+        "jetbrains.com/clion": {
+          "toolchain": "Default"
+        }
+      }
+    }
+*/

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Legitimate IDN Test - PHISH-002</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    .test-container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #27ae60;
+      border-bottom: 2px solid #27ae60;
+      padding-bottom: 10px;
+    }
+    .test-info {
+      background: #d4edda;
+      border-left: 4px solid #28a745;
+      padding: 15px;
+      margin: 20px 0;
+    }
+    .idn-examples {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    .button {
+      background: #27ae60;
+      color: white;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 10px 5px;
+    }
+    .button:hover {
+      background: #229954;
+    }
+    #result {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 4px;
+      display: none;
+    }
+    #result.visible {
+      display: block;
+    }
+    code {
+      background: #f8f9fa;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+    }
+    .domain-info {
+      font-family: monospace;
+      font-size: 14px;
+      background: #e9ecef;
+      padding: 10px;
+      border-radius: 4px;
+      margin: 5px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="test-container">
+    <h1>🔬 Phishing Detection Test: Legitimate IDN (PHISH-002)</h1>
+
+    <div class="test-info">
+      <strong>✅ Test Objective:</strong> Verify that legitimate internationalized domain names
+      (IDNs) do NOT trigger false positive alerts. The phishing detector must distinguish
+      between legitimate non-Latin domains and homograph attacks.
+    </div>
+
+    <h2>Legitimate IDN Examples</h2>
+    <div class="idn-examples">
+      <h3>Valid International Domains:</h3>
+      <div class="domain-info">
+        <strong>Chinese:</strong> 中国.cn (xn--fiqs8s.cn) - China
+      </div>
+      <div class="domain-info">
+        <strong>Arabic:</strong> السعودية.sa (xn--mgberp4a5d4ar.sa) - Saudi Arabia
+      </div>
+      <div class="domain-info">
+        <strong>Russian:</strong> президент.рф (xn--d1abbgf6aiiy.xn--p1ai) - Russian President
+      </div>
+      <div class="domain-info">
+        <strong>German:</strong> münchen.de (xn--mnchen-3ya.de) - Munich
+      </div>
+      <div class="domain-info">
+        <strong>Japanese:</strong> 日本.jp (xn--wgv71a.jp) - Japan
+      </div>
+    </div>
+
+    <h2>Key Distinction</h2>
+    <p>
+      <strong>Legitimate IDN:</strong> Uses Unicode characters from a <em>single script</em>
+      that are appropriate for the domain's language and region.
+    </p>
+    <p>
+      <strong>Homograph Attack:</strong> Mixes characters from different scripts to visually
+      impersonate a Latin domain (e.g., Cyrillic 'а' in 'аpple.com').
+    </p>
+
+    <h2>Detection Logic</h2>
+    <p>
+      PhishingURLAnalyzer should NOT flag IDNs as phishing if:
+    </p>
+    <ul>
+      <li>All characters come from the same Unicode script (e.g., all Cyrillic, all Arabic)</li>
+      <li>The domain doesn't visually resemble a popular Latin domain</li>
+      <li>No suspicious TLD or other phishing indicators</li>
+    </ul>
+    <p>
+      <strong>ICU Spoofchecker Configuration:</strong> The detector uses
+      <code>USPOOF_CONFUSABLE</code> checks, which should not flag legitimate IDNs
+      that use a consistent script.
+    </p>
+
+    <div style="margin: 30px 0;">
+      <button id="test-german-umlaut" class="button">
+        Test: münchen.de (German umlaut)
+      </button>
+      <button id="test-russian-domain" class="button">
+        Test: президент.рф (Russian Cyrillic)
+      </button>
+      <button id="test-japanese-domain" class="button">
+        Test: 日本.jp (Japanese)
+      </button>
+    </div>
+
+    <div id="result"></div>
+  </div>
+
+  <script>
+    // Test data for Playwright
+    window.__phishingTestData = {
+      testId: 'PHISH-002',
+      legitimateDomains: [
+        {
+          domain: 'münchen.de',
+          punycode: 'xn--mnchen-3ya.de',
+          script: 'Latin with diacritic',
+          language: 'German'
+        },
+        {
+          domain: 'президент.рф',
+          punycode: 'xn--d1abbgf6aiiy.xn--p1ai',
+          script: 'Cyrillic',
+          language: 'Russian'
+        },
+        {
+          domain: '日本.jp',
+          punycode: 'xn--wgv71a.jp',
+          script: 'Japanese',
+          language: 'Japanese'
+        }
+      ],
+      expectedDetection: {
+        isHomographAttack: false,
+        phishingScore: 0.0, // Should be 0 or very low
+        shouldAlert: false,
+        isFalsePositive: false
+      }
+    };
+
+    function testDomain(domainInfo) {
+      const resultDiv = document.getElementById('result');
+      resultDiv.className = 'visible';
+      resultDiv.style.background = '#d1ecf1';
+      resultDiv.style.border = '1px solid #bee5eb';
+      resultDiv.style.color = '#0c5460';
+
+      resultDiv.innerHTML = `
+        <strong>✅ Legitimate IDN - No Alert</strong>
+        <br><br>
+        <strong>Domain:</strong> <code>${domainInfo.domain}</code>
+        <br>
+        <strong>Punycode:</strong> <code>${domainInfo.punycode}</code>
+        <br>
+        <strong>Script:</strong> ${domainInfo.script}
+        <br>
+        <strong>Language:</strong> ${domainInfo.language}
+        <br><br>
+        <strong>Detection Results:</strong>
+        <ul style="margin: 10px 0; padding-left: 20px;">
+          <li>Homograph Attack: <strong>NO</strong></li>
+          <li>Phishing Score: <strong>0.00</strong></li>
+          <li>Script Consistency: <strong>PASS</strong></li>
+          <li>Visual Similarity: <strong>None</strong></li>
+        </ul>
+        <strong>Conclusion:</strong> This is a legitimate internationalized domain.
+        No security alert should be shown.
+      `;
+
+      window.__legitimateIDNTested = true;
+      window.__detectionResult = {
+        detected: false,
+        isHomographAttack: false,
+        phishingScore: 0.0,
+        confidence: 1.0,
+        explanation: 'No phishing indicators detected',
+        isFalsePositive: false
+      };
+    }
+
+    document.getElementById('test-german-umlaut').addEventListener('click', () => {
+      testDomain(window.__phishingTestData.legitimateDomains[0]);
+    });
+
+    document.getElementById('test-russian-domain').addEventListener('click', () => {
+      testDomain(window.__phishingTestData.legitimateDomains[1]);
+    });
+
+    document.getElementById('test-japanese-domain').addEventListener('click', () => {
+      testDomain(window.__phishingTestData.legitimateDomains[2]);
+    });
+
+    console.log('[PHISH-002] Legitimate IDN test fixture loaded');
+    console.log('[PHISH-002] Test data:', window.__phishingTestData);
+  </script>
+</body>
+</html>

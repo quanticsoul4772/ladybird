@@ -5,6 +5,7 @@ set(SOURCES
     ConnectionFromClient.cpp
     ConsoleGlobalEnvironmentExtensions.cpp
     DevToolsConsoleClient.cpp
+    FormMonitor.cpp
     PageClient.cpp
     PageHost.cpp
     WebContentConsoleClient.cpp
@@ -30,7 +31,7 @@ target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${CMAKE_CU
 target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${LADYBIRD_SOURCE_DIR}>)
 target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${LADYBIRD_SOURCE_DIR}/Services/>)
 
-target_link_libraries(webcontentservice PUBLIC LibCore LibCrypto LibFileSystem LibGfx LibIPC LibJS LibMain LibMedia LibWeb LibWebSocket LibRequests LibWebView LibImageDecoderClient LibGC)
+target_link_libraries(webcontentservice PUBLIC LibCore LibCrypto LibDatabase LibFileSystem LibGfx LibIPC LibJS LibMain LibMedia LibWeb LibWebSocket LibRequests LibWebView LibImageDecoderClient LibGC sentinelservice)
 target_link_libraries(webcontentservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
 target_link_libraries(webcontentservice PRIVATE SDL3::SDL3)
 
@@ -39,8 +40,7 @@ add_executable(WebContent main.cpp)
 target_link_libraries(WebContent PRIVATE webcontentservice LibURL)
 
 if(WIN32)
-    find_package(unofficial-angle REQUIRED CONFIG)
-    target_link_libraries(WebContent PRIVATE LibTextCodec unofficial::angle::libGLESv2)
+    lagom_windows_bin(WebContent CONSOLE)
 endif()
 
 
@@ -48,6 +48,7 @@ target_sources(webcontentservice PUBLIC FILE_SET server TYPE HEADERS
     BASE_DIRS ${LADYBIRD_SOURCE_DIR}/Services
     FILES ConnectionFromClient.h
           ConsoleGlobalEnvironmentExtensions.h
+          FormMonitor.h
           Forward.h
           PageHost.h
           WebContentConsoleClient.h

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<script src="include.js"></script>
+<script>
+    // Simple synchronous Text test
+    // Tests DOM element creation and manipulation
+    // Spec: https://dom.spec.whatwg.org/#interface-element
+
+    test(() => {
+        println("Testing Element.setAttribute and getAttribute");
+
+        // Create element
+        const div = document.createElement("div");
+
+        // Set attribute
+        div.setAttribute("data-test", "hello");
+        println(`After setAttribute: ${div.getAttribute("data-test")}`);
+
+        // Modify attribute
+        div.setAttribute("data-test", "world");
+        println(`After modification: ${div.getAttribute("data-test")}`);
+
+        // Remove attribute
+        div.removeAttribute("data-test");
+        println(`After removeAttribute: ${div.getAttribute("data-test")}`);
+
+        // Test multiple attributes
+        div.setAttribute("id", "myDiv");
+        div.setAttribute("class", "container");
+        println(`Has id: ${div.hasAttribute("id")}`);
+        println(`Has class: ${div.hasAttribute("class")}`);
+        println(`Has title: ${div.hasAttribute("title")}`);
+    });
+</script>

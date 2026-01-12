@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+    // Test: Clear forward session history on new pushState
+    // When we push a new state, the forward history should be cleared
+
+    test("forward history cleared on new pushState", () => {
+        // Start with a clean state
+        const initialLength = history.length;
+        println("Initial history length: " + initialLength);
+
+        // Push first state
+        history.pushState({step: 1}, "", "?step=1");
+        println("After pushState({step:1}): length = " + history.length);
+
+        // Push second state
+        history.pushState({step: 2}, "", "?step=2");
+        println("After pushState({step:2}): length = " + history.length);
+
+        // Push third state
+        history.pushState({step: 3}, "", "?step=3");
+        println("After pushState({step:3}): length = " + history.length);
+
+        println("Current state: " + JSON.stringify(history.state));
+        println("Test PASS");
+    });
+
+    test("replaceState preserves history length", () => {
+        const beforeLen = history.length;
+        history.replaceState({modified: true}, "", "?modified=true");
+        const afterLen = history.length;
+
+        println("history.length before replaceState: " + beforeLen);
+        println("history.length after replaceState: " + afterLen);
+        println("Length unchanged (replaceState): " + (beforeLen === afterLen));
+        println("Current state: " + JSON.stringify(history.state));
+        println("Test PASS");
+    });
+
+    test("pushState with URL containing special characters", () => {
+        const specialUrls = [
+            "?test=encode%20space",
+            "?param=value&other=123",
+            "?fragment=#hash",
+            "#section1"
+        ];
+
+        for (let url of specialUrls) {
+            try {
+                history.pushState({url: url}, "", url);
+                println("Successfully pushed: " + url);
+            } catch (e) {
+                println("Failed to push " + url + ": " + e.message);
+            }
+        }
+        println("Test PASS");
+    });
+
+    test("null state handling", () => {
+        history.pushState(null, "", "?null-state");
+        const state = history.state;
+        println("State after pushState(null): " + state);
+        println("State is null: " + (state === null));
+
+        history.replaceState(undefined, "", "?undefined-state");
+        const state2 = history.state;
+        println("State after replaceState(undefined): " + state2);
+        println("Test PASS");
+    });
+
+    test("empty state object handling", () => {
+        history.pushState({}, "", "?empty-state");
+        const state = history.state;
+        println("State after pushState({}): " + JSON.stringify(state));
+        println("Test PASS");
+    });
+
+    test("complex nested state object", () => {
+        const complexState = {
+            user: {
+                id: 123,
+                name: "Test User",
+                roles: ["admin", "editor"]
+            },
+            metadata: {
+                timestamp: Date.now(),
+                count: 42
+            }
+        };
+
+        history.pushState(complexState, "", "?complex");
+        const retrieved = history.state;
+        println("Complex state preserved: " + JSON.stringify(retrieved));
+        println("Test PASS");
+    });
+
+    test("pushState with scroll restoration modes", () => {
+        // Test interaction with scroll restoration
+        const initialMode = history.scrollRestoration;
+        println("Initial scroll restoration: " + initialMode);
+
+        history.scrollRestoration = "manual";
+        history.pushState({scroll: "manual"}, "", "?scroll=manual");
+        println("After setting scrollRestoration to manual: " + history.scrollRestoration);
+
+        history.scrollRestoration = "auto";
+        println("After setting scrollRestoration to auto: " + history.scrollRestoration);
+        println("Test PASS");
+    });
+
+    test("rapid pushState calls", () => {
+        const beforeLen = history.length;
+
+        // Rapidly push multiple states
+        for (let i = 0; i < 5; i++) {
+            history.pushState({count: i}, "", "?count=" + i);
+        }
+
+        const afterLen = history.length;
+        println("Length before rapid pushes: " + beforeLen);
+        println("Length after 5 pushes: " + afterLen);
+        println("Expected increase: 5");
+        println("Actual increase: " + (afterLen - beforeLen));
+        println("Test PASS");
+    });
+
+    test("alternating push and replace", () => {
+        const startLen = history.length;
+
+        history.pushState({action: "push1"}, "", "?action=push1");
+        println("After push: " + history.length);
+
+        history.replaceState({action: "replace1"}, "", "?action=replace1");
+        println("After replace: " + history.length);
+
+        history.pushState({action: "push2"}, "", "?action=push2");
+        println("After push: " + history.length);
+
+        history.replaceState({action: "replace2"}, "", "?action=replace2");
+        println("After replace: " + history.length);
+
+        println("Final state: " + JSON.stringify(history.state));
+        println("Test PASS");
+    });
+</script>

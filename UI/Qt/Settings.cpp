@@ -65,4 +65,15 @@ void Settings::set_show_menubar(bool show_menubar)
     emit show_menubar_changed(show_menubar);
 }
 
+bool Settings::network_monitoring_enabled()
+{
+    return m_qsettings->value("network_monitoring_enabled", true).toBool();
+}
+
+void Settings::set_network_monitoring_enabled(bool enabled)
+{
+    m_qsettings->setValue("network_monitoring_enabled", enabled);
+    emit network_monitoring_changed(enabled);
+}
+
 }

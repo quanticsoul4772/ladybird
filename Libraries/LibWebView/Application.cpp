@@ -117,8 +117,8 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     bool log_all_js_exceptions = false;
     bool disable_site_isolation = false;
     bool enable_idl_tracing = false;
-    bool disable_http_cache = false;
-    bool enable_http_disk_cache = false;
+    bool disable_http_memory_cache = false;
+    bool disable_http_disk_cache = false;
     bool disable_content_filter = false;
     bool enable_autoplay = false;
     bool expose_internals_object = false;
@@ -133,7 +133,7 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
 
     args_parser.add_option(Core::ArgsParser::Option {
         .argument_mode = Core::ArgsParser::OptionArgumentMode::Optional,
-        .help_string = "Run Ladybird without a browser window. Mode may be 'screenshot' (default), 'layout-tree', or 'text'.",
+        .help_string = "Run Ladybird without a browser window. Mode may be 'screenshot' (default), 'layout-tree', 'text', or 'manual'.",
         .long_name = "headless",
         .value_name = "mode",
         .accept_value = [&](StringView value) {
@@ -146,6 +146,8 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
                 headless_mode = HeadlessMode::LayoutTree;
             else if (value.equals_ignoring_ascii_case("text"sv))
                 headless_mode = HeadlessMode::Text;
+            else if (value.equals_ignoring_ascii_case("manual"sv))
+                headless_mode = HeadlessMode::Manual;
 
             return headless_mode.has_value();
         },
@@ -166,8 +168,8 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     args_parser.add_option(log_all_js_exceptions, "Log all JavaScript exceptions", "log-all-js-exceptions");
     args_parser.add_option(disable_site_isolation, "Disable site isolation", "disable-site-isolation");
     args_parser.add_option(enable_idl_tracing, "Enable IDL tracing", "enable-idl-tracing");
-    args_parser.add_option(disable_http_cache, "Disable HTTP cache", "disable-http-cache");
-    args_parser.add_option(enable_http_disk_cache, "Enable HTTP disk cache", "enable-http-disk-cache");
+    args_parser.add_option(disable_http_memory_cache, "Disable HTTP memory cache", "disable-http-memory-cache");
+    args_parser.add_option(disable_http_disk_cache, "Disable HTTP disk cache", "disable-http-disk-cache");
     args_parser.add_option(disable_content_filter, "Disable content filter", "disable-content-filter");
     args_parser.add_option(enable_autoplay, "Enable multimedia autoplay", "enable-autoplay");
     args_parser.add_option(expose_internals_object, "Expose internals object", "expose-internals-object");
@@ -212,8 +214,10 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
 
     // Our persisted SQL storage assumes it runs in a singleton process. If we have multiple UI processes accessing
     // the same underlying database, one of them is likely to fail.
-    if (force_new_process)
+    if (force_new_process) {
         disable_sql_database = true;
+        disable_http_disk_cache = true;
+    }
 
     if (!dns_server_port.has_value())
         dns_server_port = use_dns_over_tls ? 853 : 53;
@@ -260,7 +264,7 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
 
     m_request_server_options = {
         .certificates = move(certificates),
-        .enable_http_disk_cache = enable_http_disk_cache ? EnableHTTPDiskCache::Yes : EnableHTTPDiskCache::No,
+        .http_disk_cache_mode = disable_http_disk_cache ? HTTPDiskCacheMode::Disabled : HTTPDiskCacheMode::Enabled,
     };
 
     m_web_content_options = {
@@ -271,7 +275,7 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
         .log_all_js_exceptions = log_all_js_exceptions ? LogAllJSExceptions::Yes : LogAllJSExceptions::No,
         .disable_site_isolation = disable_site_isolation ? DisableSiteIsolation::Yes : DisableSiteIsolation::No,
         .enable_idl_tracing = enable_idl_tracing ? EnableIDLTracing::Yes : EnableIDLTracing::No,
-        .enable_http_cache = disable_http_cache ? EnableHTTPCache::No : EnableHTTPCache::Yes,
+        .enable_http_memory_cache = disable_http_memory_cache ? EnableMemoryHTTPCache::No : EnableMemoryHTTPCache::Yes,
         .expose_internals_object = expose_internals_object ? ExposeInternalsObject::Yes : ExposeInternalsObject::No,
         .force_cpu_painting = force_cpu_painting ? ForceCPUPainting::Yes : ForceCPUPainting::No,
         .force_fontconfig = force_fontconfig ? ForceFontconfig::Yes : ForceFontconfig::No,
@@ -281,7 +285,7 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
         .default_time_zone = default_time_zone,
     };
 
-    create_platform_options(m_browser_options, m_web_content_options);
+    create_platform_options(m_browser_options, m_request_server_options, m_web_content_options);
     initialize_actions();
 
     m_event_loop = create_platform_event_loop();
@@ -512,6 +516,15 @@ static void load_page_for_info_and_exit(Core::EventLoop& event_loop, HeadlessWeb
     view.load(url);
 }
 
+static void load_page_and_exit_on_close(Core::EventLoop& event_loop, HeadlessWebView& view, URL::URL const& url)
+{
+    view.on_close = [&event_loop]() {
+        event_loop.quit(0);
+    };
+
+    view.load(url);
+}
+
 ErrorOr<int> Application::execute()
 {
     OwnPtr<HeadlessWebView> view;
@@ -536,6 +549,9 @@ ErrorOr<int> Application::execute()
                 break;
             case HeadlessMode::Text:
                 load_page_for_info_and_exit(*m_event_loop, *view, m_browser_options.urls.first(), WebView::PageInfoType::Text);
+                break;
+            case HeadlessMode::Manual:
+                load_page_and_exit_on_close(*m_event_loop, *view, m_browser_options.urls.first());
                 break;
             case HeadlessMode::Test:
                 VERIFY_NOT_REACHED();
@@ -640,6 +656,13 @@ void Application::display_error_dialog(StringView error_message) const
     warnln("{}", error_message);
 }
 
+void Application::on_quarantine_manager_requested() const
+{
+    // Default implementation: log to console
+    // Platform-specific implementations (Qt) will override this
+    dbgln("Application: Quarantine manager requested (no platform implementation)");
+}
+
 Utf16String Application::clipboard_text() const
 {
     if (!m_clipboard.has_value())
@@ -659,6 +682,52 @@ Vector<Web::Clipboard::SystemClipboardRepresentation> Application::clipboard_ent
 void Application::insert_clipboard_entry(Web::Clipboard::SystemClipboardRepresentation entry)
 {
     m_clipboard = move(entry);
+}
+
+NonnullRefPtr<Core::Promise<Application::BrowsingDataSizes>> Application::estimate_browsing_data_size_accessed_since(UnixDateTime since)
+{
+    auto promise = Core::Promise<BrowsingDataSizes>::construct();
+
+    m_request_server_client->estimate_cache_size_accessed_since(since)
+        ->when_resolved([this, promise, since](Requests::CacheSizes cache_sizes) {
+            auto cookie_sizes = m_cookie_jar->estimate_storage_size_accessed_since(since);
+            auto storage_sizes = m_storage_jar->estimate_storage_size_accessed_since(since);
+
+            BrowsingDataSizes sizes;
+
+            sizes.cache_size_since_requested_time = cache_sizes.since_requested_time;
+            sizes.total_cache_size = cache_sizes.total;
+
+            sizes.site_data_size_since_requested_time = cookie_sizes.since_requested_time + storage_sizes.since_requested_time;
+            sizes.total_site_data_size = cookie_sizes.total + storage_sizes.total;
+
+            promise->resolve(sizes);
+        })
+        .when_rejected([promise](Error& error) {
+            promise->reject(move(error));
+        });
+
+    return promise;
+}
+
+void Application::clear_browsing_data(ClearBrowsingDataOptions const& options)
+{
+    if (options.delete_cached_files == ClearBrowsingDataOptions::Delete::Yes) {
+        m_request_server_client->async_remove_cache_entries_accessed_since(options.since);
+
+        // FIXME: Maybe we should forward the "since" parameter to the WebContent process, but the in-memory cache is
+        //        transient anyways, so just assuming they were all accessed in the last hour is fine for now.
+        ViewImplementation::for_each_view([](ViewImplementation& view) {
+            // FIXME: This should be promoted from a debug request to a proper endpoint.
+            view.debug_request("clear-cache"sv);
+            return IterationDecision::Continue;
+        });
+    }
+
+    if (options.delete_site_data == ClearBrowsingDataOptions::Delete::Yes) {
+        m_cookie_jar->expire_cookies_accessed_since(options.since);
+        m_storage_jar->remove_items_accessed_since(options.since);
+    }
 }
 
 void Application::initialize_actions()
@@ -830,11 +899,6 @@ void Application::initialize_actions()
     m_debug_menu->add_separator();
 
     m_debug_menu->add_action(Action::create("Collect Garbage"sv, ActionID::CollectGarbage, debug_request("collect-garbage"sv)));
-    m_debug_menu->add_action(Action::create("Clear Cache"sv, ActionID::ClearCache, [this, clear_memory_cache = debug_request("clear_cache")]() {
-        m_request_server_client->async_clear_cache();
-        clear_memory_cache();
-    }));
-    m_debug_menu->add_action(Action::create("Clear All Cookies"sv, ActionID::ClearCookies, [this]() { m_cookie_jar->clear_all_cookies(); }));
     m_debug_menu->add_separator();
 
     auto spoof_user_agent_menu = Menu::create_group("Spoof User Agent"sv);

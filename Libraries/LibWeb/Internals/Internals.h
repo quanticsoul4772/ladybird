@@ -43,6 +43,8 @@ public:
     void wheel(double x, double y, double delta_x, double delta_y);
     void pinch(double x, double y, double scale_delta);
 
+    String current_cursor();
+
     WebIDL::ExceptionOr<bool> dispatch_user_activated_event(DOM::EventTarget&, DOM::Event& event);
 
     void spoof_current_url(String const& url);
@@ -56,6 +58,8 @@ public:
     void enable_cookies_on_file_domains();
     void expire_cookies_with_time_offset(WebIDL::LongLong seconds);
 
+    bool set_http_memory_cache_enabled(bool enabled);
+
     String get_computed_role(DOM::Element& element);
     String get_computed_label(DOM::Element& element);
     String get_computed_aria_level(DOM::Element& element);
@@ -68,6 +72,7 @@ public:
     bool headless();
 
     String dump_display_list();
+    String dump_gc_graph();
 
     GC::Ptr<DOM::ShadowRoot> get_shadow_root(GC::Ref<DOM::Element>);
 

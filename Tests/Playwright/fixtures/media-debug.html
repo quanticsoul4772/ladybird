@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Minimal Media Test</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .status { margin: 10px 0; padding: 10px; background: #f0f0f0; border-radius: 5px; }
+        .error { background: #ffcccc; }
+        .success { background: #ccffcc; }
+    </style>
+</head>
+<body>
+    <h1>Minimal Audio Loading Test</h1>
+
+    <audio id="test-audio" controls>
+        <source src="http://localhost:9080/media/silent-mono.mp3" type="audio/mpeg">
+    </audio>
+
+    <div id="status-container"></div>
+
+    <script>
+        const audio = document.getElementById('test-audio');
+        const container = document.getElementById('status-container');
+
+        function addStatus(message, isError = false) {
+            const div = document.createElement('div');
+            div.className = 'status ' + (isError ? 'error' : '');
+            div.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
+            container.appendChild(div);
+            console.log(message);
+        }
+
+        function updateState() {
+            const states = {
+                readyState: ['HAVE_NOTHING', 'HAVE_METADATA', 'HAVE_CURRENT_DATA', 'HAVE_FUTURE_DATA', 'HAVE_ENOUGH_DATA'],
+                networkState: ['NETWORK_EMPTY', 'NETWORK_IDLE', 'NETWORK_LOADING', 'NETWORK_NO_SOURCE']
+            };
+
+            addStatus(`
+                <strong>State:</strong><br>
+                readyState: ${audio.readyState} (${states.readyState[audio.readyState] || 'UNKNOWN'})<br>
+                networkState: ${audio.networkState} (${states.networkState[audio.networkState] || 'UNKNOWN'})<br>
+                duration: ${audio.duration}<br>
+                currentSrc: ${audio.currentSrc}<br>
+                error: ${audio.error ? audio.error.code + ' - ' + audio.error.message : 'none'}
+            `);
+        }
+
+        // Log all media events
+        const events = [
+            'loadstart', 'progress', 'suspend', 'abort', 'error', 'emptied', 'stalled',
+            'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'playing',
+            'pause', 'ended', 'seeking', 'seeked', 'timeupdate', 'durationchange',
+            'ratechange', 'volumechange'
+        ];
+
+        events.forEach(eventType => {
+            audio.addEventListener(eventType, (e) => {
+                const className = eventType.includes('error') ? 'error' : 'success';
+                addStatus(`<strong>EVENT:</strong> ${eventType}`, eventType.includes('error'));
+                if (eventType === 'loadedmetadata') {
+                    updateState();
+                }
+            });
+        });
+
+        // Initial state
+        addStatus('<strong>Initial state:</strong>');
+        updateState();
+
+        // Update state every 2 seconds
+        setInterval(updateState, 2000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Navigation Test Page</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .test-section {
+      border: 1px solid #ccc;
+      padding: 20px;
+      margin: 20px 0;
+      border-radius: 5px;
+      background: #f9f9f9;
+    }
+    .test-section h2 {
+      margin-top: 0;
+      color: #333;
+    }
+    a, button {
+      display: inline-block;
+      margin: 5px;
+      padding: 10px 15px;
+      background: #007bff;
+      color: white;
+      text-decoration: none;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    a:hover, button:hover {
+      background: #0056b3;
+    }
+    .info {
+      background: #e7f3ff;
+      padding: 10px;
+      margin: 10px 0;
+      border-left: 3px solid #007bff;
+    }
+  </style>
+</head>
+<body>
+  <h1>Navigation Test Page</h1>
+  <p>This page provides various navigation test scenarios for Playwright tests.</p>
+
+  <!-- Link Navigation -->
+  <div class="test-section">
+    <h2>Link Navigation</h2>
+    <div class="info">
+      Test different link targets and behaviors
+    </div>
+    <a href="http://localhost:9080/" target="_self" id="link-same-tab">Same Tab (target=_self)</a>
+    <a href="http://localhost:9080/" target="_blank" id="link-new-tab">New Tab (target=_blank)</a>
+    <a href="http://example.com" id="link-external">External Link</a>
+  </div>
+
+  <!-- Anchor Links -->
+  <div class="test-section">
+    <h2>Anchor Links</h2>
+    <div class="info">
+      Test fragment navigation (scrolling to sections)
+    </div>
+    <a href="#bottom" id="anchor-link">Jump to Bottom</a>
+  </div>
+
+  <!-- JavaScript Navigation -->
+  <div class="test-section">
+    <h2>JavaScript Navigation</h2>
+    <div class="info">
+      Test programmatic navigation via JavaScript
+    </div>
+    <button onclick="navigateWithLocation()" id="nav-location">Navigate via window.location</button>
+    <button onclick="navigateWithAssign()" id="nav-assign">Navigate via location.assign()</button>
+    <button onclick="navigateWithReplace()" id="nav-replace">Navigate via location.replace()</button>
+  </div>
+
+  <!-- Form Navigation -->
+  <div class="test-section">
+    <h2>Form Navigation</h2>
+    <div class="info">
+      Test form submission navigation (GET method)
+    </div>
+    <form action="http://localhost:9080/submit" method="GET" id="nav-form">
+      <input type="text" name="query" value="test-query" placeholder="Search query">
+      <button type="submit">Submit Form (GET)</button>
+    </form>
+  </div>
+
+  <!-- Meta Refresh -->
+  <div class="test-section">
+    <h2>Meta Refresh</h2>
+    <div class="info">
+      Test meta refresh redirect (disabled by default)
+    </div>
+    <button onclick="enableMetaRefresh()" id="enable-meta-refresh">Enable Meta Refresh (5s delay)</button>
+    <div id="meta-status">Not enabled</div>
+  </div>
+
+  <!-- History API -->
+  <div class="test-section">
+    <h2>History API</h2>
+    <div class="info">
+      Test browser history manipulation
+    </div>
+    <button onclick="pushState()" id="history-push">Push State</button>
+    <button onclick="replaceState()" id="history-replace">Replace State</button>
+    <button onclick="history.back()" id="history-back">Go Back</button>
+    <button onclick="history.forward()" id="history-forward">Go Forward</button>
+  </div>
+
+  <!-- Current State Info -->
+  <div class="test-section">
+    <h2>Current Page State</h2>
+    <div id="page-info" style="font-family: monospace; font-size: 12px;">
+      URL: <strong id="current-url"></strong><br>
+      Origin: <strong id="current-origin"></strong><br>
+      Pathname: <strong id="current-pathname"></strong><br>
+      Hash: <strong id="current-hash"></strong><br>
+      History Length: <strong id="history-length"></strong>
+    </div>
+  </div>
+
+  <!-- Bottom anchor target -->
+  <div id="bottom" style="margin-top: 500px; padding: 20px; background: #ffe0e0; border: 2px solid #dc3545; border-radius: 5px;">
+    <h2>Bottom Section 🎯</h2>
+    <p>You scrolled to the bottom via anchor link!</p>
+    <a href="#top">Back to top</a>
+  </div>
+
+  <script>
+    // Navigation functions
+    function navigateWithLocation() {
+      window.location.href = 'http://localhost:9080/';
+    }
+
+    function navigateWithAssign() {
+      window.location.assign('http://localhost:9080/');
+    }
+
+    function navigateWithReplace() {
+      window.location.replace('http://localhost:9080/');
+    }
+
+    function enableMetaRefresh() {
+      const meta = document.createElement('meta');
+      meta.httpEquiv = 'refresh';
+      meta.content = '5;url=http://localhost:9080/';
+      document.head.appendChild(meta);
+      document.getElementById('meta-status').textContent = 'Meta refresh enabled! Redirecting in 5 seconds...';
+      document.getElementById('meta-status').style.color = 'orange';
+    }
+
+    // History API functions
+    let stateCounter = 0;
+    function pushState() {
+      stateCounter++;
+      const newUrl = window.location.pathname + '?state=' + stateCounter;
+      history.pushState({ counter: stateCounter }, 'State ' + stateCounter, newUrl);
+      updatePageInfo();
+      console.log('Pushed state:', stateCounter);
+    }
+
+    function replaceState() {
+      stateCounter++;
+      const newUrl = window.location.pathname + '?replaced=' + stateCounter;
+      history.replaceState({ counter: stateCounter }, 'Replaced ' + stateCounter, newUrl);
+      updatePageInfo();
+      console.log('Replaced state:', stateCounter);
+    }
+
+    // Update page info display
+    function updatePageInfo() {
+      document.getElementById('current-url').textContent = window.location.href;
+      document.getElementById('current-origin').textContent = window.location.origin;
+      document.getElementById('current-pathname').textContent = window.location.pathname;
+      document.getElementById('current-hash').textContent = window.location.hash || '(none)';
+      document.getElementById('history-length').textContent = history.length;
+    }
+
+    // Initialize
+    updatePageInfo();
+
+    // Listen for navigation events
+    window.addEventListener('popstate', (e) => {
+      console.log('Popstate event:', e.state);
+      updatePageInfo();
+    });
+
+    window.addEventListener('hashchange', (e) => {
+      console.log('Hash changed:', window.location.hash);
+      updatePageInfo();
+    });
+
+    // Test data for Playwright
+    window.__navigationTestData = {
+      url: window.location.href,
+      origin: window.location.origin,
+      pathname: window.location.pathname,
+      historyLength: history.length,
+      userAgent: navigator.userAgent
+    };
+
+    console.log('Navigation test page loaded:', window.__navigationTestData);
+  </script>
+</body>
+</html>

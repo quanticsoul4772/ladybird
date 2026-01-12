@@ -58,6 +58,7 @@ private:
         LayoutState::UsedValues& used_values;
         Optional<CSS::FlexBasis> used_flex_basis {};
         bool used_flex_basis_is_definite { false };
+        bool main_size_was_resolved_from_aspect_ratio { false };
         CSSPixels flex_base_size { 0 };
         CSSPixels hypothetical_main_size { 0 };
         CSSPixels hypothetical_cross_size { 0 };
@@ -184,7 +185,7 @@ private:
 
     void resolve_cross_axis_auto_margins();
 
-    void determine_hypothetical_cross_size_of_item(FlexItem&, bool resolve_percentage_min_max_sizes);
+    void determine_hypothetical_cross_size_of_item(FlexItem&);
 
     void calculate_cross_size_of_each_flex_line();
 

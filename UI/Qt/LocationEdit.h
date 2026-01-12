@@ -10,6 +10,7 @@
 #include <LibWebView/Settings.h>
 
 #include <QLineEdit>
+#include <QMimeData>
 
 namespace Ladybird {
 
@@ -28,6 +29,9 @@ public:
 
     bool url_is_hidden() const { return m_url_is_hidden; }
     void set_url_is_hidden(bool url_is_hidden) { m_url_is_hidden = url_is_hidden; }
+
+protected:
+    void insertFromMimeData(QMimeData const* source);
 
 private:
     virtual void focusInEvent(QFocusEvent* event) override;

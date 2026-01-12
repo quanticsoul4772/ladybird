@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        #test::before {
+            content: "BEFORE ";
+        }
+        #test::after {
+            content: " AFTER";
+        }
+    </style>
+</head>
+<body>
+    <div id="test">CONTENT</div>
+    <script>
+        const el = document.getElementById('test');
+        console.log('textContent:', el.textContent);
+        console.log('innerText:', el.innerText);
+        console.log('::before content:', window.getComputedStyle(el, '::before').content);
+        console.log('::after content:', window.getComputedStyle(el, '::after').content);
+    </script>
+</body>
+</html>

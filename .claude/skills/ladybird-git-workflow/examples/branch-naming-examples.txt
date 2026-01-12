@@ -1,0 +1,254 @@
+# Branch Naming Examples
+
+## ✅ Good Branch Names
+
+### Feature Branches
+
+feature/css-grid-support
+feature/webgl2-implementation
+feature/canvas-api
+feature/flexbox-layout
+feature/service-workers
+feature/websocket-client
+feature/http2-support
+
+### Bug Fix Branches
+
+fix/memory-leak-in-gc
+fix/crash-on-invalid-css
+fix/xss-vulnerability
+fix/race-condition-in-layout
+fix/null-pointer-in-parser
+fix/buffer-overflow-in-decoder
+
+### Fork-Specific Security Features
+
+sentinel/fingerprinting-detection
+sentinel/phishing-url-analyzer
+sentinel/ml-malware-detection
+sentinel/form-anomaly-detector
+sentinel/credential-protection
+
+### Milestone Branches (Long-Lived)
+
+sentinel-milestone-0.4-phase-1
+sentinel-milestone-0.4-phase-4
+sentinel-phase5-day29-security-fixes
+sentinel-phase6-form-anomaly
+
+### Refactoring Branches
+
+refactor/layout-immutable-state
+refactor/gc-to-cell-hierarchy
+refactor/event-loop-async
+refactor/ipc-message-types
+
+### Experimental/Research Branches
+
+experiment/tor-per-tab-circuits
+experiment/ipfs-integration
+research/ml-malware-detection
+research/webassembly-jit
+experiment/quantum-css
+research/spectre-mitigations
+
+### Documentation Branches
+
+docs/update-testing-guide
+docs/add-sentinel-architecture
+docs/libweb-patterns
+docs/getting-started
+
+### Performance Optimization
+
+perf/faster-css-parsing
+perf/optimize-yara-matching
+perf/reduce-layout-reflows
+perf/cache-compiled-js
+
+### Testing Branches
+
+test/add-canvas-fingerprinting-tests
+test/webgl-conformance
+test/credential-protection-e2e
+
+### Release Branches (Upstream)
+
+release/1.0.0
+release/1.1.0
+hotfix/1.0.1
+
+### CI/Build System
+
+ci/add-sanitizer-tests
+ci/enable-macos-build
+build/upgrade-cmake
+build/add-clang-20-support
+
+---
+
+## ❌ Bad Branch Names
+
+### Too Generic
+
+feature/new-feature
+fix/bug
+update
+changes
+work
+dev
+
+### No Category Prefix
+
+css-grid-support         # Missing feature/ prefix
+memory-leak             # Missing fix/ prefix
+fingerprinting          # Missing sentinel/ prefix
+
+### Unclear Purpose
+
+my-branch
+test
+temp
+wip
+asdf
+feature123
+
+### Too Long
+
+feature/implement-the-complete-css-grid-layout-specification-with-all-features-and-properties
+
+### Special Characters
+
+feature/css_grid        # Use hyphens, not underscores
+feature/CSS-Grid        # Use lowercase
+fix/bug#123            # Don't include issue numbers
+feature/grid+flexbox   # Avoid special chars
+
+### Personal References
+
+john-doe/css-grid      # No personal names
+my-feature-branch
+johns-wip
+
+### Dates in Names
+
+feature/css-grid-2024-11-01
+fix/memory-leak-nov-2024
+
+### Version Numbers
+
+feature/grid-v1.0
+fix/crash-1.2.3
+
+### Vague Descriptions
+
+feature/improvements
+fix/issues
+update/stuff
+refactor/things
+
+---
+
+## Branch Naming Conventions Summary
+
+### Format
+
+{type}/{short-descriptive-name}
+
+### Types
+
+- feature/     - New functionality
+- fix/         - Bug fixes
+- refactor/    - Code restructuring
+- perf/        - Performance improvements
+- test/        - Test additions
+- docs/        - Documentation
+- ci/          - CI/CD changes
+- build/       - Build system changes
+- experiment/  - Experimental work
+- research/    - Research/prototyping
+- sentinel/    - Fork-specific security features (alternative to feature/)
+
+### Naming Rules
+
+1. Use lowercase
+2. Separate words with hyphens
+3. Be descriptive but concise
+4. Use nouns, not verbs ("grid-support" not "add-grid")
+5. Avoid special characters (!@#$%^&*()+=)
+6. No spaces
+7. No dates or version numbers
+8. No personal attribution
+
+### Examples by Component
+
+LibWeb features:
+- feature/css-grid-support
+- feature/canvas-rendering-context
+- feature/web-audio-api
+
+LibJS features:
+- feature/async-generators
+- feature/weak-refs
+- feature/private-class-fields
+
+Services:
+- feature/request-pooling
+- feature/image-decoder-webp
+- sentinel/url-security-analyzer
+
+UI:
+- feature/dark-mode
+- feature/developer-tools
+- fix/qt-menu-crash
+
+Build/Meta:
+- build/upgrade-clang
+- ci/add-fuzzing-tests
+- docs/update-coding-style
+
+---
+
+## Special Cases
+
+### Multi-Component Changes
+
+Use primary component:
+- feature/webgl2-implementation (even if touches multiple components)
+- sentinel/fingerprinting-detection (covers WebContent + Sentinel + LibWeb)
+
+Or use descriptive name:
+- refactor/multi-process-ipc
+- perf/end-to-end-optimization
+
+### Upstream Sync Branches
+
+fix/upstream-api-changes
+fix/resolve-merge-conflicts
+merge/upstream-2024-11
+
+### Hotfixes
+
+hotfix/security-vulnerability
+hotfix/critical-crash
+hotfix/release-1.0.1
+
+### Backports
+
+backport/fix-to-release-1.0
+backport/security-patch
+
+---
+
+## Fork-Specific Patterns
+
+This fork uses longer-lived milestone branches:
+
+sentinel-milestone-0.3-phase-1
+sentinel-milestone-0.3-phase-2
+sentinel-milestone-0.4-phase-1
+sentinel-milestone-0.4-phase-4
+sentinel-milestone-0.4-phase-5
+
+These represent multi-day/week development efforts
+for major Sentinel features, not typical upstream workflow.

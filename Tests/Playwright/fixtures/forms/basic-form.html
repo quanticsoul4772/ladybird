@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basic Form Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .form-container {
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            max-width: 500px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+            text-align: center;
+            font-size: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="password"],
+        input[type="number"],
+        input[type="tel"],
+        input[type="date"],
+        input[type="time"],
+        textarea,
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 5px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: all 0.3s ease;
+        }
+
+        input:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        input:invalid {
+            border-color: #ff6b6b;
+        }
+
+        input:valid:not(:placeholder-shown) {
+            border-color: #51cf66;
+        }
+
+        .checkbox-group,
+        .radio-group {
+            margin: 15px 0;
+        }
+
+        .checkbox-item,
+        .radio-item {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+        }
+
+        input[type="checkbox"],
+        input[type="radio"] {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+
+        .checkbox-item label,
+        .radio-item label {
+            margin: 0;
+            font-weight: 400;
+            cursor: pointer;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 30px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        button[type="submit"] {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        button[type="submit"]:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        button[type="reset"] {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        button[type="reset"]:hover {
+            background: #e0e0e0;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .form-message {
+            padding: 12px;
+            border-radius: 5px;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .form-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+
+        .form-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+
+        .form-message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+
+        .field-hint {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .field-error {
+            font-size: 12px;
+            color: #ff6b6b;
+            margin-top: 5px;
+            display: none;
+        }
+
+        input:invalid ~ .field-error {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="form-container">
+        <h1>Registration Form</h1>
+
+        <form id="test-form" method="POST" action="/submit" novalidate>
+            <!-- Text Input -->
+            <div class="form-group">
+                <label for="name">Full Name *</label>
+                <input type="text" id="name" name="name" required placeholder="John Doe">
+                <div class="field-hint">Your full name as it appears in official documents</div>
+            </div>
+
+            <!-- Email Input -->
+            <div class="form-group">
+                <label for="email">Email Address *</label>
+                <input type="email" id="email" name="email" required placeholder="john@example.com">
+                <div class="field-error">Please enter a valid email address</div>
+            </div>
+
+            <!-- Password Input -->
+            <div class="form-group">
+                <label for="password">Password *</label>
+                <input type="password" id="password" name="password" required minlength="8" placeholder="Min 8 characters">
+                <div class="field-hint">Use a mix of uppercase, lowercase, and numbers</div>
+            </div>
+
+            <!-- Phone Number -->
+            <div class="form-group">
+                <label for="phone">Phone Number</label>
+                <input type="tel" id="phone" name="phone" placeholder="(555) 123-4567">
+            </div>
+
+            <!-- Age (Number Input) -->
+            <div class="form-group">
+                <label for="age">Age</label>
+                <input type="number" id="age" name="age" min="18" max="120" placeholder="18">
+                <div class="field-hint">Must be 18 or older</div>
+            </div>
+
+            <!-- Website (URL Input) -->
+            <div class="form-group">
+                <label for="website">Website</label>
+                <input type="url" id="website" name="website" placeholder="https://example.com">
+            </div>
+
+            <!-- Date of Birth -->
+            <div class="form-group">
+                <label for="dob">Date of Birth</label>
+                <input type="date" id="dob" name="dob">
+            </div>
+
+            <!-- Preferred Contact Time -->
+            <div class="form-group">
+                <label for="contact-time">Preferred Contact Time</label>
+                <input type="time" id="contact-time" name="contact-time" value="09:00">
+            </div>
+
+            <!-- Hidden Field -->
+            <input type="hidden" name="csrf_token" value="token123abc">
+            <input type="hidden" name="form_version" value="1.0">
+
+            <!-- Checkboxes -->
+            <div class="form-group">
+                <label>Interests</label>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="interest-sports" name="interests" value="sports">
+                        <label for="interest-sports">Sports</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="interest-music" name="interests" value="music">
+                        <label for="interest-music">Music</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="interest-reading" name="interests" value="reading">
+                        <label for="interest-reading">Reading</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Radio Buttons -->
+            <div class="form-group">
+                <label>Newsletter Subscription</label>
+                <div class="radio-group">
+                    <div class="radio-item">
+                        <input type="radio" id="newsletter-yes" name="newsletter" value="yes">
+                        <label for="newsletter-yes">Yes, subscribe me</label>
+                    </div>
+                    <div class="radio-item">
+                        <input type="radio" id="newsletter-no" name="newsletter" value="no" checked>
+                        <label for="newsletter-no">No, don't subscribe</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Select Dropdown -->
+            <div class="form-group">
+                <label for="country">Country *</label>
+                <select id="country" name="country" required>
+                    <option value="">-- Select a country --</option>
+                    <option value="us">United States</option>
+                    <option value="ca">Canada</option>
+                    <option value="uk">United Kingdom</option>
+                    <option value="au">Australia</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+
+            <!-- Textarea -->
+            <div class="form-group">
+                <label for="comments">Additional Comments</label>
+                <textarea id="comments" name="comments" placeholder="Tell us more about yourself..."></textarea>
+            </div>
+
+            <!-- Terms and Conditions -->
+            <div class="checkbox-item" style="margin-top: 20px;">
+                <input type="checkbox" id="terms" name="agree_terms" required>
+                <label for="terms">I agree to the Terms and Conditions *</label>
+            </div>
+
+            <!-- Form Actions -->
+            <div class="form-actions">
+                <button type="submit" id="submit-btn">Register</button>
+                <button type="reset" id="reset-btn">Clear Form</button>
+            </div>
+
+            <!-- Status Message -->
+            <div id="form-message" class="form-message"></div>
+        </form>
+    </div>
+
+    <script>
+        const form = document.getElementById('test-form');
+        const messageDiv = document.getElementById('form-message');
+
+        // Track form events
+        window.__formEvents = {
+            submit: 0,
+            reset: 0,
+            input: 0,
+            change: 0,
+            focus: 0,
+            blur: 0
+        };
+
+        // Track form state
+        window.__formState = {
+            isValid: false,
+            fieldCount: 0,
+            submissionCount: 0,
+            resetCount: 0,
+            lastSubmitTime: null,
+            lastResetTime: null
+        };
+
+        // Count form fields
+        window.__formState.fieldCount = form.querySelectorAll('input, select, textarea').length;
+
+        // Submit handler
+        form.addEventListener('submit', function(e) {
+            window.__formEvents.submit++;
+            window.__formState.submissionCount++;
+            window.__formState.lastSubmitTime = Date.now();
+
+            const isValid = form.checkValidity();
+            window.__formState.isValid = isValid;
+
+            if (!isValid) {
+                e.preventDefault();
+                messageDiv.className = 'form-message error';
+                messageDiv.textContent = 'Please fill in all required fields correctly.';
+                return false;
+            }
+
+            messageDiv.className = 'form-message success';
+            messageDiv.textContent = 'Form submitted successfully!';
+        });
+
+        // Reset handler
+        form.addEventListener('reset', function(e) {
+            window.__formEvents.reset++;
+            window.__formState.resetCount++;
+            window.__formState.lastResetTime = Date.now();
+
+            messageDiv.className = 'form-message info';
+            messageDiv.textContent = 'Form cleared.';
+        });
+
+        // Input event tracking
+        form.addEventListener('input', function(e) {
+            window.__formEvents.input++;
+        });
+
+        // Change event tracking
+        form.addEventListener('change', function(e) {
+            window.__formEvents.change++;
+        });
+
+        // Focus tracking
+        form.addEventListener('focus', function(e) {
+            window.__formEvents.focus++;
+        }, true);
+
+        // Blur tracking
+        form.addEventListener('blur', function(e) {
+            window.__formEvents.blur++;
+        }, true);
+    </script>
+</body>
+</html>

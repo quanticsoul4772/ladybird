@@ -5,12 +5,16 @@
  */
 
 #include <AK/IDAllocator.h>
+#include <AK/JsonArray.h>
+#include <AK/JsonObject.h>
+#include <AK/JsonValue.h>
 #include <AK/NonnullOwnPtr.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Proxy.h>
 #include <LibCore/Socket.h>
 #include <LibCore/StandardPaths.h>
-<<<<<<< HEAD
+#include <LibCore/System.h>
+#include <LibHTTP/Cache/DiskCache.h>
 #include <LibIPC/IPFSAPIClient.h>
 #include <LibIPC/IPFSVerifier.h>
 #include <LibIPC/Limits.h>
@@ -18,14 +22,13 @@
 #include <LibIPC/ProxyValidator.h>
 #include <LibRequests/NetworkError.h>
 #include <LibRequests/RequestTimingInfo.h>
-=======
->>>>>>> upstream/master
 #include <LibRequests/WebSocket.h>
 #include <LibWebSocket/ConnectionInfo.h>
 #include <LibWebSocket/Message.h>
+#include <LibWebView/SentinelConfig.h>
 #include <RequestServer/CURL.h>
-#include <RequestServer/Cache/DiskCache.h>
 #include <RequestServer/ConnectionFromClient.h>
+#include <RequestServer/Quarantine.h>
 #include <RequestServer/Request.h>
 #include <RequestServer/Resolver.h>
 #include <RequestServer/WebSocketImplCurl.h>
@@ -34,388 +37,17 @@ namespace RequestServer {
 
 static HashMap<int, RefPtr<ConnectionFromClient>> s_connections;
 static IDAllocator s_client_ids;
-<<<<<<< HEAD
-static long s_connect_timeout_seconds = 90L;
 
 // Gateway timeout configuration (shorter than standard HTTP for faster failover)
 // With 4 IPFS gateways, total max time = 4 * (10s connect + 30s transfer) = 160s
-static long s_gateway_connect_timeout_seconds = 10L;  // Connect timeout for gateway requests
-static long s_gateway_request_timeout_seconds = 30L;  // Total request timeout for gateway requests
+[[maybe_unused]] static long s_gateway_connect_timeout_seconds = 10L;  // Connect timeout for gateway requests
+[[maybe_unused]] static long s_gateway_request_timeout_seconds = 30L;  // Total request timeout for gateway requests
 
-static struct {
-    Optional<Core::SocketAddress> server_address;
-    Optional<ByteString> server_hostname;
-    u16 port;
-    bool use_dns_over_tls = true;
-    bool validate_dnssec_locally = false;
-} g_dns_info;
-
-Optional<DiskCache> g_disk_cache;
+Optional<HTTP::DiskCache> g_disk_cache;
+extern SecurityTap* g_security_tap;
 
 // Static storage for NetworkIdentity shared across all ConnectionFromClient instances
 HashMap<u64, RefPtr<IPC::NetworkIdentity>> ConnectionFromClient::s_page_network_identities;
-
-static WeakPtr<Resolver> s_resolver {};
-static NonnullRefPtr<Resolver> default_resolver()
-{
-    if (auto resolver = s_resolver.strong_ref())
-        return *resolver;
-    auto resolver = make_ref_counted<Resolver>([] -> ErrorOr<DNS::Resolver::SocketResult> {
-        if (!g_dns_info.server_address.has_value()) {
-            if (!g_dns_info.server_hostname.has_value())
-                return Error::from_string_literal("No DNS server configured");
-
-            auto resolved = TRY(default_resolver()->dns.lookup(*g_dns_info.server_hostname)->await());
-            if (!resolved->has_cached_addresses())
-                return Error::from_string_literal("Failed to resolve DNS server hostname");
-            auto address = resolved->cached_addresses().first().visit([](auto& addr) -> Core::SocketAddress { return { addr, g_dns_info.port }; });
-            g_dns_info.server_address = address;
-        }
-
-        if (g_dns_info.use_dns_over_tls) {
-            TLS::Options options;
-
-            if (!g_default_certificate_path.is_empty())
-                options.root_certificates_path = g_default_certificate_path;
-
-            return DNS::Resolver::SocketResult {
-                MaybeOwned<Core::Socket>(TRY(TLS::TLSv12::connect(*g_dns_info.server_address, *g_dns_info.server_hostname, move(options)))),
-                DNS::Resolver::ConnectionMode::TCP,
-            };
-        }
-
-#if !defined(AK_OS_WINDOWS)
-        return DNS::Resolver::SocketResult {
-            MaybeOwned<Core::Socket>(TRY(Core::BufferedUDPSocket::create(TRY(Core::UDPSocket::connect(*g_dns_info.server_address))))),
-            DNS::Resolver::ConnectionMode::UDP,
-        };
-#else
-        return Error::from_string_literal("Core::UDPSocket::connect() and Core::BufferedUDPSocket::create() are not implemented on Windows");
-#endif
-    });
-
-    s_resolver = resolver;
-    return resolver;
-}
-
-ByteString build_curl_resolve_list(DNS::LookupResult const& dns_result, StringView host, u16 port)
-{
-    StringBuilder resolve_opt_builder;
-    resolve_opt_builder.appendff("{}:{}:", host, port);
-    auto first = true;
-    for (auto& addr : dns_result.cached_addresses()) {
-        auto formatted_address = addr.visit(
-            [&](IPv4Address const& ipv4) { return ipv4.to_byte_string(); },
-            [&](IPv6Address const& ipv6) { return MUST(ipv6.to_string()).to_byte_string(); });
-        if (!first)
-            resolve_opt_builder.append(',');
-        first = false;
-        resolve_opt_builder.append(formatted_address);
-    }
-
-    dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: Resolve list: {}", resolve_opt_builder.string_view());
-
-    return resolve_opt_builder.to_byte_string();
-}
-
-struct ConnectionFromClient::ActiveRequest : public Weakable<ActiveRequest> {
-    CURLM* multi { nullptr };
-    CURL* easy { nullptr };
-    Vector<curl_slist*> curl_string_lists;
-    i32 request_id { 0 };
-    u64 page_id { 0 };
-    WeakPtr<ConnectionFromClient> client;
-    int writer_fd { 0 };
-    bool is_connect_only { false };
-    bool is_gateway_request { false };  // P2P gateway request (IPFS/IPNS/ENS)
-    size_t downloaded_so_far { 0 };
-    URL::URL url;
-    ByteString method;
-    Optional<String> reason_phrase;
-    ByteBuffer body;
-
-    AllocatingMemoryStream send_buffer;
-    NonnullRefPtr<Core::Notifier> write_notifier;
-    bool done_fetching { false };
-
-    Optional<long> http_status_code;
-    HTTP::HeaderMap headers;
-    bool got_all_headers { false };
-
-    Optional<size_t> start_offset_of_resumed_response;
-    size_t bytes_transferred_to_client { 0 };
-
-    Optional<CacheEntryWriter&> cache_entry;
-    UnixDateTime request_start_time;
-
-    // IPFS content verification
-    Optional<IPC::ParsedCID> ipfs_cid;
-    ByteBuffer ipfs_content_buffer;
-
-    ActiveRequest(ConnectionFromClient& client, CURLM* multi, CURL* easy, i32 request_id, u64 page_id, int writer_fd)
-        : multi(multi)
-        , easy(easy)
-        , request_id(request_id)
-        , page_id(page_id)
-        , client(client)
-        , writer_fd(writer_fd)
-        , write_notifier(Core::Notifier::construct(writer_fd, Core::NotificationType::Write))
-        , request_start_time(UnixDateTime::now())
-    {
-        write_notifier->set_enabled(false);
-        write_notifier->on_activation = [this] {
-            if (auto maybe_error = write_queued_bytes_without_blocking(); maybe_error.is_error()) {
-                dbgln("Warning: Failed to write buffered request data (it's likely the client disappeared): {}", maybe_error.error());
-            }
-        };
-    }
-
-    void schedule_self_destruction() const
-    {
-        Core::deferred_invoke([weak_this = make_weak_ptr()] {
-            if (!weak_this)
-                return;
-            if (weak_this->client)
-                weak_this->client->m_active_requests.remove(weak_this->request_id);
-        });
-    }
-
-    ErrorOr<void> write_queued_bytes_without_blocking()
-    {
-        auto available_bytes = send_buffer.used_buffer_size();
-
-        // If we've received a response to a range request that is not the partial content (206) we requested, we must
-        // only transfer the subset of data that WebContent now needs. We discard all received bytes up to the expected
-        // start of the remaining data, and then transfer the remaining bytes.
-        if (start_offset_of_resumed_response.has_value()) {
-            if (http_status_code == 206) {
-                start_offset_of_resumed_response.clear();
-            } else if (http_status_code == 200) {
-                // All bytes currently available have already been transferred. Discard them entirely.
-                if (bytes_transferred_to_client + available_bytes <= *start_offset_of_resumed_response) {
-                    bytes_transferred_to_client += available_bytes;
-
-                    MUST(send_buffer.discard(available_bytes));
-                    return {};
-                }
-
-                // Some bytes currently available have already been transferred. Discard those bytes and transfer the rest.
-                if (bytes_transferred_to_client + available_bytes > *start_offset_of_resumed_response) {
-                    auto bytes_to_discard = *start_offset_of_resumed_response - bytes_transferred_to_client;
-                    bytes_transferred_to_client += bytes_to_discard;
-                    available_bytes -= bytes_to_discard;
-
-                    MUST(send_buffer.discard(bytes_to_discard));
-                }
-
-                start_offset_of_resumed_response.clear();
-            } else {
-                return Error::from_string_literal("Unacceptable status code for resumed HTTP request");
-            }
-        }
-
-        Vector<u8> bytes_to_send;
-        bytes_to_send.resize(available_bytes);
-        send_buffer.peek_some(bytes_to_send);
-
-        auto result = Core::System::write(this->writer_fd, bytes_to_send);
-        if (result.is_error()) {
-            if (result.error().code() != EAGAIN) {
-                return result.release_error();
-            }
-            write_notifier->set_enabled(true);
-            return {};
-        }
-
-        if (cache_entry.has_value()) {
-            auto bytes_sent = bytes_to_send.span().slice(0, result.value());
-
-            if (cache_entry->write_data(bytes_sent).is_error())
-                cache_entry.clear();
-        }
-
-        bytes_transferred_to_client += result.value();
-        MUST(send_buffer.discard(result.value()));
-
-        write_notifier->set_enabled(!send_buffer.is_eof());
-        if (send_buffer.is_eof() && done_fetching)
-            schedule_self_destruction();
-
-        return {};
-    }
-
-    void notify_about_fetching_completion()
-    {
-        done_fetching = true;
-        if (send_buffer.is_eof())
-            schedule_self_destruction();
-    }
-
-    ~ActiveRequest()
-    {
-        if (!send_buffer.is_eof()) {
-            dbgln("Warning: Request destroyed with buffered data (it's likely that the client disappeared or the request was cancelled)");
-        }
-
-        if (writer_fd > 0)
-            MUST(Core::System::close(writer_fd));
-
-        auto result = curl_multi_remove_handle(multi, easy);
-        VERIFY(result == CURLM_OK);
-        curl_easy_cleanup(easy);
-
-        for (auto* string_list : curl_string_lists)
-            curl_slist_free_all(string_list);
-
-        if (cache_entry.has_value())
-            (void)cache_entry->flush();
-    }
-
-    void flush_headers_if_needed()
-    {
-        if (!http_status_code.has_value())
-            http_status_code = acquire_http_status_code();
-
-        if (got_all_headers)
-            return;
-        got_all_headers = true;
-
-        client->async_headers_became_available(request_id, headers, *http_status_code, reason_phrase);
-
-        if (g_disk_cache.has_value())
-            cache_entry = g_disk_cache->create_entry(url, method, *http_status_code, reason_phrase, headers, request_start_time);
-    }
-
-    long acquire_http_status_code() const
-    {
-        long code = 0;
-        auto result = curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &code);
-        VERIFY(result == CURLE_OK);
-
-        return code;
-    }
-};
-
-size_t ConnectionFromClient::on_header_received(void* buffer, size_t size, size_t nmemb, void* user_data)
-{
-    auto* request = static_cast<ActiveRequest*>(user_data);
-    size_t total_size = size * nmemb;
-    auto header_line = StringView { static_cast<char const*>(buffer), total_size };
-
-    // NOTE: We need to extract the HTTP reason phrase since it can be a custom value.
-    //       Fetching infrastructure needs this value for setting the status message.
-    if (!request->reason_phrase.has_value() && header_line.starts_with("HTTP/"sv)) {
-        if (auto const space_positions = header_line.find_all(" "sv); space_positions.size() > 1) {
-            auto const second_space_offset = space_positions.at(1);
-            auto const reason_phrase_string_view = header_line.substring_view(second_space_offset + 1).trim_whitespace();
-
-            if (!reason_phrase_string_view.is_empty()) {
-                auto decoder = TextCodec::decoder_for_exact_name("ISO-8859-1"sv);
-                VERIFY(decoder.has_value());
-
-                request->reason_phrase = MUST(decoder->to_utf8(reason_phrase_string_view));
-                return total_size;
-            }
-        }
-    }
-
-    if (auto colon_index = header_line.find(':'); colon_index.has_value()) {
-        auto name = header_line.substring_view(0, colon_index.value()).trim_whitespace();
-        auto value = header_line.substring_view(colon_index.value() + 1, header_line.length() - colon_index.value() - 1).trim_whitespace();
-        request->headers.set(name, value);
-    }
-
-    return total_size;
-}
-
-size_t ConnectionFromClient::on_data_received(void* buffer, size_t size, size_t nmemb, void* user_data)
-{
-    auto* request = static_cast<ActiveRequest*>(user_data);
-    request->flush_headers_if_needed();
-
-    size_t total_size = size * nmemb;
-    ReadonlyBytes bytes { static_cast<u8 const*>(buffer), total_size };
-
-    auto maybe_write_error = [&] -> ErrorOr<void> {
-        TRY(request->send_buffer.write_some(bytes));
-        return request->write_queued_bytes_without_blocking();
-    }();
-
-    if (maybe_write_error.is_error()) {
-        dbgln("ConnectionFromClient::on_data_received: Aborting request because error occurred whilst writing data to the client: {}", maybe_write_error.error());
-        return CURL_WRITEFUNC_ERROR;
-    }
-
-    // IPFS content verification: Accumulate content if this is an IPFS request
-    if (request->ipfs_cid.has_value()) {
-        auto append_result = request->ipfs_content_buffer.try_append(bytes);
-        if (append_result.is_error()) {
-            dbgln("ConnectionFromClient::on_data_received: Failed to append IPFS content to buffer: {}", append_result.error());
-            // Continue anyway - verification will fail later
-        }
-    }
-
-    request->downloaded_so_far += total_size;
-    return total_size;
-}
-
-int ConnectionFromClient::on_socket_callback(CURL*, int sockfd, int what, void* user_data, void*)
-{
-    auto* client = static_cast<ConnectionFromClient*>(user_data);
-
-    if (what == CURL_POLL_REMOVE) {
-        client->m_read_notifiers.remove(sockfd);
-        client->m_write_notifiers.remove(sockfd);
-        return 0;
-    }
-
-    if (what & CURL_POLL_IN) {
-        client->m_read_notifiers.ensure(sockfd, [client, sockfd, multi = client->m_curl_multi] {
-            auto notifier = Core::Notifier::construct(sockfd, Core::NotificationType::Read);
-            notifier->on_activation = [client, sockfd, multi] {
-                auto result = curl_multi_socket_action(multi, sockfd, CURL_CSELECT_IN, nullptr);
-                VERIFY(result == CURLM_OK);
-                client->check_active_requests();
-            };
-            notifier->set_enabled(true);
-            return notifier;
-        });
-    }
-
-    if (what & CURL_POLL_OUT) {
-        client->m_write_notifiers.ensure(sockfd, [client, sockfd, multi = client->m_curl_multi] {
-            auto notifier = Core::Notifier::construct(sockfd, Core::NotificationType::Write);
-            notifier->on_activation = [client, sockfd, multi] {
-                auto result = curl_multi_socket_action(multi, sockfd, CURL_CSELECT_OUT, nullptr);
-                VERIFY(result == CURLM_OK);
-                client->check_active_requests();
-            };
-            notifier->set_enabled(true);
-            return notifier;
-        });
-    }
-
-    return 0;
-}
-
-int ConnectionFromClient::on_timeout_callback(void*, long timeout_ms, void* user_data)
-{
-    auto* client = static_cast<ConnectionFromClient*>(user_data);
-    if (!client->m_timer)
-        return 0;
-    if (timeout_ms < 0) {
-        client->m_timer->stop();
-    } else {
-        client->m_timer->restart(timeout_ms);
-    }
-    return 0;
-}
-
-=======
-
-Optional<DiskCache> g_disk_cache;
-
->>>>>>> upstream/master
 ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transport)
     : IPC::ConnectionFromClient<RequestClientEndpoint, RequestServerEndpoint>(*this, move(transport), s_client_ids.allocate())
     , m_resolver(Resolver::default_resolver())
@@ -440,6 +72,47 @@ ConnectionFromClient::ConnectionFromClient(NonnullOwnPtr<IPC::Transport> transpo
         VERIFY(result == CURLM_OK);
         check_active_requests();
     });
+
+    // Initialize URL security analyzer for phishing detection
+    // If this fails, we continue without URL analysis rather than crashing
+    auto url_analyzer_result = URLSecurityAnalyzer::create();
+    if (url_analyzer_result.is_error()) {
+        dbgln("Warning: Failed to create URLSecurityAnalyzer: {}", url_analyzer_result.error());
+        dbgln("URL phishing detection will be disabled for this connection");
+    } else {
+        m_url_security_analyzer = url_analyzer_result.release_value();
+        dbgln("URL security analyzer initialized successfully");
+    }
+
+    // Initialize TrafficMonitor for network behavioral analysis
+    // FIXME: Re-enable SentinelConfig loading once symbol export is fixed
+    // For now, default to enabled to allow testing
+    bool network_monitoring_enabled = true;
+
+    if (network_monitoring_enabled) {
+        // If this fails, we continue without traffic monitoring rather than crashing
+        auto traffic_monitor_result = TrafficMonitor::create();
+        if (traffic_monitor_result.is_error()) {
+            dbgln("Warning: Failed to create TrafficMonitor: {}", traffic_monitor_result.error());
+            dbgln("Network behavioral analysis will be disabled for this connection");
+        } else {
+            m_traffic_monitor = traffic_monitor_result.release_value();
+            dbgln("TrafficMonitor initialized successfully");
+        }
+    } else {
+        dbgln("Network behavioral monitoring disabled by user preference");
+    }
+
+    // Initialize sandbox orchestrator for real-time malware analysis (Milestone 0.5 Phase 1)
+    // If this fails, we continue without sandbox analysis rather than crashing
+    auto sandbox_result = Sentinel::Sandbox::Orchestrator::create();
+    if (sandbox_result.is_error()) {
+        dbgln("Warning: Failed to create Sandbox Orchestrator: {}", sandbox_result.error());
+        dbgln("Real-time sandbox analysis will be disabled for this connection");
+    } else {
+        m_sandbox_orchestrator = sandbox_result.release_value();
+        dbgln("Sandbox Orchestrator initialized successfully");
+    }
 }
 
 ConnectionFromClient::~ConnectionFromClient()
@@ -456,6 +129,69 @@ void ConnectionFromClient::request_complete(Badge<Request>, int request_id)
         if (auto self = weak_self.strong_ref())
             self->m_active_requests.remove(request_id);
     });
+}
+
+void ConnectionFromClient::record_traffic(Badge<Request>, URL::URL const& url, u64 bytes_sent, u64 bytes_received)
+{
+    // TrafficMonitor integration for network behavioral analysis
+    if (!m_traffic_monitor)
+        return;
+
+    // Extract domain from URL
+    auto domain = url.serialized_host().to_byte_string();
+    if (domain.is_empty())
+        return;
+
+    // Record the request
+    auto record_result = m_traffic_monitor->record_request(domain, bytes_sent, bytes_received);
+    if (record_result.is_error()) {
+        dbgln("TrafficMonitor: Failed to record request for {}: {}", domain, record_result.error());
+        return;
+    }
+
+    // Analyze the pattern and check for alerts
+    auto alert_result = m_traffic_monitor->analyze_pattern(domain);
+    if (alert_result.is_error()) {
+        dbgln("TrafficMonitor: Failed to analyze pattern for {}: {}", domain, alert_result.error());
+        return;
+    }
+
+    // If an alert was generated, log it (IPC dispatch will be added in parallel task)
+    if (alert_result.value().has_value()) {
+        auto const& alert = alert_result.value().value();
+
+        // Determine threat type string
+        ByteString threat_type;
+        switch (alert.type) {
+        case TrafficAlert::Type::DGA:
+            threat_type = "DGA (Domain Generation Algorithm)";
+            break;
+        case TrafficAlert::Type::Beaconing:
+            threat_type = "Beaconing (C2 Communication)";
+            break;
+        case TrafficAlert::Type::Exfiltration:
+            threat_type = "Data Exfiltration";
+            break;
+        case TrafficAlert::Type::DNSTunneling:
+            threat_type = "DNS Tunneling";
+            break;
+        case TrafficAlert::Type::Combined:
+            threat_type = "Combined Threats";
+            break;
+        }
+
+        dbgln("TrafficMonitor: Alert detected for {} - Type: {}, Severity: {:.2f}",
+              alert.domain, threat_type, alert.severity);
+        dbgln("TrafficMonitor: Explanation: {}", alert.explanation);
+
+        // Log indicators
+        for (auto const& indicator : alert.indicators) {
+            dbgln("TrafficMonitor: - {}", indicator);
+        }
+
+        // TODO: Send IPC alert to WebContent for user notification
+        // This will be implemented in a parallel task
+    }
 }
 
 void ConnectionFromClient::die()
@@ -931,7 +667,7 @@ void ConnectionFromClient::set_use_system_dns()
 }
 
 #ifdef AK_OS_WINDOWS
-void ConnectionFromClient::start_request(i32, ByteString, URL::URL, HTTP::HeaderMap, ByteBuffer, Core::ProxyData, u64)
+void ConnectionFromClient::start_request(i32, ByteString, URL::URL, Vector<HTTP::Header>, ByteBuffer, Core::ProxyData, u64)
 {
     VERIFY(0 && "RequestServer::ConnectionFromClient::start_request is not implemented");
 }
@@ -965,6 +701,29 @@ void ConnectionFromClient::start_request(i32 request_id, ByteString method, URL:
 
     dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: start_request({}, {}, page_id={})", request_id, url, page_id);
 
+    // Security: URL phishing detection (Milestone 0.4 Phase 5)
+    if (m_url_security_analyzer) {
+        auto analysis_result = m_url_security_analyzer->analyze_url(url);
+        if (!analysis_result.is_error()) {
+            auto const& analysis = analysis_result.value();
+
+            // Send security alert for suspicious or dangerous URLs
+            if (analysis.is_suspicious) {
+                auto alert_json_result = m_url_security_analyzer->generate_security_alert_json(analysis, url);
+                if (!alert_json_result.is_error()) {
+                    ByteString alert_json = alert_json_result.value();
+                    dbgln("Phishing URL detected: {} (score={:.2f}, level={})",
+                        url, analysis.phishing_score,
+                        analysis.threat_level() == URLSecurityAnalyzer::URLThreatAnalysis::ThreatLevel::Dangerous ? "dangerous" :
+                        analysis.threat_level() == URLSecurityAnalyzer::URLThreatAnalysis::ThreatLevel::Suspicious ? "suspicious" : "safe");
+
+                    // Send security alert to WebContent via IPC
+                    async_security_alert(request_id, page_id, alert_json);
+                }
+            }
+        }
+    }
+
     // IPFS Integration: Detect P2P protocol types
     Request::ProtocolType protocol_type = Request::ProtocolType::HTTP;
     ByteString original_resource_id;
@@ -992,18 +751,27 @@ void ConnectionFromClient::start_request(i32 request_id, ByteString method, URL:
             original_resource_id = path;
         }
         url = transform_ipns_url_to_gateway(request_id, url, page_id);
-    } else if (url.host().ends_with(".eth"sv)) {
+    } else if (url.serialized_host().ends_with_bytes(".eth"sv)) {
         protocol_type = Request::ProtocolType::ENS;
-        original_resource_id = url.host().to_byte_string();
+        original_resource_id = url.serialized_host().to_byte_string();
         remaining_path = url.serialize_path().to_byte_string();
         url = transform_ens_url_to_gateway(request_id, url, page_id);
     }
 
+    // Get network identity for this page (for Tor/proxy configuration)
+    auto network_identity = network_identity_for_page(page_id);
+
     // Create the Request object using the (potentially transformed) URL
-    auto request = Request::fetch(request_id, g_disk_cache, *this, m_curl_multi, m_resolver, move(url), method, request_headers, request_body, m_alt_svc_cache_path, proxy_data);
+    auto request = Request::fetch(request_id, g_disk_cache, *this, m_curl_multi, m_resolver, move(url), method, request_headers, request_body, m_alt_svc_cache_path, proxy_data, network_identity);
 
     // Set protocol type on the request
     request->set_protocol_type(protocol_type);
+
+    // Set page_id for IPC routing
+    request->set_page_id(page_id);
+
+    // Set SecurityTap for Sentinel integration
+    request->set_security_tap(g_security_tap);
 
     // Setup IPFS verification callback if this is an IPFS request
     if (protocol_type == Request::ProtocolType::IPFS) {
@@ -1017,6 +785,26 @@ void ConnectionFromClient::start_request(i32 request_id, ByteString method, URL:
 
     m_active_requests.set(request_id, move(request));
 }
+
+void ConnectionFromClient::issue_network_request(i32 request_id, ByteString method, URL::URL url, HTTP::HeaderMap request_headers, ByteBuffer request_body, Core::ProxyData proxy_data, u64 page_id, Optional<ResumeRequestForFailedCacheEntry> resume)
+{
+    (void)resume;  // TODO: Handle resume for failed cache entries
+
+    // Get network identity for this page (for Tor/proxy configuration)
+    auto network_identity = network_identity_for_page(page_id);
+
+    // Create the Request object using the provided URL (no IPFS detection)
+    auto request = Request::fetch(request_id, g_disk_cache, *this, m_curl_multi, m_resolver, move(url), method, request_headers, request_body, m_alt_svc_cache_path, proxy_data, network_identity);
+
+    // Set page_id for IPC routing
+    request->set_page_id(page_id);
+
+    // Set SecurityTap for Sentinel integration
+    request->set_security_tap(g_security_tap);
+
+    m_active_requests.set(request_id, move(request));
+}
+#endif
 
 int ConnectionFromClient::on_socket_callback(CURL*, int sockfd, int what, void* user_data, void*)
 {
@@ -1143,6 +931,50 @@ Messages::RequestServer::SetCertificateResponse ConnectionFromClient::set_certif
     TODO();
 }
 
+void ConnectionFromClient::enforce_security_policy(i32 request_id, ByteString action)
+{
+    // Security: Rate limiting
+    if (!check_rate_limit())
+        return;
+
+    // Security: Request ID validation
+    if (!validate_request_id(request_id))
+        return;
+
+    // Security: Action string validation
+    if (!validate_string_length(action, "action"sv))
+        return;
+
+    dbgln("RequestServer: enforce_security_policy() called for request {} with action '{}'", request_id, action);
+
+    // Get the request
+    auto request_opt = m_active_requests.get(request_id);
+    if (!request_opt.has_value()) {
+        dbgln("RequestServer: Request {} not found for security policy enforcement", request_id);
+        return;
+    }
+
+    auto& request = *request_opt.value();
+
+    // Apply the policy action by calling Request control methods
+    if (action == "block"sv) {
+        dbgln("RequestServer: Blocking request {} per security policy", request_id);
+        request.block_download();
+        // Note: block_download() will transition to Complete state, which will call request_complete()
+        // and remove the request from m_active_requests
+    } else if (action == "quarantine"sv) {
+        dbgln("RequestServer: Quarantining request {} per security policy", request_id);
+        request.quarantine_download();
+        // Note: quarantine_download() will resume the download and mark it for quarantine
+    } else if (action == "allow"sv) {
+        dbgln("RequestServer: Allowing request {} per security policy", request_id);
+        request.resume_download();
+        // Note: resume_download() will unpause the CURL transfer and continue downloading
+    } else {
+        dbgln("RequestServer: Unknown security policy action '{}' for request {}", action, request_id);
+    }
+}
+
 void ConnectionFromClient::ensure_connection(URL::URL url, ::RequestServer::CacheLevel cache_level)
 {
     // Security: Rate limiting
@@ -1159,17 +991,27 @@ void ConnectionFromClient::ensure_connection(URL::URL url, ::RequestServer::Cach
     m_active_requests.set(connect_only_request_id, move(request));
 }
 
-void ConnectionFromClient::clear_cache()
+void ConnectionFromClient::estimate_cache_size_accessed_since(u64 cache_size_estimation_id, UnixDateTime since)
+{
+    Requests::CacheSizes sizes;
+
+    if (g_disk_cache.has_value())
+        sizes = g_disk_cache->estimate_cache_size_accessed_since(since);
+
+    async_estimated_cache_size(cache_size_estimation_id, sizes);
+}
+
+void ConnectionFromClient::remove_cache_entries_accessed_since(UnixDateTime since)
 {
     // Security: Rate limiting
     if (!check_rate_limit())
         return;
 
     if (g_disk_cache.has_value())
-        g_disk_cache->clear_cache();
+        g_disk_cache->remove_entries_accessed_since(since);
 }
 
-void ConnectionFromClient::websocket_connect(i64 websocket_id, URL::URL url, ByteString origin, Vector<ByteString> protocols, Vector<ByteString> extensions, HTTP::HeaderMap additional_request_headers)
+void ConnectionFromClient::websocket_connect(i64 websocket_id, URL::URL url, ByteString origin, Vector<ByteString> protocols, Vector<ByteString> extensions, Vector<HTTP::Header> additional_request_headers)
 {
     // Security: Rate limiting
     if (!check_rate_limit())
@@ -1213,7 +1055,7 @@ void ConnectionFromClient::websocket_connect(i64 websocket_id, URL::URL url, Byt
             connection_info.set_origin(move(origin));
             connection_info.set_protocols(move(protocols));
             connection_info.set_extensions(move(extensions));
-            connection_info.set_headers(move(additional_request_headers));
+            connection_info.set_headers(HTTP::HeaderList::create(move(additional_request_headers)));
             connection_info.set_dns_result(move(dns_result));
 
             if (auto const& path = default_certificate_path(); !path.is_empty())
@@ -1346,12 +1188,12 @@ void ConnectionFromClient::issue_ipfs_request(i32 request_id, ByteString method,
     // Clone headers and body since they'll be moved
     GatewayFallbackInfo fallback_info {
         .protocol = GatewayProtocol::IPFS,
-        .current_gateway_index = use_local_daemon ? 0 : 1, // Start with local or first public gateway
+        .current_gateway_index = static_cast<size_t>(use_local_daemon ? 0 : 1), // Start with local or first public gateway
         .resource_identifier = cid_string,
         .path = remaining_path,
         .method = method,
         .headers = request_headers,
-        .body = MUST(request_body.clone()),
+        .body = MUST(ByteBuffer::copy(request_body)),
         .proxy_data = proxy_data,
         .page_id = page_id
     };
@@ -1403,12 +1245,12 @@ void ConnectionFromClient::issue_ipns_request(i32 request_id, ByteString method,
     // Store fallback info for retry on failure
     GatewayFallbackInfo fallback_info {
         .protocol = GatewayProtocol::IPNS,
-        .current_gateway_index = use_local_daemon ? 0 : 1, // Start with local or first public gateway
+        .current_gateway_index = static_cast<size_t>(use_local_daemon ? 0 : 1), // Start with local or first public gateway
         .resource_identifier = name_string,
         .path = remaining_path,
         .method = method,
         .headers = request_headers,
-        .body = MUST(request_body.clone()),
+        .body = MUST(ByteBuffer::copy(request_body)),
         .proxy_data = proxy_data,
         .page_id = page_id
     };
@@ -1438,7 +1280,7 @@ void ConnectionFromClient::issue_ens_request(i32 request_id, ByteString method, 
 {
     // Extract .eth domain and path from URL
     // Format: http://example.eth/path or https://example.eth/path
-    auto eth_domain = ens_url.host().to_byte_string();
+    auto eth_domain = ens_url.serialized_host().to_byte_string();
     auto path = ens_url.serialize_path().to_byte_string();
     auto query = ens_url.query().value_or({}).to_byte_string();
     auto fragment = ens_url.fragment().value_or({}).to_byte_string();
@@ -1466,7 +1308,7 @@ void ConnectionFromClient::issue_ens_request(i32 request_id, ByteString method, 
         .path = full_path,
         .method = method,
         .headers = request_headers,
-        .body = MUST(request_body.clone()),
+        .body = MUST(ByteBuffer::copy(request_body)),
         .proxy_data = proxy_data,
         .page_id = page_id
     };
@@ -1572,7 +1414,7 @@ void ConnectionFromClient::retry_with_next_gateway(i32 request_id)
         // Send final error to client with context
         // Note: Would be better to send custom error message, but NetworkError enum is limited
         // The debug message above provides context in browser console
-        async_request_finished(request_id, 0, {}, Requests::NetworkError::ConnectionFailed);
+        async_request_finished(request_id, 0, {}, Requests::NetworkError::UnableToConnect);
         return;
     }
 
@@ -1637,7 +1479,7 @@ void ConnectionFromClient::retry_with_next_gateway(i32 request_id)
     // Copy request parameters (we need to clone them since they're consumed)
     auto method_copy = fallback.method;
     auto headers_copy = fallback.headers;
-    auto body_copy = MUST(fallback.body.clone());
+    auto body_copy = MUST(ByteBuffer::copy(fallback.body));
     auto proxy_data_copy = fallback.proxy_data;
     auto page_id_copy = fallback.page_id;
 
@@ -1656,6 +1498,8 @@ void ConnectionFromClient::retry_with_next_gateway(i32 request_id)
 
 URL::URL ConnectionFromClient::transform_ipfs_url_to_gateway(i32 request_id, URL::URL const& ipfs_url, u64 page_id)
 {
+    (void)request_id;
+    (void)page_id;
     auto path_string = ipfs_url.serialize_path().to_byte_string();
     if (path_string.starts_with("/"sv))
         path_string = path_string.substring(1);
@@ -1674,6 +1518,8 @@ URL::URL ConnectionFromClient::transform_ipfs_url_to_gateway(i32 request_id, URL
 
 URL::URL ConnectionFromClient::transform_ipns_url_to_gateway(i32 request_id, URL::URL const& ipns_url, u64 page_id)
 {
+    (void)request_id;
+    (void)page_id;
     auto path_string = ipns_url.serialize_path().to_byte_string();
     if (path_string.starts_with("/"sv))
         path_string = path_string.substring(1);
@@ -1692,7 +1538,9 @@ URL::URL ConnectionFromClient::transform_ipns_url_to_gateway(i32 request_id, URL
 
 URL::URL ConnectionFromClient::transform_ens_url_to_gateway(i32 request_id, URL::URL const& ens_url, u64 page_id)
 {
-    auto eth_domain = ens_url.host().to_byte_string();
+    (void)request_id;
+    (void)page_id;
+    auto eth_domain = ens_url.serialized_host().to_byte_string();
     auto path = ens_url.serialize_path().to_byte_string();
 
     auto gateway_suffix = s_ens_gateways[0];
@@ -1728,14 +1576,30 @@ void ConnectionFromClient::setup_gateway_fallback(i32 request_id, Request& reque
     ByteString const& resource_id, ByteString const& path, ByteString const& method,
     HTTP::HeaderMap const& headers, ByteBuffer const& body, Core::ProxyData const& proxy_data, u64 page_id)
 {
-    auto body_clone_result = body.clone();
+    auto body_clone_result = ByteBuffer::copy(body);
     if (body_clone_result.is_error()) {
         dbgln("Failed to clone body for gateway fallback: {}", body_clone_result.error());
         return;
     }
 
+    // Convert Request::ProtocolType to GatewayProtocol
+    GatewayProtocol gateway_protocol;
+    switch (protocol) {
+    case Request::ProtocolType::IPFS:
+        gateway_protocol = GatewayProtocol::IPFS;
+        break;
+    case Request::ProtocolType::IPNS:
+        gateway_protocol = GatewayProtocol::IPNS;
+        break;
+    case Request::ProtocolType::ENS:
+        gateway_protocol = GatewayProtocol::ENS;
+        break;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+
     GatewayFallbackInfo info {
-        .protocol = protocol,
+        .protocol = gateway_protocol,
         .current_gateway_index = 0,
         .resource_identifier = resource_id,
         .path = path,
@@ -1750,6 +1614,153 @@ void ConnectionFromClient::setup_gateway_fallback(i32 request_id, Request& reque
     request.set_gateway_fallback_callback([this, request_id]() {
         retry_with_next_gateway(request_id);
     });
+}
+
+Messages::RequestServer::GetSentinelStatusResponse ConnectionFromClient::get_sentinel_status()
+{
+    // Check if SecurityTap (connection to Sentinel) is initialized
+    bool connected = (g_security_tap != nullptr);
+
+    // Scanning is enabled if SecurityTap is connected
+    // In the future, this could check a configuration flag
+    bool scanning_enabled = connected;
+
+    return { connected, scanning_enabled };
+}
+
+Messages::RequestServer::ListQuarantineEntriesResponse ConnectionFromClient::list_quarantine_entries()
+{
+    // Security: Rate limiting
+    if (!check_rate_limit())
+        return Vector<ByteString> {};
+
+    Vector<ByteString> json_entries;
+
+    // Get all quarantine entries
+    auto entries_result = Quarantine::list_all_entries();
+    if (entries_result.is_error()) {
+        dbgln("ListQuarantineEntries: Failed to list entries: {}", entries_result.error());
+        return json_entries;
+    }
+
+    auto entries = entries_result.release_value();
+
+    // Serialize each entry to JSON
+    for (auto const& entry : entries) {
+        JsonObject obj;
+        obj.set("quarantine_id"sv, JsonValue(entry.quarantine_id));
+        obj.set("filename"sv, JsonValue(entry.filename));
+        obj.set("original_url"sv, JsonValue(entry.original_url));
+        obj.set("detection_time"sv, JsonValue(entry.detection_time));
+        obj.set("sha256"sv, JsonValue(entry.sha256));
+        obj.set("file_size"sv, JsonValue(static_cast<u64>(entry.file_size)));
+
+        JsonArray rules_array;
+        for (auto const& rule : entry.rule_names) {
+            auto append_result = rules_array.append(JsonValue(rule));
+            if (append_result.is_error()) {
+                dbgln("ListQuarantineEntries: Failed to append rule name");
+            }
+        }
+        obj.set("rule_names"sv, move(rules_array));
+
+        json_entries.append(obj.serialized().to_byte_string());
+    }
+
+    dbgln("ListQuarantineEntries: Returning {} entries", json_entries.size());
+    return json_entries;
+}
+
+Messages::RequestServer::RestoreQuarantineFileResponse ConnectionFromClient::restore_quarantine_file(ByteString quarantine_id, ByteString destination_dir)
+{
+    // Security: Rate limiting
+    if (!check_rate_limit())
+        return false;
+
+    // Security: Validate string lengths
+    if (!validate_string_length(quarantine_id, "quarantine_id"sv))
+        return false;
+    if (!validate_string_length(destination_dir, "destination_dir"sv))
+        return false;
+
+    // Convert ByteString to String
+    auto quarantine_id_str_result = String::from_byte_string(quarantine_id);
+    if (quarantine_id_str_result.is_error()) {
+        dbgln("RestoreQuarantineFile: Failed to convert quarantine_id to String");
+        return false;
+    }
+
+    auto destination_dir_str_result = String::from_byte_string(destination_dir);
+    if (destination_dir_str_result.is_error()) {
+        dbgln("RestoreQuarantineFile: Failed to convert destination_dir to String");
+        return false;
+    }
+
+    // Restore the file
+    auto restore_result = Quarantine::restore_file(
+        quarantine_id_str_result.release_value(),
+        destination_dir_str_result.release_value()
+    );
+
+    if (restore_result.is_error()) {
+        dbgln("RestoreQuarantineFile: Failed to restore file: {}", restore_result.error());
+        return false;
+    }
+
+    dbgln("RestoreQuarantineFile: Successfully restored file {}", quarantine_id);
+    return true;
+}
+
+Messages::RequestServer::DeleteQuarantineFileResponse ConnectionFromClient::delete_quarantine_file(ByteString quarantine_id)
+{
+    // Security: Rate limiting
+    if (!check_rate_limit())
+        return false;
+
+    // Security: Validate string length
+    if (!validate_string_length(quarantine_id, "quarantine_id"sv))
+        return false;
+
+    // Convert ByteString to String
+    auto quarantine_id_str_result = String::from_byte_string(quarantine_id);
+    if (quarantine_id_str_result.is_error()) {
+        dbgln("DeleteQuarantineFile: Failed to convert quarantine_id to String");
+        return false;
+    }
+
+    // Delete the file
+    auto delete_result = Quarantine::delete_file(quarantine_id_str_result.release_value());
+
+    if (delete_result.is_error()) {
+        dbgln("DeleteQuarantineFile: Failed to delete file: {}", delete_result.error());
+        return false;
+    }
+
+    dbgln("DeleteQuarantineFile: Successfully deleted file {}", quarantine_id);
+    return true;
+}
+
+Messages::RequestServer::GetQuarantineDirectoryResponse ConnectionFromClient::get_quarantine_directory()
+{
+    // Security: Rate limiting
+    if (!check_rate_limit())
+        return ByteString();
+
+    auto dir_result = Quarantine::get_quarantine_directory();
+    if (dir_result.is_error()) {
+        dbgln("GetQuarantineDirectory: Failed to get directory: {}", dir_result.error());
+        return ByteString();
+    }
+
+    return dir_result.release_value().to_byte_string();
+}
+
+void ConnectionFromClient::credential_exfil_alert(ByteString alert_json)
+{
+    // This method will be fully implemented in Phase 6 (Milestone 0.2)
+    // For now, just log the alert for debugging
+    dbgln("ConnectionFromClient: Credential exfiltration alert received: {}", alert_json);
+    // TODO: Phase 6 - Forward to WebContent for user notification
 }
 
 }

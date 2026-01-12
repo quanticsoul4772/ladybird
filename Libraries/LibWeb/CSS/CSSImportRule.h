@@ -13,6 +13,7 @@
 #include <LibWeb/CSS/URL.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/Export.h>
+#include <LibWeb/Forward.h>
 
 namespace Web::CSS {
 
@@ -22,25 +23,32 @@ class WEB_API CSSImportRule final
     GC_DECLARE_ALLOCATOR(CSSImportRule);
 
 public:
-    [[nodiscard]] static GC::Ref<CSSImportRule> create(JS::Realm&, URL, GC::Ptr<DOM::Document>, RefPtr<Supports>, Vector<NonnullRefPtr<MediaQuery>>);
+    [[nodiscard]] static GC::Ref<CSSImportRule> create(JS::Realm&, URL, GC::Ptr<DOM::Document>, Optional<FlyString> layer, RefPtr<Supports>, GC::Ref<MediaList>);
 
-    virtual ~CSSImportRule() = default;
+    virtual ~CSSImportRule();
 
     URL const& url() const { return m_url; }
     String href() const { return m_url.url(); }
 
     CSSStyleSheet* loaded_style_sheet() { return m_style_sheet; }
     CSSStyleSheet const* loaded_style_sheet() const { return m_style_sheet; }
-    GC::Ptr<MediaList> media() const;
+    GC::Ref<MediaList> media() const;
     CSSStyleSheet* style_sheet_for_bindings() { return m_style_sheet; }
 
+    Optional<FlyString> layer_name() const;
     Optional<String> supports_text() const;
 
+    bool matches() const;
+
+    Optional<FlyString> internal_layer_name() const { return m_layer_internal; }
+    Optional<FlyString> internal_qualified_layer_name(Badge<StyleScope>) const;
+
 private:
-    CSSImportRule(JS::Realm&, URL, GC::Ptr<DOM::Document>, RefPtr<Supports>, Vector<NonnullRefPtr<MediaQuery>>);
+    CSSImportRule(JS::Realm&, URL, GC::Ptr<DOM::Document>, Optional<FlyString>, RefPtr<Supports>, GC::Ref<MediaList>);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
+    virtual void dump(StringBuilder&, int indent_levels) const override;
 
     virtual void set_parent_style_sheet(CSSStyleSheet*) override;
 
@@ -51,8 +59,10 @@ private:
 
     URL m_url;
     GC::Ptr<DOM::Document> m_document;
+    Optional<FlyString> m_layer;
+    Optional<FlyString> m_layer_internal;
     RefPtr<Supports> m_supports;
-    Vector<NonnullRefPtr<MediaQuery>> m_media_query_list;
+    GC::Ref<MediaList> m_media;
     GC::Ptr<CSSStyleSheet> m_style_sheet;
     Optional<DOM::DocumentLoadEventDelayer> m_document_load_event_delayer;
 };

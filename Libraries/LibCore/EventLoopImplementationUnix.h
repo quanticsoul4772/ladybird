@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/NonnullOwnPtr.h>
 #include <AK/Time.h>
 #include <LibCore/EventLoopImplementation.h>
 
@@ -49,8 +50,6 @@ public:
     virtual bool was_exit_requested() const override { return m_exit_requested; }
 
     virtual void wake() override;
-
-    virtual void post_event(EventReceiver& receiver, NonnullOwnPtr<Event>&&) override;
 
 private:
     bool m_exit_requested { false };

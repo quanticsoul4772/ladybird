@@ -65,18 +65,7 @@ describe("errors", () => {
         );
 
         expect(() => {
-            const plainDateTime = new Temporal.PlainDateTime(
-                1972,
-                1,
-                1,
-                8,
-                45,
-                56,
-                123,
-                345,
-                789,
-                "gregory"
-            );
+            const plainDateTime = new Temporal.PlainDateTime(1972, 1, 1, 8, 45, 56, 123, 345, 789, "gregory");
             formatter.formatRange(plainDateTime, plainDateTime);
         }).toThrowWithMessage(
             RangeError,
@@ -98,19 +87,13 @@ describe("errors", () => {
         expect(() => {
             const plainDate = new Temporal.PlainDate(1972, 1, 1, "gregory");
             new Intl.DateTimeFormat().formatRange(plainDate, 0);
-        }).toThrowWithMessage(
-            TypeError,
-            "Cannot format a date-time range with different date-time types"
-        );
+        }).toThrowWithMessage(TypeError, "Cannot format a date-time range with different date-time types");
 
         expect(() => {
             const plainYearMonth = new Temporal.PlainYearMonth(1972, 1, "gregory");
             const plainMonthDay = new Temporal.PlainMonthDay(1, 1, "gregory");
             new Intl.DateTimeFormat().formatRange(plainYearMonth, plainMonthDay);
-        }).toThrowWithMessage(
-            TypeError,
-            "Cannot format a date-time range with different date-time types"
-        );
+        }).toThrowWithMessage(TypeError, "Cannot format a date-time range with different date-time types");
     });
 
     test("Temporal fields must overlap formatter", () => {
@@ -228,8 +211,8 @@ describe("dateStyle", () => {
         { date: "short", en: "1/23/89 – 12/7/21", ja: "1989/01/23～2021/12/07" },
     ];
 
-    test("all", () => {
-        data.forEach(d => {
+    data.forEach(d => {
+        test(`date=${d.date}`, () => {
             const en = new Intl.DateTimeFormat("en", { dateStyle: d.date, timeZone: "UTC" });
             expect(en.formatRange(d0, d1)).toBe(d.en);
 
@@ -262,8 +245,8 @@ describe("timeStyle", () => {
         { time: "short", en: "1/23/1989, 7:08 AM – 12/7/2021, 5:40 PM", ja: "1989/1/23 7:08～2021/12/7 17:40" },
     ];
 
-    test("all", () => {
-        data.forEach(d => {
+    data.forEach(d => {
+        test(`time=${d.time}`, () => {
             const en = new Intl.DateTimeFormat("en", { timeStyle: d.time, timeZone: "UTC" });
             expect(en.formatRange(d0, d1)).toBe(d.en);
 
@@ -294,8 +277,8 @@ describe("dateStyle + timeStyle", () => {
         { date: "short", time: "short", en: "1/23/89, 7:08 AM – 12/7/21, 5:40 PM", ja: "1989/01/23 7:08～2021/12/07 17:40" },
     ];
 
-    test("all", () => {
-        data.forEach(d => {
+    data.forEach(d => {
+        test(`dateStyle=${d.date}, timeStyle=${d.time}`, () => {
             const en = new Intl.DateTimeFormat("en", {
                 dateStyle: d.date,
                 timeStyle: d.time,
@@ -346,8 +329,6 @@ describe("Temporal objects", () => {
     test("Temporal.Instant", () => {
         const instant1 = new Temporal.Instant(601546251000000000n);
         const instant2 = new Temporal.Instant(1732740069000000000n);
-        expect(formatter.formatRange(instant1, instant2)).toBe(
-            "1989-01-23, 8:10:51 AM – 2024-11-27, 8:41:09 PM"
-        );
+        expect(formatter.formatRange(instant1, instant2)).toBe("1989-01-23, 8:10:51 AM – 2024-11-27, 8:41:09 PM");
     });
 });

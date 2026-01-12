@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visual Accessibility Test Page</title>
+    <style>
+        :root {
+            --color-white: #ffffff;
+            --color-black: #000000;
+            --color-dark-gray: #333333;
+            --color-light-gray: #f5f5f5;
+            --color-blue: #0066cc;
+            --color-green: #4CAF50;
+            --color-red: #cc0000;
+            --color-yellow: #ffcc00;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            background-color: var(--color-light-gray);
+            font-size: 16px;
+        }
+
+        main {
+            background-color: var(--color-white);
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1, h2, h3 {
+            color: var(--color-dark-gray);
+        }
+
+        h1 {
+            font-size: 32px;
+            margin-bottom: 20px;
+        }
+
+        h2 {
+            font-size: 24px;
+            border-bottom: 3px solid var(--color-green);
+            padding-bottom: 10px;
+            margin-top: 30px;
+            margin-bottom: 20px;
+        }
+
+        h3 {
+            font-size: 18px;
+            margin-top: 15px;
+            margin-bottom: 10px;
+        }
+
+        p {
+            color: var(--color-dark-gray);
+            margin: 15px 0;
+        }
+
+        section {
+            margin-bottom: 40px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        /* TEST 1: Color Contrast */
+        .contrast-test {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 4px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .contrast-good {
+            background-color: var(--color-white);
+            color: var(--color-black);
+            padding: 15px;
+            border-radius: 4px;
+            border: 2px solid var(--color-green);
+        }
+
+        .contrast-good::before {
+            content: 'GOOD (7:1) ✓';
+            display: block;
+            font-weight: bold;
+            color: var(--color-green);
+            margin-bottom: 10px;
+        }
+
+        .contrast-adequate {
+            background-color: var(--color-white);
+            color: #333333;
+            padding: 15px;
+            border-radius: 4px;
+            border: 2px solid var(--color-blue);
+        }
+
+        .contrast-adequate::before {
+            content: 'ADEQUATE (4.5:1) ✓';
+            display: block;
+            font-weight: bold;
+            color: var(--color-blue);
+            margin-bottom: 10px;
+        }
+
+        .contrast-poor {
+            background-color: #f0f0f0;
+            color: #999999;
+            padding: 15px;
+            border-radius: 4px;
+            border: 2px solid var(--color-red);
+        }
+
+        .contrast-poor::before {
+            content: 'POOR (2:1) ✗';
+            display: block;
+            font-weight: bold;
+            color: var(--color-red);
+            margin-bottom: 10px;
+        }
+
+        /* TEST 2: Text Sizing */
+        .text-size-demo {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: var(--color-white);
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .text-small {
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .text-normal {
+            font-size: 16px;
+            line-height: 1.6;
+        }
+
+        .text-large {
+            font-size: 18px;
+            line-height: 1.7;
+        }
+
+        .text-xlarge {
+            font-size: 20px;
+            line-height: 1.8;
+        }
+
+        .text-xxlarge {
+            font-size: 24px;
+            line-height: 1.9;
+        }
+
+        .text-note {
+            font-size: 12px;
+            color: #666;
+            margin-top: 10px;
+            font-style: italic;
+        }
+
+        /* TEST 3: Focus Indicators */
+        button, a.focus-test, input, select, textarea {
+            outline: none;
+            transition: outline 0.2s, box-shadow 0.2s;
+        }
+
+        button:focus,
+        a.focus-test:focus,
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: 3px solid var(--color-blue);
+            outline-offset: 3px;
+        }
+
+        button {
+            background-color: var(--color-green);
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px 10px 0;
+        }
+
+        button:hover {
+            background-color: #3d8b40;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        a.focus-test {
+            color: var(--color-blue);
+            text-decoration: underline;
+            cursor: pointer;
+            padding: 4px;
+            margin: 0 5px;
+        }
+
+        a.focus-test:hover {
+            text-decoration: none;
+            background-color: #e3f2fd;
+        }
+
+        input, select, textarea {
+            padding: 10px;
+            border: 2px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+            margin: 10px 0;
+            max-width: 100%;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            border-color: var(--color-blue);
+        }
+
+        /* Color blindness simulation areas */
+        .color-test-area {
+            display: flex;
+            gap: 15px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+
+        .color-box {
+            width: 100px;
+            height: 100px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 12px;
+            text-align: center;
+            border: 2px solid #999;
+        }
+
+        .color-red {
+            background-color: var(--color-red);
+        }
+
+        .color-green {
+            background-color: var(--color-green);
+        }
+
+        .color-blue {
+            background-color: var(--color-blue);
+        }
+
+        .color-yellow {
+            background-color: var(--color-yellow);
+            color: black;
+        }
+
+        .color-orange {
+            background-color: #ff9900;
+        }
+
+        .color-gray {
+            background-color: #999999;
+        }
+
+        .description {
+            background-color: #f0f0f0;
+            padding: 10px;
+            margin: 15px 0;
+            border-left: 4px solid var(--color-green);
+            font-size: 14px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+
+        .status-ok {
+            background-color: var(--color-green);
+        }
+
+        .status-warning {
+            background-color: var(--color-yellow);
+        }
+
+        .status-error {
+            background-color: var(--color-red);
+        }
+
+        /* Responsive container for text sizing */
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        /* Ensure text doesn't cut off at 200% zoom */
+        @media (max-width: 1200px) {
+            body {
+                font-size: 14px;
+            }
+            main {
+                padding: 15px;
+            }
+            section {
+                padding: 15px;
+            }
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: var(--color-dark-gray);
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h1>Visual Accessibility Testing</h1>
+
+        <!-- TEST 1: Color Contrast (WCAG AA) -->
+        <section id="test-contrast">
+            <h2>Test 1: Color Contrast (WCAG AA 4.5:1)</h2>
+            <p>Testing contrast ratios for readability. WCAG AA requires:</p>
+            <ul>
+                <li>Normal text: minimum 4.5:1 contrast ratio</li>
+                <li>Large text (18pt+): minimum 3:1 contrast ratio</li>
+                <li>Graphics: minimum 3:1 contrast ratio</li>
+            </ul>
+
+            <div class="contrast-test">
+                <div class="contrast-good">
+                    Black text on white background. This has excellent contrast (7:1).
+                </div>
+
+                <div class="contrast-adequate">
+                    Dark gray text on white. This meets WCAG AA for normal text (4.5:1).
+                </div>
+
+                <div class="contrast-poor">
+                    Light gray text on light gray. This fails WCAG AA standards (2:1).
+                </div>
+            </div>
+
+            <div class="description">
+                ✓ Use high contrast colors for text and backgrounds
+                <br>✓ Check colors with contrast checker tools
+                <br>✓ Large text can use 3:1 ratio; normal text needs 4.5:1
+                <br>✗ Do not rely on color alone to convey information
+            </div>
+        </section>
+
+        <!-- TEST 2: Text Resizing (200% without overflow) -->
+        <section id="test-text-resize">
+            <h2>Test 2: Text Resizing (200% without Overflow)</h2>
+            <p>Text should remain readable when zoomed to 200%. This page uses scalable units (em, rem, %) instead of fixed pixels.</p>
+
+            <div class="text-size-demo">
+                <h3>Sample Text at Different Sizes:</h3>
+
+                <div class="text-small">
+                    <strong>Small Text (14px):</strong> This is small text for secondary information or captions.
+                </div>
+
+                <div class="text-normal">
+                    <strong>Normal Text (16px):</strong> This is the default body text size, used for paragraphs and general content.
+                </div>
+
+                <div class="text-large">
+                    <strong>Large Text (18px):</strong> This is larger text, considered large for WCAG purposes and requires 3:1 contrast.
+                </div>
+
+                <div class="text-xlarge">
+                    <strong>Extra Large Text (20px):</strong> This is extra large text for emphasis and accessibility.
+                </div>
+
+                <div class="text-xxlarge">
+                    <strong>XXL Text (24px):</strong> This is very large text, ideal for headings and important information.
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="zoom-test">Try zooming (Ctrl/Cmd + +):</label>
+                <input type="range" id="zoom-test" min="100" max="200" value="100" step="10">
+                <div class="text-note" id="zoom-value">Current zoom: 100%</div>
+            </div>
+
+            <div class="description">
+                ✓ At 200% zoom, content should not overflow horizontally
+                <br>✓ All text should remain readable and well-formatted
+                <br>✓ Use relative units (rem, em, %) instead of pixels
+                <br>✓ Set max-width on containers to prevent text lines from becoming too long
+            </div>
+        </section>
+
+        <!-- TEST 3: Focus Indicators (Visible) -->
+        <section id="test-focus-indicators">
+            <h2>Test 3: Focus Indicators (Visible)</h2>
+            <p>Press Tab to navigate through interactive elements. Each should show a clear focus indicator.</p>
+
+            <h3>Buttons:</h3>
+            <div>
+                <button>Button 1</button>
+                <button>Button 2</button>
+                <button>Button 3</button>
+            </div>
+
+            <h3>Links:</h3>
+            <div style="margin: 20px 0;">
+                <a href="#" class="focus-test">Link 1</a>
+                <a href="#" class="focus-test">Link 2</a>
+                <a href="#" class="focus-test">Link 3</a>
+            </div>
+
+            <h3>Form Fields:</h3>
+            <div class="form-group">
+                <label for="text-input">Text Input:</label>
+                <input type="text" id="text-input" placeholder="Click or Tab here">
+            </div>
+
+            <div class="form-group">
+                <label for="select-input">Select Dropdown:</label>
+                <select id="select-input">
+                    <option>Option 1</option>
+                    <option>Option 2</option>
+                    <option>Option 3</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="textarea-input">Textarea:</label>
+                <textarea id="textarea-input" rows="4" placeholder="Click or Tab here"></textarea>
+            </div>
+
+            <div class="description">
+                ✓ All interactive elements show a clear focus indicator (3px blue outline)
+                <br>✓ Focus indicator has sufficient contrast (at least 3:1)
+                <br>✓ Focus indicator is at least 2px visible
+                <br>✗ Never use outline: none without providing alternative focus indicator
+            </div>
+        </section>
+
+        <!-- TEST 4: Color as Information -->
+        <section id="test-color-meaning">
+            <h2>Test 4: Don't Rely on Color Alone</h2>
+            <p>Information should not be conveyed by color alone. Use icons, patterns, or text labels too.</p>
+
+            <h3>Status Indicators (With Color AND Text):</h3>
+            <div style="margin: 15px 0;">
+                <p>
+                    <span class="status-indicator status-ok"></span>
+                    <strong>Status: OK</strong> - System is running normally
+                </p>
+                <p>
+                    <span class="status-indicator status-warning"></span>
+                    <strong>Status: WARNING</strong> - Please review system settings
+                </p>
+                <p>
+                    <span class="status-indicator status-error"></span>
+                    <strong>Status: ERROR</strong> - Action required
+                </p>
+            </div>
+
+            <h3>Traffic Light Example (With Text Labels):</h3>
+            <div class="color-test-area">
+                <div class="color-box color-red">
+                    STOP<br>(Red)
+                </div>
+                <div class="color-box color-yellow">
+                    WAIT<br>(Yellow)
+                </div>
+                <div class="color-box color-green">
+                    GO<br>(Green)
+                </div>
+            </div>
+
+            <div class="description">
+                ✓ Always use text, icons, or patterns to supplement color
+                <br>✓ People with color blindness (8% of men, 0.5% of women) may not see colors
+                <br>✓ Color-only information is inaccessible to those with monochromatic vision
+                <br>✓ Test your color choices with color blindness simulators
+            </div>
+        </section>
+
+        <!-- TEST 5: Visual Spacing and Layout -->
+        <section id="test-spacing">
+            <h2>Test 5: Visual Spacing and Layout</h2>
+            <p>Adequate spacing improves readability and accessibility for people with dyslexia or motor control issues.</p>
+
+            <div class="form-group">
+                <label for="spacing-demo">Line Spacing and Letter Spacing:</label>
+                <div id="spacing-demo" style="
+                    background-color: #f9f9f9;
+                    padding: 20px;
+                    border-radius: 4px;
+                    line-height: 2;
+                    letter-spacing: 0.1em;
+                    word-spacing: 0.2em;
+                ">
+                    <p>This text has increased line spacing (2x), letter spacing, and word spacing. This makes it easier to read for people with dyslexia and those with motor control challenges.</p>
+                    <p>Adequate white space helps users focus on content and reduces visual overwhelm.</p>
+                </div>
+            </div>
+
+            <div class="description">
+                ✓ Use adequate line spacing (at least 1.5x)
+                <br>✓ Use adequate letter spacing (0.12em or more)
+                <br>✓ Use adequate word spacing (0.16em or more)
+                <br>✓ Provide white space and breathing room in layouts
+            </div>
+        </section>
+
+        <script>
+            // Test data
+            window.__visual_test_data = {
+                testId: 'A11Y-016-to-A11Y-018',
+                testType: 'visual-accessibility',
+                contrastTestsCount: 3,
+                focusIndicatorsVisible: true,
+                canZoomTo200: true,
+                colorNotAlone: true
+            };
+
+            // Zoom test slider
+            const zoomSlider = document.getElementById('zoom-test');
+            const zoomValue = document.getElementById('zoom-value');
+
+            if (zoomSlider) {
+                zoomSlider.addEventListener('input', (e) => {
+                    const zoom = e.target.value;
+                    zoomValue.textContent = `Current zoom: ${zoom}%`;
+                    document.documentElement.style.zoom = `${zoom / 100}`;
+                });
+            }
+
+            // Calculate contrast ratio
+            function getContrast(rgb1, rgb2) {
+                const getLuminance = (rgb) => {
+                    const [r, g, b] = rgb;
+                    const [rs, gs, bs] = [r, g, b].map((v) => {
+                        v = v / 255;
+                        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+                    });
+                    return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
+                };
+
+                const l1 = getLuminance(rgb1);
+                const l2 = getLuminance(rgb2);
+                const lighter = Math.max(l1, l2);
+                const darker = Math.min(l1, l2);
+
+                return ((lighter + 0.05) / (darker + 0.05)).toFixed(2);
+            }
+
+            // Example contrast calculations
+            console.log('Contrast ratios:');
+            console.log('Black on white:', getContrast([0, 0, 0], [255, 255, 255])); // 21:1
+            console.log('Dark gray on white:', getContrast([51, 51, 51], [255, 255, 255])); // ~13:1
+            console.log('Light gray on light gray:', getContrast([153, 153, 153], [240, 240, 240])); // ~2:1
+        </script>
+    </main>
+</body>
+</html>

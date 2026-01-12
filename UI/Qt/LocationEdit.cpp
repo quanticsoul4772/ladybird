@@ -145,4 +145,13 @@ void LocationEdit::set_url(URL::URL url)
     }
 }
 
+void LocationEdit::insertFromMimeData(QMimeData const* source)
+{
+    if (!source || !source->hasText())
+        return;
+
+    auto pasted_text = ak_string_from_qstring(source->text());
+    insert(qstring_from_ak_string(pasted_text));
+}
+
 }

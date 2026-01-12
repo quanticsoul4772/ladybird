@@ -18,10 +18,10 @@
 namespace JS {
 
 struct JS_API TracebackFrame {
-    FlyString function_name;
+    Utf16String function_name;
     [[nodiscard]] SourceRange const& source_range() const;
 
-    RefPtr<CachedSourceRange> cached_source_range;
+    GC::Ptr<CachedSourceRange> cached_source_range;
 };
 
 enum CompactTraceback {
@@ -50,6 +50,8 @@ public:
 
 protected:
     explicit Error(Object& prototype);
+
+    virtual void visit_edges(Visitor&) override;
 
 private:
     virtual bool is_error_object() const final { return true; }

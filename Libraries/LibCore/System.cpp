@@ -164,7 +164,7 @@ ErrorOr<int> anon_create([[maybe_unused]] size_t size, [[maybe_unused]] int opti
         TRY(close(fd));
         return Error::from_errno(saved_errno);
     }
-#elif defined(AK_OS_BSD_GENERIC) || defined(AK_OS_EMSCRIPTEN) || defined(AK_OS_HAIKU)
+#elif defined(AK_OS_BSD_GENERIC) || defined(AK_OS_HAIKU)
     static size_t shared_memory_id = 0;
 
     auto name = ByteString::formatted("/shm-{}-{}", getpid(), shared_memory_id++);
@@ -255,17 +255,17 @@ ErrorOr<struct stat> lstat(StringView path)
     return st;
 }
 
-ErrorOr<ssize_t> read(int fd, Bytes buffer)
+ErrorOr<size_t> read(int fd, Bytes buffer)
 {
-    ssize_t rc = ::read(fd, buffer.data(), buffer.size());
+    auto rc = ::read(fd, buffer.data(), buffer.size());
     if (rc < 0)
         return Error::from_syscall("read"sv, errno);
     return rc;
 }
 
-ErrorOr<ssize_t> write(int fd, ReadonlyBytes buffer)
+ErrorOr<size_t> write(int fd, ReadonlyBytes buffer)
 {
-    ssize_t rc = ::write(fd, buffer.data(), buffer.size());
+    auto rc = ::write(fd, buffer.data(), buffer.size());
     if (rc < 0)
         return Error::from_syscall("write"sv, errno);
     return rc;
@@ -520,14 +520,6 @@ ErrorOr<void> utimensat(int fd, StringView path, struct timespec const times[2],
     return {};
 }
 
-ErrorOr<struct utsname> uname()
-{
-    struct utsname uts;
-    if (::uname(&uts) < 0)
-        return Error::from_syscall("uname"sv, errno);
-    return uts;
-}
-
 ErrorOr<int> socket(int domain, int type, int protocol)
 {
     auto fd = ::socket(domain, type, protocol);
@@ -565,15 +557,15 @@ ErrorOr<void> connect(int sockfd, struct sockaddr const* address, socklen_t addr
     return {};
 }
 
-ErrorOr<ssize_t> send(int sockfd, void const* buffer, size_t buffer_length, int flags)
+ErrorOr<size_t> send(int sockfd, ReadonlyBytes data, int flags)
 {
-    auto sent = ::send(sockfd, buffer, buffer_length, flags);
+    auto sent = ::send(sockfd, data.data(), data.size(), flags);
     if (sent < 0)
         return Error::from_syscall("send"sv, errno);
     return sent;
 }
 
-ErrorOr<ssize_t> sendmsg(int sockfd, const struct msghdr* message, int flags)
+ErrorOr<size_t> sendmsg(int sockfd, const struct msghdr* message, int flags)
 {
     auto sent = ::sendmsg(sockfd, message, flags);
     if (sent < 0)
@@ -581,23 +573,23 @@ ErrorOr<ssize_t> sendmsg(int sockfd, const struct msghdr* message, int flags)
     return sent;
 }
 
-ErrorOr<ssize_t> sendto(int sockfd, void const* source, size_t source_length, int flags, struct sockaddr const* destination, socklen_t destination_length)
+ErrorOr<size_t> sendto(int sockfd, ReadonlyBytes data, int flags, struct sockaddr const* destination, socklen_t destination_length)
 {
-    auto sent = ::sendto(sockfd, source, source_length, flags, destination, destination_length);
+    auto sent = ::sendto(sockfd, data.data(), data.size(), flags, destination, destination_length);
     if (sent < 0)
         return Error::from_syscall("sendto"sv, errno);
     return sent;
 }
 
-ErrorOr<ssize_t> recv(int sockfd, void* buffer, size_t length, int flags)
+ErrorOr<size_t> recv(int sockfd, Bytes buffer, int flags)
 {
-    auto received = ::recv(sockfd, buffer, length, flags);
+    auto received = ::recv(sockfd, buffer.data(), buffer.size(), flags);
     if (received < 0)
         return Error::from_syscall("recv"sv, errno);
     return received;
 }
 
-ErrorOr<ssize_t> recvmsg(int sockfd, struct msghdr* message, int flags)
+ErrorOr<size_t> recvmsg(int sockfd, struct msghdr* message, int flags)
 {
     auto received = ::recvmsg(sockfd, message, flags);
     if (received < 0)
@@ -605,9 +597,9 @@ ErrorOr<ssize_t> recvmsg(int sockfd, struct msghdr* message, int flags)
     return received;
 }
 
-ErrorOr<ssize_t> recvfrom(int sockfd, void* buffer, size_t buffer_length, int flags, struct sockaddr* address, socklen_t* address_length)
+ErrorOr<size_t> recvfrom(int sockfd, Bytes buffer, int flags, struct sockaddr* address, socklen_t* address_length)
 {
-    auto received = ::recvfrom(sockfd, buffer, buffer_length, flags, address, address_length);
+    auto received = ::recvfrom(sockfd, buffer.data(), buffer.size(), flags, address, address_length);
     if (received < 0)
         return Error::from_syscall("recvfrom"sv, errno);
     return received;
@@ -807,8 +799,6 @@ ErrorOr<ByteString> current_executable_path()
     if (sizeof(info.name) > sizeof(path))
         return Error::from_errno(ENAMETOOLONG);
     strlcpy(path, info.name, sizeof(path) - 1);
-#elif defined(AK_OS_EMSCRIPTEN)
-    return Error::from_string_literal("current_executable_path() unknown on this platform");
 #else
 #    warning "Not sure how to get current_executable_path on this platform!"
     // GetModuleFileName on Windows, unsure about OpenBSD.
@@ -889,7 +879,7 @@ ErrorOr<size_t> transfer_file_through_pipe(int source_fd, int target_fd, size_t 
     auto* mapped = TRY(mmap(nullptr, mapped_source_length, PROT_READ, MAP_SHARED, source_fd, aligned_source_offset));
     ScopeGuard guard { [&]() { (void)munmap(mapped, mapped_source_length); } };
 
-    return TRY(write(target_fd, { static_cast<u8*>(mapped) + offset_adjustment, source_length }));
+    return write(target_fd, { static_cast<u8*>(mapped) + offset_adjustment, source_length });
 #endif
 }
 

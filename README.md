@@ -1,74 +1,283 @@
-# Ladybird Browser - Personal Development Fork
+# Ladybird Browser - Privacy & Security Research Fork
 
-This is a personal fork of [Ladybird Browser](https://github.com/LadybirdBrowser/ladybird) for learning and IPC security research.
+A privacy-focused experimental fork of [Ladybird Browser](https://github.com/LadybirdBrowser/ladybird) implementing advanced threat detection, credential protection, and decentralized web protocols.
 
-This fork includes experimental security enhancements not intended for upstream contribution. For the official project, visit [ladybird.org](https://ladybird.org)
+> **Educational Research Project**: This fork is for learning and security research. Not audited for production use.
 
-## About This Fork
+---
 
-This fork maintains sync with upstream Ladybird while adding experimental features for educational purposes:
+## Features
 
-- IPC Security Enhancements: Rate limiting, validated decoding, overflow protection
-- Fuzzing Framework: Automated IPC message testing infrastructure
-- Per-Tab Tor Integration: Privacy-focused network isolation with stream isolation
-- VPN/Proxy Support: Per-tab VPN and proxy configuration with NetworkIdentity management
-- Development Documentation: Comprehensive guides for development workflow
+### Sentinel Security System
 
-See [docs/FORK.md](docs/FORK.md) for detailed documentation of custom additions.
+Local threat detection daemon with zero cloud dependencies.
+
+**Malware Detection**:
+- YARA signature scanning (9 builtin rules + custom rule support)
+- ML-based detection using TensorFlow Lite
+- WASM + nsjail sandbox for behavioral analysis
+- Quarantine system with AES-256 encryption
+- VirusTotal and AlienVault OTX threat intelligence integration
+- Automatic YARA rule generation from threat feeds
+
+**Credential Protection**:
+- Real-time form monitoring for cross-origin credential submissions
+- PolicyGraph database for trusted relationships
+- Autofill protection for untrusted forms
+
+**Browser Fingerprinting Detection**:
+- 27 API hooks across Canvas, WebGL, Audio, and Navigator APIs
+- Aggressiveness scoring (0.0-1.0 scale)
+- Real-time alerts for tracking attempts
+
+**Phishing Detection**:
+- Unicode homograph detection
+- Typosquatting analysis
+- Suspicious TLD detection
+- Domain entropy analysis
+
+**Network Behavioral Analysis**:
+- C2 beaconing detection
+- Data exfiltration monitoring
+- DGA (Domain Generation Algorithm) detection
+- DNS tunneling detection
+
+**Network Isolation**:
+- Per-process network isolation using iptables/nftables
+- Process monitoring and automatic rule cleanup
+- Prevents malicious processes from network access
+
+### Network Privacy
+
+**Tor Integration**:
+- Per-tab circuit isolation
+- SOCKS5H proxy with DNS leak prevention
+- Stream isolation between tabs
+
+**IPFS/IPNS Support**:
+- Decentralized content delivery
+- CID cryptographic verification
+- Multi-gateway fallback
+- Local daemon integration
+
+**ENS Resolution**:
+- Ethereum Name Service support
+- Human-readable .eth domains
+- Gateway integration (eth.limo, eth.link)
+
+**DNS Privacy**:
+- DNS-over-TLS (default enabled)
+- DNSSEC validation
+- DNS leak prevention via SOCKS5H
+
+---
+
+## Quick Start
+
+```bash
+# Clone
+git clone https://github.com/quanticsoul4772/ladybird.git
+cd ladybird
+
+# Build
+cmake --preset Release
+cmake --build Build/release -j$(nproc)
+
+# Run
+./Build/release/bin/Ladybird
+```
+
+Platform Support: Linux (full), macOS/Windows (partial - Sentinel features degrade gracefully)
+
+Detailed build instructions: [BuildInstructionsLadybird.md](Documentation/BuildInstructionsLadybird.md)
+
+---
+
+## Usage
+
+### Security Features
+
+```bash
+# Sentinel starts automatically with browser
+./Build/release/bin/Ladybird
+
+# Security dashboard
+Navigate to: about:security
+
+# View quarantined files
+ls ~/.local/share/Ladybird/Quarantine/
+
+# Custom YARA rules
+mkdir -p ~/.local/share/Ladybird/yara-rules
+cp my-rules.yar ~/.local/share/Ladybird/yara-rules/
+```
+
+### Network Privacy
+
+**Tor .onion sites**:
+```
+http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion
+```
+
+**IPFS content**:
+```
+ipfs://QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco
+ipns://docs.ipfs.tech
+```
+
+**ENS domains**:
+```
+https://vitalik.eth
+https://uniswap.eth
+```
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Browser UI Process                                  │
+│  ├─ SecurityAlertDialog (Threat/Credential Alerts)  │
+│  └─ about:security Dashboard                        │
+└────────────────┬────────────────────────────────────┘
+                 │ IPC
+┌────────────────┴────────────────────────────────────┐
+│  WebContent Process (per tab, sandboxed)            │
+│  ├─ FormMonitor (Credential Protection)             │
+│  └─ FingerprintingDetector (Tracking Detection)     │
+└────────────────┬────────────────────────────────────┘
+                 │ IPC
+┌────────────────┴────────────────────────────────────┐
+│  RequestServer Process                               │
+│  ├─ SecurityTap (YARA Malware Scanning)            │
+│  ├─ URLSecurityAnalyzer (Phishing Detection)        │
+│  ├─ C2Detector (Beaconing Detection)                │
+│  └─ TrafficMonitor (Network Behavioral Analysis)    │
+└────────────────┬────────────────────────────────────┘
+                 │ Unix Socket
+┌────────────────┴────────────────────────────────────┐
+│  Sentinel Server (Daemon)                           │
+│  ├─ YARA Rule Engine                                │
+│  ├─ ML Malware Detector (TensorFlow Lite)          │
+│  ├─ Behavioral Sandbox (WASM + nsjail)             │
+│  ├─ PolicyGraph (SQLite + LRU Cache)                │
+│  ├─ ThreatFeed (Bloom Filter)                       │
+│  ├─ ThreatIntelligence (VirusTotal, OTX)           │
+│  ├─ QuarantineManager (AES-256 encryption)          │
+│  ├─ NetworkIsolation (iptables/nftables)           │
+│  └─ AuditLogger                                      │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## Documentation
+
+### User Guides
+- [Malware Scanning](docs/SENTINEL_USER_GUIDE.md)
+- [Credential Protection](docs/USER_GUIDE_CREDENTIAL_PROTECTION.md)
+- [Network Monitoring](docs/USER_GUIDE_NETWORK_MONITORING.md)
+- [Policy Management](docs/SENTINEL_POLICY_GUIDE.md)
+
+### Technical Documentation
+- [Sentinel Architecture](docs/SENTINEL_ARCHITECTURE.md)
+- [Fingerprinting Detection](docs/FINGERPRINTING_DETECTION_ARCHITECTURE.md)
+- [Phishing Detection](docs/PHISHING_DETECTION_ARCHITECTURE.md)
+- [TensorFlow Lite Integration](docs/TENSORFLOW_LITE_INTEGRATION.md)
+- [Sandbox Architecture](docs/SANDBOX_ARCHITECTURE.md)
+
+### Development
+- [CLAUDE.md](CLAUDE.md) - Developer guide
+- [docs/FORK.md](docs/FORK.md) - Fork overview
+- [docs/FEATURES.md](docs/FEATURES.md) - Feature catalog
+- [Changelog](docs/CHANGELOG.md)
+
+---
+
+## For Developers
+
+See [CLAUDE.md](CLAUDE.md) for:
+- Build presets and debugging
+- Testing procedures (Playwright + LibWeb)
+- Code architecture and patterns
+- Sentinel development guidelines
+- IPC message catalog
+
+Run tests:
+```bash
+# Playwright tests
+cd Tests/Playwright
+npm test
+
+# LibWeb tests
+./Meta/ladybird.py test LibWeb
+```
 
 ---
 
 ## About Ladybird
 
-[Ladybird](https://ladybird.org) is a truly independent web browser, using a novel engine based on web standards.
+This fork builds on [Ladybird](https://ladybird.org), a web browser built from scratch with its own rendering and JavaScript engines. Ladybird is pre-alpha software under active development.
 
-Ladybird is in a pre-alpha state, and only suitable for use by developers.
+### Core Libraries
 
-### Features
+- LibWeb - Web rendering engine
+- LibJS - JavaScript engine (ECMAScript)
+- LibWasm - WebAssembly implementation
+- LibCrypto/LibTLS - Cryptography and TLS
+- LibHTTP - HTTP/1.1 client
+- LibGfx - 2D graphics and image decoding
+- LibCore - Event loop and OS abstraction
+- LibIPC - Inter-process communication
 
-Ladybird aims to build a complete, usable browser for the modern web.
+### Fork Additions
 
-Multi-Process Architecture:
-- Main UI process (Qt/AppKit/Android UI)
-- WebContent renderer processes (one per tab, sandboxed)
-- ImageDecoder process (sandboxed image decoding)
-- RequestServer process (network isolation with Tor/VPN support)
+- Services/Sentinel/ - Security daemon
+  - Sandbox/ - WASM + nsjail behavioral analysis, ThreatReporter
+  - ThreatIntelligence/ - VirusTotal, OTX feeds, YARA generator
+  - Quarantine/ - Encrypted quarantine with AES-256
+  - NetworkIsolation/ - iptables/nftables process isolation
+- FormMonitor - Credential protection
+- FingerprintingDetector - Tracking detection
+- SecurityTap - YARA integration
+- PolicyGraph - Security policy database with LRU cache
+- NetworkIdentity - Per-tab network isolation
 
-Image decoding and network connections are done out of process to be more robust against malicious content.
-Each tab has its own renderer process, which is sandboxed from the rest of the system.
+---
 
-Core Libraries (inherited from SerenityOS):
-- LibWeb: Web rendering engine
-- LibJS: JavaScript engine
-- LibWasm: WebAssembly implementation
-- LibCrypto/LibTLS: Cryptography primitives and Transport Layer Security
-- LibHTTP: HTTP/1.1 client
-- LibGfx: 2D Graphics Library, Image Decoding and Rendering
-- LibUnicode: Unicode and locale support
-- LibMedia: Audio and video playback
-- LibCore: Event loop, OS abstraction layer
-- LibIPC: Inter-process communication
+## Upstream Participation
 
-## How do I build and run this?
+Join [Ladybird's Discord server](https://discord.gg/nvfjVJ4Svh) to participate in upstream development.
 
-See [build instructions](Documentation/BuildInstructionsLadybird.md) for information on how to build Ladybird.
+Contributing to upstream: Read [Getting Started Contributing](Documentation/GettingStartedContributing.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Ladybird runs on Linux, macOS, Windows (with WSL2), and many other \*Nixes.
+Note: Fork-specific features (Sentinel, network privacy) are not intended for upstream contribution. This is a personal learning fork.
 
-## How do I read the documentation?
+---
 
-Code-related documentation can be found in the [documentation](Documentation/) folder.
+## Disclaimer
 
-## Get in touch and participate!
+This fork is for educational and research purposes:
+- Not security-audited
+- May contain bugs
+- Not production-ready
 
-Join [our Discord server](https://discord.gg/nvfjVJ4Svh) to participate in development discussion.
+For production use, visit the official [Ladybird Browser](https://github.com/LadybirdBrowser/ladybird).
 
-Please read [Getting started contributing](Documentation/GettingStartedContributing.md) if you plan to contribute to Ladybird for the first time.
-
-Before opening an issue, please see the [issue policy](CONTRIBUTING.md#issue-policy) and the [detailed issue-reporting guidelines](ISSUES.md).
-
-The full contribution guidelines can be found in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+---
 
 ## License
 
-Ladybird is licensed under a 2-clause BSD license.
+Ladybird is licensed under a 2-clause BSD license. This fork maintains the same license.
+
+See [LICENSE](LICENSE) for details.
+
+---
+
+## Links
+
+- Upstream Ladybird: https://github.com/LadybirdBrowser/ladybird
+- This Fork: https://github.com/quanticsoul4772/ladybird
+- Discord: https://discord.gg/nvfjVJ4Svh
+- Website: https://ladybird.org

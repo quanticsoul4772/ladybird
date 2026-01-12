@@ -8,6 +8,7 @@
 #include <LibWeb/CSS/Serialize.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/Dump.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Page/Page.h>
 
@@ -125,7 +126,7 @@ MatchResult MediaFeature::evaluate(DOM::Document const* document) const
         if (queried_value.is_ratio())
             return as_match_result(!queried_value.ratio().is_degenerate());
         if (queried_value.is_resolution())
-            return as_match_result(queried_value.resolution().resolved(calculation_context).map([](auto& it) { return it.to_dots_per_pixel(); }).value_or(0) != 0);
+            return as_match_result(queried_value.resolution().resolved(calculation_context).map([](auto&& it) { return it.to_dots_per_pixel(); }).value_or(0) != 0);
         if (queried_value.is_ident()) {
             if (media_feature_keyword_is_falsey(m_id, queried_value.ident()))
                 return MatchResult::False;
@@ -237,8 +238,8 @@ MatchResult MediaFeature::compare(DOM::Document const& document, MediaFeatureVal
     }
 
     if (left.is_resolution()) {
-        auto left_dppx = left.resolution().resolved(calculation_context).map([](auto& it) { return it.to_dots_per_pixel(); }).value_or(0);
-        auto right_dppx = right.resolution().resolved(calculation_context).map([](auto& it) { return it.to_dots_per_pixel(); }).value_or(0);
+        auto left_dppx = left.resolution().resolved(calculation_context).map([](auto&& it) { return it.to_dots_per_pixel(); }).value_or(0);
+        auto right_dppx = right.resolution().resolved(calculation_context).map([](auto&& it) { return it.to_dots_per_pixel(); }).value_or(0);
 
         switch (comparison) {
         case Comparison::Equal:
@@ -261,7 +262,7 @@ MatchResult MediaFeature::compare(DOM::Document const& document, MediaFeatureVal
 void MediaFeature::dump(StringBuilder& builder, int indent_levels) const
 {
     indent(builder, indent_levels);
-    builder.appendff("MediaFeature: {}", to_string());
+    builder.appendff("MediaFeature: {}\n", to_string());
 }
 
 String MediaQuery::to_string() const
@@ -316,6 +317,24 @@ bool MediaQuery::evaluate(DOM::Document const& document)
 
     m_matches = result == MatchResult::True;
     return m_matches;
+}
+
+void MediaQuery::dump(StringBuilder& builder, int indent_levels) const
+{
+    dump_indent(builder, indent_levels);
+    builder.appendff("Media condition: (matches = {})\n", m_matches);
+
+    dump_indent(builder, indent_levels + 1);
+    builder.appendff("Negated: {}\n", m_negated);
+
+    dump_indent(builder, indent_levels + 1);
+    builder.appendff("Type: {}\n", m_media_type.name);
+
+    if (m_media_condition) {
+        dump_indent(builder, indent_levels + 1);
+        builder.append("Condition:\n"sv);
+        m_media_condition->dump(builder, indent_levels + 2);
+    }
 }
 
 // https://www.w3.org/TR/cssom-1/#serialize-a-media-query-list

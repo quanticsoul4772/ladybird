@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keyboard Navigation Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .skip-link {
+            position: absolute;
+            top: -40px;
+            left: 0;
+            background-color: #000;
+            color: #fff;
+            padding: 8px;
+            text-decoration: none;
+            z-index: 100;
+        }
+        .skip-link:focus {
+            top: 0;
+        }
+        main {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        h2 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        button, a, input, select, textarea {
+            outline: none;
+            transition: outline 0.2s;
+        }
+        button:focus, a:focus, input:focus, select:focus, textarea:focus {
+            outline: 3px solid #0066cc;
+            outline-offset: 2px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:focus {
+            outline: 3px solid #0066cc;
+            outline-offset: 2px;
+        }
+        a {
+            color: #0066cc;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+        a:focus {
+            outline: 3px solid #0066cc;
+            outline-offset: 2px;
+        }
+        input, select, textarea {
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+            margin: 5px 0;
+        }
+        input:focus, select:focus, textarea:focus {
+            border-color: #0066cc;
+            outline: 3px solid #0066cc;
+            outline-offset: 2px;
+        }
+        .keyboard-trap {
+            padding: 15px;
+            background-color: #ffe6e6;
+            border: 1px solid #ff0000;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .keyboard-trap button {
+            margin: 5px;
+        }
+        .description {
+            background-color: #f0f0f0;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 4px solid #4CAF50;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .keyboard-shortcuts {
+            background-color: #e3f2fd;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .shortcut-item {
+            margin: 5px 0;
+            font-family: monospace;
+        }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.open {
+            display: flex;
+        }
+        .modal {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .tabindex-demo {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0;
+            flex-wrap: wrap;
+        }
+        .tabindex-item {
+            padding: 10px;
+            background-color: #e3f2fd;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <a href="#main-content" id="skip-link" class="skip-link">Skip to main content</a>
+
+    <main id="main-content">
+        <h1>Keyboard Navigation Testing</h1>
+
+        <!-- TEST 1: Tab Order and Focus Management -->
+        <section id="test-tab-order">
+            <h2>Test 1: Tab Order and Focus Management</h2>
+            <p>Natural reading order: buttons in sequence 1, 2, 3, 4, 5</p>
+
+            <div class="tabindex-demo">
+                <button>Button 1</button>
+                <button>Button 2</button>
+                <button>Button 3</button>
+                <button>Button 4</button>
+                <button>Button 5</button>
+            </div>
+
+            <div class="tabindex-demo">
+                <a href="#">Link 1</a>
+                <a href="#">Link 2</a>
+                <a href="#">Link 3</a>
+            </div>
+
+            <div class="description">
+                ✓ All focusable elements follow logical tab order
+                <br>✓ No positive tabindex values (anti-pattern)
+                <br>✓ Tab order matches visual reading order
+            </div>
+        </section>
+
+        <!-- TEST 2: Skip Links -->
+        <section id="test-skip-links">
+            <h2>Test 2: Skip Links</h2>
+            <p>Press Tab immediately when page loads - you should see a "Skip to main content" link.</p>
+
+            <div class="description">
+                ✓ Skip link allows jumping to main content
+                <br>✓ Skip link appears on focus
+                <br>✓ Skip link is the first focusable element
+            </div>
+        </section>
+
+        <!-- TEST 3: Keyboard Shortcuts -->
+        <section id="test-keyboard-shortcuts">
+            <h2>Test 3: Keyboard Shortcuts</h2>
+            <p>Supported keyboard shortcuts for this page:</p>
+
+            <div class="keyboard-shortcuts">
+                <div class="shortcut-item">Alt + S: Submit form</div>
+                <div class="shortcut-item">Alt + R: Reset form</div>
+                <div class="shortcut-item">Alt + M: Open modal</div>
+                <div class="shortcut-item">Escape: Close modal</div>
+            </div>
+
+            <div class="description">
+                ✓ Keyboard shortcuts documented and accessible
+                <br>✓ Standard keyboard conventions used
+                <br>✓ Shortcuts do not conflict with browser keys
+            </div>
+        </section>
+
+        <!-- TEST 4: Focus Visible -->
+        <section id="test-focus-visible">
+            <h2>Test 4: Focus Visible Indicators</h2>
+            <p>All interactive elements show clear focus indicators (blue outline).</p>
+
+            <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                <div>
+                    <h3>Buttons</h3>
+                    <button>Button A</button>
+                    <button>Button B</button>
+                </div>
+
+                <div>
+                    <h3>Links</h3>
+                    <a href="#">Link A</a><br>
+                    <a href="#">Link B</a>
+                </div>
+
+                <div>
+                    <h3>Form Fields</h3>
+                    <input type="text" placeholder="Text input">
+                    <select>
+                        <option>Option 1</option>
+                        <option>Option 2</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="description">
+                ✓ All interactive elements have visible focus indicators
+                <br>✓ Focus indicators have sufficient contrast
+                <br>✓ Focus indicators are not removed with outline: none
+            </div>
+        </section>
+
+        <!-- TEST 5: No Keyboard Traps -->
+        <section id="test-no-traps">
+            <h2>Test 5: No Keyboard Traps</h2>
+            <p>You should be able to Tab out of any element without getting trapped.</p>
+
+            <button onclick="openModal()">Open Modal (Tab to escape)</button>
+
+            <div class="description">
+                ✓ Focus can move from any element using Tab
+                <br>✓ No elements trap keyboard focus
+                <br>✓ Modal dialogs implement focus trap correctly
+            </div>
+        </section>
+
+        <!-- TEST 6: Form Navigation -->
+        <section id="test-form-navigation">
+            <h2>Test 6: Form Navigation</h2>
+            <p>Tab through form fields in logical order.</p>
+
+            <form id="test-form">
+                <div class="form-group">
+                    <label for="name">Name</label>
+                    <input type="text" id="name" name="name" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" name="email" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="country">Country</label>
+                    <select id="country" name="country">
+                        <option>United States</option>
+                        <option>Canada</option>
+                        <option>Mexico</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="message">Message</label>
+                    <textarea id="message" name="message" rows="4"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="agree">
+                        I agree to the terms
+                    </label>
+                </div>
+
+                <button type="submit">Submit</button>
+                <button type="reset">Reset</button>
+            </form>
+
+            <div class="description">
+                ✓ Form fields are focusable and navigable
+                <br>✓ All form controls are keyboard accessible
+                <br>✓ Submit and reset buttons are reachable
+            </div>
+        </section>
+
+        <!-- TEST 7: Complex Component Navigation -->
+        <section id="test-complex">
+            <h2>Test 7: Complex Component Navigation</h2>
+            <p>Tab through a complex menu structure.</p>
+
+            <nav style="margin: 10px 0;">
+                <button aria-haspopup="menu" aria-controls="menu-1">File</button>
+                <button aria-haspopup="menu" aria-controls="menu-2">Edit</button>
+                <button aria-haspopup="menu" aria-controls="menu-3">Help</button>
+            </nav>
+
+            <div class="description">
+                ✓ Complex components are keyboard navigable
+                <br>✓ Submenus can be accessed with keyboard
+                <br>✓ Arrow keys work for menu navigation
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal for focus trap testing -->
+    <div id="modal-overlay" class="modal-overlay">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+            <h2 id="modal-title">Modal Dialog</h2>
+            <p>Tab through these elements. Focus should stay within the modal.</p>
+
+            <button>Button 1</button>
+            <button>Button 2</button>
+            <button onclick="closeModal()">Close</button>
+
+            <div class="description">
+                This modal implements focus trapping. Tab will cycle through all focusable elements
+                within the modal and not escape.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Test data
+        window.__keyboard_test_data = {
+            testId: 'A11Y-011-to-A11Y-015',
+            testType: 'keyboard-navigation',
+            skipLinksCount: 1,
+            tabableElementsCount: 0, // Will be calculated
+            focusIndicatorsVisible: true,
+            keyboardTrapsDetected: false,
+            keyboardShortcutsAvailable: true
+        };
+
+        // Count focusable elements
+        window.addEventListener('DOMContentLoaded', () => {
+            const focusable = document.querySelectorAll(
+                'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+            );
+            window.__keyboard_test_data.tabableElementsCount = focusable.length;
+        });
+
+        // Keyboard shortcut handling
+        document.addEventListener('keydown', (e) => {
+            if (e.altKey) {
+                if (e.key === 's' || e.key === 'S') {
+                    e.preventDefault();
+                    document.getElementById('test-form').submit();
+                } else if (e.key === 'r' || e.key === 'R') {
+                    e.preventDefault();
+                    document.getElementById('test-form').reset();
+                } else if (e.key === 'm' || e.key === 'M') {
+                    e.preventDefault();
+                    openModal();
+                }
+            } else if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+
+        // Modal functions
+        function openModal() {
+            const overlay = document.getElementById('modal-overlay');
+            overlay.classList.add('open');
+            const modal = overlay.querySelector('.modal');
+            const firstButton = modal.querySelector('button');
+            if (firstButton) {
+                firstButton.focus();
+            }
+
+            // Implement focus trap
+            const focusableElements = modal.querySelectorAll(
+                'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+            );
+            const firstElement = focusableElements[0];
+            const lastElement = focusableElements[focusableElements.length - 1];
+
+            modal.addEventListener('keydown', (e) => {
+                if (e.key !== 'Tab') return;
+
+                if (e.shiftKey) {
+                    if (document.activeElement === firstElement) {
+                        e.preventDefault();
+                        lastElement.focus();
+                    }
+                } else {
+                    if (document.activeElement === lastElement) {
+                        e.preventDefault();
+                        firstElement.focus();
+                    }
+                }
+            });
+        }
+
+        function closeModal() {
+            const overlay = document.getElementById('modal-overlay');
+            overlay.classList.remove('open');
+        }
+    </script>
+</body>
+</html>

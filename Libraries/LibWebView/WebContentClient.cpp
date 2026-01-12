@@ -96,12 +96,20 @@ void WebContentClient::did_request_new_process_for_navigation(u64 page_id, URL::
 
 void WebContentClient::did_start_loading(u64 page_id, URL::URL url, bool is_redirect)
 {
-    if (!check_rate_limit())
+    dbgln("WebContentClient::did_start_loading: page_id={}, url={}", page_id, url);
+
+    if (!check_rate_limit()) {
+        dbgln("WebContentClient::did_start_loading: rate limit check failed");
         return;
-    if (!validate_page_id(page_id))
+    }
+    if (!validate_page_id(page_id)) {
+        dbgln("WebContentClient::did_start_loading: page_id validation failed for {}", page_id);
         return;
-    if (!validate_url_length(url))
+    }
+    if (!validate_url_length(url)) {
+        dbgln("WebContentClient::did_start_loading: URL length validation failed");
         return;
+    }
 
     if (auto process = WebView::Application::the().find_process(m_process_handle.pid); process.has_value())
         process->set_title(OptionalNone {});
@@ -111,23 +119,38 @@ void WebContentClient::did_start_loading(u64 page_id, URL::URL url, bool is_redi
 
         if (view->on_load_start)
             view->on_load_start(url, is_redirect);
+    } else {
+        dbgln("WebContentClient::did_start_loading: no view found for page_id {}", page_id);
     }
 }
 
 void WebContentClient::did_finish_loading(u64 page_id, URL::URL url)
 {
-    if (!check_rate_limit())
-        return;
-    if (!validate_page_id(page_id))
-        return;
-    if (!validate_url_length(url))
-        return;
+    dbgln("WebContentClient::did_finish_loading: page_id={}, url={}", page_id, url);
 
+    if (!check_rate_limit()) {
+        dbgln("WebContentClient::did_finish_loading: rate limit check failed");
+        return;
+    }
+    if (!validate_url_length(url)) {
+        dbgln("WebContentClient::did_finish_loading: URL length validation failed");
+        return;
+    }
+
+    // Handle about: pages first - they use WebUI IPC and don't require a registered view
     if (url.scheme() == "about"sv && url.paths().size() == 1) {
+        dbgln("WebContentClient::did_finish_loading: handling about: page");
         if (auto web_ui = WebUI::create(*this, url.paths().first()); web_ui.is_error())
             warnln("Could not create WebUI for {}: {}", url, web_ui.error());
         else
             m_web_ui = web_ui.release_value();
+        return; // about: pages don't need the view-based handling below
+    }
+
+    // For normal pages, validate page_id
+    if (!validate_page_id(page_id)) {
+        dbgln("WebContentClient::did_finish_loading: page_id validation failed for {}", page_id);
+        return;
     }
 
     if (auto view = view_for_page_id(page_id); view.has_value()) {
@@ -135,6 +158,8 @@ void WebContentClient::did_finish_loading(u64 page_id, URL::URL url)
 
         if (view->on_load_finish)
             view->on_load_finish(url);
+    } else {
+        dbgln("WebContentClient::did_finish_loading: no view found for page_id {}", page_id);
     }
 }
 
@@ -641,6 +666,56 @@ void WebContentClient::did_request_dismiss_dialog(u64 page_id)
         if (view->on_request_dismiss_dialog)
             view->on_request_dismiss_dialog();
     }
+}
+
+void WebContentClient::did_receive_security_alert(u64 page_id, ByteString alert_json, i32 request_id)
+{
+    if (auto view = view_for_page_id(page_id); view.has_value()) {
+        if (view->on_security_alert)
+            view->on_security_alert(alert_json, request_id);
+    }
+}
+
+void WebContentClient::did_detect_credential_exfiltration(u64 page_id, String alert_type, String severity, String form_origin, String action_origin, bool uses_https, bool has_password_field, bool is_cross_origin, String description)
+{
+    dbgln("WebContentClient: Credential exfiltration detected on page {}", page_id);
+    dbgln("  Alert type: {}", alert_type);
+    dbgln("  Severity: {}", severity);
+    dbgln("  Form origin: {}", form_origin);
+    dbgln("  Action origin: {}", action_origin);
+    dbgln("  Uses HTTPS: {}", uses_https);
+    dbgln("  Has password: {}", has_password_field);
+    dbgln("  Cross-origin: {}", is_cross_origin);
+    dbgln("  Description: {}", description);
+
+    // Forward to the view's callback to show SecurityAlertDialog
+    if (auto view = view_for_page_id(page_id); view.has_value()) {
+        if (view->on_credential_exfiltration_alert)
+            view->on_credential_exfiltration_alert(alert_type, severity, form_origin, action_origin, uses_https, has_password_field, is_cross_origin, description);
+    }
+}
+
+void WebContentClient::did_block_autofill(u64 page_id, String form_origin, String action_origin, bool is_cross_origin, String reason)
+{
+    dbgln("WebContentClient: Autofill blocked on page {}", page_id);
+    dbgln("  Form origin: {}", form_origin);
+    dbgln("  Action origin: {}", action_origin);
+    dbgln("  Cross-origin: {}", is_cross_origin);
+    dbgln("  Reason: {}", reason);
+
+    // Forward to the view's callback to show autofill blocked notification
+    if (auto view = view_for_page_id(page_id); view.has_value()) {
+        if (view->on_autofill_blocked)
+            view->on_autofill_blocked(form_origin, action_origin, is_cross_origin, reason);
+    }
+}
+
+void WebContentClient::did_detect_traffic_alert(u64 page_id, ByteString alert_json)
+{
+    dbgln("WebContentClient: Traffic alert detected on page {}: {}", page_id, alert_json);
+
+    // FIXME: Implement traffic alert handling (e.g., show notification to user)
+    // This is currently just a stub for the phishing/malware detection system
 }
 
 void WebContentClient::did_change_favicon(u64 page_id, Gfx::ShareableBitmap favicon)

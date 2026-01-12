@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Suspicious TLD Test - PHISH-004</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; background-color: #f5f5f5; }
+    .test-container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    h1 { color: #8e44ad; border-bottom: 2px solid #8e44ad; padding-bottom: 10px; }
+    .test-info { background: #e8daef; border-left: 4px solid #8e44ad; padding: 15px; margin: 20px 0; }
+    .tld-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 20px 0; }
+    .tld-badge { background: #e74c3c; color: white; padding: 8px; text-align: center; border-radius: 4px; font-weight: bold; }
+    .button { background: #8e44ad; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin: 10px 5px; }
+    .button:hover { background: #7d3c98; }
+    #result { margin-top: 20px; padding: 15px; border-radius: 4px; display: none; }
+    #result.visible { display: block; }
+    code { background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: 'Courier New', monospace; }
+  </style>
+</head>
+<body>
+  <div class="test-container">
+    <h1>🔬 Phishing Detection Test: Suspicious TLDs (PHISH-004)</h1>
+
+    <div class="test-info">
+      <strong>⚠️ Test Objective:</strong> Detect phishing domains using free or suspicious
+      Top-Level Domains (TLDs) commonly abused by attackers.
+    </div>
+
+    <h2>High-Risk TLDs</h2>
+    <p>
+      These TLDs are flagged as suspicious due to:
+      <ul>
+        <li><strong>Free registration:</strong> No cost, minimal verification</li>
+        <li><strong>Abuse history:</strong> High percentage of malicious use</li>
+        <li><strong>No restrictions:</strong> Anyone can register</li>
+      </ul>
+    </p>
+
+    <div class="tld-grid">
+      <div class="tld-badge">.tk</div>
+      <div class="tld-badge">.ml</div>
+      <div class="tld-badge">.ga</div>
+      <div class="tld-badge">.cf</div>
+      <div class="tld-badge">.gq</div>
+      <div class="tld-badge">.xyz</div>
+      <div class="tld-badge">.top</div>
+      <div class="tld-badge">.club</div>
+      <div class="tld-badge">.work</div>
+      <div class="tld-badge">.click</div>
+      <div class="tld-badge">.link</div>
+      <div class="tld-badge">.stream</div>
+    </div>
+
+    <h2>Test Scenarios</h2>
+    <div style="margin: 30px 0;">
+      <button id="test-bank-xyz" class="button">Test: secure-bank.xyz</button>
+      <button id="test-paypal-top" class="button">Test: paypal-verify.top</button>
+      <button id="test-amazon-tk" class="button">Test: amazon-login.tk</button>
+    </div>
+
+    <div id="result"></div>
+  </div>
+
+  <script>
+    window.__phishingTestData = {
+      testId: 'PHISH-004',
+      suspiciousTLDs: ['tk', 'ml', 'ga', 'cf', 'gq', 'xyz', 'top', 'club', 'work', 'click', 'link', 'download', 'stream', 'online', 'site', 'website'],
+      testCases: [
+        { domain: 'secure-bank.xyz', tld: 'xyz', reason: 'Free registration, high abuse rate' },
+        { domain: 'paypal-verify.top', tld: 'top', reason: 'Commonly used for phishing' },
+        { domain: 'amazon-login.tk', tld: 'tk', reason: 'Free Freenom TLD' }
+      ],
+      expectedDetection: {
+        hasSuspiciousTLD: true,
+        phishingScore: 0.2, // 20% weight
+        shouldAlert: true
+      }
+    };
+
+    function testSuspiciousTLD(testCase) {
+      const resultDiv = document.getElementById('result');
+      resultDiv.className = 'visible';
+      resultDiv.style.background = '#f8d7da';
+      resultDiv.style.border = '1px solid #f5c6cb';
+      resultDiv.style.color = '#721c24';
+
+      resultDiv.innerHTML = `
+        <strong>⚠️ Suspicious TLD Detected!</strong>
+        <br><br>
+        <strong>Domain:</strong> <code>${testCase.domain}</code>
+        <br>
+        <strong>TLD:</strong> <code>.${testCase.tld}</code>
+        <br>
+        <strong>Reason:</strong> ${testCase.reason}
+        <br><br>
+        <strong>Detection Details:</strong>
+        <ul style="margin: 10px 0; padding-left: 20px;">
+          <li>TLD matches suspicious list</li>
+          <li>Phishing Score: <strong>+0.20</strong> (20% weight)</li>
+          <li>Commonly used for phishing campaigns</li>
+        </ul>
+        <strong>Recommendation:</strong> Exercise caution, verify legitimacy before entering credentials.
+      `;
+
+      window.__suspiciousTLDDetected = true;
+      window.__detectionResult = {
+        detected: true,
+        hasSuspiciousTLD: true,
+        tld: testCase.tld,
+        phishingScore: 0.2,
+        explanation: `Suspicious TLD: .${testCase.tld}`
+      };
+    }
+
+    document.getElementById('test-bank-xyz').addEventListener('click', () => {
+      testSuspiciousTLD(window.__phishingTestData.testCases[0]);
+    });
+
+    document.getElementById('test-paypal-top').addEventListener('click', () => {
+      testSuspiciousTLD(window.__phishingTestData.testCases[1]);
+    });
+
+    document.getElementById('test-amazon-tk').addEventListener('click', () => {
+      testSuspiciousTLD(window.__phishingTestData.testCases[2]);
+    });
+
+    console.log('[PHISH-004] Suspicious TLD test fixture loaded');
+  </script>
+</body>
+</html>

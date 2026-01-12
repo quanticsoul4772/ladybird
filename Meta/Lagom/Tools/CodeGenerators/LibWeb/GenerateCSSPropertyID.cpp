@@ -256,6 +256,12 @@ WEB_API Optional<PropertyID> property_id_from_string(StringView);
 WEB_API bool is_inherited_property(PropertyID);
 NonnullRefPtr<StyleValue const> property_initial_value(PropertyID);
 
+enum class PropertyMultiplicity {
+    Single,
+    List,
+    CoordinatingList,
+};
+PropertyMultiplicity property_multiplicity(PropertyID);
 bool property_is_single_valued(PropertyID);
 bool property_is_list_valued(PropertyID);
 
@@ -444,8 +450,9 @@ ErrorOr<void> generate_implementation_file(JsonObject& properties, JsonObject& l
 
 namespace Web::CSS {
 
-Optional<PropertyID> property_id_from_camel_case_string(StringView string)
+static auto generate_camel_case_property_table()
 {
+    HashMap<StringView, PropertyID, CaseInsensitiveASCIIStringViewTraits> table;
 )~~~");
 
     properties.for_each_member([&](auto& name, auto& value) {
@@ -460,20 +467,24 @@ Optional<PropertyID> property_id_from_camel_case_string(StringView string)
             member_generator.set("name:titlecase", title_casify(name));
         }
         member_generator.append(R"~~~(
-    if (string.equals_ignoring_ascii_case("@name:camelcase@"sv))
-        return PropertyID::@name:titlecase@;
+    table.set("@name:camelcase@"sv, PropertyID::@name:titlecase@);
 )~~~");
     });
 
     generator.append(R"~~~(
-    return {};
+    return table;
 }
 
-Optional<PropertyID> property_id_from_string(StringView string)
-{
-    if (is_a_custom_property_name_string(string))
-        return PropertyID::Custom;
+static HashMap<StringView, PropertyID, CaseInsensitiveASCIIStringViewTraits> const camel_case_properties_table = generate_camel_case_property_table();
 
+Optional<PropertyID> property_id_from_camel_case_string(StringView string)
+{
+    return camel_case_properties_table.get(string);
+}
+
+static auto generate_properties_table()
+{
+    HashMap<StringView, PropertyID, CaseInsensitiveASCIIStringViewTraits> table;
 )~~~");
 
     properties.for_each_member([&](auto& name, auto& value) {
@@ -487,13 +498,22 @@ Optional<PropertyID> property_id_from_string(StringView string)
             member_generator.set("name:titlecase", title_casify(name));
         }
         member_generator.append(R"~~~(
-    if (string.equals_ignoring_ascii_case("@name@"sv))
-        return PropertyID::@name:titlecase@;
+    table.set("@name@"sv, PropertyID::@name:titlecase@);
 )~~~");
     });
 
     generator.append(R"~~~(
-    return {};
+    return table;
+}
+
+static HashMap<StringView, PropertyID, CaseInsensitiveASCIIStringViewTraits> const properties_table = generate_properties_table();
+
+Optional<PropertyID> property_id_from_string(StringView string)
+{
+    if (is_a_custom_property_name_string(string))
+        return PropertyID::Custom;
+
+    return properties_table.get(string);
 }
 
 FlyString const& string_from_property_id(PropertyID property_id) {
@@ -770,7 +790,38 @@ NonnullRefPtr<StyleValue const> property_initial_value(PropertyID property_id)
     }
     VERIFY_NOT_REACHED();
 }
-        
+
+PropertyMultiplicity property_multiplicity(PropertyID property_id)
+{
+    switch (property_id) {
+)~~~");
+
+    properties.for_each_member([&](auto& name, JsonValue const& value) {
+        auto const& property = value.as_object();
+        if (auto multiplicity = property.get_string("multiplicity"sv);
+            multiplicity.has_value() && multiplicity != "single"sv) {
+
+            if (!first_is_one_of(multiplicity, "single"sv, "list"sv, "coordinating-list"sv)) {
+                dbgln("'{}' is not a valid value for 'multiplicity'. Accepted values are: 'single', 'list', 'coordinating-list'", multiplicity.value());
+                VERIFY_NOT_REACHED();
+            }
+
+            auto property_generator = generator.fork();
+            property_generator.set("name:titlecase", title_casify(name));
+            property_generator.set("multiplicity:titlecase", title_casify(multiplicity.value()));
+            property_generator.appendln("    case PropertyID::@name:titlecase@:");
+            property_generator.appendln("        return PropertyMultiplicity::@multiplicity:titlecase@;");
+        }
+    });
+
+    generator.append(R"~~~(
+    default:
+        return PropertyMultiplicity::Single;
+    }
+
+    VERIFY_NOT_REACHED();
+}
+
 bool property_is_single_valued(PropertyID property_id)
 {
     return !property_is_list_valued(property_id);

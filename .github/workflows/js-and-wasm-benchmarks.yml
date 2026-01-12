@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: 'Checkout LadybirdBrowser/js-benchmarks'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6.0.1
         with:
           repository: LadybirdBrowser/js-benchmarks
           path: js-benchmarks
@@ -115,7 +115,7 @@ jobs:
           ./run.py ${run_options}
 
       - name: 'Save results as an artifact'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: js-benchmarks-results-${{ matrix.os_name }}-${{ matrix.arch }}
           path: js-benchmarks/results.json

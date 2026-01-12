@@ -8,6 +8,7 @@
  */
 
 #include "ConicGradientStyleValue.h"
+#include <LibWeb/CSS/StyleValues/AngleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/PositionStyleValue.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Painting/DisplayListRecorder.h>
@@ -20,12 +21,12 @@ String ConicGradientStyleValue::to_string(SerializationMode mode) const
     if (is_repeating())
         builder.append("repeating-"sv);
     builder.append("conic-gradient("sv);
-    bool has_from_angle = m_properties.from_angle.to_degrees() != 0;
+    bool has_from_angle = m_properties.from_angle;
     bool has_at_position = !m_properties.position->is_center();
     bool has_color_space = m_properties.interpolation_method.has_value() && m_properties.interpolation_method.value().color_space != InterpolationMethod::default_color_space(m_properties.color_syntax);
 
     if (has_from_angle)
-        builder.appendff("from {}", m_properties.from_angle.to_string());
+        builder.appendff("from {}", m_properties.from_angle->to_string(mode));
     if (has_at_position) {
         if (has_from_angle)
             builder.append(' ');
@@ -64,6 +65,20 @@ void ConicGradientStyleValue::paint(DisplayListRecordingContext& context, Device
     context.display_list_recorder().fill_rect_with_conic_gradient(destination_rect, m_resolved->data, position);
 }
 
+ValueComparingNonnullRefPtr<StyleValue const> ConicGradientStyleValue::absolutized(ComputationContext const& context) const
+{
+    Vector<ColorStopListElement> absolutized_color_stops;
+    absolutized_color_stops.ensure_capacity(m_properties.color_stop_list.size());
+    for (auto const& color_stop : m_properties.color_stop_list) {
+        absolutized_color_stops.unchecked_append(color_stop.absolutized(context));
+    }
+    RefPtr<StyleValue const> absolutized_from_angle;
+    if (m_properties.from_angle)
+        absolutized_from_angle = m_properties.from_angle->absolutized(context);
+    ValueComparingNonnullRefPtr<PositionStyleValue const> absolutized_position = m_properties.position->absolutized(context)->as_position();
+    return create(move(absolutized_from_angle), move(absolutized_position), move(absolutized_color_stops), m_properties.repeating, m_properties.interpolation_method);
+}
+
 bool ConicGradientStyleValue::equals(StyleValue const& other) const
 {
     if (type() != other.type())
@@ -74,7 +89,9 @@ bool ConicGradientStyleValue::equals(StyleValue const& other) const
 
 float ConicGradientStyleValue::angle_degrees() const
 {
-    return m_properties.from_angle.to_degrees();
+    if (!m_properties.from_angle)
+        return 0;
+    return Angle::from_style_value(*m_properties.from_angle, {}).to_degrees();
 }
 
 }

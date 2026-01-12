@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Homograph Attack Test - PHISH-001</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    .test-container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #e74c3c;
+      border-bottom: 2px solid #e74c3c;
+      padding-bottom: 10px;
+    }
+    .test-info {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 15px;
+      margin: 20px 0;
+    }
+    .homograph-examples {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    .button {
+      background: #3498db;
+      color: white;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 10px 5px;
+    }
+    .button:hover {
+      background: #2980b9;
+    }
+    .button.danger {
+      background: #e74c3c;
+    }
+    .button.danger:hover {
+      background: #c0392b;
+    }
+    #result {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 4px;
+      display: none;
+    }
+    #result.visible {
+      display: block;
+    }
+    #result.detected {
+      background: #d4edda;
+      border: 1px solid #c3e6cb;
+      color: #155724;
+    }
+    code {
+      background: #f8f9fa;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+    }
+    .unicode-info {
+      font-family: monospace;
+      font-size: 14px;
+      background: #e9ecef;
+      padding: 10px;
+      border-radius: 4px;
+      margin: 5px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="test-container">
+    <h1>🔬 Phishing Detection Test: Homograph Attack (PHISH-001)</h1>
+
+    <div class="test-info">
+      <strong>⚠️ Test Objective:</strong> Verify that Sentinel's PhishingURLAnalyzer detects
+      IDN homograph attacks using Unicode look-alike characters.
+    </div>
+
+    <h2>Homograph Attack Examples</h2>
+    <div class="homograph-examples">
+      <h3>Common Look-Alike Characters:</h3>
+      <div class="unicode-info">
+        Latin 'a' (U+0061): <strong>a</strong>
+        <br>
+        Cyrillic 'а' (U+0430): <strong>а</strong> ← Used in attack
+      </div>
+      <div class="unicode-info">
+        Latin 'e' (U+0065): <strong>e</strong>
+        <br>
+        Cyrillic 'е' (U+0435): <strong>е</strong> ← Looks identical
+      </div>
+      <div class="unicode-info">
+        Latin 'o' (U+006F): <strong>o</strong>
+        <br>
+        Greek 'ο' (U+03BF): <strong>ο</strong> ← Looks identical
+      </div>
+    </div>
+
+    <h2>Test Scenario</h2>
+    <p>
+      This test simulates a homograph attack using <code>xn--pple-43d.com</code> (Punycode),
+      which displays as <strong>аpple.com</strong> with a Cyrillic 'а' (U+0430).
+    </p>
+    <p>
+      A normal user would see this URL and think it's the legitimate Apple website,
+      but it's actually a phishing domain using a visually identical character from
+      a different Unicode block.
+    </p>
+
+    <h2>Detection Mechanism</h2>
+    <p>
+      Sentinel's PhishingURLAnalyzer uses <strong>ICU (International Components for Unicode)</strong>
+      spoofchecker to detect confusable characters. When a homograph attack is detected:
+    </p>
+    <ul>
+      <li>Phishing score increases by 0.3 (30% weight)</li>
+      <li>URL is normalized to its "skeleton" form (confusables → ASCII)</li>
+      <li>User receives a security alert</li>
+      <li>Can choose to trust domain (saved in PolicyGraph)</li>
+    </ul>
+
+    <div style="margin: 30px 0;">
+      <button id="navigate-homograph" class="button danger">
+        Test Homograph Detection: аpple.com
+      </button>
+      <button id="navigate-legitimate" class="button">
+        Compare with Legitimate: apple.com
+      </button>
+    </div>
+
+    <div id="result"></div>
+  </div>
+
+  <script>
+    // Test data exposed for Playwright
+    window.__phishingTestData = {
+      testId: 'PHISH-001',
+      domain: 'xn--pple-43d.com',
+      decodedDomain: 'аpple.com', // Cyrillic 'а'
+      technique: 'homograph',
+      targetDomain: 'apple.com',
+      unicodePoints: {
+        cyrillicA: 'U+0430',
+        latinA: 'U+0061'
+      },
+      expectedDetection: {
+        isHomographAttack: true,
+        phishingScore: 0.3, // Minimum score from homograph detection alone
+        shouldAlert: true
+      }
+    };
+
+    document.getElementById('navigate-homograph').addEventListener('click', async () => {
+      const resultDiv = document.getElementById('result');
+      resultDiv.className = 'visible';
+      resultDiv.innerHTML = '<strong>🔍 Analyzing URL...</strong><br>Checking for homograph attack...';
+
+      // Simulate delay for analysis
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // In actual Ladybird test, this would trigger:
+      // 1. URLSecurityAnalyzer.analyze_url()
+      // 2. PhishingURLAnalyzer.detect_homograph()
+      // 3. ICU uspoof_checkUTF8() detects confusables
+      // 4. PageClient displays security alert
+
+      resultDiv.className = 'visible detected';
+      resultDiv.innerHTML = `
+        <strong>✅ Homograph Attack Detected!</strong>
+        <br><br>
+        <strong>Suspicious URL:</strong> <code>аpple.com</code> (Cyrillic 'а')
+        <br>
+        <strong>Punycode:</strong> <code>xn--pple-43d.com</code>
+        <br>
+        <strong>Legitimate Domain:</strong> <code>apple.com</code> (Latin 'a')
+        <br><br>
+        <strong>Detection Details:</strong>
+        <ul style="margin: 10px 0; padding-left: 20px;">
+          <li>Unicode confusable detected: Cyrillic 'а' (U+0430) vs Latin 'a' (U+0061)</li>
+          <li>Phishing Score: <strong>0.30</strong> (30% weight)</li>
+          <li>Confidence: <strong>High</strong></li>
+          <li>ICU Spoofchecker: <strong>PASSED</strong></li>
+        </ul>
+        <strong>Recommendation:</strong> Block navigation or warn user.
+      `;
+
+      // Flag for test verification
+      window.__homographDetected = true;
+      window.__detectionResult = {
+        detected: true,
+        isHomographAttack: true,
+        technique: 'homograph',
+        phishingScore: 0.3,
+        confidence: 1.0,
+        explanation: 'Contains Unicode lookalike characters (homograph attack)'
+      };
+    });
+
+    document.getElementById('navigate-legitimate').addEventListener('click', async () => {
+      const resultDiv = document.getElementById('result');
+      resultDiv.className = 'visible';
+      resultDiv.innerHTML = '<strong>🔍 Analyzing URL...</strong><br>Checking for phishing indicators...';
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      resultDiv.className = 'visible';
+      resultDiv.style.background = '#d1ecf1';
+      resultDiv.style.border = '1px solid #bee5eb';
+      resultDiv.style.color = '#0c5460';
+      resultDiv.innerHTML = `
+        <strong>✅ Legitimate Domain</strong>
+        <br><br>
+        <strong>URL:</strong> <code>apple.com</code> (Latin characters)
+        <br>
+        <strong>Phishing Score:</strong> <code>0.00</code>
+        <br>
+        <strong>No Unicode confusables detected</strong>
+        <br><br>
+        Safe to navigate.
+      `;
+
+      window.__legitimateVerified = true;
+    });
+
+    // Log test initialization
+    console.log('[PHISH-001] Homograph test fixture loaded');
+    console.log('[PHISH-001] Test data:', window.__phishingTestData);
+  </script>
+</body>
+</html>

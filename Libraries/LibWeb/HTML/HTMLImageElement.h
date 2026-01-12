@@ -11,7 +11,6 @@
 #include <AK/OwnPtr.h>
 #include <LibGC/Function.h>
 #include <LibGfx/Forward.h>
-#include <LibGfx/ImmutableBitmap.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/HTML/BrowsingContext.h>
@@ -53,10 +52,10 @@ public:
     virtual RefPtr<Gfx::ImmutableBitmap> default_image_bitmap_sized(Gfx::IntSize) const override;
 
     WebIDL::UnsignedLong width() const;
-    WebIDL::ExceptionOr<void> set_width(WebIDL::UnsignedLong);
+    void set_width(WebIDL::UnsignedLong);
 
     WebIDL::UnsignedLong height() const;
-    WebIDL::ExceptionOr<void> set_height(WebIDL::UnsignedLong);
+    void set_height(WebIDL::UnsignedLong);
 
     unsigned natural_width() const;
     unsigned natural_height() const;
@@ -92,7 +91,7 @@ public:
     ImageRequest& current_request() { return *m_current_request; }
     ImageRequest const& current_request() const { return *m_current_request; }
 
-    size_t current_frame_index() const { return m_current_frame_index; }
+    virtual size_t current_frame_index() const override { return m_current_frame_index; }
 
     // https://html.spec.whatwg.org/multipage/images.html#upgrade-the-pending-request-to-the-current-request
     void upgrade_pending_request_to_current_request();
@@ -108,13 +107,14 @@ public:
     virtual RefPtr<Gfx::ImmutableBitmap> current_image_bitmap_sized(Gfx::IntSize) const override;
     virtual void set_visible_in_viewport(bool) override;
     virtual GC::Ptr<DOM::Element const> to_html_element() const override { return *this; }
+    virtual GC::Ptr<DecodedImageData> decoded_image_data() const override;
 
     virtual void visit_edges(Cell::Visitor&) override;
 
 private:
     HTMLImageElement(DOM::Document&, DOM::QualifiedName);
 
-    void update_the_image_data_impl(bool restart_the_animations = false, bool maybe_omit_events = false);
+    void update_the_image_data_impl(bool restart_the_animations, bool maybe_omit_events, u64 update_the_image_data_count);
 
     virtual bool is_html_image_element() const override { return true; }
 
@@ -163,6 +163,8 @@ private:
     SourceSet m_source_set;
 
     CSSPixelSize m_last_seen_viewport_size;
+
+    u64 m_update_the_image_data_count { 0 };
 };
 
 }

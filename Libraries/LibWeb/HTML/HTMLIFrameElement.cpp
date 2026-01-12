@@ -19,6 +19,8 @@
 #include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Layout/NavigableContainerViewport.h>
+#include <LibWeb/TrustedTypes/RequireTrustedTypesForDirective.h>
+#include <LibWeb/TrustedTypes/TrustedTypePolicy.h>
 
 namespace Web::HTML {
 
@@ -123,7 +125,11 @@ void HTMLIFrameElement::post_connection()
         if (auto navigable = content_navigable()) {
             auto traversable = navigable->traversable_navigable();
             traversable->append_session_history_traversal_steps(GC::create_function(heap(), [this] {
+                // NB: Use Core::Promise to signal SessionHistoryTraversalQueue that it can continue to execute next entry.
+                auto signal_to_continue_session_history_processing = Core::Promise<Empty>::construct();
                 set_content_navigable_has_session_history_entry_and_ready_for_navigation();
+                signal_to_continue_session_history_processing->resolve({});
+                return signal_to_continue_session_history_processing;
             }));
         }
     })));
@@ -303,6 +309,33 @@ void HTMLIFrameElement::set_current_navigation_was_lazy_loaded(bool value)
     // An iframe element whose current navigation was lazy loaded boolean is false potentially delays the load event.
     // https://html.spec.whatwg.org/multipage/iframe-embed-object.html#the-iframe-element:potentially-delays-the-load-event
     set_potentially_delays_the_load_event(!value);
+}
+
+// https://html.spec.whatwg.org/multipage/iframe-embed-object.html#dom-iframe-srcdoc
+TrustedTypes::TrustedHTMLOrString HTMLIFrameElement::srcdoc()
+{
+    // 1. Let attribute be the result of running get an attribute by namespace and local name given null, srcdoc's
+    //    local name, and this.
+    // 2. If attribute is null, then return the empty string.
+    // 3. Return attribute's value.
+    return Utf16String::from_utf8(get_attribute_value(AttributeNames::srcdoc));
+}
+
+// https://html.spec.whatwg.org/multipage/iframe-embed-object.html#dom-iframe-srcdoc
+WebIDL::ExceptionOr<void> HTMLIFrameElement::set_srcdoc(TrustedTypes::TrustedHTMLOrString const& value)
+{
+    // 1. Let compliantString be the result of invoking the Get Trusted Type compliant string algorithm with
+    //      TrustedHTML, this's relevant global object, the given value, "HTMLIFrameElement srcdoc", and "script".
+    auto const compliant_string = TRY(TrustedTypes::get_trusted_type_compliant_string(
+        TrustedTypes::TrustedTypeName::TrustedHTML,
+        HTML::relevant_global_object(*this),
+        value,
+        TrustedTypes::InjectionSink::HTMLIFrameElement_srcdoc,
+        TrustedTypes::Script.to_string()));
+
+    // 2. Set an attribute value given this, srcdoc's local name, and compliantString.
+    set_attribute_value(AttributeNames::srcdoc, compliant_string.to_utf8_but_should_be_ported_to_utf16());
+    return {};
 }
 
 }

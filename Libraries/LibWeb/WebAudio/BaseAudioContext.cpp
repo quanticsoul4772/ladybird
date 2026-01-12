@@ -11,6 +11,7 @@
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/WebAudio/AnalyserNode.h>
 #include <LibWeb/WebAudio/AudioBuffer.h>
 #include <LibWeb/WebAudio/AudioBufferSourceNode.h>
@@ -63,6 +64,10 @@ WebIDL::CallbackType* BaseAudioContext::onstatechange()
 // https://webaudio.github.io/web-audio-api/#dom-baseaudiocontext-createanalyser
 WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> BaseAudioContext::create_analyser()
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    auto const& window = as<HTML::Window>(HTML::relevant_global_object(*this));
+    window.associated_document().page().client().page_did_call_fingerprinting_api("audio"sv, "createAnalyser"sv);
+
     return AnalyserNode::create(realm(), *this);
 }
 
@@ -124,6 +129,10 @@ WebIDL::ExceptionOr<GC::Ref<ChannelSplitterNode>> BaseAudioContext::create_chann
 // https://webaudio.github.io/web-audio-api/#dom-baseaudiocontext-createoscillator
 WebIDL::ExceptionOr<GC::Ref<OscillatorNode>> BaseAudioContext::create_oscillator()
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    auto const& window = as<HTML::Window>(HTML::relevant_global_object(*this));
+    window.associated_document().page().client().page_did_call_fingerprinting_api("audio"sv, "createOscillator"sv);
+
     // Factory method for an OscillatorNode.
     return OscillatorNode::create(realm(), *this);
 }

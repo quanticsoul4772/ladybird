@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cross-Origin Form Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .warning-box {
+      background: #fff3cd;
+      border: 2px solid #ffc107;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 5px;
+    }
+    .login-form {
+      border: 1px solid #ccc;
+      padding: 20px;
+      border-radius: 5px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 15px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      background-color: #dc3545;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background-color: #c82333;
+    }
+    .origin-info {
+      background: #e7f3ff;
+      padding: 10px;
+      margin-top: 20px;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="warning-box">
+    <strong>⚠️ Cross-Origin Form Submission Test</strong><br>
+    This form submits credentials to a different origin. FormMonitor should detect this.
+  </div>
+
+  <div class="login-form">
+    <h1>Login Page</h1>
+    <p>Hosted on: <code id="form-origin"></code></p>
+
+    <!-- Cross-origin submission: submits to port 8081 (different origin) -->
+    <form id="cross-origin-form" action="http://localhost:9081/submit" method="POST">
+      <label for="username">Username:</label>
+      <input type="text" id="username" name="username" value="testuser" required>
+
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" value="secret123" required>
+
+      <button type="submit" id="submit-btn">Submit to Different Origin</button>
+    </form>
+  </div>
+
+  <div class="origin-info">
+    <strong>Origin Information:</strong><br>
+    Document origin: <span id="doc-origin"></span><br>
+    Form action: <span id="form-action"></span><br>
+    Action origin: <span id="action-origin"></span><br>
+    Cross-origin: <strong id="is-cross-origin"></strong>
+  </div>
+
+  <div id="test-status" style="margin-top: 20px; padding: 10px; background: #f8d7da; border: 1px solid #dc3545; border-radius: 3px;">
+    <strong>FormMonitor Expected Behavior:</strong><br>
+    1. Detect cross-origin password submission<br>
+    2. Show security alert to user<br>
+    3. Alert type: credential_exfiltration<br>
+    4. Severity: high
+  </div>
+
+  <script>
+    // Get origin information
+    const form = document.getElementById('cross-origin-form');
+    const documentOrigin = window.location.origin;
+    const actionUrl = new URL(form.action);
+    const actionOrigin = actionUrl.origin;
+    const isCrossOrigin = documentOrigin !== actionOrigin;
+
+    // Display origin info
+    document.getElementById('form-origin').textContent = documentOrigin;
+    document.getElementById('doc-origin').textContent = documentOrigin;
+    document.getElementById('form-action').textContent = form.action;
+    document.getElementById('action-origin').textContent = actionOrigin;
+    document.getElementById('is-cross-origin').textContent = isCrossOrigin ? 'YES' : 'NO';
+    document.getElementById('is-cross-origin').style.color = isCrossOrigin ? 'red' : 'green';
+
+    // FormMonitor test data
+    window.__formMonitorTestData = {
+      testName: 'cross-origin-form',
+      documentUrl: window.location.href,
+      actionUrl: form.action,
+      formOrigin: documentOrigin,
+      actionOrigin: actionOrigin,
+      method: 'POST',
+      hasPasswordField: true,
+      hasUsernameField: true,
+      isCrossOrigin: isCrossOrigin,
+      expectedAlert: 'credential_exfiltration',
+      expectedSeverity: 'high',
+      note: 'Cross-origin password submission should trigger FormMonitor alert'
+    };
+
+    // Log form submission
+    form.addEventListener('submit', (e) => {
+      console.log('Form submitted:', window.__formMonitorTestData);
+      // Don't prevent default - allow actual submission for testing
+    });
+  </script>
+</body>
+</html>

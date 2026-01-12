@@ -17,6 +17,7 @@
 #include <LibWeb/DOM/EventDispatcher.h>
 #include <LibWeb/DOM/IDLEventListener.h>
 #include <LibWeb/DOMURL/DOMURL.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP.h>
 #include <LibWeb/FileAPI/Blob.h>
 #include <LibWeb/HTML/CloseEvent.h>
 #include <LibWeb/HTML/EventHandler.h>
@@ -24,6 +25,7 @@
 #include <LibWeb/HTML/MessageEvent.h>
 #include <LibWeb/HTML/WindowOrWorkerGlobalScope.h>
 #include <LibWeb/Loader/ResourceLoader.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 #include <LibWeb/WebIDL/Buffers.h>
@@ -197,7 +199,7 @@ ErrorOr<void> WebSocket::establish_web_socket_connection(URL::URL const& url_rec
     for (auto const& protocol : protocols)
         TRY(protocol_byte_strings.try_append(protocol.to_byte_string()));
 
-    HTTP::HeaderMap additional_headers;
+    auto additional_headers = HTTP::HeaderList::create();
 
     auto cookies = ([&] {
         auto& page = Bindings::principal_host_defined_page(HTML::principal_realm(realm()));
@@ -205,10 +207,10 @@ ErrorOr<void> WebSocket::establish_web_socket_connection(URL::URL const& url_rec
     })();
 
     if (!cookies.is_empty()) {
-        additional_headers.set("Cookie", cookies.to_byte_string());
+        additional_headers->append({ "Cookie"sv, cookies.to_byte_string() });
     }
 
-    additional_headers.set("User-Agent", ResourceLoader::the().user_agent().to_byte_string());
+    additional_headers->append({ "User-Agent"sv, Fetch::Infrastructure::default_user_agent_value() });
 
     auto request_client = ResourceLoader::the().request_client();
 
@@ -306,24 +308,21 @@ WebIDL::ExceptionOr<void> WebSocket::send(Variant<GC::Root<WebIDL::BufferSource>
     if (state == Requests::WebSocket::ReadyState::Connecting)
         return WebIDL::InvalidStateError::create(realm(), "Websocket is still CONNECTING"_utf16);
     if (state == Requests::WebSocket::ReadyState::Open) {
-        TRY_OR_THROW_OOM(vm(),
-            data.visit(
-                [this](String const& string) -> ErrorOr<void> {
-                    m_websocket->send(string);
-                    return {};
-                },
-                [this](GC::Root<WebIDL::BufferSource> const& buffer_source) -> ErrorOr<void> {
-                    // FIXME: While the spec doesn't say to do this, it's not observable except from potentially throwing OOM.
-                    //        Can we avoid this copy?
-                    auto data_buffer = TRY(WebIDL::get_buffer_source_copy(*buffer_source->raw_object()));
-                    m_websocket->send(data_buffer, false);
-                    return {};
-                },
-                [this](GC::Root<FileAPI::Blob> const& blob) -> ErrorOr<void> {
-                    auto byte_buffer = TRY(ByteBuffer::copy(blob->raw_bytes()));
-                    m_websocket->send(byte_buffer, false);
-                    return {};
-                }));
+        data.visit(
+            [this](String const& string) {
+                m_websocket->send(string);
+            },
+            [this](GC::Root<WebIDL::BufferSource> const& buffer_source) {
+                ReadonlyBytes buffer;
+
+                if (auto array_buffer = buffer_source->viewed_array_buffer(); array_buffer && !array_buffer->is_detached())
+                    buffer = array_buffer->buffer();
+
+                m_websocket->send(buffer, false);
+            },
+            [this](GC::Root<FileAPI::Blob> const& blob) {
+                m_websocket->send(blob->raw_bytes(), false);
+            });
         // TODO : If the data cannot be sent, e.g. because it would need to be buffered but the buffer is full, the user agent must flag the WebSocket as full and then close the WebSocket connection.
         // TODO : Any invocation of this method with a string argument that does not throw an exception must increase the bufferedAmount attribute by the number of bytes needed to express the argument as UTF-8.
     }

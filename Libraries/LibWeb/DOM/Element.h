@@ -84,7 +84,7 @@ struct CustomElementCallbackReaction {
 
 // https://dom.spec.whatwg.org/#concept-element-custom-element-state
 // An element’s custom element state is one of "undefined", "failed", "uncustomized", "precustomized", or "custom".
-enum class CustomElementState {
+enum class CustomElementState : u8 {
     Undefined,
     Failed,
     Uncustomized,
@@ -94,13 +94,18 @@ enum class CustomElementState {
 
 // https://drafts.csswg.org/css-contain/#proximity-to-the-viewport
 // An element that has content-visibility: auto is in one of three states when it comes to its proximity to the viewport:
-enum class ProximityToTheViewport {
+enum class ProximityToTheViewport : u8 {
     // - The element is close to the viewport:
     CloseToTheViewport,
     // - The element is far away from the viewport:
     FarAwayFromTheViewport,
     // - The element’s proximity to the viewport is not determined:
     NotDetermined,
+};
+
+// https://w3c.github.io/pointerlock/#pointerlockoptions-dictionary
+struct PointerLockOptions {
+    bool unadjusted_movement = false;
 };
 
 class WEB_API Element
@@ -148,14 +153,15 @@ public:
     String get_attribute_value(FlyString const& local_name, Optional<FlyString> const& namespace_ = {}) const;
 
     Optional<String> lang() const;
+    void invalidate_lang_value();
 
-    WebIDL::ExceptionOr<void> set_attribute(FlyString qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, String> const& value);
-    WebIDL::ExceptionOr<void> set_attribute(FlyString qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> const& value);
+    WebIDL::ExceptionOr<void> set_attribute_for_bindings(FlyString qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> const& value);
+    WebIDL::ExceptionOr<void> set_attribute_for_bindings(FlyString qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, String> const& value);
 
-    WebIDL::ExceptionOr<void> set_attribute_ns(Optional<FlyString> const& namespace_, FlyString const& qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> const& value);
+    WebIDL::ExceptionOr<void> set_attribute_ns_for_bindings(Optional<FlyString> const& namespace_, FlyString const& qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> const& value);
     void set_attribute_value(FlyString const& local_name, String const& value, Optional<FlyString> const& prefix = {}, Optional<FlyString> const& namespace_ = {});
-    WebIDL::ExceptionOr<GC::Ptr<Attr>> set_attribute_node(Attr&);
-    WebIDL::ExceptionOr<GC::Ptr<Attr>> set_attribute_node_ns(Attr&);
+    WebIDL::ExceptionOr<GC::Ptr<Attr>> set_attribute_node_for_bindings(Attr&);
+    WebIDL::ExceptionOr<GC::Ptr<Attr>> set_attribute_node_ns_for_bindings(Attr&);
 
     void append_attribute(FlyString const& name, String const& value);
     void append_attribute(Attr&);
@@ -175,9 +181,10 @@ public:
     GC::Ptr<Attr> get_attribute_node_ns(Optional<FlyString> const& namespace_, FlyString const& name) const;
 
     GC::Ptr<DOM::Element> get_the_attribute_associated_element(FlyString const& content_attribute, GC::Ptr<DOM::Element> explicitly_set_attribute_element) const;
-    Optional<GC::RootVector<GC::Ref<DOM::Element>>> get_the_attribute_associated_elements(FlyString const& content_attribute, Optional<Vector<GC::Weak<DOM::Element>>> const& explicitly_set_attribute_elements) const;
+    Optional<GC::RootVector<GC::Ref<DOM::Element>>> get_the_attribute_associated_elements(FlyString const& content_attribute, Optional<Vector<GC::Weak<DOM::Element>> const&> explicitly_set_attribute_elements) const;
 
-    DOMTokenList* class_list();
+    GC::Ref<DOMTokenList> class_list();
+    GC::Ref<DOMTokenList> part_list();
 
     WebIDL::ExceptionOr<GC::Ref<ShadowRoot>> attach_shadow(ShadowRootInit init);
     WebIDL::ExceptionOr<void> attach_a_shadow_root(Bindings::ShadowRootMode mode, bool clonable, bool serializable, bool delegates_focus, Bindings::SlotAssignmentMode slot_assignment);
@@ -300,6 +307,7 @@ public:
     virtual void did_receive_focus() { }
     virtual void did_lose_focus() { }
     bool should_indicate_focus() const;
+    virtual bool is_focusable() const override;
 
     static GC::Ptr<Layout::NodeWithStyle> create_layout_node_for_display_type(DOM::Document&, CSS::Display const&, GC::Ref<CSS::ComputedProperties>, Element*);
 
@@ -336,20 +344,9 @@ public:
     ErrorOr<void> scroll_into_view(Optional<Variant<bool, ScrollIntoViewOptions>> = {});
 
     // https://www.w3.org/TR/wai-aria-1.2/#ARIAMixin
-#define __ENUMERATE_ARIA_ATTRIBUTE(name, attribute)                              \
-    Optional<String> name() const override                                       \
-    {                                                                            \
-        return get_attribute(ARIA::AttributeNames::name);                        \
-    }                                                                            \
-                                                                                 \
-    WebIDL::ExceptionOr<void> set_##name(Optional<String> const& value) override \
-    {                                                                            \
-        if (value.has_value())                                                   \
-            TRY(set_attribute(ARIA::AttributeNames::name, *value));              \
-        else                                                                     \
-            remove_attribute(ARIA::AttributeNames::name);                        \
-        return {};                                                               \
-    }
+#define __ENUMERATE_ARIA_ATTRIBUTE(name, attribute) \
+    virtual Optional<String> name() const override; \
+    virtual void set_##name(Optional<String> const& value) override;
     ENUMERATE_ARIA_ATTRIBUTES
 #undef __ENUMERATE_ARIA_ATTRIBUTE
 
@@ -374,7 +371,7 @@ public:
     CustomElementReactionQueue const* custom_element_reaction_queue() const { return m_custom_element_reaction_queue; }
     CustomElementReactionQueue& ensure_custom_element_reaction_queue();
 
-    HTML::CustomStateSet const* custom_state_set() const { return m_custom_state_set; }
+    GC::Ptr<HTML::CustomStateSet const> custom_state_set() const { return m_custom_state_set; }
     HTML::CustomStateSet& ensure_custom_state_set();
 
     JS::ThrowCompletionOr<void> upgrade_element(GC::Ref<HTML::CustomElementDefinition> custom_element_definition);
@@ -493,7 +490,7 @@ public:
     }
 
     i32 number_of_owned_list_items() const;
-    Element* list_owner() const;
+    GC::Ptr<Element> list_owner() const;
     void maybe_invalidate_ordinals_for_list_owner(Optional<Element*> skip_node = {});
     i32 ordinal_value();
 
@@ -519,6 +516,19 @@ public:
     bool had_duplicate_attribute_during_tokenization() const { return m_had_duplicate_attribute_during_tokenization; }
 
     GC::Ref<CSS::StylePropertyMapReadOnly> computed_style_map();
+
+    // https://html.spec.whatwg.org/multipage/dom.html#block-rendering
+    void block_rendering();
+    // https://html.spec.whatwg.org/multipage/dom.html#unblock-rendering
+    void unblock_rendering();
+    // https://html.spec.whatwg.org/multipage/urls-and-fetching.html#potentially-render-blocking
+    bool is_potentially_render_blocking();
+    // https://html.spec.whatwg.org/multipage/urls-and-fetching.html#implicitly-potentially-render-blocking
+    virtual bool is_implicitly_potentially_render_blocking() const { return false; }
+
+    double ensure_css_random_base_value(CSS::RandomCachingKey const&);
+
+    GC::Ref<WebIDL::Promise> request_pointer_lock(Optional<PointerLockOptions>);
 
 protected:
     Element(Document&, DOM::QualifiedName);
@@ -574,6 +584,7 @@ private:
     GC::Ptr<CSS::StylePropertyMap> m_attribute_style_map;
     GC::Ptr<DOMTokenList> m_class_list;
     GC::Ptr<ShadowRoot> m_shadow_root;
+    GC::Ptr<DOMTokenList> m_part_list;
 
     GC::Ptr<CSS::CascadedProperties> m_cascaded_properties;
     GC::Ptr<CSS::ComputedProperties> m_computed_properties;
@@ -595,9 +606,6 @@ private:
     // All elements have an associated custom element reaction queue, initially empty. Each item in the custom element reaction queue is of one of two types:
     // NOTE: See the structs at the top of this header.
     OwnPtr<CustomElementReactionQueue> m_custom_element_reaction_queue;
-
-    // https://dom.spec.whatwg.org/#concept-element-custom-element-state
-    CustomElementState m_custom_element_state { CustomElementState::Undefined };
 
     // https://dom.spec.whatwg.org/#concept-element-custom-element-definition
     GC::Ptr<HTML::CustomElementDefinition> m_custom_element_definition;
@@ -635,6 +643,13 @@ private:
 
     size_t m_sibling_invalidation_distance { 0 };
 
+    OwnPtr<CSS::CountersSet> m_counters_set;
+
+    // https://html.spec.whatwg.org/multipage/grouping-content.html#ordinal-value
+    Optional<i32> m_ordinal_value;
+
+    mutable Optional<String> m_lang_value;
+
     // https://w3c.github.io/webappsec-csp/#is-element-nonceable
     // AD-HOC: We need to know the element had a duplicate attribute when it was created from the HTML parser.
     //         However, there currently isn't any specified way to do this, so we store a flag on the token, which is
@@ -642,7 +657,8 @@ private:
     //         flag is set.
     bool m_had_duplicate_attribute_during_tokenization { false };
 
-    OwnPtr<CSS::CountersSet> m_counters_set;
+    // https://dom.spec.whatwg.org/#concept-element-custom-element-state
+    CustomElementState m_custom_element_state { CustomElementState::Undefined };
 
     // https://drafts.csswg.org/css-contain/#proximity-to-the-viewport
     ProximityToTheViewport m_proximity_to_the_viewport { ProximityToTheViewport::NotDetermined };
@@ -650,9 +666,10 @@ private:
     // https://drafts.csswg.org/css-view-transitions-1/#captured-in-a-view-transition
     bool m_captured_in_a_view_transition { false };
 
-    // https://html.spec.whatwg.org/multipage/grouping-content.html#ordinal-value
-    Optional<i32> m_ordinal_value;
     bool m_is_contained_in_list_subtree { false };
+
+    // https://drafts.csswg.org/css-values-5/#random-caching
+    HashMap<CSS::RandomCachingKey, double> m_element_specific_css_random_base_value_cache;
 };
 
 template<>

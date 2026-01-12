@@ -9,7 +9,6 @@
 
 #include <AK/Badge.h>
 #include <AK/Optional.h>
-#include <LibGC/Function.h>
 #include <LibJS/Bytecode/Builtins.h>
 #include <LibJS/Export.h>
 #include <LibJS/Runtime/Completion.h>
@@ -36,6 +35,8 @@ public:
     virtual ThrowCompletionOr<Value> call();
     virtual ThrowCompletionOr<GC::Ref<Object>> construct(FunctionObject& new_target);
 
+    virtual Utf16String name_for_call_stack() const override;
+
     Utf16FlyString const& name() const { return m_name; }
     virtual bool is_strict_mode() const override;
     virtual bool has_constructor() const override { return false; }
@@ -51,24 +52,25 @@ public:
 
     Optional<Bytecode::Builtin> builtin() const { return m_builtin; }
 
+    virtual bool function_environment_needed() const { return false; }
+    virtual size_t function_environment_bindings_count() const { return 0; }
+
 protected:
     NativeFunction(Utf16FlyString name, Object& prototype);
     NativeFunction(AK::Function<ThrowCompletionOr<Value>(VM&)>, Object* prototype, Realm& realm, Optional<Bytecode::Builtin> builtin);
     NativeFunction(Utf16FlyString name, AK::Function<ThrowCompletionOr<Value>(VM&)>, Object& prototype);
     explicit NativeFunction(Object& prototype);
 
-    virtual void initialize(Realm&) override;
     virtual void visit_edges(Cell::Visitor& visitor) override;
 
 private:
     virtual bool is_native_function() const final { return true; }
 
     Utf16FlyString m_name;
-    GC::Ptr<PrimitiveString> m_name_string;
     Optional<Utf16FlyString> m_initial_name; // [[InitialName]]
     Optional<Bytecode::Builtin> m_builtin;
     AK::Function<ThrowCompletionOr<Value>(VM&)> m_native_function;
-    GC::Ptr<Realm> m_realm;
+    GC::Ref<Realm> m_realm;
 };
 
 template<>

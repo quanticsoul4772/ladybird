@@ -1,0 +1,174 @@
+# Good Commit Message Examples
+
+## Simple Feature Addition
+
+LibWeb: Add CSS grid support
+
+## Bug Fix with Context
+
+LibJS: Fix memory leak in running_execution_context()
+
+The execution context stack was not properly cleaned up when
+exceptions were thrown during async operations.
+
+## Multi-Component Change
+
+RequestServer+Sentinel: Fix critical performance issues and add fingerprinting detection
+
+Optimized YARA scanning to run asynchronously, preventing UI freezes.
+Added FingerprintingDetector integration for canvas API monitoring.
+
+## Spec Implementation
+
+LibWeb: Implement HTMLInputElement constraint validation
+
+Implements the constraint validation API from HTML spec:
+https://html.spec.whatwg.org/multipage/form-control-infrastructure.html
+
+Added algorithms:
+- checkValidity()
+- reportValidity()
+- setCustomValidity()
+- suffering_from_being_missing()
+- suffering_from_type_mismatch()
+- suffering_from_pattern_mismatch()
+
+Tests: Tests/LibWeb/Text/input/constraint-validation.html
+
+## Documentation Update
+
+docs: Add comprehensive phishing detection architecture documentation
+
+Documents the complete phishing detection system including:
+- URLSecurityAnalyzer design patterns
+- Heuristic scoring algorithms
+- PolicyGraph integration
+- Real-time detection workflow
+
+## Build System Change
+
+Meta: Upgrade prettier to version 3.6.2
+
+## Fork-Specific Milestone
+
+Sentinel Milestone 0.4 Phase 1: ML-based malware detection infrastructure
+
+Implemented TensorFlow Lite integration for advanced threat detection:
+- MalwareML class for model inference
+- Training pipeline for custom models
+- Integration with existing YARA scanner
+- Hybrid detection (rules + ML) for improved accuracy
+
+Tests: Services/Sentinel/TestMalwareML.cpp
+
+## Security Fix
+
+Sentinel: Fix privilege escalation in PolicyGraph
+
+The policy evaluation was not properly validating domain origins,
+allowing cross-origin bypass. Added strict origin checking.
+
+CVE-2024-XXXXX (if applicable)
+
+## Test Addition
+
+Tests: Add canvas fingerprinting detection test cases
+
+Added comprehensive tests for:
+- toDataURL() monitoring
+- getImageData() detection
+- Multiple API call patterns
+- User interaction tracking
+
+## Refactoring
+
+LibWeb: Refactor layout tree to use immutable LayoutState
+
+Replaced mutable layout node properties with immutable LayoutState
+pattern. This eliminates race conditions in multi-threaded layout
+and simplifies incremental layout invalidation.
+
+No functional changes, purely internal refactoring.
+
+## API Change
+
+LibCore: Change EventLoop::pump() to return ErrorOr<void>
+
+This allows proper error propagation when I/O operations fail,
+instead of silently continuing with corrupted state.
+
+Updated all call sites to use TRY() macro.
+
+## Performance Improvement
+
+Sentinel: Improve YARA rule matching performance
+
+Optimized rule matching with:
+- Parallel scanning for multiple files
+- Memory-mapped file reading
+- Rule compilation caching
+- Early termination on first match
+
+Benchmark: 500MB file scanning reduced from 2.1s to 0.3s
+
+## Multiple Related Commits
+
+LibWeb: Add HTMLCanvasElement.toDataURL() implementation
+
+LibWeb: Add CanvasRenderingContext2D.getImageData()
+
+LibWeb: Wire up canvas API to fingerprinting detector
+
+## Merge Commit from Upstream
+
+Merge upstream/master: prettier upgrades and line length changes
+
+Integrated commits:
+- 583164e Meta: Upgrade prettier to version 3.6.2
+- 019c529 Meta: Increase line length enforced by prettier to 120
+
+Resolved conflicts:
+- Services/Sentinel/PolicyGraph.cpp (formatting)
+- Libraries/LibWeb/HTML/Navigator.cpp (line length)
+
+## Revert Commit
+
+Revert "LibWeb: Add experimental CSS container queries"
+
+This reverts commit abc1234def5678.
+
+The implementation had performance issues causing 50% slowdown
+in layout computation. Needs redesign before re-landing.
+
+## Cherry-Pick Commit
+
+LibWeb: Fix XSS vulnerability in innerHTML setter
+
+(cherry picked from commit abc1234def5678)
+
+Backported security fix to release/1.0.0 branch.
+
+## Work-in-Progress (for personal branches only)
+
+WIP: Sentinel Phase 6 form anomaly detection
+
+Not ready for review - implementing basic structure.
+
+## Combined Feature Set
+
+Sentinel: Complete Milestone 0.3 Phase 6 form anomaly detection
+
+Implemented comprehensive form security analysis:
+1. FormAnomalyDetector core logic
+2. PolicyGraph integration for persistence
+3. FormMonitor hooks for real-time detection
+4. User alerts via IPC to UI process
+5. Browser tests for all detection patterns
+
+Tests:
+- Services/Sentinel/TestFormAnomalyDetector.cpp
+- Tests/LibWeb/Text/input/form-anomaly-*.html
+
+Documentation:
+- docs/FORM_ANOMALY_DETECTION.md
+- Updated CHANGELOG.md

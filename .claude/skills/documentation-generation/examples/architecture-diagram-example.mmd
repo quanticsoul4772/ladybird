@@ -1,0 +1,262 @@
+%% Ladybird Multi-Process Architecture Example
+%% Demonstrates various Mermaid diagram types for documenting browser architecture
+
+%% ============================================================================
+%% 1. PROCESS ARCHITECTURE (Graph)
+%% ============================================================================
+
+graph TB
+    subgraph "UI Process (Browser)"
+        Browser[Browser UI<br/>Qt/AppKit]
+        TabManager[Tab Manager]
+        Settings[Settings Manager]
+    end
+
+    subgraph "Per-Tab Processes (Sandboxed)"
+        direction TB
+        WC1[WebContent #1<br/>LibWeb + LibJS]
+        WC2[WebContent #2<br/>LibWeb + LibJS]
+        RS1[RequestServer #1<br/>HTTP/HTTPS]
+        RS2[RequestServer #2<br/>HTTP/HTTPS]
+    end
+
+    subgraph "Shared Service Processes"
+        ImageDecoder[ImageDecoder<br/>Image Processing]
+        WebDriver[WebDriver<br/>Automation]
+        AudioServer[AudioServer<br/>Audio Playback]
+    end
+
+    subgraph "Fork: Security Services"
+        Sentinel[Sentinel Service<br/>YARA + ML Detection]
+    end
+
+    Browser --> TabManager
+    TabManager --> WC1
+    TabManager --> WC2
+    WC1 -.IPC.-> RS1
+    WC2 -.IPC.-> RS2
+    WC1 -.IPC.-> ImageDecoder
+    WC2 -.IPC.-> ImageDecoder
+    Browser --> WebDriver
+    WC1 --> AudioServer
+    WC2 --> AudioServer
+    RS1 -.Unix Socket.-> Sentinel
+    RS2 -.Unix Socket.-> Sentinel
+
+    style Browser fill:#e1f5ff
+    style WC1 fill:#fff4e1
+    style WC2 fill:#fff4e1
+    style RS1 fill:#e8f5e8
+    style RS2 fill:#e8f5e8
+    style Sentinel fill:#ffe1e1
+
+%% ============================================================================
+%% 2. PAGE LOADING SEQUENCE (Sequence Diagram)
+%% ============================================================================
+
+sequenceDiagram
+    participant User
+    participant Browser as Browser UI
+    participant WC as WebContent
+    participant RS as RequestServer
+    participant Sentinel as Sentinel
+    participant Net as Network
+
+    User->>Browser: Type URL + Enter
+    Browser->>Browser: Create new tab
+    Browser->>WC: Load URL via IPC
+    activate WC
+
+    WC->>RS: Start HTTP request
+    activate RS
+    RS->>Net: TCP + TLS handshake
+    Net-->>RS: Connection established
+    RS->>Net: Send HTTP request
+    Net-->>RS: HTTP response headers
+
+    RS->>Sentinel: Scan URL (phishing check)
+    activate Sentinel
+    Sentinel-->>RS: Phishing score: 0.2 (safe)
+    deactivate Sentinel
+
+    Net-->>RS: Response body
+    RS->>Sentinel: Scan content (YARA rules)
+    activate Sentinel
+    Sentinel-->>RS: No malware detected
+    deactivate Sentinel
+
+    RS-->>WC: Response data
+    deactivate RS
+
+    WC->>WC: Parse HTML
+    WC->>WC: Build DOM tree
+    WC->>WC: Parse CSS
+    WC->>WC: Build layout tree
+    WC->>WC: Paint to bitmap
+
+    WC-->>Browser: Render complete
+    deactivate WC
+    Browser->>User: Display page
+
+%% ============================================================================
+%% 3. RENDERING PIPELINE (Flowchart)
+%% ============================================================================
+
+flowchart LR
+    A[HTML Bytes] --> B[Tokenizer]
+    B --> C[TreeBuilder]
+    C --> D[DOM Tree]
+    D --> E{Has Stylesheets?}
+    E -->|Yes| F[CSS Parser]
+    E -->|No| G[Default Styles]
+    F --> H[CSSOM]
+    G --> H
+    H --> I[Style Computation]
+    I --> J[Layout Tree]
+    J --> K[Paint Tree]
+    K --> L[Display List]
+    L --> M[Compositor]
+    M --> N[Framebuffer]
+    N --> O[Screen]
+
+    style D fill:#e1f5ff
+    style J fill:#fff4e1
+    style K fill:#e8f5e8
+    style N fill:#ffe1e1
+
+%% ============================================================================
+%% 4. SENTINEL DETECTION STATE MACHINE (State Diagram)
+%% ============================================================================
+
+stateDiagram-v2
+    [*] --> Idle: Sentinel starts
+
+    Idle --> Scanning: Download initiated
+    Scanning --> YARAScan: Check YARA rules
+    YARAScan --> MLAnalysis: YARA suspicious
+    YARAScan --> Safe: YARA clean
+
+    MLAnalysis --> ThreatScoring: ML inference complete
+    ThreatScoring --> HighThreat: Score > 0.8
+    ThreatScoring --> MediumThreat: Score 0.5-0.8
+    ThreatScoring --> Safe: Score < 0.5
+
+    HighThreat --> UserAlert: Show alert
+    MediumThreat --> UserAlert: Show alert
+    UserAlert --> PolicyCheck: User decision
+
+    PolicyCheck --> Block: User blocked
+    PolicyCheck --> Quarantine: User quarantined
+    PolicyCheck --> Allow: User allowed
+
+    Block --> PolicyDB: Store policy
+    Quarantine --> PolicyDB: Store policy
+    Allow --> PolicyDB: Store policy
+
+    PolicyDB --> Idle: Ready for next download
+    Safe --> Idle: Continue download
+
+    note right of YARAScan
+        Pattern matching against
+        known malware signatures
+    end note
+
+    note right of MLAnalysis
+        TensorFlow Lite inference
+        on file features
+    end note
+
+%% ============================================================================
+%% 5. CLASS HIERARCHY (Class Diagram)
+%% ============================================================================
+
+classDiagram
+    class Node {
+        +parent_node() Node*
+        +first_child() Node*
+        +next_sibling() Node*
+        +append_child(Node) ErrorOr
+        +remove_child(Node) ErrorOr
+        +node_name() String
+    }
+
+    class Element {
+        +tag_name() String
+        +id() String
+        +class_list() Vector~String~
+        +get_attribute(String) String
+        +set_attribute(String, String) ErrorOr
+        +has_attribute(String) bool
+    }
+
+    class HTMLElement {
+        +title() String
+        +lang() String
+        +dir() String
+        +click() void
+        +focus() void
+    }
+
+    class HTMLDivElement {
+        +align() String
+    }
+
+    class HTMLInputElement {
+        +value() String
+        +type() String
+        +checked() bool
+        +form() HTMLFormElement*
+    }
+
+    class HTMLCanvasElement {
+        +width() u32
+        +height() u32
+        +get_context(String) RenderingContext*
+        +to_data_url() String
+    }
+
+    Node <|-- Element
+    Element <|-- HTMLElement
+    HTMLElement <|-- HTMLDivElement
+    HTMLElement <|-- HTMLInputElement
+    HTMLElement <|-- HTMLCanvasElement
+
+    class GC_Cell {
+        <<abstract>>
+        +visit_edges(Visitor)
+    }
+
+    GC_Cell <|-- Node
+
+    note for HTMLCanvasElement "Canvas fingerprinting\ndetection hooks here"
+
+%% ============================================================================
+%% 6. IPC MESSAGE FLOW (Sequence with Notes)
+%% ============================================================================
+
+sequenceDiagram
+    participant UI as UI Process
+    participant WC as WebContent
+    participant RS as RequestServer
+
+    Note over UI,RS: User navigates to new page
+
+    UI->>+WC: LoadURL(url)
+    Note right of WC: Create DocumentLoader<br/>Initialize Page
+
+    WC->>+RS: StartRequest(id, GET, url)
+    Note right of RS: Create HTTP connection<br/>Send request headers
+
+    RS-->>-WC: DidReceiveHeaders(id, headers)
+    Note right of WC: Create Document<br/>Begin parsing
+
+    loop Response chunks
+        RS-->>WC: DidReceiveData(id, chunk)
+        Note right of WC: Feed to HTML parser<br/>Build DOM incrementally
+    end
+
+    RS-->>WC: DidFinishRequest(id, success)
+    Note right of WC: Finalize DOM<br/>Trigger load event
+
+    WC-->>-UI: DidFinishLoading(url)
+    Note right of UI: Update UI state<br/>Enable navigation buttons

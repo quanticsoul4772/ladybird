@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head><title>Beaconing Detection Test</title></head>
+<body>
+<h1>C2 Beaconing Test</h1>
+<p>This page sends regular requests to simulate C2 beaconing.</p>
+<div id="status">Starting beaconing test...</div>
+<script>
+let count = 0;
+const domain = 'suspicious-c2-server.example.com';
+const interval = 5000; // 5 seconds
+
+function beacon() {
+    count++;
+    document.getElementById('status').textContent =
+        `Sent ${count} beacons to ${domain} (every ${interval/1000}s)`;
+
+    fetch('https://' + domain + '/beacon')
+        .catch(err => console.log('Beacon ' + count + ' failed (expected)'));
+}
+
+// Send beacons every 5 seconds (should be detected after 10+ requests)
+setInterval(beacon, interval);
+beacon(); // Send first beacon immediately
+</script>
+<p>Let run for 2+ minutes to generate beaconing alert.</p>
+</body>
+</html>

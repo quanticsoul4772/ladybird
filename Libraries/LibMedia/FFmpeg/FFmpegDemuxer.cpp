@@ -8,6 +8,7 @@
 #include <AK/Math.h>
 #include <AK/MemoryStream.h>
 #include <AK/Stream.h>
+#include <AK/StringBuilder.h>
 #include <AK/Time.h>
 #include <LibMedia/FFmpeg/FFmpegDemuxer.h>
 #include <LibMedia/FFmpeg/FFmpegHelpers.h>
@@ -33,27 +34,62 @@ FFmpegDemuxer::~FFmpegDemuxer()
 
 static DecoderErrorOr<void> initialize_format_context(AVFormatContext*& format_context, AVIOContext& io_context)
 {
+    dbgln("initialize_format_context: Starting format context initialization");
+
     format_context = avformat_alloc_context();
     if (format_context == nullptr)
         return DecoderError::with_description(DecoderErrorCategory::Memory, "Failed to allocate format context"sv);
+
     format_context->pb = &io_context;
-    if (avformat_open_input(&format_context, nullptr, nullptr, nullptr) < 0)
+    dbgln("initialize_format_context: AVIOContext buffer size: {}, seekable: {}",
+          io_context.buffer_size, (io_context.seekable != 0));
+
+    dbgln("initialize_format_context: Calling avformat_open_input");
+    auto open_result = avformat_open_input(&format_context, nullptr, nullptr, nullptr);
+    if (open_result < 0) {
+        char error_buf[256];
+        av_strerror(open_result, error_buf, sizeof(error_buf));
+        dbgln("initialize_format_context: avformat_open_input FAILED with code {}: {}", open_result, error_buf);
         return DecoderError::with_description(DecoderErrorCategory::Corrupted, "Failed to open input for format parsing"sv);
+    }
+    dbgln("initialize_format_context: avformat_open_input succeeded");
 
     // Read stream info; doing this is required for headerless formats like MPEG
-    if (avformat_find_stream_info(format_context, nullptr) < 0)
+    dbgln("initialize_format_context: Calling avformat_find_stream_info");
+    auto stream_info_result = avformat_find_stream_info(format_context, nullptr);
+    if (stream_info_result < 0) {
+        char error_buf[256];
+        av_strerror(stream_info_result, error_buf, sizeof(error_buf));
+        dbgln("initialize_format_context: avformat_find_stream_info FAILED with code {}: {}", stream_info_result, error_buf);
         return DecoderError::with_description(DecoderErrorCategory::Corrupted, "Failed to find stream info"sv);
+    }
+    dbgln("initialize_format_context: avformat_find_stream_info succeeded, found {} streams", format_context->nb_streams);
 
     return {};
 }
 
 DecoderErrorOr<NonnullRefPtr<FFmpegDemuxer>> FFmpegDemuxer::from_data(ReadonlyBytes data)
 {
-    auto stream = DECODER_TRY_ALLOC(try_make<FixedMemoryStream>(data));
-    auto io_context = DECODER_TRY_ALLOC(Media::FFmpeg::FFmpegIOContext::create(*stream));
-    auto demuxer = DECODER_TRY_ALLOC(adopt_nonnull_ref_or_enomem(new (nothrow) FFmpegDemuxer(data, move(stream), move(io_context))));
+    dbgln("FFmpegDemuxer::from_data() called with {} bytes", data.size());
 
+    // Debug: Print first few bytes to verify data integrity
+    if (data.size() >= 4) {
+        dbgln("FFmpegDemuxer: First 4 bytes: {:02x} {:02x} {:02x} {:02x}",
+              data[0], data[1], data[2], data[3]);
+    }
+
+    auto stream = DECODER_TRY_ALLOC(try_make<FixedMemoryStream>(data));
+    dbgln("FFmpegDemuxer: FixedMemoryStream created, size: {}", stream->size().value_or(0));
+
+    auto io_context = DECODER_TRY_ALLOC(Media::FFmpeg::FFmpegIOContext::create(*stream));
+    dbgln("FFmpegDemuxer: FFmpegIOContext created");
+
+    auto demuxer = DECODER_TRY_ALLOC(adopt_nonnull_ref_or_enomem(new (nothrow) FFmpegDemuxer(data, move(stream), move(io_context))));
+    dbgln("FFmpegDemuxer: FFmpegDemuxer instance created");
+
+    dbgln("FFmpegDemuxer: About to call initialize_format_context");
     TRY(initialize_format_context(demuxer->m_format_context, *demuxer->m_io_context->avio_context()));
+    dbgln("FFmpegDemuxer: initialize_format_context succeeded");
 
     return demuxer;
 }
@@ -75,37 +111,18 @@ FFmpegDemuxer::TrackContext& FFmpegDemuxer::get_track_context(Track const& track
     });
 }
 
-static inline AK::Duration time_units_to_duration(i64 time_units, int numerator, int denominator)
-{
-    VERIFY(numerator != 0);
-    VERIFY(denominator != 0);
-    auto seconds = time_units * numerator / denominator;
-    auto seconds_in_time_units = seconds * denominator / numerator;
-    auto remainder_in_time_units = time_units - seconds_in_time_units;
-    auto nanoseconds = ((remainder_in_time_units * 1'000'000'000 * numerator) + (denominator / 2)) / denominator;
-    return AK::Duration::from_seconds(seconds) + AK::Duration::from_nanoseconds(nanoseconds);
-}
-
 static inline AK::Duration time_units_to_duration(i64 time_units, AVRational const& time_base)
 {
-    return time_units_to_duration(time_units, time_base.num, time_base.den);
-}
-
-static inline i64 duration_to_time_units(AK::Duration duration, int numerator, int denominator)
-{
-    VERIFY(numerator != 0);
-    VERIFY(denominator != 0);
-    auto seconds = duration.to_truncated_seconds();
-    auto nanoseconds = (duration - AK::Duration::from_seconds(seconds)).to_nanoseconds();
-
-    auto time_units = seconds * denominator / numerator;
-    time_units += nanoseconds * denominator / numerator / 1'000'000'000;
-    return time_units;
+    VERIFY(time_base.num > 0);
+    VERIFY(time_base.den > 0);
+    return AK::Duration::from_time_units(time_units, time_base.num, time_base.den);
 }
 
 static inline i64 duration_to_time_units(AK::Duration duration, AVRational const& time_base)
 {
-    return duration_to_time_units(duration, time_base.num, time_base.den);
+    VERIFY(time_base.num > 0);
+    VERIFY(time_base.den > 0);
+    return duration.to_time_units(time_base.num, time_base.den);
 }
 
 DecoderErrorOr<AK::Duration> FFmpegDemuxer::total_duration()
@@ -114,7 +131,7 @@ DecoderErrorOr<AK::Duration> FFmpegDemuxer::total_duration()
         return DecoderError::format(DecoderErrorCategory::Unknown, "Negative stream duration");
     }
 
-    return time_units_to_duration(m_format_context->duration, 1, AV_TIME_BASE);
+    return AK::Duration::from_time_units(m_format_context->duration, 1, AV_TIME_BASE);
 }
 
 DecoderErrorOr<AK::Duration> FFmpegDemuxer::duration_of_track(Track const& track)
@@ -147,9 +164,24 @@ DecoderErrorOr<Track> FFmpegDemuxer::get_track_for_stream_index(u32 stream_index
     Track track(type, stream_index, name, language);
 
     if (type == TrackType::Video) {
+        auto color_primaries = static_cast<ColorPrimaries>(stream.codecpar->color_primaries);
+        auto transfer_characteristics = static_cast<TransferCharacteristics>(stream.codecpar->color_trc);
+        auto matrix_coefficients = static_cast<MatrixCoefficients>(stream.codecpar->color_space);
+        auto color_range = [stream] {
+            switch (stream.codecpar->color_range) {
+            case AVColorRange::AVCOL_RANGE_MPEG:
+                return VideoFullRangeFlag::Studio;
+            case AVColorRange::AVCOL_RANGE_JPEG:
+                return VideoFullRangeFlag::Full;
+            default:
+                return VideoFullRangeFlag::Unspecified;
+            }
+        }();
+
         track.set_video_data({
             .pixel_width = static_cast<u64>(stream.codecpar->width),
             .pixel_height = static_cast<u64>(stream.codecpar->height),
+            .cicp = CodingIndependentCodePoints(color_primaries, transfer_characteristics, matrix_coefficients, color_range),
         });
     }
 
@@ -242,20 +274,7 @@ DecoderErrorOr<CodedFrame> FFmpegDemuxer::get_next_sample_for_track(Track const&
 
         auto auxiliary_data = [&]() -> CodedFrame::AuxiliaryData {
             if (track.type() == TrackType::Video) {
-                auto color_primaries = static_cast<ColorPrimaries>(stream.codecpar->color_primaries);
-                auto transfer_characteristics = static_cast<TransferCharacteristics>(stream.codecpar->color_trc);
-                auto matrix_coefficients = static_cast<MatrixCoefficients>(stream.codecpar->color_space);
-                auto color_range = [stream] {
-                    switch (stream.codecpar->color_range) {
-                    case AVColorRange::AVCOL_RANGE_MPEG:
-                        return VideoFullRangeFlag::Studio;
-                    case AVColorRange::AVCOL_RANGE_JPEG:
-                        return VideoFullRangeFlag::Full;
-                    default:
-                        return VideoFullRangeFlag::Unspecified;
-                    }
-                }();
-                return CodedVideoFrameData(CodingIndependentCodePoints(color_primaries, transfer_characteristics, matrix_coefficients, color_range));
+                return CodedVideoFrameData();
             }
             if (track.type() == TrackType::Audio) {
                 return CodedAudioFrameData();

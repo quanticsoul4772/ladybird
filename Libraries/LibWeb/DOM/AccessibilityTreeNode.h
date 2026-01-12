@@ -7,9 +7,12 @@
 #pragma once
 
 #include <AK/JsonObjectSerializer.h>
+#include <AK/Optional.h>
+#include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibGC/CellAllocator.h>
 #include <LibJS/Heap/Cell.h>
+#include <LibWeb/ARIA/Roles.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/Forward.h>
 
@@ -28,6 +31,12 @@ public:
     Vector<GC::Ptr<AccessibilityTreeNode>> children() const { return m_children; }
     void append_child(AccessibilityTreeNode* child) { m_children.append(child); }
 
+    // Computed ARIA properties
+    // https://www.w3.org/TR/wai-aria-1.2/
+    Optional<ARIA::Role> computed_role() const { return m_computed_role; }
+    String const& computed_name() const { return m_computed_name; }
+    String const& computed_description() const { return m_computed_description; }
+
     void serialize_tree_as_json(JsonObjectSerializer<StringBuilder>& object, Document const&) const;
 
 protected:
@@ -38,6 +47,12 @@ private:
 
     GC::Ptr<DOM::Node const> m_value;
     Vector<GC::Ptr<AccessibilityTreeNode>> m_children;
+
+    // Computed ARIA properties cached at node creation
+    // https://www.w3.org/TR/wai-aria-1.2/
+    Optional<ARIA::Role> m_computed_role;
+    String m_computed_name;
+    String m_computed_description;
 };
 
 }

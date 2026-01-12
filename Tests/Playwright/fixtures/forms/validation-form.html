@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Form Validation Tests</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        .test-section h2 {
+            font-size: 18px;
+            color: #667eea;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            padding: 8px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+        }
+
+        input:invalid {
+            border-color: #ff6b6b;
+            background-color: #fff5f5;
+        }
+
+        input:valid:not(:placeholder-shown) {
+            border-color: #51cf66;
+            background-color: #f1fdf4;
+        }
+
+        .validation-info {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            font-style: italic;
+        }
+
+        .validation-message {
+            font-size: 12px;
+            color: #ff6b6b;
+            margin-top: 5px;
+            display: none;
+        }
+
+        input:invalid ~ .validation-message {
+            display: block;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        button:hover {
+            background: #764ba2;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .result {
+            background: #f9f9f9;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+
+        .result.valid {
+            border-left: 4px solid #51cf66;
+            background: #f1fdf4;
+        }
+
+        .result.invalid {
+            border-left: 4px solid #ff6b6b;
+            background: #fff5f5;
+        }
+
+        .test-controls {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+        }
+
+        button[type="button"] {
+            flex: 1;
+            padding: 8px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Form Validation Test Suite</h1>
+
+        <!-- Required Field Validation -->
+        <div class="test-section">
+            <h2>Required Field Validation</h2>
+            <form id="form-required">
+                <div class="form-group">
+                    <label for="req-name">Name (Required) *</label>
+                    <input type="text" id="req-name" name="name" required>
+                    <div class="validation-message">This field is required</div>
+                </div>
+                <button type="submit">Submit</button>
+                <div id="req-result" class="result"></div>
+            </form>
+        </div>
+
+        <!-- Email Validation -->
+        <div class="test-section">
+            <h2>Email Validation</h2>
+            <form id="form-email">
+                <div class="form-group">
+                    <label for="req-email">Email Address *</label>
+                    <input type="email" id="req-email" name="email" required>
+                    <div class="validation-info">Must be a valid email format</div>
+                    <div class="validation-message">Please enter a valid email address</div>
+                </div>
+                <button type="submit">Validate</button>
+                <div id="email-result" class="result"></div>
+            </form>
+        </div>
+
+        <!-- URL Validation -->
+        <div class="test-section">
+            <h2>URL Validation</h2>
+            <form id="form-url">
+                <div class="form-group">
+                    <label for="req-url">Website URL *</label>
+                    <input type="url" id="req-url" name="url" required>
+                    <div class="validation-info">Must start with http:// or https://</div>
+                    <div class="validation-message">Please enter a valid URL</div>
+                </div>
+                <button type="submit">Validate</button>
+                <div id="url-result" class="result"></div>
+            </form>
+        </div>
+
+        <!-- Pattern Validation -->
+        <div class="test-section">
+            <h2>Pattern Validation</h2>
+            <form id="form-pattern">
+                <div class="form-group">
+                    <label for="phone-pattern">Phone Number (XXX-XXX-XXXX) *</label>
+                    <input type="tel" id="phone-pattern" name="phone" required pattern="[0-9]{3}-[0-9]{3}-[0-9]{4}">
+                    <div class="validation-info">Format: 555-123-4567</div>
+                    <div class="validation-message">Please match the required format</div>
+                </div>
+                <button type="submit">Validate</button>
+                <div id="pattern-result" class="result"></div>
+            </form>
+        </div>
+
+        <!-- Min/Max Validation -->
+        <div class="test-section">
+            <h2>Min/Max Validation (Numbers)</h2>
+            <form id="form-minmax">
+                <div class="form-group">
+                    <label for="age-minmax">Age (18-120) *</label>
+                    <input type="number" id="age-minmax" name="age" required min="18" max="120">
+                    <div class="validation-info">Must be between 18 and 120</div>
+                    <div class="validation-message">Age must be between 18 and 120</div>
+                </div>
+                <button type="submit">Validate</button>
+                <div id="minmax-result" class="result"></div>
+            </form>
+        </div>
+
+        <!-- Min/Max Length Validation -->
+        <div class="test-section">
+            <h2>MinLength/MaxLength Validation</h2>
+            <form id="form-length">
+                <div class="form-group">
+                    <label for="username-length">Username (3-20 characters) *</label>
+                    <input type="text" id="username-length" name="username" required minlength="3" maxlength="20">
+                    <div class="validation-info">Length must be 3-20 characters</div>
+                    <div class="validation-message">Username must be 3-20 characters long</div>
+                </div>
+                <button type="submit">Validate</button>
+                <div id="length-result" class="result"></div>
+            </form>
+        </div>
+
+        <!-- Custom Validity -->
+        <div class="test-section">
+            <h2>Custom Validity Messages</h2>
+            <form id="form-custom">
+                <div class="form-group">
+                    <label for="password-custom">Password (min 8, must contain uppercase) *</label>
+                    <input type="password" id="password-custom" name="password" required minlength="8">
+                    <div class="validation-message">Custom validation message will appear here</div>
+                </div>
+                <button type="submit">Validate</button>
+                <div id="custom-result" class="result"></div>
+            </form>
+        </div>
+
+        <!-- NoValidate Form -->
+        <div class="test-section">
+            <h2>Form with novalidate Attribute</h2>
+            <form id="form-novalidate" novalidate>
+                <div class="form-group">
+                    <label for="req-novalidate">This field is required *</label>
+                    <input type="email" id="req-novalidate" name="email" required>
+                    <div class="validation-info">Browser validation is disabled with novalidate</div>
+                </div>
+                <button type="submit">Try Submit</button>
+                <div id="novalidate-result" class="result"></div>
+            </form>
+        </div>
+
+        <!-- Multiple Validation Rules -->
+        <div class="test-section">
+            <h2>Multiple Validation Rules Combined</h2>
+            <form id="form-multi">
+                <div class="form-group">
+                    <label for="multi-field">Complex Field *</label>
+                    <input
+                        type="text"
+                        id="multi-field"
+                        name="field"
+                        required
+                        minlength="5"
+                        maxlength="50"
+                        pattern="^[a-zA-Z0-9-_]*$"
+                    >
+                    <div class="validation-info">Required, 5-50 chars, alphanumeric + dash/underscore only</div>
+                    <div class="validation-message">Must match all validation rules</div>
+                </div>
+                <button type="submit">Validate</button>
+                <div id="multi-result" class="result"></div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Helper function to validate and show result
+        function setupFormValidation(formId, resultId, options = {}) {
+            const form = document.getElementById(formId);
+            const resultDiv = document.getElementById(resultId);
+
+            form.addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                const isValid = form.checkValidity();
+                const firstInvalid = form.querySelector(':invalid');
+
+                resultDiv.className = 'result ' + (isValid ? 'valid' : 'invalid');
+
+                if (isValid) {
+                    resultDiv.textContent = '✓ Form is valid!';
+                } else {
+                    const fieldName = firstInvalid?.getAttribute('name') || 'Unknown field';
+                    const message = firstInvalid?.validationMessage || 'Invalid field';
+                    resultDiv.textContent = `✗ Invalid: ${fieldName} - ${message}`;
+                }
+
+                window.__lastValidationResult = {
+                    formId,
+                    isValid,
+                    timestamp: Date.now(),
+                    invalidField: firstInvalid?.getAttribute('id')
+                };
+            });
+        }
+
+        // Setup all validation forms
+        setupFormValidation('form-required', 'req-result');
+        setupFormValidation('form-email', 'email-result');
+        setupFormValidation('form-url', 'url-result');
+        setupFormValidation('form-pattern', 'pattern-result');
+        setupFormValidation('form-minmax', 'minmax-result');
+        setupFormValidation('form-length', 'length-result');
+        setupFormValidation('form-novalidate', 'novalidate-result');
+        setupFormValidation('form-multi', 'multi-result');
+
+        // Custom validation example
+        const customForm = document.getElementById('form-custom');
+        const customInput = document.getElementById('password-custom');
+
+        customForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const value = customInput.value;
+            let customMessage = '';
+
+            if (!value) {
+                customMessage = 'Password is required';
+            } else if (value.length < 8) {
+                customMessage = 'Password must be at least 8 characters';
+            } else if (!/[A-Z]/.test(value)) {
+                customMessage = 'Password must contain at least one uppercase letter';
+            } else {
+                customMessage = '';
+            }
+
+            customInput.setCustomValidity(customMessage);
+
+            const isValid = customForm.checkValidity();
+            const resultDiv = document.getElementById('custom-result');
+            resultDiv.className = 'result ' + (isValid ? 'valid' : 'invalid');
+            resultDiv.textContent = isValid ? '✓ Password is valid!' : `✗ ${customMessage}`;
+
+            window.__customValidationResult = {
+                isValid,
+                message: customMessage,
+                timestamp: Date.now()
+            };
+        });
+
+        // Store validation state for testing
+        window.__validationState = {
+            formCount: document.querySelectorAll('form').length,
+            requiredFieldCount: document.querySelectorAll('[required]').length,
+            emailFieldCount: document.querySelectorAll('input[type="email"]').length,
+            numberFieldCount: document.querySelectorAll('input[type="number"]').length,
+            patternFieldCount: document.querySelectorAll('[pattern]').length
+        };
+
+        console.log('Validation forms loaded:', window.__validationState);
+    </script>
+</body>
+</html>

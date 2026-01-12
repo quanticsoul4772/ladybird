@@ -1,0 +1,48 @@
+Test: forward history cleared on new pushState
+Initial history length: 1
+After pushState({step:1}): length = 2
+After pushState({step:2}): length = 3
+After pushState({step:3}): length = 4
+Current state: {"step":3}
+Test PASS
+Test: replaceState preserves history length
+history.length before replaceState: 4
+history.length after replaceState: 4
+Length unchanged (replaceState): true
+Current state: {"modified":true}
+Test PASS
+Test: pushState with URL containing special characters
+Successfully pushed: ?test=encode%20space
+Successfully pushed: ?param=value&other=123
+Successfully pushed: ?fragment=#hash
+Successfully pushed: #section1
+Test PASS
+Test: null state handling
+State after pushState(null): null
+State is null: true
+State after replaceState(undefined): null
+Test PASS
+Test: empty state object handling
+State after pushState({}): {}
+Test PASS
+Test: complex nested state object
+Complex state preserved: {"user":{"id":123,"name":"Test User","roles":["admin","editor"]},"metadata":{"timestamp":{"value":0},"count":42}}
+Test PASS
+Test: pushState with scroll restoration modes
+Initial scroll restoration: auto
+After setting scrollRestoration to manual: manual
+After setting scrollRestoration to auto: auto
+Test PASS
+Test: rapid pushState calls
+Length before rapid pushes: 4
+Length after 5 pushes: 9
+Expected increase: 5
+Actual increase: 5
+Test PASS
+Test: alternating push and replace
+After push: 10
+After replace: 10
+After push: 11
+After replace: 11
+Final state: {"action":"replace2"}
+Test PASS

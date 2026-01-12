@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <LibJS/Bytecode/BuiltinAbstractOperationsEnabled.h>
 #include <LibJS/Bytecode/Executable.h>
 #include <LibJS/Bytecode/Label.h>
 #include <LibJS/Bytecode/Register.h>
@@ -22,39 +23,34 @@ class InstructionStreamIterator;
 
 class JS_API Interpreter {
 public:
-    explicit Interpreter(VM&);
+    Interpreter();
     ~Interpreter();
 
-    [[nodiscard]] Realm& realm() { return *m_realm; }
-    [[nodiscard]] Object& global_object() { return *m_global_object; }
-    [[nodiscard]] DeclarativeEnvironment& global_declarative_environment() { return *m_global_declarative_environment; }
-    VM& vm() { return m_vm; }
-    VM const& vm() const { return m_vm; }
+    [[nodiscard]] Realm& realm() { return *m_running_execution_context->realm; }
+    [[nodiscard]] Object& global_object() { return *m_running_execution_context->global_object; }
+    [[nodiscard]] DeclarativeEnvironment& global_declarative_environment() { return *m_running_execution_context->global_declarative_environment; }
+    static VM& vm() { return VM::the(); }
 
     ThrowCompletionOr<Value> run(Script&, GC::Ptr<Environment> lexical_environment_override = nullptr);
     ThrowCompletionOr<Value> run(SourceTextModule&);
 
-    ThrowCompletionOr<Value> run(Bytecode::Executable& executable, Optional<size_t> entry_point = {}, Value initial_accumulator_value = js_special_empty_value())
-    {
-        auto result_and_return_register = run_executable(executable, entry_point, initial_accumulator_value);
-        return move(result_and_return_register.value);
-    }
+    ThrowCompletionOr<Value> run_executable(ExecutionContext&, Executable&, Optional<size_t> entry_point);
 
-    struct ResultAndReturnRegister {
-        ThrowCompletionOr<Value> value;
-        Value return_register_value;
-    };
-    ResultAndReturnRegister run_executable(Bytecode::Executable&, Optional<size_t> entry_point, Value initial_accumulator_value = js_special_empty_value());
+    ThrowCompletionOr<Value> run_executable(ExecutionContext& context, Executable& executable, Optional<size_t> entry_point, Value initial_accumulator_value)
+    {
+        context.registers_and_constants_and_locals_and_arguments_span()[0] = initial_accumulator_value;
+        return run_executable(context, executable, entry_point);
+    }
 
     ALWAYS_INLINE Value& accumulator() { return reg(Register::accumulator()); }
     ALWAYS_INLINE Value& saved_return_value() { return reg(Register::saved_return_value()); }
     Value& reg(Register const& r)
     {
-        return m_registers_and_constants_and_locals_arguments.data()[r.index()];
+        return m_running_execution_context->registers_and_constants_and_locals_and_arguments()[r.index()];
     }
     Value reg(Register const& r) const
     {
-        return m_registers_and_constants_and_locals_arguments.data()[r.index()];
+        return m_running_execution_context->registers_and_constants_and_locals_and_arguments()[r.index()];
     }
 
     [[nodiscard]] Value get(Operand) const;
@@ -63,6 +59,8 @@ public:
     Value do_yield(Value value, Optional<Label> continuation);
     void do_return(Value value)
     {
+        if (value.is_special_empty_value())
+            value = js_undefined();
         reg(Register::return_value()) = value;
         reg(Register::exception()) = js_special_empty_value();
     }
@@ -75,8 +73,8 @@ public:
 
     void enter_object_environment(Object&);
 
-    Executable& current_executable() { return *m_current_executable; }
-    Executable const& current_executable() const { return *m_current_executable; }
+    Executable& current_executable() { return *m_running_execution_context->executable; }
+    Executable const& current_executable() const { return *m_running_execution_context->executable; }
 
     ExecutionContext& running_execution_context() { return *m_running_execution_context; }
 
@@ -95,22 +93,14 @@ private:
         ExitFromExecutable,
         ContinueInThisExecutable,
     };
-    [[nodiscard]] HandleExceptionResponse handle_exception(size_t& program_counter, Value exception);
+    [[nodiscard]] COLD HandleExceptionResponse handle_exception(u32& program_counter, Value exception);
 
-    VM& m_vm;
-    Optional<size_t> m_scheduled_jump;
-    GC::Ptr<Executable> m_current_executable { nullptr };
-    GC::Ptr<Realm> m_realm { nullptr };
-    GC::Ptr<Object> m_global_object { nullptr };
-    GC::Ptr<DeclarativeEnvironment> m_global_declarative_environment { nullptr };
-    Span<Value> m_registers_and_constants_and_locals_arguments;
     ExecutionContext* m_running_execution_context { nullptr };
-    ReadonlySpan<Utf16FlyString> m_identifier_table;
 };
 
 JS_API extern bool g_dump_bytecode;
 
 ThrowCompletionOr<GC::Ref<Bytecode::Executable>> compile(VM&, ASTNode const&, JS::FunctionKind kind, Utf16FlyString const& name);
-ThrowCompletionOr<GC::Ref<Bytecode::Executable>> compile(VM&, ECMAScriptFunctionObject const&);
+ThrowCompletionOr<GC::Ref<Bytecode::Executable>> compile(VM&, GC::Ref<SharedFunctionInstanceData const>, BuiltinAbstractOperationsEnabled builtin_abstract_operations_enabled);
 
 }

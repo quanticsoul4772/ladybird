@@ -132,7 +132,7 @@ void SourceTextModule::visit_edges(Cell::Visitor& visitor)
 Result<GC::Ref<SourceTextModule>, Vector<ParserError>> SourceTextModule::parse(StringView source_text, Realm& realm, StringView filename, Script::HostDefined* host_defined)
 {
     // 1. Let body be ParseText(sourceText, Module).
-    auto parser = Parser(Lexer(source_text, filename), Program::Type::Module);
+    auto parser = Parser(Lexer(SourceCode::create(String::from_utf8(filename).release_value_but_fixme_should_propagate_errors(), Utf16String::from_utf8(source_text))), Program::Type::Module);
     auto body = parser.parse_program();
 
     // 2. If body is a List of errors, return body.
@@ -655,7 +655,7 @@ ResolvedBinding SourceTextModule::resolve_export(VM& vm, Utf16FlyString const& e
         }
         // iii. Else,
         else {
-            // 1. Assert: There is more than one * import that includes the requested name.
+            // 1. Assert: There is more than one * export that includes the requested name.
             // FIXME: Assert this
 
             // 2. If resolution.[[Module]] and starResolution.[[Module]] are not the same Module Record, return AMBIGUOUS.
@@ -709,9 +709,6 @@ ThrowCompletionOr<void> SourceTextModule::execute_module(VM& vm, GC::Ptr<Promise
     ExecutionContext* module_context = nullptr;
     ALLOCATE_EXECUTION_CONTEXT_ON_NATIVE_STACK(module_context, registers_and_constants_and_locals_count, 0);
 
-    // NOTE: This is not in the spec but we require it.
-    module_context->is_strict_mode = true;
-
     // 2. Set the Function of moduleContext to null.
 
     // 3. Set the Realm of moduleContext to module.[[Realm]].
@@ -746,11 +743,11 @@ ThrowCompletionOr<void> SourceTextModule::execute_module(VM& vm, GC::Ptr<Promise
         // c. Let result be the result of evaluating module.[[ECMAScriptCode]].
         Completion result;
 
-        auto result_and_return_register = vm.bytecode_interpreter().run_executable(*executable, {});
-        if (result_and_return_register.value.is_error()) {
-            result = result_and_return_register.value.release_error();
+        auto result_or_error = vm.bytecode_interpreter().run_executable(*module_context, *executable, {});
+        if (result_or_error.is_error()) {
+            result = result_or_error.release_error();
         } else {
-            result = result_and_return_register.return_register_value.is_special_empty_value() ? js_undefined() : result_and_return_register.return_register_value;
+            result = result_or_error.value().is_special_empty_value() ? js_undefined() : result_or_error.release_value();
         }
 
         // d. Let env be moduleContext's LexicalEnvironment.

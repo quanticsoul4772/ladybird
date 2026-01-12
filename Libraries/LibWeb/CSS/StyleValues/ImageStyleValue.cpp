@@ -7,6 +7,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGfx/ImmutableBitmap.h>
 #include <LibWeb/CSS/ComputedValues.h>
 #include <LibWeb/CSS/Fetch.h>
 #include <LibWeb/CSS/StyleValues/ImageStyleValue.h>
@@ -152,11 +153,14 @@ Optional<CSSPixelFraction> ImageStyleValue::natural_aspect_ratio() const
 
 void ImageStyleValue::paint(DisplayListRecordingContext& context, DevicePixelRect const& dest_rect, CSS::ImageRendering image_rendering) const
 {
-    if (auto const* b = bitmap(m_current_frame_index, dest_rect.size().to_type<int>()); b != nullptr) {
-        auto scaling_mode = to_gfx_scaling_mode(image_rendering, b->rect(), dest_rect.to_type<int>());
-        auto dest_int_rect = dest_rect.to_type<int>();
-        context.display_list_recorder().draw_scaled_immutable_bitmap(dest_int_rect, dest_int_rect, *b, scaling_mode);
-    }
+    auto image_data = this->image_data();
+    if (!image_data)
+        return;
+
+    auto dest_int_rect = dest_rect.to_type<int>();
+    auto rect = image_data->frame_rect(m_current_frame_index).value_or(dest_int_rect);
+    auto scaling_mode = to_gfx_scaling_mode(image_rendering, rect.size(), dest_int_rect.size());
+    image_data->paint(context, m_current_frame_index, dest_int_rect, dest_int_rect, scaling_mode);
 }
 
 Gfx::ImmutableBitmap const* ImageStyleValue::current_frame_bitmap(DevicePixelRect const& dest_rect) const

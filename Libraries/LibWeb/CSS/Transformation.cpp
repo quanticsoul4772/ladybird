@@ -68,27 +68,29 @@ ErrorOr<Gfx::FloatMatrix4x4> Transformation::to_matrix(Optional<Painting::Painta
     CSSPixels width = 1;
     CSSPixels height = 1;
     if (paintable_box.has_value()) {
-        auto reference_box = paintable_box->transform_box_rect();
+        auto reference_box = paintable_box->transform_reference_box();
         width = reference_box.width();
         height = reference_box.height();
     }
 
     switch (m_function) {
     case CSS::TransformFunction::Perspective:
-        // https://drafts.csswg.org/css-transforms-2/#perspective
+        // https://drafts.csswg.org/css-transforms-2/#funcdef-perspective
         // Count is zero when null parameter
         if (count == 1) {
-            // FIXME: Add support for the 'perspective-origin' CSS property.
             auto distance = TRY(value(0));
+            // If the depth value is less than '1px', it must be treated as '1px' for the purpose of rendering, for
+            // computing the resolved value of 'transform', and when used as the endpoint of interpolation.
+            // Note: The intent of the above rules on values less than '1px' is that they cover the cases where
+            // the 'perspective()' function needs to be converted into a matrix.
+            if (distance < 1)
+                distance = 1;
             return Gfx::FloatMatrix4x4(1, 0, 0, 0,
                 0, 1, 0, 0,
                 0, 0, 1, 0,
-                0, 0, -1 / (distance <= 0 ? 1 : distance), 1);
+                0, 0, -1 / distance, 1);
         }
-        return Gfx::FloatMatrix4x4(1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 1, 0,
-            0, 0, 0, 1);
+        break;
     case CSS::TransformFunction::Matrix:
         if (count == 6)
             return Gfx::FloatMatrix4x4(TRY(value(0)), TRY(value(2)), 0, TRY(value(4)),

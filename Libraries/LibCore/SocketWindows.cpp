@@ -11,6 +11,7 @@
 #include <LibCore/System.h>
 
 #include <AK/Windows.h>
+#include <ws2tcpip.h>
 
 #define MSG_DONTWAIT 0x40
 
@@ -137,7 +138,7 @@ void PosixSocketHelper::close()
 
     // shutdown is required for another end to receive FD_CLOSE
     shutdown(m_fd, SD_BOTH);
-    MUST(System::close(m_fd));
+    closesocket(m_fd);
     m_fd = -1;
 }
 

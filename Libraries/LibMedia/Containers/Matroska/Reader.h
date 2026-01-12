@@ -25,9 +25,6 @@ class MEDIA_API Reader {
 public:
     typedef Function<DecoderErrorOr<IterationDecision>(TrackEntry const&)> TrackEntryCallback;
 
-    static DecoderErrorOr<Reader> from_file(StringView path);
-    static DecoderErrorOr<Reader> from_mapped_file(NonnullOwnPtr<Core::MappedFile> mapped_file);
-
     static DecoderErrorOr<Reader> from_data(ReadonlyBytes data);
 
     EBMLHeader const& header() const { return m_header.value(); }
@@ -56,12 +53,13 @@ private:
 
     DecoderErrorOr<void> ensure_tracks_are_parsed();
     DecoderErrorOr<void> parse_tracks(Streamer&);
+    void fix_track_quirks();
+    void fix_ffmpeg_webm_quirk();
 
     DecoderErrorOr<void> parse_cues(Streamer&);
     DecoderErrorOr<void> ensure_cues_are_parsed();
     DecoderErrorOr<void> seek_to_cue_for_timestamp(SampleIterator&, AK::Duration const&);
 
-    RefPtr<Core::SharedMappedFile> m_mapped_file;
     ReadonlyBytes m_data;
 
     Optional<EBMLHeader> m_header;
@@ -91,9 +89,8 @@ public:
 private:
     friend class Reader;
 
-    SampleIterator(RefPtr<Core::SharedMappedFile> file, ReadonlyBytes data, TrackEntry& track, u64 timestamp_scale, size_t position)
-        : m_file(move(file))
-        , m_data(data)
+    SampleIterator(ReadonlyBytes data, TrackEntry& track, u64 timestamp_scale, size_t position)
+        : m_data(data)
         , m_track(track)
         , m_segment_timestamp_scale(timestamp_scale)
         , m_position(position)
@@ -102,7 +99,6 @@ private:
 
     DecoderErrorOr<void> seek_to_cue_point(CuePoint const& cue_point);
 
-    RefPtr<Core::SharedMappedFile> m_file;
     ReadonlyBytes m_data;
     NonnullRefPtr<TrackEntry> m_track;
     u64 m_segment_timestamp_scale { 0 };
@@ -147,7 +143,7 @@ public:
     ErrorOr<u64> read_u64();
     ErrorOr<double> read_float();
 
-    ErrorOr<ByteString> read_string();
+    ErrorOr<String> read_string();
 
     ErrorOr<void> read_unknown_element();
 

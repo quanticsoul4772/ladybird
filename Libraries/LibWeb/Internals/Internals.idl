@@ -35,6 +35,8 @@ interface Internals {
     undefined wheel(double x, double y, double deltaX, double deltaY);
     undefined pinch(double x, double y, double scaleDelta);
 
+    DOMString currentCursor();
+
     boolean dispatchUserActivatedEvent(EventTarget target, Event event);
     undefined spoofCurrentURL(USVString url);
 
@@ -47,6 +49,8 @@ interface Internals {
     undefined enableCookiesOnFileDomains();
     undefined expireCookiesWithTimeOffset(long long seconds);
 
+    boolean setHttpMemoryCacheEnabled(boolean enabled);
+
     DOMString getComputedRole(Element element);
     DOMString getComputedLabel(Element element);
     DOMString getComputedAriaLevel(Element element);
@@ -57,6 +61,7 @@ interface Internals {
     readonly attribute boolean headless;
 
     DOMString dumpDisplayList();
+    DOMString dumpGCGraph();
 
     // Returns the shadow root of the element, if it has one, even if it's not normally accessible to JS.
     ShadowRoot? getShadowRoot(Element element);

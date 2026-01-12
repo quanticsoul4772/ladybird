@@ -31,7 +31,7 @@ public:
 
     // ^EventTarget
     // https://html.spec.whatwg.org/multipage/interaction.html#the-tabindex-attribute:the-a-element
-    virtual bool is_focusable() const override { return has_attribute(HTML::AttributeNames::href); }
+    virtual bool is_focusable() const override { return Base::is_focusable() || has_attribute(HTML::AttributeNames::href); }
 
     virtual bool is_html_anchor_element() const override { return true; }
 
@@ -55,7 +55,7 @@ private:
     virtual DOM::Document& hyperlink_element_utils_document() override { return document(); }
     virtual DOM::Element& hyperlink_element_utils_element() override { return *this; }
     virtual Optional<String> hyperlink_element_utils_href() const override;
-    virtual WebIDL::ExceptionOr<void> set_hyperlink_element_utils_href(String) override;
+    virtual void set_hyperlink_element_utils_href(String) override;
     virtual Optional<String> hyperlink_element_utils_referrerpolicy() const override;
     virtual bool hyperlink_element_utils_is_html_anchor_element() const final { return true; }
     virtual bool hyperlink_element_utils_is_connected() const final { return is_connected(); }

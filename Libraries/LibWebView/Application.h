@@ -17,7 +17,7 @@
 #include <LibDevTools/Forward.h>
 #include <LibImageDecoderClient/Client.h>
 #include <LibMain/Main.h>
-#include <LibRequests/RequestClient.h>
+#include <LibRequests/Forward.h>
 #include <LibURL/URL.h>
 #include <LibWeb/CSS/PreferredColorScheme.h>
 #include <LibWeb/CSS/PreferredContrast.h>
@@ -77,11 +77,33 @@ public:
 
     virtual void display_download_confirmation_dialog(StringView download_name, LexicalPath const& path) const;
     virtual void display_error_dialog(StringView error_message) const;
+    virtual void on_quarantine_manager_requested() const;
 
     // FIXME: We should implement UI-agnostic platform APIs to interact with the system clipboard.
     virtual Utf16String clipboard_text() const;
     virtual Vector<Web::Clipboard::SystemClipboardRepresentation> clipboard_entries() const;
     virtual void insert_clipboard_entry(Web::Clipboard::SystemClipboardRepresentation);
+
+    struct BrowsingDataSizes {
+        u64 cache_size_since_requested_time { 0 };
+        u64 total_cache_size { 0 };
+
+        u64 site_data_size_since_requested_time { 0 };
+        u64 total_site_data_size { 0 };
+    };
+    NonnullRefPtr<Core::Promise<BrowsingDataSizes>> estimate_browsing_data_size_accessed_since(UnixDateTime since);
+
+    struct ClearBrowsingDataOptions {
+        enum class Delete {
+            No,
+            Yes,
+        };
+
+        UnixDateTime since { UnixDateTime::earliest() };
+        Delete delete_cached_files { Delete::No };
+        Delete delete_site_data { Delete::No };
+    };
+    void clear_browsing_data(ClearBrowsingDataOptions const&);
 
     Action& reload_action() { return *m_reload_action; }
     Action& copy_selection_action() { return *m_copy_selection_action; }
@@ -118,7 +140,7 @@ protected:
     virtual void process_did_exit(Process&&);
 
     virtual void create_platform_arguments(Core::ArgsParser&) { }
-    virtual void create_platform_options(BrowserOptions&, WebContentOptions&) { }
+    virtual void create_platform_options(BrowserOptions&, RequestServerOptions&, WebContentOptions&) { }
     virtual NonnullOwnPtr<Core::EventLoop> create_platform_event_loop();
 
     virtual Optional<ByteString> ask_user_for_download_folder() const { return {}; }

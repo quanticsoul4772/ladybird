@@ -182,12 +182,15 @@ void Paintable::paint_inspector_overlay(DisplayListRecordingContext& context) co
                 auto to_device_pixels_scale = float(context.device_pixels_per_css_pixel());
                 auto transform_matrix = box->transform();
                 auto transform_origin = box->transform_origin().to_type<float>();
+                Optional<Gfx::FloatMatrix4x4> parent_perspective_matrix;
+                if (auto const* parent = as_if<PaintableBox>(box->parent()))
+                    parent_perspective_matrix = parent->perspective_matrix();
                 // We only want the transform here, everything else undesirable for the inspector overlay
                 DisplayListRecorder::PushStackingContextParams push_stacking_context_params {
                     .opacity = 1.0,
                     .compositing_and_blending_operator = Gfx::CompositingAndBlendingOperator::Normal,
                     .isolate = false,
-                    .transform = StackingContextTransform(transform_origin, transform_matrix, to_device_pixels_scale),
+                    .transform = StackingContextTransform(transform_origin, transform_matrix, parent_perspective_matrix, to_device_pixels_scale),
                 };
                 context.display_list_recorder().push_stacking_context(push_stacking_context_params);
             }
@@ -208,7 +211,7 @@ void Paintable::paint_inspector_overlay(DisplayListRecordingContext& context) co
 
 void Paintable::set_needs_display(InvalidateDisplayList should_invalidate_display_list)
 {
-    auto& document = const_cast<DOM::Document&>(this->document());
+    auto& document = this->document();
     if (should_invalidate_display_list == InvalidateDisplayList::Yes)
         document.invalidate_display_list();
 
@@ -216,11 +219,10 @@ void Paintable::set_needs_display(InvalidateDisplayList should_invalidate_displa
     if (!containing_block)
         return;
 
-    if (!is<Painting::PaintableWithLines>(*containing_block))
+    if (!is<PaintableWithLines>(*containing_block))
         return;
-    for (auto const& fragment : static_cast<Painting::PaintableWithLines const&>(*containing_block).fragments()) {
+    for (auto const& fragment : as<PaintableWithLines>(*containing_block).fragments())
         document.set_needs_display(fragment.absolute_rect(), InvalidateDisplayList::No);
-    };
 }
 
 CSSPixelPoint Paintable::box_type_agnostic_position() const

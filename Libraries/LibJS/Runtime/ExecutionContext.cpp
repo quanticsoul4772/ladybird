@@ -14,6 +14,9 @@
 
 namespace JS {
 
+GC_DEFINE_ALLOCATOR(CachedSourceRange);
+GC_DEFINE_ALLOCATOR(ExecutionContextRareData);
+
 class ExecutionContextAllocator {
 public:
     NonnullOwnPtr<ExecutionContext> allocate(u32 registers_and_constants_and_locals_count, u32 arguments_count)
@@ -99,20 +102,6 @@ void ExecutionContext::operator delete(void* ptr)
     s_execution_context_allocator->deallocate(ptr, execution_context->registers_and_constants_and_locals_and_arguments_count);
 }
 
-ExecutionContext::ExecutionContext(u32 registers_and_constants_and_locals_count, u32 arguments_count)
-{
-    registers_and_constants_and_locals_and_arguments_count = registers_and_constants_and_locals_count + arguments_count;
-    arguments_offset = registers_and_constants_and_locals_count;
-    auto* registers_and_constants_and_locals_and_arguments = this->registers_and_constants_and_locals_and_arguments();
-    for (size_t i = 0; i < registers_and_constants_and_locals_count; ++i)
-        registers_and_constants_and_locals_and_arguments[i] = js_special_empty_value();
-    arguments = { registers_and_constants_and_locals_and_arguments + arguments_offset, registers_and_constants_and_locals_and_arguments_count - arguments_offset };
-}
-
-ExecutionContext::~ExecutionContext()
-{
-}
-
 NonnullOwnPtr<ExecutionContext> ExecutionContext::copy() const
 {
     auto copy = create(registers_and_constants_and_locals_and_arguments_count, arguments.size());
@@ -123,19 +112,19 @@ NonnullOwnPtr<ExecutionContext> ExecutionContext::copy() const
     copy->variable_environment = variable_environment;
     copy->private_environment = private_environment;
     copy->program_counter = program_counter;
-    copy->function_name = function_name;
     copy->this_value = this_value;
-    copy->is_strict_mode = is_strict_mode;
     copy->executable = executable;
-    copy->arguments_offset = arguments_offset;
     copy->passed_argument_count = passed_argument_count;
-    copy->unwind_contexts = unwind_contexts;
-    copy->saved_lexical_environments = saved_lexical_environments;
-    copy->previously_scheduled_jumps = previously_scheduled_jumps;
+    if (m_rare_data) {
+        auto copy_rare_data = copy->ensure_rare_data();
+        copy_rare_data->unwind_contexts = m_rare_data->unwind_contexts;
+        copy_rare_data->saved_lexical_environments = m_rare_data->saved_lexical_environments;
+        copy_rare_data->previously_scheduled_jumps = m_rare_data->previously_scheduled_jumps;
+    }
     copy->registers_and_constants_and_locals_and_arguments_count = registers_and_constants_and_locals_and_arguments_count;
     for (size_t i = 0; i < registers_and_constants_and_locals_and_arguments_count; ++i)
         copy->registers_and_constants_and_locals_and_arguments()[i] = registers_and_constants_and_locals_and_arguments()[i];
-    copy->arguments = { copy->registers_and_constants_and_locals_and_arguments() + copy->arguments_offset, arguments.size() };
+    copy->arguments = { copy->registers_and_constants_and_locals_and_arguments() + (arguments.data() - registers_and_constants_and_locals_and_arguments()), arguments.size() };
     return copy;
 }
 
@@ -146,21 +135,35 @@ void ExecutionContext::visit_edges(Cell::Visitor& visitor)
     visitor.visit(variable_environment);
     visitor.visit(lexical_environment);
     visitor.visit(private_environment);
-    visitor.visit(context_owner);
+    visitor.visit(m_rare_data);
     if (this_value.has_value())
         visitor.visit(*this_value);
     visitor.visit(executable);
-    visitor.visit(function_name);
     visitor.visit(registers_and_constants_and_locals_and_arguments_span());
-    for (auto& context : unwind_contexts) {
-        visitor.visit(context.lexical_environment);
-    }
-    visitor.visit(saved_lexical_environments);
     script_or_module.visit(
         [](Empty) {},
         [&](auto& script_or_module) {
             visitor.visit(script_or_module);
         });
+}
+
+void ExecutionContextRareData::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(context_owner);
+    visitor.visit(cached_source_range);
+    for (auto& context : unwind_contexts) {
+        visitor.visit(context.lexical_environment);
+    }
+    visitor.visit(saved_lexical_environments);
+}
+
+GC::Ref<ExecutionContextRareData> ExecutionContext::ensure_rare_data()
+{
+    if (!m_rare_data) {
+        m_rare_data = GC::Heap::the().allocate<ExecutionContextRareData>();
+    }
+    return *m_rare_data;
 }
 
 }

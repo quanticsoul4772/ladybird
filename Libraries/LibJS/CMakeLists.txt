@@ -1,3 +1,5 @@
+include(libjs_generators)
+
 set(SOURCES
     AST.cpp
     Bytecode/ASTCodegen.cpp
@@ -156,6 +158,7 @@ set(SOURCES
     Runtime/ModuleEnvironment.cpp
     Runtime/ModuleNamespaceObject.cpp
     Runtime/NativeFunction.cpp
+    Runtime/NativeJavaScriptBackedFunction.cpp
     Runtime/NumberConstructor.cpp
     Runtime/NumberObject.cpp
     Runtime/NumberPrototype.cpp
@@ -197,6 +200,7 @@ set(SOURCES
     Runtime/Shape.cpp
     Runtime/SharedArrayBufferConstructor.cpp
     Runtime/SharedArrayBufferPrototype.cpp
+    Runtime/SharedFunctionInstanceData.cpp
     Runtime/StringConstructor.cpp
     Runtime/StringIterator.cpp
     Runtime/StringIteratorPrototype.cpp
@@ -264,6 +268,10 @@ set(SOURCES
     SyntheticModule.cpp
     Token.cpp
 )
+
+generate_bytecode_def_derived()
+
+set(GENERATED_SOURCES Bytecode/Op.cpp)
 
 ladybird_lib(LibJS js EXPLICIT_SYMBOL_EXPORT)
 target_link_libraries(LibJS PRIVATE LibCore LibCrypto LibFileSystem LibRegex LibSyntax LibGC)

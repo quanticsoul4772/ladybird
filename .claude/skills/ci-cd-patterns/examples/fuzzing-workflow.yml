@@ -1,0 +1,262 @@
+# Continuous Fuzzing Workflow for Ladybird
+# Automated fuzzing campaigns with crash triage
+
+name: Continuous Fuzzing
+
+on:
+  # Run every 6 hours
+  schedule:
+    - cron: '0 */6 * * *'
+
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      fuzzing_duration:
+        description: 'Fuzzing duration in minutes'
+        required: false
+        default: '60'
+        type: number
+
+      fuzzer_name:
+        description: 'Specific fuzzer to run (leave empty for all)'
+        required: false
+        type: string
+
+concurrency:
+  group: fuzzing
+  cancel-in-progress: false  # Let fuzzing complete
+
+jobs:
+  build-fuzzers:
+    name: Build Fuzzers
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-20 \
+            cmake \
+            ninja-build
+
+      - name: Set up vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git Build/vcpkg
+          ./Build/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Restore Build Cache
+        uses: actions/cache@v4
+        with:
+          path: Build/fuzzers/
+          key: fuzzers-${{ github.sha }}
+          restore-keys: fuzzers-
+
+      - name: Configure Fuzzers Build
+        env:
+          CC: clang-20
+          CXX: clang++-20
+          VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
+        run: cmake --preset Fuzzers
+
+      - name: Build Fuzzers
+        run: cmake --build Build --parallel $(nproc)
+
+      - name: Upload Fuzzer Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzzer-binaries
+          path: Build/fuzzers/bin/Fuzz*
+          retention-days: 1
+
+  run-fuzzing:
+    name: Run ${{ matrix.fuzzer }}
+    runs-on: ubuntu-24.04
+    needs: build-fuzzers
+    timeout-minutes: 120
+
+    strategy:
+      fail-fast: false
+      matrix:
+        fuzzer:
+          - FuzzIPCMessages
+          - FuzzHTMLParser
+          - FuzzCSSParser
+          - FuzzImageDecoder
+          - FuzzURLParser
+          - FuzzWebSocket
+          - FuzzHTTPHeaders
+          - FuzzJSON
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Download Fuzzer Binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: fuzzer-binaries
+          path: fuzzers/
+
+      - name: Make Fuzzers Executable
+        run: chmod +x fuzzers/*
+
+      - name: Download Corpus
+        uses: actions/cache@v4
+        with:
+          path: corpus/${{ matrix.fuzzer }}/
+          key: corpus-${{ matrix.fuzzer }}-${{ github.sha }}
+          restore-keys: corpus-${{ matrix.fuzzer }}-
+
+      - name: Create Directories
+        run: |
+          mkdir -p corpus/${{ matrix.fuzzer }}/
+          mkdir -p artifacts/
+          mkdir -p crash-reports/
+
+      - name: Run Fuzzing Campaign
+        timeout-minutes: ${{ inputs.fuzzing_duration || 60 }}
+        continue-on-error: true  # Don't fail if crashes found
+        run: |
+          ./fuzzers/${{ matrix.fuzzer }} \
+            -max_total_time=$(( ${{ inputs.fuzzing_duration || 60 }} * 60 )) \
+            -timeout=10 \
+            -rss_limit_mb=2048 \
+            -max_len=65536 \
+            -print_final_stats=1 \
+            -artifact_prefix=artifacts/ \
+            corpus/${{ matrix.fuzzer }}/
+
+      - name: Minimize Crashes
+        if: always()
+        run: |
+          for crash in artifacts/crash-*; do
+            if [ -f "$crash" ]; then
+              echo "Minimizing $crash..."
+              timeout 60 ./fuzzers/${{ matrix.fuzzer }} \
+                -minimize_crash=1 \
+                -max_total_time=60 \
+                "$crash" 2>&1 | tee "crash-reports/$(basename "$crash").txt"
+            fi
+          done
+
+      - name: Triage Crashes
+        if: always()
+        run: |
+          if [ -d artifacts/ ] && [ "$(ls -A artifacts/crash-* 2>/dev/null)" ]; then
+            echo "## Fuzzing Crashes Found for ${{ matrix.fuzzer }}" > crash-reports/summary.md
+            echo "" >> crash-reports/summary.md
+
+            for crash in artifacts/crash-*; do
+              if [ -f "$crash" ]; then
+                echo "### $(basename "$crash")" >> crash-reports/summary.md
+                echo '```' >> crash-reports/summary.md
+                ./fuzzers/${{ matrix.fuzzer }} "$crash" 2>&1 | head -50 >> crash-reports/summary.md
+                echo '```' >> crash-reports/summary.md
+                echo "" >> crash-reports/summary.md
+              fi
+            done
+          fi
+
+      - name: Upload Crashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-${{ matrix.fuzzer }}
+          path: |
+            artifacts/crash-*
+            crash-reports/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Minimize Corpus
+        if: always()
+        run: |
+          mkdir -p corpus-minimized/
+          ./fuzzers/${{ matrix.fuzzer }} \
+            -merge=1 \
+            corpus-minimized/ \
+            corpus/${{ matrix.fuzzer }}/
+
+          # Replace corpus with minimized version
+          rm -rf corpus/${{ matrix.fuzzer }}/
+          mv corpus-minimized/ corpus/${{ matrix.fuzzer }}/
+
+      - name: Save Corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: corpus/${{ matrix.fuzzer }}/
+          key: corpus-${{ matrix.fuzzer }}-${{ github.sha }}
+
+  fuzzing-report:
+    name: Fuzzing Report
+    runs-on: ubuntu-latest
+    needs: run-fuzzing
+    if: always()
+
+    steps:
+      - name: Download All Crash Reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: crashes-*
+          path: all-crashes/
+
+      - name: Generate Summary Report
+        run: |
+          cat > fuzzing-report.md <<'EOF'
+          # Fuzzing Campaign Report
+
+          **Date**: $(date -u +"%Y-%m-%d %H:%M UTC")
+          **Duration**: ${{ inputs.fuzzing_duration || 60 }} minutes per fuzzer
+
+          ## Crashes Found
+          EOF
+
+          crash_count=0
+          for fuzzer_dir in all-crashes/crashes-*; do
+            if [ -d "$fuzzer_dir" ]; then
+              fuzzer_name=$(basename "$fuzzer_dir" | sed 's/crashes-//')
+              crashes=$(find "$fuzzer_dir" -name "crash-*" | wc -l)
+
+              if [ "$crashes" -gt 0 ]; then
+                echo "- **$fuzzer_name**: $crashes crashes" >> fuzzing-report.md
+                crash_count=$((crash_count + crashes))
+              fi
+            fi
+          done
+
+          if [ "$crash_count" -eq 0 ]; then
+            echo "" >> fuzzing-report.md
+            echo "✅ No crashes found!" >> fuzzing-report.md
+          else
+            echo "" >> fuzzing-report.md
+            echo "⚠️  Total crashes: $crash_count" >> fuzzing-report.md
+          fi
+
+      - name: Create Issue on Crash
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('fuzzing-report.md', 'utf8');
+
+            // Check if crashes were found
+            if (report.includes('Total crashes:')) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Fuzzing Campaign Found Crashes (${new Date().toISOString().split('T')[0]})`,
+                body: report,
+                labels: ['bug', 'fuzzing', 'security']
+              });
+            }
+
+      - name: Post Summary
+        if: always()
+        run: |
+          cat fuzzing-report.md >> $GITHUB_STEP_SUMMARY

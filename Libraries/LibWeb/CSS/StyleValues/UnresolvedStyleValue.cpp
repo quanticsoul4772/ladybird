@@ -11,6 +11,7 @@
 #include <LibWeb/CSS/CSSUnparsedValue.h>
 #include <LibWeb/CSS/CSSVariableReferenceValue.h>
 #include <LibWeb/CSS/Parser/ArbitrarySubstitutionFunctions.h>
+#include <LibWeb/CSS/Parser/TokenStream.h>
 #include <LibWeb/CSS/PropertyName.h>
 #include <LibWeb/CSS/Serialize.h>
 #include <LibWeb/CSS/StyleValues/UnresolvedStyleValue.h>
@@ -45,7 +46,7 @@ String UnresolvedStyleValue::to_string(SerializationMode) const
     if (m_original_source_text.has_value())
         return *m_original_source_text;
 
-    return serialize_a_series_of_component_values(m_values, InsertWhitespace::Yes);
+    return MUST(serialize_a_series_of_component_values(m_values).trim_ascii_whitespace());
 }
 
 bool UnresolvedStyleValue::equals(StyleValue const& other) const
@@ -145,8 +146,7 @@ private:
 
     void serialize_unserialized_values()
     {
-        // FIXME: Stop inserting whitespace once we stop removing it during parsing.
-        m_reified_values.append(serialize_a_series_of_component_values(m_unserialized_values, InsertWhitespace::Yes));
+        m_reified_values.append(serialize_a_series_of_component_values(m_unserialized_values));
         m_unserialized_values.clear_with_capacity();
     }
 

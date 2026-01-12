@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>DOM: Element.toggleAttribute() method</title>
+<link rel="help" href="https://dom.spec.whatwg.org/#dom-element-toggleattribute">
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+// Web Platform Test (WPT) structure
+// Uses WPT test harness (testharness.js)
+
+test(() => {
+    const div = document.createElement("div");
+
+    // Toggle adds attribute if not present
+    const result1 = div.toggleAttribute("hidden");
+    assert_true(result1, "toggleAttribute returns true when adding");
+    assert_true(div.hasAttribute("hidden"), "Attribute is added");
+
+    // Toggle removes attribute if present
+    const result2 = div.toggleAttribute("hidden");
+    assert_false(result2, "toggleAttribute returns false when removing");
+    assert_false(div.hasAttribute("hidden"), "Attribute is removed");
+}, "toggleAttribute() adds and removes attribute");
+
+test(() => {
+    const div = document.createElement("div");
+
+    // Force set to true
+    div.toggleAttribute("disabled", true);
+    assert_true(div.hasAttribute("disabled"), "Force true adds attribute");
+
+    // Force true again (attribute already present)
+    div.toggleAttribute("disabled", true);
+    assert_true(div.hasAttribute("disabled"), "Force true keeps attribute");
+
+    // Force false removes
+    div.toggleAttribute("disabled", false);
+    assert_false(div.hasAttribute("disabled"), "Force false removes attribute");
+
+    // Force false again (attribute not present)
+    div.toggleAttribute("disabled", false);
+    assert_false(div.hasAttribute("disabled"), "Force false keeps attribute absent");
+}, "toggleAttribute(name, force) with boolean argument");
+
+test(() => {
+    const div = document.createElement("div");
+
+    // Invalid attribute names should throw
+    assert_throws_dom("InvalidCharacterError", () => {
+        div.toggleAttribute("invalid name");
+    }, "Attribute name with space throws");
+
+    assert_throws_dom("InvalidCharacterError", () => {
+        div.toggleAttribute("");
+    }, "Empty attribute name throws");
+
+    assert_throws_dom("InvalidCharacterError", () => {
+        div.toggleAttribute("attr=value");
+    }, "Attribute name with = throws");
+}, "toggleAttribute() throws on invalid names");
+
+test(() => {
+    const div = document.createElement("div");
+
+    // Attribute names are case-sensitive in XML documents
+    div.toggleAttribute("ID");
+    assert_true(div.hasAttribute("ID"), "Uppercase attribute added");
+    assert_false(div.hasAttribute("id"), "Lowercase attribute not present");
+
+    div.toggleAttribute("id");
+    assert_true(div.hasAttribute("id"), "Lowercase attribute added");
+    assert_true(div.hasAttribute("ID"), "Both attributes present");
+}, "toggleAttribute() is case-sensitive");
+</script>
+
+<!--
+WPT Test Structure:
+
+1. Metadata at top:
+   - <meta charset="utf-8">
+   - <title> describing what's tested
+   - <link rel="help"> pointing to spec section
+
+2. Include test harness:
+   - /resources/testharness.js (test framework)
+   - /resources/testharnessreport.js (result reporting)
+
+3. Test cases:
+   - test(() => { ... }, "description") for sync tests
+   - async_test(t => { ... }, "description") for async tests
+   - promise_test(async () => { ... }, "description") for promises
+
+4. Assertions:
+   - assert_true(condition, "message")
+   - assert_false(condition, "message")
+   - assert_equals(actual, expected, "message")
+   - assert_throws_dom("ExceptionName", () => { ... })
+   - Many more in testharness.js
+
+To import into Ladybird:
+./Meta/WPT.sh import dom/nodes/Element-toggleAttribute.html
+-->

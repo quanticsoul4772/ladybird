@@ -113,6 +113,8 @@ static bool interpret_compares(Vector<CompareTypeAndValuePair> const& lhs, Stati
             // FIXME: We just need to look at the last character of this string, but we only have the first character here.
             //        Just bail out to avoid false positives.
             return false;
+        case CharacterCompareType::StringSet:
+            return false;
         case CharacterCompareType::CharClass:
             if (!current_lhs_inversion_state())
                 lhs_char_classes.set(static_cast<CharClass>(pair.value));
@@ -167,6 +169,7 @@ static bool interpret_compares(Vector<CompareTypeAndValuePair> const& lhs, Stati
             // These are the default behaviour for [...], so we don't need to do anything (unless we add support for 'And' below).
             break;
         case CharacterCompareType::And:
+        case CharacterCompareType::Subtract:
             // FIXME: These are too difficult to handle, so bail out.
             return false;
         case CharacterCompareType::Undefined:
@@ -430,9 +433,18 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
     temporary_inverse = false;
     reset_temporary_inverse = false;
     inverse = false;
-    auto in_or = false; // We're in an OR block, so we should wait for the EndAndOr to decide if we would match.
-    auto matched_in_or = false;
-    auto inverse_matched_in_or = false;
+    struct DisjunctionState {
+        bool in_or = false; // We're in an OR block, so we should wait for the EndAndOr to decide if we would match.
+        bool matched_in_or = false;
+        bool inverse_matched_in_or = false;
+    };
+
+    Vector<DisjunctionState, 2> disjunction_stack;
+    disjunction_stack.empend();
+
+    auto in_or = [&] -> bool& { return disjunction_stack.last().in_or; };
+    auto matched_in_or = [&] -> bool& { return disjunction_stack.last().matched_in_or; };
+    auto inverse_matched_in_or = [&] -> bool& { return disjunction_stack.last().inverse_matched_in_or; };
 
     for (auto const& pair : rhs) {
         if (reset_temporary_inverse) {
@@ -452,7 +464,7 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
                 dbgln("  {}", character_class_name(char_class));
             for (auto& char_class : lhs_negated_char_classes)
                 dbgln("  ^{}", character_class_name(char_class));
-            dbgln("}}, in or: {}, matched in or: {}, inverse matched in or: {}", in_or, matched_in_or, inverse_matched_in_or);
+            dbgln("}}, in or: {}, matched in or: {}, inverse matched in or: {}", in_or(), matched_in_or(), inverse_matched_in_or());
         }
 
         switch (pair.type) {
@@ -465,20 +477,20 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
             break;
         case CharacterCompareType::AnyChar:
             // Special case: if not inverted, AnyChar is always in the range.
-            if (!in_or && !current_lhs_inversion_state())
+            if (!in_or() && !current_lhs_inversion_state())
                 return true;
-            if (in_or) {
-                matched_in_or = true;
-                inverse_matched_in_or = false;
+            if (in_or()) {
+                matched_in_or() = true;
+                inverse_matched_in_or() = false;
             }
             break;
         case CharacterCompareType::Char: {
             auto matched = range_contains(pair.value);
-            if (!in_or && (current_lhs_inversion_state() ^ matched))
+            if (!in_or() && (current_lhs_inversion_state() ^ matched))
                 return true;
-            if (in_or) {
-                matched_in_or |= matched;
-                inverse_matched_in_or |= !matched;
+            if (in_or()) {
+                matched_in_or() |= matched;
+                inverse_matched_in_or() |= !matched;
             }
             break;
         }
@@ -486,25 +498,27 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
             // FIXME: We just need to look at the last character of this string, but we only have the first character here.
             //        Just bail out to avoid false positives.
             return true;
+        case CharacterCompareType::StringSet:
+            return true;
         case CharacterCompareType::CharClass: {
             auto contains = char_class_contains(static_cast<CharClass>(pair.value));
-            if (!in_or && (current_lhs_inversion_state() ^ contains))
+            if (!in_or() && (current_lhs_inversion_state() ^ contains))
                 return true;
-            if (in_or) {
-                matched_in_or |= contains;
-                inverse_matched_in_or |= !contains;
+            if (in_or()) {
+                matched_in_or() |= contains;
+                inverse_matched_in_or() |= !contains;
             }
             break;
         }
         case CharacterCompareType::CharRange: {
             auto range = CharRange(pair.value);
             auto contains = range_contains(range);
-            if (!in_or && (contains ^ current_lhs_inversion_state()))
+            if (!in_or() && (contains ^ current_lhs_inversion_state()))
                 return true;
 
-            if (in_or) {
-                matched_in_or |= contains;
-                inverse_matched_in_or |= !contains;
+            if (in_or()) {
+                matched_in_or() |= contains;
+                inverse_matched_in_or() |= !contains;
             }
 
             break;
@@ -525,16 +539,16 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
                 return true;
             if (has_any_unicode_property && !lhs_unicode_properties.is_empty() && !lhs_negated_unicode_properties.is_empty()) {
                 auto contains = lhs_unicode_properties.contains(static_cast<Unicode::Property>(pair.value));
-                if (!in_or && (current_lhs_inversion_state() ^ contains))
+                if (!in_or() && (current_lhs_inversion_state() ^ contains))
                     return true;
 
                 auto inverse_contains = lhs_negated_unicode_properties.contains(static_cast<Unicode::Property>(pair.value));
-                if (!in_or && !(current_lhs_inversion_state() ^ inverse_contains))
+                if (!in_or() && !(current_lhs_inversion_state() ^ inverse_contains))
                     return true;
 
-                if (in_or) {
-                    matched_in_or |= contains;
-                    inverse_matched_in_or |= inverse_contains;
+                if (in_or()) {
+                    matched_in_or() |= contains;
+                    inverse_matched_in_or() |= inverse_contains;
                 }
             }
             break;
@@ -543,14 +557,14 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
                 return true;
             if (has_any_unicode_property && !lhs_unicode_general_categories.is_empty() && !lhs_negated_unicode_general_categories.is_empty()) {
                 auto contains = lhs_unicode_general_categories.contains(static_cast<Unicode::GeneralCategory>(pair.value));
-                if (!in_or && (current_lhs_inversion_state() ^ contains))
+                if (!in_or() && (current_lhs_inversion_state() ^ contains))
                     return true;
                 auto inverse_contains = lhs_negated_unicode_general_categories.contains(static_cast<Unicode::GeneralCategory>(pair.value));
-                if (!in_or && !(current_lhs_inversion_state() ^ inverse_contains))
+                if (!in_or() && !(current_lhs_inversion_state() ^ inverse_contains))
                     return true;
-                if (in_or) {
-                    matched_in_or |= contains;
-                    inverse_matched_in_or |= inverse_contains;
+                if (in_or()) {
+                    matched_in_or() |= contains;
+                    inverse_matched_in_or() |= inverse_contains;
                 }
             }
             break;
@@ -559,14 +573,14 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
                 return true;
             if (has_any_unicode_property && !lhs_unicode_scripts.is_empty() && !lhs_negated_unicode_scripts.is_empty()) {
                 auto contains = lhs_unicode_scripts.contains(static_cast<Unicode::Script>(pair.value));
-                if (!in_or && (current_lhs_inversion_state() ^ contains))
+                if (!in_or() && (current_lhs_inversion_state() ^ contains))
                     return true;
                 auto inverse_contains = lhs_negated_unicode_scripts.contains(static_cast<Unicode::Script>(pair.value));
-                if (!in_or && !(current_lhs_inversion_state() ^ inverse_contains))
+                if (!in_or() && !(current_lhs_inversion_state() ^ inverse_contains))
                     return true;
-                if (in_or) {
-                    matched_in_or |= contains;
-                    inverse_matched_in_or |= inverse_contains;
+                if (in_or()) {
+                    matched_in_or() |= contains;
+                    inverse_matched_in_or() |= inverse_contains;
                 }
             }
             break;
@@ -575,34 +589,36 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
                 return true;
             if (has_any_unicode_property && !lhs_unicode_script_extensions.is_empty() && !lhs_negated_unicode_script_extensions.is_empty()) {
                 auto contains = lhs_unicode_script_extensions.contains(static_cast<Unicode::Script>(pair.value));
-                if (!in_or && (current_lhs_inversion_state() ^ contains))
+                if (!in_or() && (current_lhs_inversion_state() ^ contains))
                     return true;
                 auto inverse_contains = lhs_negated_unicode_script_extensions.contains(static_cast<Unicode::Script>(pair.value));
-                if (!in_or && !(current_lhs_inversion_state() ^ inverse_contains))
+                if (!in_or() && !(current_lhs_inversion_state() ^ inverse_contains))
                     return true;
-                if (in_or) {
-                    matched_in_or |= contains;
-                    inverse_matched_in_or |= inverse_contains;
+                if (in_or()) {
+                    matched_in_or() |= contains;
+                    inverse_matched_in_or() |= inverse_contains;
                 }
             }
             break;
         case CharacterCompareType::Or:
-            in_or = true;
+            disjunction_stack.empend(true);
             break;
-        case CharacterCompareType::EndAndOr:
+        case CharacterCompareType::EndAndOr: {
             // FIXME: Handle And when we support it below.
-            VERIFY(in_or);
-            in_or = false;
+            VERIFY(in_or());
+            auto state = disjunction_stack.take_last();
             if (current_lhs_inversion_state()) {
-                if (!inverse_matched_in_or)
+                if (!state.inverse_matched_in_or)
                     return true;
             } else {
-                if (matched_in_or)
+                if (state.matched_in_or)
                     return true;
             }
 
             break;
+        }
         case CharacterCompareType::And:
+        case CharacterCompareType::Subtract:
             // FIXME: These are too difficult to handle, so bail out.
             return true;
         case CharacterCompareType::Undefined:
@@ -1426,6 +1442,8 @@ void Optimizer::append_alternation(ByteCode& target, Span<ByteCode> alternatives
     struct QualifiedIP {
         size_t alternative_index;
         size_t instruction_position;
+
+        bool operator==(QualifiedIP const& other) const = default;
     };
     struct NodeMetadataEntry {
         QualifiedIP ip;
@@ -1455,7 +1473,7 @@ void Optimizer::append_alternation(ByteCode& target, Span<ByteCode> alternatives
                     node_key_bytes.append(edge.jump_insn);
             }
 
-            active_node = static_cast<decltype(active_node)>(MUST(active_node->ensure_child(DisjointSpans<ByteCodeValueType const> { move(node_key_bytes) })));
+            active_node = static_cast<decltype(active_node)>(MUST(active_node->ensure_child(DisjointSpans<ByteCodeValueType const> { move(node_key_bytes) }, [] -> Vector<NodeMetadataEntry> { return {}; })));
 
             auto next_compare = [&alternative, &state](StaticallyInterpretedCompares& compares) {
                 TemporaryChange state_change { state.instruction_position, state.instruction_position };
@@ -1479,15 +1497,12 @@ void Optimizer::append_alternation(ByteCode& target, Span<ByteCode> alternatives
             };
 
             auto node_metadata = NodeMetadataEntry { { i, state.instruction_position }, make<StaticallyInterpretedCompares>() };
-            if (active_node->has_metadata()) {
-                active_node->metadata_value().append(move(node_metadata));
-                common_hits += 1;
-            } else {
-                Vector<NodeMetadataEntry> metadata;
-                metadata.append(move(node_metadata));
-                active_node->set_metadata(move(metadata));
+            auto& metadata = active_node->metadata_value();
+            if (metadata.is_empty())
                 total_bytecode_entries_in_tree += opcode.size();
-            }
+            else
+                common_hits++;
+            metadata.append(move(node_metadata));
             next_compare(*active_node->metadata_value().last().first_compare_from_here);
 
             state.instruction_position += opcode.size();
@@ -1624,13 +1639,7 @@ void Optimizer::append_alternation(ByteCode& target, Span<ByteCode> alternatives
         target.ensure_capacity(total_bytecode_entries_in_tree + common_hits * 6);
 
         auto node_is = [](Tree const* node, QualifiedIP ip) {
-            if (!node->has_metadata())
-                return false;
-            for (auto& node_ip : node->metadata_value()) {
-                if (node_ip.ip.alternative_index == ip.alternative_index && node_ip.ip.instruction_position == ip.instruction_position)
-                    return true;
-            }
-            return false;
+            return node->metadata_value().span().first_matching([&](auto& entry) { return entry.ip == ip; }).has_value();
         };
 
         struct Patch {
@@ -1835,6 +1844,7 @@ static LookupTableInsertionOutcome insert_into_lookup_table(RedBlackTree<ByteCod
     case CharacterCompareType::EndAndOr:
         return LookupTableInsertionOutcome::FinishFlushOnInsertion;
     case CharacterCompareType::And:
+    case CharacterCompareType::Subtract:
         return LookupTableInsertionOutcome::FlushOnInsertion;
     case CharacterCompareType::Reference:
     case CharacterCompareType::NamedReference:
@@ -1842,6 +1852,7 @@ static LookupTableInsertionOutcome insert_into_lookup_table(RedBlackTree<ByteCod
     case CharacterCompareType::GeneralCategory:
     case CharacterCompareType::Script:
     case CharacterCompareType::ScriptExtension:
+    case CharacterCompareType::StringSet:
     case CharacterCompareType::Or:
         return LookupTableInsertionOutcome::CannotPlaceInTable;
     case CharacterCompareType::Undefined:
@@ -1867,6 +1878,7 @@ void Optimizer::append_character_class(ByteCode& target, Vector<CompareTypeAndVa
                 && pair.type != CharacterCompareType::Inverse
                 && pair.type != CharacterCompareType::And
                 && pair.type != CharacterCompareType::Or
+                && pair.type != CharacterCompareType::Subtract
                 && pair.type != CharacterCompareType::EndAndOr)
                 arguments.append(pair.value);
             ++argument_count;
@@ -1980,6 +1992,7 @@ void Optimizer::append_character_class(ByteCode& target, Vector<CompareTypeAndVa
                     && value.type != CharacterCompareType::Inverse
                     && value.type != CharacterCompareType::And
                     && value.type != CharacterCompareType::Or
+                    && value.type != CharacterCompareType::Subtract
                     && value.type != CharacterCompareType::EndAndOr)
                     arguments.append(value.value);
                 ++argument_count;

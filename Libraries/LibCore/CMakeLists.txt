@@ -1,12 +1,14 @@
 # These are the minimal set of sources needed to build the code generators. We separate them to allow
 # LibCore to depend on generated sources.
 set(SOURCES
+    AddressInfoVector.cpp
     ArgsParser.cpp
     Directory.cpp
     DirectoryEntry.cpp
     DirIterator.cpp
     Environment.cpp
     File.cpp
+    SocketAddress.cpp
     StandardPaths.cpp
     Version.cpp
 )
@@ -39,6 +41,7 @@ if (LAGOM_TOOLS_ONLY)
 endif()
 
 set(SOURCES
+    CircuitBreaker.cpp
     ConfigFile.cpp
     ElapsedTimer.cpp
     EventLoop.cpp
@@ -47,9 +50,12 @@ set(SOURCES
     MappedFile.cpp
     MimeData.cpp
     Notifier.cpp
+    RateLimiter.cpp
+    ReportTime.cpp
     Resource.cpp
     ResourceImplementation.cpp
     ResourceImplementationFile.cpp
+    RetryPolicy.cpp
     SystemServerTakeover.cpp
     ThreadEventQueue.cpp
     Timer.cpp
@@ -71,14 +77,14 @@ else()
         TCPServer.cpp)
 endif()
 
-if (NOT WIN32 AND NOT EMSCRIPTEN)
+if (NOT WIN32)
     list(APPEND SOURCES LocalServer.cpp)
-elseif (WIN32)
+else()
     list(APPEND SOURCES LocalServerWindows.cpp)
 endif()
 
 # FIXME: Implement these for other systems.
-if (LINUX AND NOT EMSCRIPTEN)
+if (LINUX)
     list(APPEND SOURCES
         FileWatcherLinux.cpp
         Platform/ProcessStatisticsLinux.cpp
@@ -136,12 +142,15 @@ if (APPLE)
     target_link_libraries(LibCore PUBLIC "-framework IOSurface")
 endif()
 
+if (WIN32)
+    target_link_libraries(LibCore PRIVATE ntdll.dll)
+endif()
+
 if (ANDROID)
     target_link_libraries(LibCore PRIVATE log)
 endif()
 
 if (ENABLE_SWIFT)
-    set(SWIFT_EXCLUDE_HEADERS "SocketAddressWindows.h")
     if(WIN32)
         list(APPEND SWIFT_EXCLUDE_HEADERS "EventLoopImplementationUnix.h")
     else()

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Canvas Fingerprinting Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        #canvas {
+            border: 1px solid #999;
+            display: block;
+            margin: 10px 0;
+        }
+        .result {
+            background: #f0f0f0;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+            font-family: monospace;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Canvas Fingerprinting Detection Test</h1>
+
+    <p><strong>Purpose:</strong> This page tests Ladybird's Canvas fingerprinting detection capabilities.</p>
+
+    <div class="test-section">
+        <h2>Test 1: Single toDataURL() Call</h2>
+        <p>This should NOT trigger aggressive fingerprinting (score too low).</p>
+        <button onclick="test1()">Run Test 1</button>
+        <canvas id="canvas1" width="200" height="50"></canvas>
+        <div id="result1" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 2: Multiple Canvas Calls (Fingerprinting)</h2>
+        <p>This should trigger aggressive fingerprinting detection (score > 0.6).</p>
+        <button onclick="test2()">Run Test 2</button>
+        <canvas id="canvas2" width="200" height="50"></canvas>
+        <div id="result2" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 3: Advanced Fingerprinting (toDataURL + getImageData)</h2>
+        <p>This should definitely trigger aggressive fingerprinting detection.</p>
+        <button onclick="test3()">Run Test 3</button>
+        <canvas id="canvas3" width="200" height="50"></canvas>
+        <div id="result3" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Expected Results</h2>
+        <ul>
+            <li><strong>Test 1:</strong> No alert (single call, score ~0.7, below aggressive threshold)</li>
+            <li><strong>Test 2:</strong> ⚠️ Alert expected (multiple calls, score ~0.8+)</li>
+            <li><strong>Test 3:</strong> ⚠️ Alert expected (toDataURL + getImageData, score ~0.9+)</li>
+        </ul>
+        <p><strong>Check WebContent console for alerts!</strong></p>
+    </div>
+
+    <script>
+        function test1() {
+            console.log("=== Test 1: Single toDataURL() ===");
+            const canvas = document.getElementById('canvas1');
+            const ctx = canvas.getContext('2d');
+
+            // Single toDataURL call (NO DRAWING)
+            const dataURL = canvas.toDataURL();
+
+            document.getElementById('result1').textContent =
+                'Test 1 complete: 1 toDataURL() call\nExpected: NO alert (score < 0.75)';
+
+            console.log("Test 1 complete - single toDataURL() call");
+        }
+
+        function test2() {
+            console.log("=== Test 2: Multiple Canvas Calls ===");
+            const canvas = document.getElementById('canvas2');
+            const ctx = canvas.getContext('2d');
+
+            // Multiple toDataURL calls (fingerprinting behavior) - NO DRAWING
+            const fp1 = canvas.toDataURL();
+            const fp2 = canvas.toDataURL('image/png');
+            const fp3 = canvas.toDataURL('image/jpeg', 0.95);
+
+            document.getElementById('result2').textContent =
+                'Test 2 complete: 3 toDataURL() calls\n' +
+                'Expected: ⚠️ ALERT (score 0.80+)';
+
+            console.log("Test 2 complete - 3 toDataURL() calls");
+        }
+
+        function test3() {
+            console.log("=== Test 3: Advanced Fingerprinting ===");
+            const canvas = document.getElementById('canvas3');
+            const ctx = canvas.getContext('2d');
+
+            // Aggressive fingerprinting: toDataURL + getImageData - NO DRAWING
+            const dataURL1 = canvas.toDataURL();
+            const dataURL2 = canvas.toDataURL('image/png');
+
+            // getImageData is a strong fingerprinting indicator
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+            // Generate hash from pixel data (typical fingerprinting)
+            let hash = 0;
+            for (let i = 0; i < imageData.data.length; i += 10) {
+                hash = ((hash << 5) - hash) + imageData.data[i];
+                hash = hash & hash; // Convert to 32-bit integer
+            }
+
+            document.getElementById('result3').textContent =
+                'Test 3 complete:\n' +
+                '- 2 toDataURL() calls\n' +
+                '- 1 getImageData() call\n' +
+                'Expected: ⚠️ ALERT (score 1.00)';
+
+            console.log("Test 3 complete - aggressive fingerprinting detected!");
+        }
+
+        console.log("Canvas Fingerprinting Test page loaded");
+        console.log("Click buttons to run tests and check for detection alerts");
+    </script>
+</body>
+</html>

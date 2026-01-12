@@ -23,6 +23,33 @@ AccessibilityTreeNode::AccessibilityTreeNode(GC::Ptr<DOM::Node const> value)
     : m_value(value)
 {
     m_children = {};
+
+    // Compute ARIA properties at node creation time
+    // https://www.w3.org/TR/wai-aria-1.2/
+    if (!value)
+        return;
+
+    auto const* element = dynamic_cast<DOM::Element const*>(value.ptr());
+    if (!element)
+        return;
+
+    // Compute role: explicit role from 'role' attribute, or implicit role from element
+    // https://www.w3.org/TR/wai-aria-1.2/#introroles
+    m_computed_role = element->role_or_default();
+
+    // Compute accessible name
+    // https://www.w3.org/TR/accname-1.2/
+    // NOTE: The full accessible name calculation algorithm is implemented in Element::accessible_name()
+    // TODO: Cache the computed name here once the algorithm is fully implemented by another agent
+    // For now, we leave this empty and let serialize_tree_as_json() call the algorithm directly
+    // m_computed_name = element->accessible_name(element->document()).release_value_but_fixme_should_propagate_errors();
+
+    // Compute accessible description
+    // https://www.w3.org/TR/accname-1.2/
+    // NOTE: The full accessible description calculation algorithm is implemented in Element::accessible_description()
+    // TODO: Cache the computed description here once the algorithm is fully implemented by another agent
+    // For now, we leave this empty and let serialize_tree_as_json() call the algorithm directly
+    // m_computed_description = element->accessible_description(element->document()).release_value_but_fixme_should_propagate_errors();
 }
 
 void AccessibilityTreeNode::serialize_tree_as_json(JsonObjectSerializer<StringBuilder>& object, Document const& document) const
@@ -35,9 +62,18 @@ void AccessibilityTreeNode::serialize_tree_as_json(JsonObjectSerializer<StringBu
         if (element->include_in_accessibility_tree()) {
             MUST(object.add("type"sv, "element"sv));
 
-            auto role = element->role_or_default();
+            // Use computed role if available, otherwise compute on-the-fly
+            // The computed role is cached at node creation for performance
+            Optional<ARIA::Role> role;
+            if (m_computed_role.has_value()) {
+                role = m_computed_role;
+            } else {
+                role = element->role_or_default();
+            }
             bool has_role = role.has_value() && !ARIA::is_abstract_role(*role);
 
+            // Compute name and description on-the-fly for now
+            // TODO: Use m_computed_name and m_computed_description once they are populated
             auto name = MUST(element->accessible_name(document));
             MUST(object.add("name"sv, name));
             auto description = MUST(element->accessible_description(document));

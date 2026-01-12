@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSS Animation Performance Test</title>
+  <style>
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes slide {
+      0% { transform: translateX(0); }
+      50% { transform: translateX(200px); }
+      100% { transform: translateX(0); }
+    }
+
+    .spinner {
+      width: 50px;
+      height: 50px;
+      background-color: #e74c3c;
+      margin: 10px;
+      animation: spin 2s linear infinite;
+      display: inline-block;
+    }
+
+    .slider {
+      width: 50px;
+      height: 50px;
+      background-color: #2ecc71;
+      margin: 10px;
+      animation: slide 3s ease-in-out infinite;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <h1>CSS Animation Performance Test</h1>
+  <div>
+    <div class="spinner"></div>
+    <div class="spinner"></div>
+    <div class="spinner"></div>
+  </div>
+  <div>
+    <div class="slider"></div>
+    <div class="slider"></div>
+    <div class="slider"></div>
+  </div>
+
+  <script>
+    // Benchmark will be run by the test
+    console.log('CSS animations running');
+  </script>
+</body>
+</html>

@@ -204,6 +204,7 @@ public:
 
     void define_native_function(Realm&, PropertyKey const&, ESCAPING Function<ThrowCompletionOr<Value>(VM&)>, i32 length, PropertyAttributes attributes, Optional<Bytecode::Builtin> builtin = {});
     void define_native_accessor(Realm&, PropertyKey const&, ESCAPING Function<ThrowCompletionOr<Value>(VM&)> getter, ESCAPING Function<ThrowCompletionOr<Value>(VM&)> setter, PropertyAttributes attributes);
+    void define_native_javascript_backed_function(PropertyKey const&, GC::Ref<NativeJavaScriptBackedFunction> function, i32 length, PropertyAttributes attributes);
 
     virtual bool is_dom_node() const { return false; }
     virtual bool is_dom_element() const { return false; }
@@ -233,7 +234,7 @@ public:
 
     virtual bool eligible_for_own_property_enumeration_fast_path() const { return true; }
 
-    virtual BuiltinIterator* as_builtin_iterator_if_next_is_not_redefined(IteratorRecord const&) { return nullptr; }
+    virtual BuiltinIterator* as_builtin_iterator_if_next_is_not_redefined([[maybe_unused]] Value next_method) { return nullptr; }
 
     virtual bool is_array_iterator_prototype() const { return false; }
     virtual bool is_map_iterator_prototype() const { return false; }

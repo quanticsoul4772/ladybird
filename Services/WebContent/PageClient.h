@@ -18,6 +18,8 @@
 #include <LibWeb/StorageAPI/StorageEndpoint.h>
 #include <LibWebView/Forward.h>
 #include <LibWebView/StorageOperationError.h>
+#include <Services/Sentinel/FingerprintingDetector.h>
+#include <WebContent/FormMonitor.h>
 #include <WebContent/Forward.h>
 
 namespace WebContent {
@@ -32,6 +34,12 @@ public:
     virtual ~PageClient() override;
 
     virtual u64 id() const override { return m_id; }
+
+    FormMonitor* form_monitor() { return m_form_monitor.ptr(); }
+    FormMonitor const* form_monitor() const { return m_form_monitor.ptr(); }
+
+    Sentinel::FingerprintingDetector* fingerprinting_detector() { return m_fingerprinting_detector.ptr(); }
+    Sentinel::FingerprintingDetector const* fingerprinting_detector() const { return m_fingerprinting_detector.ptr(); }
 
     enum class UseSkiaPainter {
         CPUBackend,
@@ -64,10 +72,10 @@ public:
     void set_window_position(Web::DevicePixelPoint);
     void set_window_size(Web::DevicePixelSize);
 
-    Web::WebIDL::ExceptionOr<void> toggle_media_play_state();
+    void toggle_media_play_state();
     void toggle_media_mute_state();
-    Web::WebIDL::ExceptionOr<void> toggle_media_loop_state();
-    Web::WebIDL::ExceptionOr<void> toggle_media_controls_state();
+    void toggle_media_loop_state();
+    void toggle_media_controls_state();
 
     void alert_closed();
     void confirm_closed(bool accepted);
@@ -142,6 +150,11 @@ private:
     virtual void page_did_request_set_prompt_text(String const&) override;
     virtual void page_did_request_accept_dialog() override;
     virtual void page_did_request_dismiss_dialog() override;
+    virtual void page_did_receive_security_alert(ByteString const& alert_json, i32 request_id) override;
+    virtual void page_did_detect_traffic_alert(ByteString const& alert_json) override;
+    virtual void page_did_call_fingerprinting_api(StringView technique, StringView api_name) const override;
+    virtual void page_did_submit_form(Web::HTML::HTMLFormElement& form, String const& method, URL::URL const& action) override;
+    virtual bool should_block_autofill(URL::URL const& form_url, URL::URL const& action_url) const override;
     virtual void page_did_change_favicon(Gfx::Bitmap const&) override;
     virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_webdriver(URL::URL const&) override;
     virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_cookiestore(URL::URL const&) override;
@@ -203,6 +216,9 @@ private:
     GC::Root<JS::GlobalObject> m_console_global_object;
 
     RefPtr<Core::Timer> m_paint_refresh_timer;
+
+    OwnPtr<FormMonitor> m_form_monitor;
+    mutable OwnPtr<Sentinel::FingerprintingDetector> m_fingerprinting_detector;
 };
 
 }

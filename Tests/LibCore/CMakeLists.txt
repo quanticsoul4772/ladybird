@@ -1,5 +1,6 @@
 set(TEST_SOURCES
     TestLibCoreArgsParser.cpp
+    TestCircuitBreaker.cpp
     TestLibCoreDeferredInvoke.cpp
     TestLibCoreEventLoop.cpp
     TestLibCoreMappedFile.cpp
@@ -7,6 +8,7 @@ set(TEST_SOURCES
     TestLibCorePromise.cpp
     TestLibCoreSharedSingleProducerCircularQueue.cpp
     TestLibCoreStream.cpp
+    TestRetryPolicy.cpp
 )
 
 # FIXME: Change these tests to use a portable tempfile directory

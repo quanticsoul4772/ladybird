@@ -308,9 +308,9 @@ String Selector::PseudoElementSelector::serialize() const
     }
 
     m_value.visit(
-        [&builder](NonnullRefPtr<Selector> const& compund_selector) {
+        [&builder](NonnullRefPtr<Selector> const& compound_selector) {
             builder.append('(');
-            builder.append(compund_selector->serialize());
+            builder.append(compound_selector->serialize());
             builder.append(')');
         },
         [&builder](PTNameSelector const& pt_name_selector) {
@@ -319,6 +319,17 @@ String Selector::PseudoElementSelector::serialize() const
                 builder.append('*');
             else
                 builder.append(pt_name_selector.value);
+            builder.append(')');
+        },
+        [&builder](IdentList const& ident_list) {
+            builder.append('(');
+            bool first = true;
+            for (auto const& ident : ident_list) {
+                if (!first)
+                    builder.append(' ');
+                first = false;
+                builder.append(serialize_an_identifier(ident));
+            }
             builder.append(')');
         },
         [](Empty const&) {});

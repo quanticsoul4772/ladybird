@@ -152,30 +152,21 @@ static WebIDL::ExceptionOr<KeyframeType<AL>> process_a_keyframe_like_object(JS::
     auto input_properties = TRY(keyframe_object.enumerable_own_property_names(JS::Object::PropertyKind::Key));
 
     Vector<String> animation_properties;
-    Optional<JS::Value> all_value;
 
     for (auto const& input_property : input_properties) {
         if (!input_property.is_string())
             continue;
 
         auto name = input_property.as_string().utf8_string();
-        if (name == "all"sv) {
-            all_value = TRY(keyframe_object.get(vm.names.all));
-            for (auto i = to_underlying(CSS::first_longhand_property_id); i <= to_underlying(CSS::last_longhand_property_id); ++i) {
-                auto property = static_cast<CSS::PropertyID>(i);
-                if (CSS::is_animatable_property(property))
-                    animation_properties.append(String { CSS::string_from_property_id(property) });
-            }
-        } else {
-            // Handle the two special cases
-            if (name == "cssFloat"sv || name == "cssOffset"sv) {
+
+        // Handle the two special cases
+        if (name == "cssFloat"sv || name == "cssOffset"sv) {
+            animation_properties.append(name);
+        } else if (name == "float"sv || name == "offset"sv) {
+            // Ignore these property names
+        } else if (auto property = CSS::property_id_from_camel_case_string(name); property.has_value()) {
+            if (CSS::is_animatable_property(property.value()))
                 animation_properties.append(name);
-            } else if (name == "float"sv || name == "offset"sv) {
-                // Ignore these property names
-            } else if (auto property = CSS::property_id_from_camel_case_string(name); property.has_value()) {
-                if (CSS::is_animatable_property(property.value()))
-                    animation_properties.append(name);
-            }
         }
     }
 
@@ -188,7 +179,7 @@ static WebIDL::ExceptionOr<KeyframeType<AL>> process_a_keyframe_like_object(JS::
         //    as the property key and keyframe input as the receiver.
         // 2. Check the completion record of raw value.
         JS::PropertyKey key { Utf16FlyString::from_utf8(property_name), JS::PropertyKey::StringMayBeNumber::No };
-        auto raw_value = TRY(keyframe_object.has_property(key)) ? TRY(keyframe_object.get(key)) : *all_value;
+        auto raw_value = TRY(keyframe_object.get(key));
 
         using PropertyValuesType = Conditional<AL == AllowLists::Yes, Vector<String>, String>;
         PropertyValuesType property_values;
@@ -357,7 +348,7 @@ static WebIDL::ExceptionOr<Vector<BaseKeyframe>> process_a_keyframes_argument(JS
 
             // 6. If Type(nextItem) is not Undefined, Null or Object, then throw a TypeError and abort these steps.
             if (!next_item.is_nullish() && !next_item.is_object())
-                return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOrNull, next_item.to_string_without_side_effects());
+                return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOrNull, next_item);
 
             // 7. Append to processed keyframes the result of running the procedure to process a keyframe-like object
             //    passing nextItem as the keyframe input and with the allow lists flag set to false.
@@ -636,11 +627,12 @@ void KeyframeEffect::generate_initial_and_final_frames(RefPtr<KeyFrameSet> keyfr
 // https://www.w3.org/TR/web-animations-1/#animation-composite-order
 int KeyframeEffect::composite_order(GC::Ref<KeyframeEffect> a, GC::Ref<KeyframeEffect> b)
 {
-    // 1. Let the associated animation of an animation effect be the animation associated with the animation effect.
+    // The relative composite order of any two keyframe effects A and B within an effect stack is established by
+    // comparing their properties as follows:
     auto a_animation = a->associated_animation();
     auto b_animation = b->associated_animation();
 
-    // 2. Sort A and B by applying the following conditions in turn until the order is resolved,
+    // 1. Sort A and B by applying the following conditions in turn until the order is resolved,
 
     //    1. If A and B’s associated animations differ by class, sort by any inter-class composite order defined for
     //       the corresponding classes.
@@ -655,8 +647,8 @@ int KeyframeEffect::composite_order(GC::Ref<KeyframeEffect> a, GC::Ref<KeyframeE
 
     //    2. If A and B are still not sorted, sort by any class-specific composite order defined by the common class of
     //       A and B’s associated animations.
-    if (auto order = a_animation->class_specific_composite_order(*b_animation); order.has_value())
-        return order.value();
+    if (auto order = a_animation->class_specific_composite_order(*b_animation); order != 0)
+        return order;
 
     //    3. If A and B are still not sorted, sort by the position of their associated animations in the global
     //       animation list.
@@ -807,6 +799,19 @@ WebIDL::ExceptionOr<void> KeyframeEffect::set_pseudo_element(Optional<String> va
     return {};
 }
 
+Optional<DOM::AbstractElement> KeyframeEffect::target_abstract_element() const
+{
+    if (m_target_element)
+        return DOM::AbstractElement { *m_target_element, pseudo_element_type() };
+    return {};
+}
+
+void KeyframeEffect::set_target(DOM::AbstractElement abstract_element)
+{
+    set_target(&abstract_element.element());
+    m_target_pseudo_selector = abstract_element.pseudo_element().map([](auto it) { return CSS::Selector::PseudoElementSelector { it }; });
+}
+
 Optional<CSS::PseudoElement> KeyframeEffect::pseudo_element_type() const
 {
     if (!m_target_pseudo_selector.has_value())
@@ -930,7 +935,7 @@ void KeyframeEffect::update_computed_properties(AnimationUpdateContext& context)
     DOM::AbstractElement abstract_element { *target, pseudo_element_type() };
     context.elements.ensure(abstract_element, [computed_properties] {
         auto old_animated_properties = computed_properties->animated_property_values();
-        computed_properties->reset_animated_properties({});
+        computed_properties->reset_non_inherited_animated_properties({});
         return make<AnimationUpdateContext::ElementData>(move(old_animated_properties), computed_properties);
     });
 

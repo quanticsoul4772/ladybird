@@ -1,0 +1,28 @@
+{
+  "project": {
+    "name": "ladybird-browser",
+    "type": "cpp",
+    "build_system": "cmake"
+  },
+  "agents": {
+    "enabled": true,
+    "default_orchestrator": "orchestrator",
+    "max_parallel": 3,
+    "timeout": 300
+  },
+  "tools": {
+    "mcp_servers": ["brave-search", "unified-thinking", "filesystem", "github"],
+    "default_search": "brave-search",
+    "default_reasoning": "unified-thinking"
+  },
+  "workflows": {
+    "feature": "workflows/feature-development.md",
+    "bugfix": "workflows/bugfix.md",
+    "security": "workflows/security-review.md"
+  },
+  "testing": {
+    "framework": "libtest",
+    "coverage_target": 80,
+    "fuzzing_enabled": true
+  }
+}

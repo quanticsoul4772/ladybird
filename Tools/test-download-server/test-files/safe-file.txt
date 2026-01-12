@@ -1,0 +1,5 @@
+This is a completely safe text file for download testing.
+
+It contains no malicious content and should pass all security scans.
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit.

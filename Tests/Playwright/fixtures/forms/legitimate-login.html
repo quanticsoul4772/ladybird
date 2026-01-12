@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Legitimate Login - Example.com</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 400px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .login-form {
+      border: 1px solid #ccc;
+      padding: 20px;
+      border-radius: 5px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 15px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-form">
+    <h1>Login to Example.com</h1>
+    <p>Legitimate same-origin login form</p>
+
+    <!-- Same-origin submission: relative action URL -->
+    <form id="login-form" action="/login" method="POST">
+      <label for="email">Email Address:</label>
+      <input type="email" id="email" name="email" value="user@example.com" required>
+
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" value="mypassword123" required>
+
+      <button type="submit" id="submit-btn">Login</button>
+    </form>
+  </div>
+
+  <div id="test-status" style="margin-top: 20px; padding: 10px; background: #f0f0f0; border-radius: 3px;">
+    <strong>Test Status:</strong> <span id="status-text">Ready</span>
+  </div>
+
+  <script>
+    // FormMonitor test data
+    const form = document.getElementById('login-form');
+    const documentOrigin = window.location.origin || 'data:';
+
+    // Resolve relative action to absolute URL
+    const actionUrl = new URL(form.action, window.location.href);
+    const actionOrigin = actionUrl.origin;
+
+    const isCrossOrigin = documentOrigin !== actionOrigin;
+
+    window.__formMonitorTestData = {
+      testName: 'legitimate-login',
+      documentUrl: window.location.href,
+      actionUrl: actionUrl.href,
+      formOrigin: documentOrigin,
+      actionOrigin: actionOrigin,
+      method: 'POST',
+      hasPasswordField: true,
+      hasEmailField: true,
+      isCrossOrigin: isCrossOrigin,
+      expectedAlert: null, // No alert expected for same-origin
+      expectedSeverity: null,
+      note: 'Legitimate same-origin login form should not trigger FormMonitor alert'
+    };
+
+    document.getElementById('status-text').textContent =
+      `Same-origin: ${!isCrossOrigin}, Password: ${window.__formMonitorTestData.hasPasswordField}`;
+  </script>
+</body>
+</html>

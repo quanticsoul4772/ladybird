@@ -11,41 +11,38 @@
 #include <AK/MemoryStream.h>
 #include <AK/Optional.h>
 #include <AK/Time.h>
-#include <AK/Weakable.h>
 #include <LibCore/Proxy.h>
 #include <LibDNS/Resolver.h>
-#include <LibHTTP/HeaderMap.h>
+#include <LibHTTP/Cache/CacheRequest.h>
+#include <LibHTTP/HeaderList.h>
+#include <LibIPC/NetworkIdentity.h>
 #include <LibRequests/NetworkError.h>
 #include <LibRequests/RequestTimingInfo.h>
 #include <LibURL/URL.h>
 #include <RequestServer/CacheLevel.h>
 #include <RequestServer/Forward.h>
+#include <RequestServer/RequestPipe.h>
+#include <RequestServer/SecurityTap.h>
 
 struct curl_slist;
 
 namespace RequestServer {
 
-class Request : public Weakable<Request> {
+class Request : public HTTP::CacheRequest {
 public:
-    enum class ProtocolType : u8 {
-        HTTP,
-        IPFS,
-        IPNS,
-        ENS
-    };
-
     static NonnullOwnPtr<Request> fetch(
         i32 request_id,
-        Optional<DiskCache&> disk_cache,
+        Optional<HTTP::DiskCache&> disk_cache,
         ConnectionFromClient& client,
         void* curl_multi,
         Resolver& resolver,
         URL::URL url,
         ByteString method,
-        HTTP::HeaderMap request_headers,
+        NonnullRefPtr<HTTP::HeaderList> request_headers,
         ByteBuffer request_body,
         ByteString alt_svc_cache_path,
-        Core::ProxyData proxy_data);
+        Core::ProxyData proxy_data,
+        RefPtr<IPC::NetworkIdentity> network_identity = nullptr);
 
     static NonnullOwnPtr<Request> connect(
         i32 request_id,
@@ -55,27 +52,45 @@ public:
         URL::URL url,
         CacheLevel cache_level);
 
-    ~Request();
+    virtual ~Request() override;
 
     URL::URL const& url() const { return m_url; }
     ByteString const& method() const { return m_method; }
+    HTTP::HeaderList const& request_headers() const { return m_request_headers; }
     UnixDateTime request_start_time() const { return m_request_start_time; }
+
+    virtual void notify_request_unblocked(Badge<HTTP::DiskCache>) override;
+    void notify_fetch_complete(Badge<ConnectionFromClient>, int result_code);
+
+    // Sentinel integration
+    void set_security_tap(SecurityTap* security_tap) { m_security_tap = security_tap; }
+    void set_page_id(u64 page_id) { m_page_id = page_id; }
+    bool should_inspect_download() const;
+    SecurityTap::DownloadMetadata extract_download_metadata() const;
+
+    // Security policy enforcement (pause/resume state machine)
+    void resume_download();
+    void block_download();
+    void quarantine_download();
+
+    // IPFS Integration: Start
+    // Protocol types for P2P/decentralized content
+    enum class ProtocolType : u8 {
+        HTTP,  // Standard HTTP/HTTPS
+        IPFS,  // IPFS content-addressed
+        IPNS,  // IPFS mutable names
+        ENS,   // Ethereum Name Service
+    };
 
     void set_protocol_type(ProtocolType type) { m_protocol_type = type; }
     ProtocolType protocol_type() const { return m_protocol_type; }
 
-    void set_content_verification_callback(Function<ErrorOr<bool>(ReadonlyBytes)> callback)
-    {
-        m_content_verification_callback = move(callback);
-    }
+    // Set callback for content verification (e.g., IPFS CID verification)
+    void set_content_verification_callback(Function<ErrorOr<bool>(ReadonlyBytes)> callback);
 
-    void set_gateway_fallback_callback(Function<void()> callback)
-    {
-        m_gateway_fallback_callback = move(callback);
-    }
-
-    void notify_request_unblocked(Badge<DiskCache>);
-    void notify_fetch_complete(Badge<ConnectionFromClient>, int result_code);
+    // Set callback for gateway fallback on errors
+    void set_gateway_fallback_callback(Function<void()> callback);
+    // IPFS Integration: End
 
 private:
     enum class Type : u8 {
@@ -84,25 +99,28 @@ private:
     };
 
     enum class State : u8 {
-        Init,         // Decide whether to service this request from cache or the network.
-        ReadCache,    // Read the cached response from disk.
-        WaitForCache, // Wait for an existing cache entry to complete before proceeding.
-        DNSLookup,    // Resolve the URL's host.
-        Connect,      // Issue a network request to connect to the URL.
-        Fetch,        // Issue a network request to fetch the URL.
-        Complete,     // Finalize the request with the client.
-        Error,        // Any error occured during the request's lifetime.
+        Init,              // Decide whether to service this request from cache or the network.
+        ReadCache,         // Read the cached response from disk.
+        WaitForCache,      // Wait for an existing cache entry to complete before proceeding.
+        DNSLookup,         // Resolve the URL's host.
+        Connect,           // Issue a network request to connect to the URL.
+        Fetch,             // Issue a network request to fetch the URL.
+        WaitingForPolicy,  // Download paused, waiting for user security decision.
+        PolicyBlocked,     // User chose to block the download.
+        PolicyQuarantined, // Malware detected, file will be quarantined.
+        Complete,          // Finalize the request with the client.
+        Error,             // Any error occured during the request's lifetime.
     };
 
     Request(
         i32 request_id,
-        Optional<DiskCache&> disk_cache,
+        Optional<HTTP::DiskCache&> disk_cache,
         ConnectionFromClient& client,
         void* curl_multi,
         Resolver& resolver,
         URL::URL url,
         ByteString method,
-        HTTP::HeaderMap request_headers,
+        NonnullRefPtr<HTTP::HeaderList> request_headers,
         ByteBuffer request_body,
         ByteString alt_svc_cache_path,
         Core::ProxyData proxy_data);
@@ -122,14 +140,17 @@ private:
     void handle_dns_lookup_state();
     void handle_connect_state();
     void handle_fetch_state();
+    void handle_waiting_for_policy_state();
     void handle_complete_state();
     void handle_error_state();
 
     static size_t on_header_received(void* buffer, size_t size, size_t nmemb, void* user_data);
     static size_t on_data_received(void* buffer, size_t size, size_t nmemb, void* user_data);
 
+    ErrorOr<void> inform_client_request_started();
     void transfer_headers_to_client_if_needed();
     ErrorOr<void> write_queued_bytes_without_blocking();
+    ErrorOr<void> revalidation_failed();
 
     u32 acquire_status_code() const;
     Requests::RequestTimingInfo acquire_timing_info() const;
@@ -140,7 +161,7 @@ private:
     Type m_type { Type::Fetch };
     State m_state { State::Init };
 
-    Optional<DiskCache&> m_disk_cache;
+    Optional<HTTP::DiskCache&> m_disk_cache;
     ConnectionFromClient& m_client;
 
     void* m_curl_multi_handle { nullptr };
@@ -155,33 +176,36 @@ private:
     ByteString m_method;
 
     UnixDateTime m_request_start_time { UnixDateTime::now() };
-    HTTP::HeaderMap m_request_headers;
+    NonnullRefPtr<HTTP::HeaderList> m_request_headers;
     ByteBuffer m_request_body;
 
     ByteString m_alt_svc_cache_path;
     Core::ProxyData m_proxy_data;
+    RefPtr<IPC::NetworkIdentity> m_network_identity;
 
     u32 m_status_code { 0 };
     Optional<String> m_reason_phrase;
 
-    HTTP::HeaderMap m_response_headers;
+    NonnullRefPtr<HTTP::HeaderList> m_response_headers;
     bool m_sent_response_headers_to_client { false };
 
     AllocatingMemoryStream m_response_buffer;
     RefPtr<Core::Notifier> m_client_writer_notifier;
-    int m_client_writer_fd { -1 };
-
-    Optional<size_t> m_start_offset_of_response_resumed_from_cache;
+    Optional<RequestPipe> m_client_request_pipe;
     size_t m_bytes_transferred_to_client { 0 };
-
-    Optional<CacheEntryReader&> m_cache_entry_reader;
-    Optional<CacheEntryWriter&> m_cache_entry_writer;
 
     Optional<Requests::NetworkError> m_network_error;
 
+    // IPFS Integration: Start
     ProtocolType m_protocol_type { ProtocolType::HTTP };
     Function<ErrorOr<bool>(ReadonlyBytes)> m_content_verification_callback;
     Function<void()> m_gateway_fallback_callback;
+    // IPFS Integration: End
+
+    // Sentinel integration
+    SecurityTap* m_security_tap { nullptr };
+    u64 m_page_id { 0 };
+    Optional<ByteString> m_security_alert_json;  // Stored alert for quarantine (Phase 3 Day 19)
 };
 
 }

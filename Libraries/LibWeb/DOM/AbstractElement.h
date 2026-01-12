@@ -55,10 +55,15 @@ public:
     CSS::CountersSet& ensure_counters_set();
     void set_counters_set(OwnPtr<CSS::CountersSet>&&);
 
+    HashMap<FlyString, GC::Ref<Animations::Animation>>* css_defined_animations() const;
+    void set_has_css_defined_animations();
+
     void visit(GC::Cell::Visitor& visitor) const;
 
     String debug_description() const;
     bool operator==(AbstractElement const&) const = default;
+
+    CSS::StyleScope const& style_scope() const;
 
 private:
     enum class WalkMethod : u8 {

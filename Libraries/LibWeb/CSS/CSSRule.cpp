@@ -1,15 +1,17 @@
 /*
  * Copyright (c) 2021, the SerenityOS developers.
- * Copyright (c) 2022-2024, Sam Atkins <sam@ladybird.org>
+ * Copyright (c) 2022-2025, Sam Atkins <sam@ladybird.org>
  * Copyright (c) 2022, Andreas Kling <andreas@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibWeb/Bindings/CSSRulePrototype.h>
+#include <LibWeb/CSS/CSSImportRule.h>
 #include <LibWeb/CSS/CSSLayerBlockRule.h>
 #include <LibWeb/CSS/CSSRule.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
+#include <LibWeb/Dump.h>
 
 namespace Web::CSS {
 
@@ -67,6 +69,12 @@ void CSSRule::set_parent_style_sheet(CSSStyleSheet* parent_style_sheet)
     clear_caches();
 }
 
+void CSSRule::dump(StringBuilder& builder, int indent_levels) const
+{
+    dump_indent(builder, indent_levels);
+    builder.appendff("{}:\n", class_name());
+}
+
 void CSSRule::clear_caches()
 {
     m_cached_layer_name.clear();
@@ -78,11 +86,12 @@ FlyString CSSRule::parent_layer_internal_qualified_name_slow_case() const
     for (auto* rule = parent_rule(); rule; rule = rule->parent_rule()) {
         switch (rule->type()) {
         case Type::Import:
-            // TODO: Handle `layer(foo)` in import rules once we implement that.
+            // @import is only a parent to style sheets, not to rules directly. It's handled below this loop.
+            VERIFY_NOT_REACHED();
             break;
 
         case Type::LayerBlock: {
-            auto& layer_block = static_cast<CSSLayerBlockRule const&>(*rule);
+            auto& layer_block = as<CSSLayerBlockRule>(*rule);
             layer_names.append(layer_block.internal_name());
             break;
         }
@@ -102,6 +111,22 @@ FlyString CSSRule::parent_layer_internal_qualified_name_slow_case() const
         case Type::Page:
         case Type::Margin:
             break;
+        }
+    }
+
+    // If this style sheet is owned by a rule, include its qualified layer name.
+    if (m_parent_style_sheet && m_parent_style_sheet->owner_rule()) {
+        if (auto* import = as_if<CSSImportRule>(*m_parent_style_sheet->owner_rule())) {
+            // https://drafts.csswg.org/css-cascade-5/#at-import
+            // The layer is added to the layer order even if the import fails to load the stylesheet, but is subject to
+            // any import conditions (just as if declared by an @layer rule wrapped in the appropriate conditional
+            // group rules).
+            if (auto layer_name = import->internal_layer_name(); layer_name.has_value() && import->matches()) {
+                layer_names.append(layer_name.release_value());
+                auto parent_qualified_layer_name = m_parent_style_sheet->owner_rule()->parent_layer_internal_qualified_name();
+                if (!parent_qualified_layer_name.is_empty())
+                    layer_names.append(move(parent_qualified_layer_name));
+            }
         }
     }
 

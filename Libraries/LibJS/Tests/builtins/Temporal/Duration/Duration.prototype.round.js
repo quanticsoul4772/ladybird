@@ -38,10 +38,7 @@ describe("correct behavior", () => {
             ["nanosecond", { nanoseconds: 1840300200300400 }],
             ["microsecond", { microseconds: 1840300200300, nanoseconds: 400 }],
             ["millisecond", { milliseconds: 1840300200, microseconds: 300, nanoseconds: 400 }],
-            [
-                "second",
-                { seconds: 1840300, milliseconds: 200, microseconds: 300, nanoseconds: 400 },
-            ],
+            ["second", { seconds: 1840300, milliseconds: 200, microseconds: 300, nanoseconds: 400 }],
             [
                 "minute",
                 {
@@ -123,6 +120,14 @@ describe("correct behavior", () => {
 
         expect(result.toString()).toBe("PT0S");
     });
+
+    test("leap day rounding", () => {
+        const duration = new Temporal.Duration(1, 0, 0, 0, 1);
+        const relativeTo = new Temporal.PlainDate(2020, 2, 29);
+
+        const result = duration.round({ smallestUnit: "years", relativeTo });
+        expect(result.toString()).toBe("P1Y");
+    });
 });
 
 describe("errors", () => {
@@ -143,20 +148,14 @@ describe("errors", () => {
         const duration = new Temporal.Duration(1);
         expect(() => {
             duration.round({ smallestUnit: "second", roundingMode: "serenityOS" });
-        }).toThrowWithMessage(
-            RangeError,
-            "serenityOS is not a valid value for option roundingMode"
-        );
+        }).toThrowWithMessage(RangeError, "serenityOS is not a valid value for option roundingMode");
     });
 
     test("invalid smallest unit", () => {
         const duration = new Temporal.Duration(1);
         expect(() => {
             duration.round({ smallestUnit: "serenityOS" });
-        }).toThrowWithMessage(
-            RangeError,
-            "serenityOS is not a valid value for option smallestUnit"
-        );
+        }).toThrowWithMessage(RangeError, "serenityOS is not a valid value for option smallestUnit");
     });
 
     test("increment may not be NaN", () => {
@@ -176,10 +175,7 @@ describe("errors", () => {
         }).toThrowWithMessage(RangeError, "0 is not a valid value for option roundingIncrement");
         expect(() => {
             duration.round({ smallestUnit: "second", roundingIncrement: Infinity });
-        }).toThrowWithMessage(
-            RangeError,
-            "Infinity is not a valid value for option roundingIncrement"
-        );
+        }).toThrowWithMessage(RangeError, "Infinity is not a valid value for option roundingIncrement");
     });
 
     test("must provide one or both of smallestUnit or largestUnit", () => {

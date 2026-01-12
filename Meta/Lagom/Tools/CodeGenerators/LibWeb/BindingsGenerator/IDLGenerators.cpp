@@ -122,6 +122,8 @@ static bool is_platform_object(Type const& type)
         "ServiceWorkerContainer"sv,
         "ServiceWorkerRegistration"sv,
         "SVGAnimationElement"sv,
+        "SVGLength"sv,
+        "SVGNumber"sv,
         "SVGTransform"sv,
         "ShadowRoot"sv,
         "SourceBuffer"sv,
@@ -697,7 +699,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
     @cpp_type@* @cpp_name@ = nullptr;
     if (!@js_name@@js_suffix@.is_nullish()) {
         if (!@js_name@@js_suffix@.is_object())
-            return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@.to_string_without_side_effects());
+            return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@);
 
         auto callback_type = vm.heap().allocate<WebIDL::CallbackType>(@js_name@@js_suffix@.as_object(), HTML::incumbent_realm());
         @cpp_name@ = TRY(throw_dom_exception_if_needed(vm, [&] { return @cpp_type@::create(realm, *callback_type); }));
@@ -706,7 +708,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         } else {
             scoped_generator.append(R"~~~(
     if (!@js_name@@js_suffix@.is_object())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@);
 
     auto callback_type = vm.heap().allocate<WebIDL::CallbackType>(@js_name@@js_suffix@.as_object(), HTML::incumbent_realm());
     auto @cpp_name@ = adopt_ref(*new @cpp_type@(callback_type));
@@ -1104,7 +1106,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
             if (optional)
                 callback_function_generator.append("&& !@js_name@@js_suffix@.is_undefined()");
             callback_function_generator.append(R"~~~()
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, @js_name@@js_suffix@.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, @js_name@@js_suffix@);
 )~~~");
         }
         // 2. Return the IDL callback function type value that represents a reference to the same object that V represents, with the incumbent realm as the callback context.
@@ -1175,11 +1177,11 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
 
         sequence_generator.append(R"~~~(
     if (!@js_name@@js_suffix@.is_object())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@);
 
     auto @js_name@@js_suffix@_iterator_method@recursion_depth@ = TRY(@js_name@@js_suffix@.get_method(vm, vm.well_known_symbol_iterator()));
     if (!@js_name@@js_suffix@_iterator_method@recursion_depth@)
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotIterable, @js_name@@js_suffix@.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotIterable, @js_name@@js_suffix@);
 )~~~");
 
         parameterized_type.generate_sequence_from_iterable(sequence_generator, ByteString::formatted("{}{}", acceptable_cpp_name, optional || parameter.type->is_nullable() ? "_non_optional" : ""), ByteString::formatted("{}{}", js_name, js_suffix), ByteString::formatted("{}{}_iterator_method{}", js_name, js_suffix, recursion_depth), interface, recursion_depth + 1);
@@ -1224,7 +1226,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         if (recursion_depth == 0) {
             record_generator.append(R"~~~(
     if (!@js_name@@js_suffix@.is_object())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObject, @js_name@@js_suffix@);
 
     auto& @js_name@@js_suffix@_object = @js_name@@js_suffix@.as_object();
 )~~~");
@@ -1634,7 +1636,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
             // NOTE: Currently all string types are converted to String.
 
             IDL::Parameter parameter { .type = *string_type, .name = ByteString::empty(), .optional_default_value = {}, .extended_attributes = {} };
-            generate_to_cpp(union_generator, parameter, js_name, js_suffix, ByteString::formatted("{}{}_string", js_name, js_suffix), interface, false, false, {}, false, recursion_depth + 1);
+            generate_to_cpp(union_generator, parameter, js_name, js_suffix, ByteString::formatted("{}{}_string", js_name, js_suffix), interface, legacy_null_to_empty_string, false, {}, false, recursion_depth + 1);
 
             union_generator.append(R"~~~(
         return { @js_name@@js_suffix@_string };
@@ -4395,7 +4397,7 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.setter_callback@)
     if (!cpp_value)
         impl->remove_attribute("@attribute.reflect_name@"_fly_string);
     else
-        MUST(impl->set_attribute("@attribute.reflect_name@"_fly_string, String {}));
+        impl->set_attribute_value("@attribute.reflect_name@"_fly_string, String {});
 )~~~");
                 } else if (attribute.type->name() == "unsigned long") {
                     // The setter steps are:
@@ -4411,11 +4413,11 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.setter_callback@)
     u32 new_value = minimum;
     if (cpp_value >= minimum && cpp_value <= 2147483647)
         new_value = cpp_value;
-    MUST(impl->set_attribute("@attribute.reflect_name@"_fly_string, String::number(new_value)));
+    impl->set_attribute_value("@attribute.reflect_name@"_fly_string, String::number(new_value));
 )~~~");
                 } else if (attribute.type->is_integer() && !attribute.type->is_nullable()) {
                     attribute_generator.append(R"~~~(
-    MUST(impl->set_attribute("@attribute.reflect_name@"_fly_string, String::number(cpp_value)));
+    impl->set_attribute_value("@attribute.reflect_name@"_fly_string, String::number(cpp_value));
 )~~~");
                 }
                 // If a reflected IDL attribute has the type T?, where T is either Element or an interface that inherits
@@ -4431,18 +4433,18 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.setter_callback@)
     static auto content_attribute = "@attribute.reflect_name@"_fly_string;
 
     if (!cpp_value) {
-        TRY(throw_dom_exception_if_needed(vm, [&] { return impl->set_@attribute.cpp_name@({}); }));
+        impl->set_@attribute.cpp_name@({});
         impl->remove_attribute(content_attribute);
         return JS::js_undefined();
     }
 )~~~");
                     // 2. Run this's set the content attribute with the empty string.
                     attribute_generator.append(R"~~~(
-    MUST(impl->set_attribute(content_attribute, String {}));
+    impl->set_attribute_value(content_attribute, String {});
 )~~~");
                     // 3. Set this's explicitly set attr-element to a weak reference to the given value.
                     attribute_generator.append(R"~~~(
-    TRY(throw_dom_exception_if_needed(vm, [&] { return impl->set_@attribute.cpp_name@(*cpp_value); }));
+    impl->set_@attribute.cpp_name@(*cpp_value);
 )~~~");
                 }
                 // If a reflected IDL attribute has the type FrozenArray<T>?, where T is either Element or an interface
@@ -4457,7 +4459,7 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.setter_callback@)
     static auto content_attribute = "@attribute.reflect_name@"_fly_string;
 
     if (!cpp_value.has_value()) {
-        TRY(throw_dom_exception_if_needed(vm, [&] { return impl->set_@attribute.cpp_name@({}); }));
+        impl->set_@attribute.cpp_name@({});
         impl->remove_attribute(content_attribute);
         return JS::js_undefined();
     }
@@ -4465,7 +4467,7 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.setter_callback@)
 
                     // 2. Run this's set the content attribute with the empty string.
                     attribute_generator.append(R"~~~(
-    MUST(impl->set_attribute(content_attribute, String {}));
+    impl->set_attribute_value(content_attribute, String {});
 )~~~");
 
                     // 3. Let elements be an empty list.
@@ -4480,18 +4482,18 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::@attribute.setter_callback@)
         elements.unchecked_append(*element);
     }
 
-    TRY(throw_dom_exception_if_needed(vm, [&] { return impl->set_@attribute.cpp_name@(move(elements)); }));
+    impl->set_@attribute.cpp_name@(move(elements));
 )~~~");
                 } else if (attribute.type->is_nullable()) {
                     attribute_generator.append(R"~~~(
     if (!cpp_value.has_value())
         impl->remove_attribute("@attribute.reflect_name@"_fly_string);
     else
-        TRY(throw_dom_exception_if_needed(vm, [&] { return impl->set_attribute("@attribute.reflect_name@"_fly_string, cpp_value.value()); }));
+        impl->set_attribute_value("@attribute.reflect_name@"_fly_string, cpp_value.value());
 )~~~");
                 } else {
                     attribute_generator.append(R"~~~(
-    TRY(throw_dom_exception_if_needed(vm, [&] { return impl->set_attribute("@attribute.reflect_name@"_fly_string, cpp_value); }));
+    impl->set_attribute_value("@attribute.reflect_name@"_fly_string, cpp_value);
 )~~~");
                 }
 
@@ -4642,7 +4644,7 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::for_each)
 
     auto callback = vm.argument(0);
     if (!callback.is_function())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, callback.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, callback);
 
     auto this_value = vm.this_value();
     TRY(impl->for_each([&](auto key, auto value) -> JS::ThrowCompletionOr<void> {
@@ -4770,7 +4772,7 @@ JS_DEFINE_NATIVE_FUNCTION(@class_name@::for_each)
 
     auto callback = vm.argument(0);
     if (!callback.is_function())
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, callback.to_string_without_side_effects());
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, callback);
 
     for (auto& entry : *set) {
         auto value = entry.key;

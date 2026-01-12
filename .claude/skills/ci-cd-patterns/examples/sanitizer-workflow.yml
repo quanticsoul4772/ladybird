@@ -1,0 +1,235 @@
+# Sanitizer Workflow for Ladybird
+# Memory safety testing with ASAN, UBSAN, MSAN, TSAN
+
+name: Sanitizer Testing
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  schedule:
+    - cron: '0 4 * * *'  # Daily at 4 AM UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Primary sanitizer check (ASAN + UBSAN)
+  asan-ubsan:
+    name: ASAN + UBSAN
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-20 \
+            cmake \
+            ninja-build \
+            ccache
+
+      - name: Set up vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git Build/vcpkg
+          ./Build/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Restore Caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ccache
+            Build/caches/vcpkg-binary-cache
+          key: sanitizer-${{ github.sha }}
+          restore-keys: sanitizer-
+
+      - name: Configure Build
+        env:
+          CC: clang-20
+          CXX: clang++-20
+          VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
+        run: cmake --preset Sanitizer
+
+      - name: Build
+        run: cmake --build Build --parallel $(nproc)
+
+      - name: Run Tests with ASAN + UBSAN
+        env:
+          ASAN_OPTIONS: "strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:allocator_may_return_null=1:detect_leaks=1"
+          UBSAN_OPTIONS: "print_stacktrace=1:print_summary=1:halt_on_error=1"
+          LSAN_OPTIONS: "suppressions=${{ github.workspace }}/Meta/sanitizers/lsan.supp"
+        run: |
+          ctest --preset Sanitizer \
+            --output-on-failure \
+            --timeout 300
+
+      - name: Upload Sanitizer Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asan-ubsan-logs
+          path: |
+            Build/sanitizers/Testing/Temporary/
+            asan.log.*
+          retention-days: 14
+
+  # Memory sanitizer (weekly, requires instrumented dependencies)
+  msan:
+    name: MSAN (Memory Sanitizer)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # Only run on schedule or manual trigger
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-20 \
+            cmake \
+            ninja-build
+
+      - name: Build Instrumented Dependencies
+        env:
+          CC: clang-20
+          CXX: clang++-20
+          CFLAGS: "-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -O1"
+          CXXFLAGS: "-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -O1"
+        run: |
+          # Build vcpkg dependencies with MSAN instrumentation
+          git clone https://github.com/microsoft/vcpkg.git Build/vcpkg
+          ./Build/vcpkg/bootstrap-vcpkg.sh
+          # This is slow - instrumented dependencies must be rebuilt
+
+      - name: Configure Build with MSAN
+        env:
+          CC: clang-20
+          CXX: clang++-20
+        run: |
+          cmake -B Build \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENABLE_MEMORY_SANITIZER=ON
+
+      - name: Build
+        run: cmake --build Build --parallel $(nproc)
+
+      - name: Run Tests with MSAN
+        env:
+          MSAN_OPTIONS: "symbolize=1:halt_on_error=1:print_stats=1"
+        run: |
+          ctest --test-dir Build \
+            --output-on-failure \
+            --timeout 300
+
+      - name: Upload MSAN Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msan-logs
+          path: Build/Testing/Temporary/
+          retention-days: 14
+
+  # Thread sanitizer (on-demand for concurrency changes)
+  tsan:
+    name: TSAN (Thread Sanitizer)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # Only run on manual trigger or for specific file changes
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[tsan]')
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-20 \
+            cmake \
+            ninja-build
+
+      - name: Set up vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git Build/vcpkg
+          ./Build/vcpkg/bootstrap-vcpkg.sh
+
+      - name: Configure Build with TSAN
+        env:
+          CC: clang-20
+          CXX: clang++-20
+          VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
+        run: |
+          cmake -B Build \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DENABLE_THREAD_SANITIZER=ON
+
+      - name: Build
+        run: cmake --build Build --parallel $(nproc)
+
+      - name: Run Tests with TSAN
+        env:
+          TSAN_OPTIONS: "second_deadlock_stack=1:halt_on_error=1:suppressions=${{ github.workspace }}/Meta/sanitizers/tsan.supp"
+        run: |
+          ctest --test-dir Build \
+            --output-on-failure \
+            --timeout 300
+
+      - name: Upload TSAN Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tsan-logs
+          path: Build/Testing/Temporary/
+          retention-days: 14
+
+  # Sanitizer summary report
+  sanitizer-summary:
+    name: Sanitizer Summary
+    runs-on: ubuntu-latest
+    needs: [asan-ubsan]
+    if: always()
+
+    steps:
+      - name: Generate Summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const jobs = [
+              { name: 'ASAN + UBSAN', status: '${{ needs.asan-ubsan.result }}' },
+            ];
+
+            let summary = '# Sanitizer Test Results\n\n';
+            summary += '| Sanitizer | Status |\n';
+            summary += '|-----------|--------|\n';
+
+            for (const job of jobs) {
+              const emoji = job.status === 'success' ? '✅' : '❌';
+              summary += `| ${job.name} | ${emoji} ${job.status} |\n`;
+            }
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: jobs.every(j => j.status === 'success') ? 'success' : 'failure',
+              context: 'Sanitizer Tests',
+              description: 'Memory safety tests completed'
+            });
+
+            core.summary.addRaw(summary);
+            await core.summary.write();

@@ -21,6 +21,7 @@
 #include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ShorthandStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
+#include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TransformationStyleValue.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
@@ -150,8 +151,7 @@ String CSSStyleProperties::item(size_t index) const
 
     if (index < custom_properties_count) {
         auto keys = m_custom_properties.keys();
-        auto custom_property = m_custom_properties.get(keys[index]);
-        return custom_property.ptr()->custom_name.to_string();
+        return keys[index].to_string();
     }
 
     return CSS::string_from_property_id(m_properties[index - custom_properties_count].property_id).to_string();
@@ -250,7 +250,6 @@ WebIDL::ExceptionOr<void> CSSStyleProperties::set_property_internal(PropertyName
                 .important = !priority.is_empty() ? Important::Yes : Important::No,
                 .property_id = property.id(),
                 .value = component_value_list.release_nonnull(),
-                .custom_name = property.name(),
             };
             m_custom_properties.set(property.name(), style_property);
             updated = true;
@@ -415,8 +414,11 @@ WebIDL::ExceptionOr<void> CSSStyleProperties::set_property_style_value(PropertyN
             StyleProperty {
                 Important::No,
                 PropertyID::Custom,
-                style_value,
-                property.name() });
+                style_value });
+
+        update_style_attribute();
+        invalidate_owners(DOM::StyleInvalidationReason::CSSStylePropertiesSetPropertyStyleValue);
+
         return {};
     }
 
@@ -440,6 +442,9 @@ WebIDL::ExceptionOr<void> CSSStyleProperties::set_property_style_value(PropertyN
             .value = longhand_value,
         });
     });
+
+    update_style_attribute();
+    invalidate_owners(DOM::StyleInvalidationReason::CSSStylePropertiesSetPropertyStyleValue);
 
     return {};
 }
@@ -517,14 +522,6 @@ Optional<StyleProperty> CSSStyleProperties::get_direct_property(PropertyNameAndI
 
         Layout::NodeWithStyle* layout_node = abstract_element.layout_node();
 
-        // Pending changes to an ancestor document's layout can affect an element's computed style e.g. an IFrame's
-        // width being changed can affect media query evaluation and the value of the `vw` unit.
-        // FIXME: This is likely overkill and can be optimized
-        for (auto const& navigable : abstract_element.document().ancestor_navigables()) {
-            if (navigable->active_document())
-                navigable->active_document()->update_layout(DOM::UpdateLayoutReason::ResolvedCSSStyleDeclarationProperty);
-        }
-
         // FIXME: Be smarter about updating layout if there's no layout node.
         //        We may legitimately have no layout node if we're not visible, but this protects against situations
         //        where we're requesting the computed style before layout has happened.
@@ -542,7 +539,6 @@ Optional<StyleProperty> CSSStyleProperties::get_direct_property(PropertyNameAndI
                 return StyleProperty {
                     .property_id = property_id,
                     .value = maybe_value.release_nonnull(),
-                    .custom_name = property_name_and_id.name(),
                 };
             }
             return {};
@@ -567,7 +563,7 @@ Optional<StyleProperty> CSSStyleProperties::get_direct_property(PropertyNameAndI
     }
 
     if (property_name_and_id.is_custom_property())
-        return custom_property(property_name_and_id.name()).map([](auto& it) { return it; });
+        return custom_property(property_name_and_id.name()).copy();
 
     for (auto const& property : m_properties) {
         if (property.property_id == property_id)
@@ -881,6 +877,30 @@ RefPtr<StyleValue const> CSSStyleProperties::style_value_for_computed_property(L
             };
             return TransformationStyleValue::create(PropertyID::Transform, TransformFunction::Matrix3d, move(parameters));
         }
+    }
+    case PropertyID::AnimationDuration: {
+        // https://drafts.csswg.org/css-animations-2/#animation-duration
+        // For backwards-compatibility with Level 1, when the computed value of animation-timeline is auto (i.e. only
+        // one list value, and that value being auto), the resolved value of auto for animation-duration is 0s whenever
+        // its used value would also be 0s.
+        auto const& animation_timeline_computed_value = get_computed_value(PropertyID::AnimationTimeline);
+        auto const& animation_duration_computed_value = get_computed_value(PropertyID::AnimationDuration);
+
+        if (animation_timeline_computed_value.as_value_list().size() == 1 && animation_timeline_computed_value.as_value_list().values()[0]->to_keyword() == Keyword::Auto) {
+            StyleValueVector resolved_durations;
+
+            for (auto const& duration : animation_duration_computed_value.as_value_list().values()) {
+                if (duration->to_keyword() == Keyword::Auto) {
+                    resolved_durations.append(TimeStyleValue::create(Time::make_seconds(0)));
+                } else {
+                    resolved_durations.append(duration);
+                }
+            }
+
+            return StyleValueList::create(move(resolved_durations), StyleValueList::Separator::Comma);
+        }
+
+        return animation_duration_computed_value;
     }
 
         // -> Any other property

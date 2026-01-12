@@ -20,17 +20,17 @@ GC::Ref<CSSAnimation> CSSAnimation::create(JS::Realm& realm)
 }
 
 // https://www.w3.org/TR/css-animations-2/#animation-composite-order
-Optional<int> CSSAnimation::class_specific_composite_order(GC::Ref<Animations::Animation> other_animation) const
+int CSSAnimation::class_specific_composite_order(GC::Ref<Animations::Animation> other_animation) const
 {
     auto other = GC::Ref { as<CSSAnimation>(*other_animation) };
 
     // The existence of an owning element determines the animation class, so both animations should have their owning
     // element in the same state
-    VERIFY(!owning_element() == !other->owning_element());
+    VERIFY(owning_element().has_value() == other->owning_element().has_value());
 
     // Within the set of CSS Animations with an owning element, two animations A and B are sorted in composite order
     // (first to last) as follows:
-    if (owning_element()) {
+    if (owning_element().has_value()) {
         // 1. If the owning element of A and B differs, sort A and B by tree order of their corresponding owning elements.
         //    With regard to pseudo-elements, the sort order is as follows:
         //    - element
@@ -40,15 +40,15 @@ Optional<int> CSSAnimation::class_specific_composite_order(GC::Ref<Animations::A
         //      codepoints that make up each selector
         //    - ::after
         //    - element children
-        if (owning_element().ptr() != other->owning_element().ptr()) {
+        if (owning_element() != other->owning_element()) {
             // FIXME: Sort by tree order
-            return {};
+            return 0;
         }
 
         // 2. Otherwise, sort A and B based on their position in the computed value of the animation-name property of the
         //    (common) owning element.
         // FIXME: Do this when animation-name supports multiple values
-        return {};
+        return 0;
     }
 
     // The composite order of CSS Animations without an owning element is based on their position in the global animation list.
@@ -57,7 +57,7 @@ Optional<int> CSSAnimation::class_specific_composite_order(GC::Ref<Animations::A
 
 Animations::AnimationClass CSSAnimation::animation_class() const
 {
-    if (owning_element())
+    if (owning_element().has_value())
         return Animations::AnimationClass::CSSAnimationWithOwningElement;
     return Animations::AnimationClass::CSSAnimationWithoutOwningElement;
 }

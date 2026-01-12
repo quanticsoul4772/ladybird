@@ -1,0 +1,249 @@
+# Example: Adding a New Service/Executable to Ladybird
+
+# File: Services/MyService/CMakeLists.txt
+
+# Disable Qt auto-tools (unless service needs Qt)
+set(CMAKE_AUTOMOC OFF)
+set(CMAKE_AUTORCC OFF)
+set(CMAKE_AUTOUIC OFF)
+
+# Service implementation as static library
+# This allows testing without IPC overhead
+set(SOURCES
+    ConnectionFromClient.cpp
+    ServiceLogic.cpp
+    RequestHandler.cpp
+    Cache/CacheManager.cpp
+    Utils/Helper.cpp
+)
+
+# IPC-generated endpoint headers
+set(GENERATED_SOURCES
+    MyServiceClientEndpoint.h
+    MyServiceServerEndpoint.h
+)
+
+# Create service library (for testing and reuse)
+add_library(myserviceservice STATIC ${SOURCES} ${GENERATED_SOURCES})
+
+# Mark generated sources as such
+ladybird_generated_sources(myserviceservice)
+
+# Main service executable (runs as separate process)
+add_executable(MyService main.cpp)
+
+# Optional: Test executables
+add_executable(TestMyService TestMyService.cpp)
+add_executable(TestServiceLogic TestServiceLogic.cpp)
+
+# Optional: Command-line tool
+add_executable(myservice-cli ../../Tools/myservice-cli.cpp)
+
+# Include directories
+# Allow service to see generated IPC headers
+target_include_directories(myserviceservice
+    PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/../..  # For generated endpoints
+        ${LADYBIRD_SOURCE_DIR}/Services/   # For other service headers
+)
+
+# Link service executable to service library
+target_link_libraries(MyService PRIVATE myserviceservice)
+target_link_libraries(TestMyService PRIVATE myserviceservice)
+target_link_libraries(TestServiceLogic PRIVATE myserviceservice)
+target_link_libraries(myservice-cli PRIVATE myserviceservice)
+
+# Service library dependencies
+target_link_libraries(myserviceservice
+    PUBLIC
+        LibCore         # Event loop, core types
+        LibIPC          # IPC infrastructure
+        LibMain         # Main entry point
+    PRIVATE
+        LibCrypto       # Cryptography
+        LibFileSystem   # File operations
+        LibDatabase     # SQLite wrapper
+        LibURL          # URL parsing
+)
+
+# Optional: Find and link external dependencies
+find_package(CURL REQUIRED)
+target_link_libraries(myserviceservice PRIVATE CURL::libcurl)
+
+# Optional: Custom external library
+find_library(CUSTOM_LIBRARY
+    NAMES customlib libcustom
+    PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+)
+find_path(CUSTOM_INCLUDE_DIR
+    custom.h
+    PATHS /usr/include /usr/local/include
+)
+
+if(NOT CUSTOM_LIBRARY)
+    message(WARNING "CustomLib not found. Feature disabled.")
+    target_compile_definitions(myserviceservice PRIVATE NO_CUSTOM_FEATURE=1)
+else()
+    message(STATUS "Found CustomLib: ${CUSTOM_LIBRARY}")
+    target_include_directories(myserviceservice PRIVATE ${CUSTOM_INCLUDE_DIR})
+    target_link_libraries(myserviceservice PRIVATE ${CUSTOM_LIBRARY})
+    target_compile_definitions(myserviceservice PRIVATE HAS_CUSTOM_FEATURE=1)
+endif()
+
+# Optional: Platform-specific linking
+if (WIN32)
+    # Windows-specific binary setup
+    lagom_windows_bin(MyService)
+    target_link_libraries(myserviceservice PRIVATE ws2_32)  # Winsock
+endif()
+
+if (${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
+    # Solaris networking libraries
+    target_link_libraries(myserviceservice PUBLIC nsl socket)
+endif()
+
+if (HAIKU)
+    # Haiku networking library
+    target_link_libraries(MyService PRIVATE network)
+endif()
+
+if (ANDROID)
+    # Android needs LibWebView for resource paths
+    target_link_libraries(myserviceservice PUBLIC LibWebView)
+endif()
+
+# Optional: Install targets
+install(TARGETS MyService myservice-cli
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Optional: Install data files
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/Base/res/myservice/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/ladybird/myservice
+)
+
+# Optional: Install configuration
+install(FILES ${CMAKE_SOURCE_DIR}/Base/etc/myservice.conf
+    DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/ladybird
+)
+
+# ============================================================
+# IPC Endpoint Compilation
+# ============================================================
+# Compile IPC definitions to generate endpoint headers
+# These must be compiled BEFORE adding to GENERATED_SOURCES
+
+# Client endpoint (service receives messages)
+compile_ipc(MyService.ipc MyServiceClientEndpoint.h)
+
+# Server endpoint (service sends messages)
+compile_ipc(MyClient.ipc MyServiceServerEndpoint.h)
+
+# ============================================================
+# File Structure
+# ============================================================
+# Services/MyService/
+# ├── CMakeLists.txt (this file)
+# ├── main.cpp (service entry point)
+# ├── MyService.ipc (IPC definition - server side)
+# ├── MyClient.ipc (IPC definition - client side)
+# ├── ConnectionFromClient.h
+# ├── ConnectionFromClient.cpp
+# ├── ServiceLogic.h
+# ├── ServiceLogic.cpp
+# ├── RequestHandler.h
+# ├── RequestHandler.cpp
+# ├── Cache/
+# │   ├── CacheManager.h
+# │   └── CacheManager.cpp
+# ├── Utils/
+# │   ├── Helper.h
+# │   └── Helper.cpp
+# ├── TestMyService.cpp
+# └── TestServiceLogic.cpp
+#
+# Tools/
+# └── myservice-cli.cpp (command-line client)
+
+# ============================================================
+# IPC Definition Example
+# ============================================================
+# File: MyService.ipc
+#
+# endpoint MyService {
+#     // Synchronous message (=> returns response)
+#     start_operation(i32 operation_id, ByteString name) => (bool success)
+#
+#     // Asynchronous message (=| no response)
+#     notify_status(i32 operation_id, ByteString status) =|
+#
+#     // Message with complex types
+#     process_data(Vector<ByteString> items, HashMap<ByteString, ByteString> metadata) => (ErrorOr<ByteString> result)
+# }
+
+# ============================================================
+# main.cpp Example
+# ============================================================
+# #include <LibCore/EventLoop.h>
+# #include <LibCore/System.h>
+# #include <LibIPC/SingleServer.h>
+# #include <LibMain/Main.h>
+# #include <Services/MyService/ConnectionFromClient.h>
+#
+# ErrorOr<int> ladybird_main(Main::Arguments)
+# {
+#     Core::EventLoop event_loop;
+#
+#     TRY(Core::System::pledge("stdio unix recvfd sendfd"));
+#     TRY(Core::System::unveil(nullptr, nullptr));
+#
+#     auto server = TRY(IPC::MultiServer<MyService::ConnectionFromClient>::try_create());
+#
+#     return event_loop.exec();
+# }
+
+# ============================================================
+# ConnectionFromClient.h Example
+# ============================================================
+# #pragma once
+#
+# #include <AK/HashMap.h>
+# #include <LibIPC/ConnectionFromClient.h>
+# #include <Services/MyService/MyServiceClientEndpoint.h>
+# #include <Services/MyService/MyServiceServerEndpoint.h>
+#
+# namespace MyService {
+#
+# class ConnectionFromClient final
+#     : public IPC::ConnectionFromClient<MyServiceClientEndpoint, MyServiceServerEndpoint> {
+#     C_OBJECT(ConnectionFromClient);
+#
+# public:
+#     virtual ~ConnectionFromClient() override = default;
+#
+# private:
+#     explicit ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket>);
+#
+#     // IPC message handlers
+#     Messages::MyService::StartOperationResponse start_operation(i32 operation_id, ByteString const& name);
+#     void notify_status(i32 operation_id, ByteString const& status);
+# };
+#
+# }
+
+# ============================================================
+# Adding Service to Build
+# ============================================================
+# 1. Create Services/MyService/ directory
+# 2. Add CMakeLists.txt (this file)
+# 3. Update Services/CMakeLists.txt:
+#    add_subdirectory(MyService)
+#
+# 4. Build:
+#    ./Meta/ladybird.py build MyService
+#
+# 5. Run:
+#    ./Build/release/bin/MyService
+#
+# 6. Test:
+#    ./Build/release/bin/TestMyService

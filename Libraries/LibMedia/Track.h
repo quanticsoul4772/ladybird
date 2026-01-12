@@ -12,20 +12,16 @@
 #include <AK/Types.h>
 #include <AK/Utf16String.h>
 #include <AK/Variant.h>
+#include <LibMedia/Color/CodingIndependentCodePoints.h>
+#include <LibMedia/TrackType.h>
 
 namespace Media {
-
-enum class TrackType : u32 {
-    Video,
-    Audio,
-    Subtitles,
-    Unknown,
-};
 
 class Track {
     struct VideoData {
         u64 pixel_width { 0 };
         u64 pixel_height { 0 };
+        CodingIndependentCodePoints cicp;
     };
 
 public:

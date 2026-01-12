@@ -1,20 +1,25 @@
 /*
  * Copyright (c) 2024-2025, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
  * Copyright (c) 2024-2025, Luke Wilde <luke@ladybird.org>
+ * Copyright (c) 2025, Undefine <undefine@undefine.pl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #define GL_GLEXT_PROTOTYPES 1
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
+
+#include <GLES3/gl3.h>
 extern "C" {
+#include <GLES2/gl2ext.h>
 #include <GLES2/gl2ext_angle.h>
 }
 
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/DataView.h>
 #include <LibJS/Runtime/TypedArray.h>
+#include <LibWeb/DOM/Document.h>
+#include <LibWeb/HTML/HTMLCanvasElement.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLActiveInfo.h>
 #include <LibWeb/WebGL/WebGLBuffer.h>
@@ -27,324 +32,17 @@ extern "C" {
 #include <LibWeb/WebGL/WebGLShaderPrecisionFormat.h>
 #include <LibWeb/WebGL/WebGLSync.h>
 #include <LibWeb/WebGL/WebGLTexture.h>
+#include <LibWeb/WebGL/WebGLTransformFeedback.h>
 #include <LibWeb/WebGL/WebGLUniformLocation.h>
 #include <LibWeb/WebGL/WebGLVertexArrayObject.h>
 #include <LibWeb/WebIDL/Buffers.h>
 
 namespace Web::WebGL {
 
-static Vector<GLchar> null_terminated_string(StringView string)
-{
-    Vector<GLchar> result;
-    for (auto c : string.bytes())
-        result.append(c);
-    result.append('\0');
-    return result;
-}
-
 WebGLRenderingContextImpl::WebGLRenderingContextImpl(JS::Realm& realm, NonnullOwnPtr<OpenGLContext> context)
     : m_realm(realm)
     , m_context(move(context))
 {
-}
-
-void WebGLRenderingContextImpl::buffer_data(WebIDL::UnsignedLong target, WebIDL::LongLong size, WebIDL::UnsignedLong usage)
-{
-    m_context->make_current();
-
-    glBufferData(target, size, 0, usage);
-}
-
-void WebGLRenderingContextImpl::buffer_data(WebIDL::UnsignedLong target, GC::Root<WebIDL::BufferSource> data, WebIDL::UnsignedLong usage)
-{
-    m_context->make_current();
-
-    auto span = MUST(get_offset_span<u8 const>(*data, /* src_offset= */ 0));
-    glBufferData(target, span.size(), span.data(), usage);
-}
-
-void WebGLRenderingContextImpl::buffer_sub_data(WebIDL::UnsignedLong target, WebIDL::LongLong offset, GC::Root<WebIDL::BufferSource> data)
-{
-    m_context->make_current();
-
-    auto span = MUST(get_offset_span<u8 const>(*data, /* src_offset= */ 0));
-    glBufferSubData(target, offset, span.size(), span.data());
-}
-
-void WebGLRenderingContextImpl::compressed_tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::UnsignedLong internalformat, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border, GC::Root<WebIDL::ArrayBufferView> data)
-{
-    m_context->make_current();
-
-    auto span = MUST(get_offset_span<u8 const>(*data, /* src_offset= */ 0));
-    glCompressedTexImage2DRobustANGLE(target, level, internalformat, width, height, border, span.size(), span.size(), span.data());
-}
-
-void WebGLRenderingContextImpl::compressed_tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, GC::Root<WebIDL::ArrayBufferView> data)
-{
-    m_context->make_current();
-
-    auto span = MUST(get_offset_span<u8 const>(*data, /* src_offset= */ 0));
-    glCompressedTexSubImage2DRobustANGLE(target, level, xoffset, yoffset, width, height, format, span.size(), span.size(), span.data());
-}
-
-void WebGLRenderingContextImpl::read_pixels(WebIDL::Long x, WebIDL::Long y, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels)
-{
-    m_context->make_current();
-
-    if (!pixels) {
-        return;
-    }
-
-    auto span = MUST(get_offset_span<u8>(*pixels, /* src_offset= */ 0));
-    glReadPixelsRobustANGLE(x, y, width, height, format, type, span.size(), nullptr, nullptr, nullptr, span.data());
-}
-
-void WebGLRenderingContextImpl::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::Long width, WebIDL::Long height, WebIDL::Long border, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels)
-{
-    m_context->make_current();
-
-    if (pixels) {
-        auto span = MUST(get_offset_span<u8>(*pixels, /* src_offset= */ 0));
-        glTexImage2DRobustANGLE(target, level, internalformat, width, height, border, format, type, span.size(), span.data());
-        return;
-    }
-
-    Checked<size_t> bytes = 0;
-    if (type == GL_UNSIGNED_SHORT_5_6_5 && format != GL_RGB) {
-        set_error(GL_INVALID_OPERATION);
-        return;
-    }
-
-    if ((type == GL_UNSIGNED_SHORT_4_4_4_4 || type == GL_UNSIGNED_SHORT_5_5_5_1) && format != GL_RGBA) {
-        set_error(GL_INVALID_OPERATION);
-        return;
-    }
-
-    switch (format) {
-    case GL_ALPHA:
-    case GL_LUMINANCE:
-    case GL_LUMINANCE_ALPHA: {
-        if (type != GL_UNSIGNED_BYTE) {
-            set_error(GL_INVALID_ENUM);
-            return;
-        }
-
-        bytes = format == GL_LUMINANCE_ALPHA ? 2 : 1;
-        break;
-    }
-    case GL_RGB:
-    case GL_RGBA: {
-        switch (type) {
-        case GL_UNSIGNED_BYTE:
-            bytes = format == GL_RGB ? 3 : 4;
-            break;
-        case GL_UNSIGNED_SHORT_4_4_4_4:
-        case GL_UNSIGNED_SHORT_5_5_5_1:
-        case GL_UNSIGNED_SHORT_5_6_5:
-            bytes = 2;
-            break;
-        default:
-            set_error(GL_INVALID_ENUM);
-            return;
-        }
-
-        break;
-    }
-    default:
-        set_error(GL_INVALID_ENUM);
-        return;
-    }
-
-    bytes *= width;
-    bytes *= height;
-
-    if (bytes.has_overflow()) {
-        set_error(GL_INVALID_OPERATION);
-        return;
-    }
-
-    auto byte_buffer = MUST(ByteBuffer::create_zeroed(bytes.value_unchecked()));
-    glTexImage2DRobustANGLE(target, level, internalformat, width, height, border, format, type, byte_buffer.size(), byte_buffer.data());
-}
-
-void WebGLRenderingContextImpl::tex_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long internalformat, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
-{
-    m_context->make_current();
-
-    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type);
-    if (!maybe_converted_texture.has_value())
-        return;
-    auto converted_texture = maybe_converted_texture.release_value();
-    glTexImage2DRobustANGLE(target, level, internalformat, converted_texture.width, converted_texture.height, 0, format, type, converted_texture.buffer.size(), converted_texture.buffer.data());
-}
-
-void WebGLRenderingContextImpl::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::Long width, WebIDL::Long height, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, GC::Root<WebIDL::ArrayBufferView> pixels)
-{
-    m_context->make_current();
-
-    auto span = MUST(get_offset_span<u8>(*pixels, /* src_offset= */ 0));
-    glTexSubImage2DRobustANGLE(target, level, xoffset, yoffset, width, height, format, type, span.size(), span.data());
-}
-
-void WebGLRenderingContextImpl::tex_sub_image2d(WebIDL::UnsignedLong target, WebIDL::Long level, WebIDL::Long xoffset, WebIDL::Long yoffset, WebIDL::UnsignedLong format, WebIDL::UnsignedLong type, TexImageSource source)
-{
-    m_context->make_current();
-
-    auto maybe_converted_texture = read_and_pixel_convert_texture_image_source(source, format, type);
-
-    if (!maybe_converted_texture.has_value())
-        return;
-    auto converted_texture = maybe_converted_texture.release_value();
-    glTexSubImage2DRobustANGLE(target, level, xoffset, yoffset, converted_texture.width, converted_texture.height, format, type, converted_texture.buffer.size(), converted_texture.buffer.data());
-}
-
-void WebGLRenderingContextImpl::uniform1fv(GC::Root<WebGLUniformLocation> location, Float32List v)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    auto span = MUST(span_from_float32_list(v, /* src_offset= */ 0));
-    glUniform1fv(location->handle(), span.size(), span.data());
-}
-
-void WebGLRenderingContextImpl::uniform2fv(GC::Root<WebGLUniformLocation> location, Float32List v)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    auto span = MUST(span_from_float32_list(v, /* src_offset= */ 0));
-    if (span.size() % 2 != 0) [[unlikely]] {
-        set_error(GL_INVALID_VALUE);
-        return;
-    }
-    glUniform2fv(location->handle(), span.size() / 2, span.data());
-}
-
-void WebGLRenderingContextImpl::uniform3fv(GC::Root<WebGLUniformLocation> location, Float32List v)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    auto span = MUST(span_from_float32_list(v, /* src_offset= */ 0));
-    if (span.size() % 3 != 0) [[unlikely]] {
-        set_error(GL_INVALID_VALUE);
-        return;
-    }
-    glUniform3fv(location->handle(), span.size() / 3, span.data());
-}
-
-void WebGLRenderingContextImpl::uniform4fv(GC::Root<WebGLUniformLocation> location, Float32List v)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    auto span = MUST(span_from_float32_list(v, /* src_offset= */ 0));
-    if (span.size() % 4 != 0) [[unlikely]] {
-        set_error(GL_INVALID_VALUE);
-        return;
-    }
-    glUniform4fv(location->handle(), span.size() / 4, span.data());
-}
-
-void WebGLRenderingContextImpl::uniform1iv(GC::Root<WebGLUniformLocation> location, Int32List v)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    auto span = MUST(span_from_int32_list(v, /* src_offset= */ 0));
-    glUniform1iv(location->handle(), span.size(), span.data());
-}
-
-void WebGLRenderingContextImpl::uniform2iv(GC::Root<WebGLUniformLocation> location, Int32List v)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    auto span = MUST(span_from_int32_list(v, /* src_offset= */ 0));
-    if (span.size() % 2 != 0) [[unlikely]] {
-        set_error(GL_INVALID_VALUE);
-        return;
-    }
-    glUniform2iv(location->handle(), span.size() / 2, span.data());
-}
-
-void WebGLRenderingContextImpl::uniform3iv(GC::Root<WebGLUniformLocation> location, Int32List v)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    auto span = MUST(span_from_int32_list(v, /* src_offset= */ 0));
-    if (span.size() % 3 != 0) [[unlikely]] {
-        set_error(GL_INVALID_VALUE);
-        return;
-    }
-    glUniform3iv(location->handle(), span.size() / 3, span.data());
-}
-
-void WebGLRenderingContextImpl::uniform4iv(GC::Root<WebGLUniformLocation> location, Int32List v)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    auto span = MUST(span_from_int32_list(v, /* src_offset= */ 0));
-    if (span.size() % 4 != 0) [[unlikely]] {
-        set_error(GL_INVALID_VALUE);
-        return;
-    }
-    glUniform4iv(location->handle(), span.size() / 4, span.data());
-}
-
-void WebGLRenderingContextImpl::uniform_matrix2fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List value)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    constexpr auto matrix_size = 2 * 2;
-    auto span = MUST(span_from_float32_list(value, /* src_offset= */ 0));
-    if (span.size() % matrix_size != 0) [[unlikely]] {
-        set_error(GL_INVALID_VALUE);
-        return;
-    }
-    glUniformMatrix2fv(location->handle(), span.size() / matrix_size, transpose, span.data());
-}
-
-void WebGLRenderingContextImpl::uniform_matrix3fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List value)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    constexpr auto matrix_size = 3 * 3;
-    auto span = MUST(span_from_float32_list(value, /* src_offset= */ 0));
-    if (span.size() % matrix_size != 0) [[unlikely]] {
-        set_error(GL_INVALID_VALUE);
-        return;
-    }
-    glUniformMatrix3fv(location->handle(), span.size() / matrix_size, transpose, span.data());
-}
-
-void WebGLRenderingContextImpl::uniform_matrix4fv(GC::Root<WebGLUniformLocation> location, bool transpose, Float32List value)
-{
-    m_context->make_current();
-
-    if (!location)
-        return;
-    constexpr auto matrix_size = 4 * 4;
-    auto span = MUST(span_from_float32_list(value, /* src_offset= */ 0));
-    if (span.size() % matrix_size != 0) [[unlikely]] {
-        set_error(GL_INVALID_VALUE);
-        return;
-    }
-    glUniformMatrix4fv(location->handle(), span.size() / matrix_size, transpose, span.data());
 }
 
 void WebGLRenderingContextImpl::active_texture(WebIDL::UnsignedLong texture)
@@ -439,20 +137,57 @@ void WebGLRenderingContextImpl::bind_buffer(WebIDL::UnsignedLong target, GC::Roo
             return;
         }
         buffer_handle = handle_or_error.release_value();
+
+        if (!buffer->is_compatible_with(target)) {
+            set_error(GL_INVALID_OPERATION);
+            return;
+        }
     }
 
-    switch (target) {
-    case GL_ELEMENT_ARRAY_BUFFER:
-        m_element_array_buffer_binding = buffer;
-        break;
-    case GL_ARRAY_BUFFER:
-        m_array_buffer_binding = buffer;
-        break;
-
-    default:
-        dbgln("Unknown WebGL buffer object binding target for storing current binding: 0x{:04x}", target);
-        set_error(GL_INVALID_ENUM);
-        return;
+    if (m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2) {
+        switch (target) {
+        case GL_ARRAY_BUFFER:
+            m_array_buffer_binding = buffer;
+            break;
+        case GL_COPY_READ_BUFFER:
+            m_copy_read_buffer_binding = buffer;
+            break;
+        case GL_COPY_WRITE_BUFFER:
+            m_copy_write_buffer_binding = buffer;
+            break;
+        case GL_ELEMENT_ARRAY_BUFFER:
+            m_element_array_buffer_binding = buffer;
+            break;
+        case GL_PIXEL_PACK_BUFFER:
+            m_pixel_pack_buffer_binding = buffer;
+            break;
+        case GL_PIXEL_UNPACK_BUFFER:
+            m_pixel_unpack_buffer_binding = buffer;
+            break;
+        case GL_TRANSFORM_FEEDBACK_BUFFER:
+            m_transform_feedback_buffer_binding = buffer;
+            break;
+        case GL_UNIFORM_BUFFER:
+            m_uniform_buffer_binding = buffer;
+            break;
+        default:
+            dbgln("Unknown WebGL buffer object binding target for storing current binding: 0x{:04x}", target);
+            set_error(GL_INVALID_ENUM);
+            return;
+        }
+    } else {
+        switch (target) {
+        case GL_ELEMENT_ARRAY_BUFFER:
+            m_element_array_buffer_binding = buffer;
+            break;
+        case GL_ARRAY_BUFFER:
+            m_array_buffer_binding = buffer;
+            break;
+        default:
+            dbgln("Unknown WebGL buffer object binding target for storing current binding: 0x{:04x}", target);
+            set_error(GL_INVALID_ENUM);
+            return;
+        }
     }
 
     glBindBuffer(target, buffer_handle);
@@ -515,6 +250,23 @@ void WebGLRenderingContextImpl::bind_texture(WebIDL::UnsignedLong target, GC::Ro
     case GL_TEXTURE_CUBE_MAP:
         m_texture_binding_cube_map = texture;
         break;
+
+    case GL_TEXTURE_2D_ARRAY:
+        if (m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2) {
+            m_texture_binding_2d_array = texture;
+            break;
+        }
+
+        set_error(GL_INVALID_ENUM);
+        return;
+    case GL_TEXTURE_3D:
+        if (m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2) {
+            m_texture_binding_3d = texture;
+            break;
+        }
+
+        set_error(GL_INVALID_ENUM);
+        return;
 
     default:
         dbgln("Unknown WebGL texture target for storing current binding: 0x{:04x}", target);
@@ -730,6 +482,8 @@ void WebGLRenderingContextImpl::delete_program(GC::Root<WebGLProgram> program)
         program_handle = handle_or_error.release_value();
     }
     glDeleteProgram(program_handle);
+    if (m_current_program == program)
+        m_current_program = nullptr;
 }
 
 void WebGLRenderingContextImpl::delete_renderbuffer(GC::Root<WebGLRenderbuffer> renderbuffer)
@@ -1318,6 +1072,8 @@ JS::Value WebGLRenderingContextImpl::get_parameter(WebIDL::UnsignedLong pname)
         return JS::Value(m_renderbuffer_binding);
     }
     case GL_RENDERER: {
+        // Track potential fingerprinting (Milestone 0.4 Phase 4)
+        canvas_for_binding()->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getParameter"sv);
         auto result = reinterpret_cast<char const*>(glGetString(GL_RENDERER));
         return JS::PrimitiveString::create(m_realm->vm(), ByteString { result });
     }
@@ -1366,6 +1122,8 @@ JS::Value WebGLRenderingContextImpl::get_parameter(WebIDL::UnsignedLong pname)
         return JS::Value(result == GL_TRUE);
     }
     case GL_SHADING_LANGUAGE_VERSION: {
+        // Track potential fingerprinting (Milestone 0.4 Phase 4)
+        canvas_for_binding()->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getParameter"sv);
         auto result = reinterpret_cast<char const*>(glGetString(GL_SHADING_LANGUAGE_VERSION));
         return JS::PrimitiveString::create(m_realm->vm(), ByteString { result });
     }
@@ -1475,10 +1233,14 @@ JS::Value WebGLRenderingContextImpl::get_parameter(WebIDL::UnsignedLong pname)
         return JS::Value(result);
     }
     case GL_VENDOR: {
+        // Track potential fingerprinting (Milestone 0.4 Phase 4)
+        canvas_for_binding()->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getParameter"sv);
         auto result = reinterpret_cast<char const*>(glGetString(GL_VENDOR));
         return JS::PrimitiveString::create(m_realm->vm(), ByteString { result });
     }
     case GL_VERSION: {
+        // Track potential fingerprinting (Milestone 0.4 Phase 4)
+        canvas_for_binding()->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getParameter"sv);
         auto result = reinterpret_cast<char const*>(glGetString(GL_VERSION));
         return JS::PrimitiveString::create(m_realm->vm(), ByteString { result });
     }
@@ -1491,6 +1253,37 @@ JS::Value WebGLRenderingContextImpl::get_parameter(WebIDL::UnsignedLong pname)
         auto array_buffer = JS::ArrayBuffer::create(m_realm, move(byte_buffer));
         return JS::Int32Array::create(m_realm, 4, array_buffer);
     }
+
+    case GL_FRAGMENT_SHADER_DERIVATIVE_HINT: { // NOTE: This has the same value as GL_FRAGMENT_SHADER_DERIVATIVE_HINT_OES
+        if (oes_standard_derivatives_extension_enabled() || m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2) {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_FRAGMENT_SHADER_DERIVATIVE_HINT, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+
+        set_error(GL_INVALID_ENUM);
+        return JS::js_null();
+    }
+    case GL_MAX_COLOR_ATTACHMENTS: { // NOTE: This has the same value as MAX_COLOR_ATTACHMENTS_WEBGL
+        if (webgl_draw_buffers_extension_enabled() || m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2) {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_COLOR_ATTACHMENTS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+
+        set_error(GL_INVALID_ENUM);
+        return JS::js_null();
+    }
+    case GL_MAX_DRAW_BUFFERS: {
+        if (m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2) { // FIXME: Allow this code path for MAX_DRAW_BUFFERS_WEBGL
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_DRAW_BUFFERS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+
+        set_error(GL_INVALID_ENUM);
+        return JS::js_null();
+    }
     case GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: {
         if (ext_texture_filter_anisotropic_extension_enabled()) {
             GLfloat result { 0.0f };
@@ -1501,19 +1294,271 @@ JS::Value WebGLRenderingContextImpl::get_parameter(WebIDL::UnsignedLong pname)
         set_error(GL_INVALID_ENUM);
         return JS::js_null();
     }
+
+    case COMPRESSED_TEXTURE_FORMATS: {
+        auto formats = enabled_compressed_texture_formats();
+        auto byte_buffer = MUST(ByteBuffer::copy(formats.data(), formats.reinterpret<u8 const>().size()));
+        auto array_buffer = JS::ArrayBuffer::create(m_realm, move(byte_buffer));
+        return JS::Uint32Array::create(m_realm, formats.size(), array_buffer);
+    }
     case UNPACK_FLIP_Y_WEBGL:
         return JS::Value(m_unpack_flip_y);
-    default:
-        dbgln("Unknown WebGL parameter name: {:x}", pname);
-        set_error(GL_INVALID_ENUM);
-        return JS::js_null();
+    case UNPACK_PREMULTIPLY_ALPHA_WEBGL:
+        return JS::Value(m_unpack_premultiply_alpha);
     }
+
+    if (m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2) {
+        switch (pname) {
+        case GL_COPY_READ_BUFFER_BINDING: {
+            if (!m_copy_read_buffer_binding)
+                return JS::js_null();
+            return JS::Value(m_copy_read_buffer_binding);
+        }
+        case GL_COPY_WRITE_BUFFER_BINDING: {
+            if (!m_copy_write_buffer_binding)
+                return JS::js_null();
+            return JS::Value(m_copy_write_buffer_binding);
+        }
+        case GL_MAX_SAMPLES: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_SAMPLES, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_3D_TEXTURE_SIZE: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_3D_TEXTURE_SIZE, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_ARRAY_TEXTURE_LAYERS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_ARRAY_TEXTURE_LAYERS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_VERTEX_UNIFORM_COMPONENTS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_VERTEX_UNIFORM_COMPONENTS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_UNIFORM_BLOCK_SIZE: {
+            GLint64 result { 0 };
+            glGetInteger64vRobustANGLE(GL_MAX_UNIFORM_BLOCK_SIZE, 1, nullptr, &result);
+            return JS::Value(static_cast<double>(result));
+        }
+        case GL_MAX_UNIFORM_BUFFER_BINDINGS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_UNIFORM_BUFFER_BINDINGS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_VERTEX_UNIFORM_BLOCKS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_VERTEX_UNIFORM_BLOCKS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_FRAGMENT_INPUT_COMPONENTS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_FRAGMENT_INPUT_COMPONENTS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_FRAGMENT_UNIFORM_COMPONENTS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_FRAGMENT_UNIFORM_COMPONENTS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_COMBINED_UNIFORM_BLOCKS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_COMBINED_UNIFORM_BLOCKS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS: {
+            GLint64 result { 0 };
+            glGetInteger64vRobustANGLE(GL_MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS, 1, nullptr, &result);
+            return JS::Value(static_cast<double>(result));
+        }
+        case GL_MAX_COMBINED_FRAGMENT_UNIFORM_COMPONENTS: {
+            GLint64 result { 0 };
+            glGetInteger64vRobustANGLE(GL_MAX_COMBINED_FRAGMENT_UNIFORM_COMPONENTS, 1, nullptr, &result);
+            return JS::Value(static_cast<double>(result));
+        }
+        case GL_MAX_ELEMENT_INDEX: {
+            GLint64 result { 0 };
+            glGetInteger64vRobustANGLE(GL_MAX_ELEMENT_INDEX, 1, nullptr, &result);
+            return JS::Value(static_cast<double>(result));
+        }
+        case GL_MAX_FRAGMENT_UNIFORM_BLOCKS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_FRAGMENT_UNIFORM_BLOCKS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_VARYING_COMPONENTS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_VARYING_COMPONENTS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_ELEMENTS_INDICES: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_ELEMENTS_INDICES, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_ELEMENTS_VERTICES: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_ELEMENTS_VERTICES, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_TEXTURE_LOD_BIAS: {
+            GLfloat result { 0.0f };
+            glGetFloatvRobustANGLE(GL_MAX_TEXTURE_LOD_BIAS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_TRANSFORM_FEEDBACK_INTERLEAVED_COMPONENTS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_TRANSFORM_FEEDBACK_SEPARATE_ATTRIBS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_TRANSFORM_FEEDBACK_SEPARATE_ATTRIBS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_TRANSFORM_FEEDBACK_SEPARATE_COMPONENTS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_TRANSFORM_FEEDBACK_SEPARATE_COMPONENTS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MIN_PROGRAM_TEXEL_OFFSET: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MIN_PROGRAM_TEXEL_OFFSET, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_PROGRAM_TEXEL_OFFSET: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_PROGRAM_TEXEL_OFFSET, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_VERTEX_OUTPUT_COMPONENTS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_MAX_VERTEX_OUTPUT_COMPONENTS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_MAX_SERVER_WAIT_TIMEOUT: {
+            GLint64 result { 0 };
+            glGetInteger64vRobustANGLE(GL_MAX_SERVER_WAIT_TIMEOUT, 1, nullptr, &result);
+            return JS::Value(static_cast<double>(result));
+        }
+        case GL_PACK_ROW_LENGTH: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_PACK_ROW_LENGTH, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_PACK_SKIP_ROWS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_PACK_SKIP_ROWS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_PACK_SKIP_PIXELS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_PACK_SKIP_PIXELS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_PIXEL_PACK_BUFFER_BINDING: {
+            if (!m_pixel_pack_buffer_binding)
+                return JS::js_null();
+            return JS::Value(m_pixel_pack_buffer_binding);
+        }
+        case GL_PIXEL_UNPACK_BUFFER_BINDING: {
+            if (!m_pixel_unpack_buffer_binding)
+                return JS::js_null();
+            return JS::Value(m_pixel_unpack_buffer_binding);
+        }
+        case GL_TEXTURE_BINDING_2D_ARRAY: {
+            if (!m_texture_binding_2d_array)
+                return JS::js_null();
+            return JS::Value(m_texture_binding_2d_array);
+        }
+        case GL_TRANSFORM_FEEDBACK_ACTIVE: {
+            GLboolean result { GL_FALSE };
+            glGetBooleanvRobustANGLE(GL_TRANSFORM_FEEDBACK_ACTIVE, 1, nullptr, &result);
+            return JS::Value(result == GL_TRUE);
+        }
+        case GL_TRANSFORM_FEEDBACK_BINDING: {
+            if (!m_transform_feedback_binding)
+                return JS::js_null();
+            return JS::Value(m_transform_feedback_binding);
+        }
+        case GL_TRANSFORM_FEEDBACK_BUFFER_BINDING: {
+            if (!m_transform_feedback_buffer_binding)
+                return JS::js_null();
+            return JS::Value(m_transform_feedback_buffer_binding);
+        }
+        case GL_TRANSFORM_FEEDBACK_PAUSED: {
+            GLboolean result { GL_FALSE };
+            glGetBooleanvRobustANGLE(GL_TRANSFORM_FEEDBACK_PAUSED, 1, nullptr, &result);
+            return JS::Value(result == GL_TRUE);
+        }
+        case GL_RASTERIZER_DISCARD: {
+            GLboolean result { GL_FALSE };
+            glGetBooleanvRobustANGLE(GL_RASTERIZER_DISCARD, 1, nullptr, &result);
+            return JS::Value(result == GL_TRUE);
+        }
+        case GL_SAMPLER_BINDING: {
+            GLint handle { 0 };
+            glGetIntegervRobustANGLE(GL_SAMPLER_BINDING, 1, nullptr, &handle);
+            return WebGLSampler::create(m_realm, *this, handle);
+        }
+        case GL_UNIFORM_BUFFER_BINDING: {
+            if (!m_uniform_buffer_binding)
+                return JS::js_null();
+            return JS::Value(m_uniform_buffer_binding);
+        }
+        case GL_UNPACK_IMAGE_HEIGHT: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_UNPACK_IMAGE_HEIGHT, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_UNPACK_ROW_LENGTH: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_UNPACK_ROW_LENGTH, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_UNPACK_SKIP_IMAGES: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_UNPACK_SKIP_IMAGES, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_UNPACK_SKIP_PIXELS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_UNPACK_SKIP_PIXELS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_UNPACK_SKIP_ROWS: {
+            GLint result { 0 };
+            glGetIntegervRobustANGLE(GL_UNPACK_SKIP_ROWS, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+        case GL_VERTEX_ARRAY_BINDING: { // FIXME: Allow this for VERTEX_ARRAY_BINDING_OES
+            if (!m_current_vertex_array)
+                return JS::js_null();
+            return JS::Value(m_current_vertex_array);
+        }
+        case MAX_CLIENT_WAIT_TIMEOUT_WEBGL:
+            // FIXME: Make this an actual limit
+            return JS::js_infinity();
+        }
+    }
+
+    dbgln("Unknown WebGL parameter name: {:x}", pname);
+    set_error(GL_INVALID_ENUM);
+    return JS::js_null();
 }
 
 WebIDL::UnsignedLong WebGLRenderingContextImpl::get_error()
 {
     m_context->make_current();
-    return glGetError();
+    return get_error_value();
 }
 
 JS::Value WebGLRenderingContextImpl::get_program_parameter(GC::Root<WebGLProgram> program, WebIDL::UnsignedLong pname)
@@ -1536,8 +1581,17 @@ JS::Value WebGLRenderingContextImpl::get_program_parameter(GC::Root<WebGLProgram
     case GL_ATTACHED_SHADERS:
     case GL_ACTIVE_ATTRIBUTES:
     case GL_ACTIVE_UNIFORMS:
-
         return JS::Value(result);
+
+    case GL_TRANSFORM_FEEDBACK_BUFFER_MODE:
+    case GL_TRANSFORM_FEEDBACK_VARYINGS:
+    case GL_ACTIVE_UNIFORM_BLOCKS:
+        if (m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2)
+            return JS::Value(result);
+
+        set_error(GL_INVALID_ENUM);
+        return JS::js_null();
+
     case GL_DELETE_STATUS:
     case GL_LINK_STATUS:
     case GL_VALIDATE_STATUS:
@@ -1571,6 +1625,32 @@ Optional<String> WebGLRenderingContextImpl::get_program_info_log(GC::Root<WebGLP
         return String {};
     glGetProgramInfoLog(program_handle, info_log_length, nullptr, info_log.data());
     return String::from_utf8_without_validation(ReadonlyBytes { info_log.data(), static_cast<size_t>(info_log_length - 1) });
+}
+
+JS::Value WebGLRenderingContextImpl::get_renderbuffer_parameter(WebIDL::UnsignedLong target, WebIDL::UnsignedLong pname)
+{
+    m_context->make_current();
+
+    switch (pname) {
+    case GL_RENDERBUFFER_WIDTH:
+    case GL_RENDERBUFFER_HEIGHT:
+    case GL_RENDERBUFFER_INTERNAL_FORMAT:
+    case GL_RENDERBUFFER_RED_SIZE:
+    case GL_RENDERBUFFER_GREEN_SIZE:
+    case GL_RENDERBUFFER_BLUE_SIZE:
+    case GL_RENDERBUFFER_ALPHA_SIZE:
+    case GL_RENDERBUFFER_DEPTH_SIZE:
+    case GL_RENDERBUFFER_SAMPLES:
+    case GL_RENDERBUFFER_STENCIL_SIZE: {
+        GLint result = 0;
+        glGetRenderbufferParameteriv(target, pname, &result);
+        return JS::Value(result);
+    }
+    default:
+        // If pname is not in the table above, generates an INVALID_ENUM error.
+        set_error(GL_INVALID_ENUM);
+        return JS::js_null();
+    }
 }
 
 JS::Value WebGLRenderingContextImpl::get_shader_parameter(GC::Root<WebGLShader> shader, WebIDL::UnsignedLong pname)
@@ -1636,6 +1716,36 @@ Optional<String> WebGLRenderingContextImpl::get_shader_info_log(GC::Root<WebGLSh
     return String::from_utf8_without_validation(ReadonlyBytes { info_log.data(), static_cast<size_t>(info_log_length - 1) });
 }
 
+Optional<String> WebGLRenderingContextImpl::get_shader_source(GC::Root<WebGLShader> shader)
+{
+    m_context->make_current();
+
+    GLuint shader_handle = 0;
+    if (shader) {
+        auto handle_or_error = shader->handle(this);
+        if (handle_or_error.is_error()) {
+            set_error(GL_INVALID_OPERATION);
+            return {};
+        }
+        shader_handle = handle_or_error.release_value();
+    }
+
+    GLint shader_source_length = 0;
+    glGetShaderiv(shader_handle, GL_SHADER_SOURCE_LENGTH, &shader_source_length);
+    if (!shader_source_length)
+        return String {};
+
+    auto shader_source = MUST(ByteBuffer::create_uninitialized(shader_source_length));
+    glGetShaderSource(shader_handle, shader_source_length, nullptr, reinterpret_cast<GLchar*>(shader_source.data()));
+    return String::from_utf8_without_validation(ReadonlyBytes { shader_source.data(), static_cast<size_t>(shader_source_length - 1) });
+}
+
+JS::Value WebGLRenderingContextImpl::get_uniform(GC::Root<WebGLProgram>, GC::Root<WebGLUniformLocation>)
+{
+    dbgln("FIXME: Implement get_uniform");
+    return JS::Value(0);
+}
+
 GC::Root<WebGLUniformLocation> WebGLRenderingContextImpl::get_uniform_location(GC::Root<WebGLProgram> program, String name)
 {
     m_context->make_current();
@@ -1659,7 +1769,88 @@ GC::Root<WebGLUniformLocation> WebGLRenderingContextImpl::get_uniform_location(G
     if (location == -1)
         return nullptr;
 
-    return WebGLUniformLocation::create(m_realm, location);
+    return WebGLUniformLocation::create(m_realm, location, program.ptr());
+}
+
+JS::Value WebGLRenderingContextImpl::get_vertex_attrib(WebIDL::UnsignedLong index, WebIDL::UnsignedLong pname)
+{
+    switch (pname) {
+    case GL_CURRENT_VERTEX_ATTRIB: {
+        Array<GLfloat, 4> result;
+        result.fill(0);
+        glGetVertexAttribfvRobustANGLE(index, GL_CURRENT_VERTEX_ATTRIB, result.size(), nullptr, result.data());
+
+        auto byte_buffer = MUST(ByteBuffer::copy(result.span().reinterpret<u8>()));
+        auto array_buffer = JS::ArrayBuffer::create(m_realm, move(byte_buffer));
+        return JS::Float32Array::create(m_realm, result.size(), array_buffer);
+    }
+    case GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING: {
+        GLint handle { 0 };
+        glGetVertexAttribivRobustANGLE(index, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, 1, nullptr, &handle);
+        return WebGLBuffer::create(m_realm, *this, handle);
+    }
+    case GL_VERTEX_ATTRIB_ARRAY_DIVISOR: { // NOTE: This has the same value as GL_VERTEX_ATTRIB_ARRAY_DIVISOR_ANGLE
+        if (angle_instanced_arrays_extension_enabled() || m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2) {
+            GLint result { 0 };
+            glGetVertexAttribivRobustANGLE(index, GL_VERTEX_ATTRIB_ARRAY_DIVISOR, 1, nullptr, &result);
+            return JS::Value(result);
+        }
+
+        set_error(GL_INVALID_ENUM);
+        return JS::js_null();
+    }
+    case GL_VERTEX_ATTRIB_ARRAY_ENABLED: {
+        GLint result { 0 };
+        glGetVertexAttribivRobustANGLE(index, GL_VERTEX_ATTRIB_ARRAY_ENABLED, 1, nullptr, &result);
+        return JS::Value(result == GL_TRUE);
+    }
+    case GL_VERTEX_ATTRIB_ARRAY_INTEGER: {
+        if (m_context->webgl_version() == OpenGLContext::WebGLVersion::WebGL2) {
+            GLint result { 0 };
+            glGetVertexAttribivRobustANGLE(index, GL_VERTEX_ATTRIB_ARRAY_INTEGER, 1, nullptr, &result);
+            return JS::Value(result == GL_TRUE);
+        }
+
+        set_error(GL_INVALID_ENUM);
+        return JS::js_null();
+    }
+    case GL_VERTEX_ATTRIB_ARRAY_NORMALIZED: {
+        GLint result { 0 };
+        glGetVertexAttribivRobustANGLE(index, GL_VERTEX_ATTRIB_ARRAY_NORMALIZED, 1, nullptr, &result);
+        return JS::Value(result == GL_TRUE);
+    }
+    case GL_VERTEX_ATTRIB_ARRAY_SIZE: {
+        GLint result { 0 };
+        glGetVertexAttribivRobustANGLE(index, GL_VERTEX_ATTRIB_ARRAY_SIZE, 1, nullptr, &result);
+        return JS::Value(result);
+    }
+    case GL_VERTEX_ATTRIB_ARRAY_STRIDE: {
+        GLint result { 0 };
+        glGetVertexAttribivRobustANGLE(index, GL_VERTEX_ATTRIB_ARRAY_STRIDE, 1, nullptr, &result);
+        return JS::Value(result);
+    }
+    case GL_VERTEX_ATTRIB_ARRAY_TYPE: {
+        GLint result { 0 };
+        glGetVertexAttribivRobustANGLE(index, GL_VERTEX_ATTRIB_ARRAY_TYPE, 1, nullptr, &result);
+        return JS::Value(result);
+    }
+    default:
+        dbgln("Unknown WebGL vertex attrib name: 0x{:04x}", pname);
+        set_error(GL_INVALID_ENUM);
+        return JS::js_null();
+    }
+}
+
+WebIDL::LongLong WebGLRenderingContextImpl::get_vertex_attrib_offset(WebIDL::UnsignedLong index, WebIDL::UnsignedLong pname)
+{
+    if (pname != GL_VERTEX_ATTRIB_ARRAY_POINTER) {
+        set_error(GL_INVALID_ENUM);
+        return 0;
+    }
+
+    GLintptr result { 0 };
+    glGetVertexAttribPointervRobustANGLE(index, GL_VERTEX_ATTRIB_ARRAY_POINTER, 1, nullptr, reinterpret_cast<void**>(&result));
+    return result;
 }
 
 void WebGLRenderingContextImpl::hint(WebIDL::UnsignedLong target, WebIDL::UnsignedLong mode)
@@ -1800,6 +1991,9 @@ void WebGLRenderingContextImpl::pixel_storei(WebIDL::UnsignedLong pname, WebIDL:
     case UNPACK_FLIP_Y_WEBGL:
         m_unpack_flip_y = param != GL_FALSE;
         return;
+    case UNPACK_PREMULTIPLY_ALPHA_WEBGL:
+        m_unpack_premultiply_alpha = param != GL_FALSE;
+        return;
     }
 
     glPixelStorei(pname, param);
@@ -1815,14 +2009,8 @@ void WebGLRenderingContextImpl::renderbuffer_storage(WebIDL::UnsignedLong target
 {
     m_context->make_current();
 
-#define GL_DEPTH_STENCIL 0x84F9
-#define GL_DEPTH24_STENCIL8 0x88F0
-
     if (internalformat == GL_DEPTH_STENCIL)
         internalformat = GL_DEPTH24_STENCIL8;
-
-#undef GL_DEPTH_STENCIL
-#undef GL_DEPTH24_STENCIL8
 
     glRenderbufferStorage(target, internalformat, width, height);
 }
@@ -1912,49 +2100,89 @@ void WebGLRenderingContextImpl::tex_parameteri(WebIDL::UnsignedLong target, WebI
 void WebGLRenderingContextImpl::uniform1f(GC::Root<WebGLUniformLocation> location, float x)
 {
     m_context->make_current();
-    glUniform1f(location ? location->handle() : 0, x);
+
+    GLuint location_handle = 0;
+    if (location)
+        location_handle = SET_ERROR_VALUE_IF_ERROR(location->handle(m_current_program), GL_INVALID_OPERATION);
+
+    glUniform1f(location_handle, x);
 }
 
 void WebGLRenderingContextImpl::uniform2f(GC::Root<WebGLUniformLocation> location, float x, float y)
 {
     m_context->make_current();
-    glUniform2f(location ? location->handle() : 0, x, y);
+
+    GLuint location_handle = 0;
+    if (location)
+        location_handle = SET_ERROR_VALUE_IF_ERROR(location->handle(m_current_program), GL_INVALID_OPERATION);
+
+    glUniform2f(location_handle, x, y);
 }
 
 void WebGLRenderingContextImpl::uniform3f(GC::Root<WebGLUniformLocation> location, float x, float y, float z)
 {
     m_context->make_current();
-    glUniform3f(location ? location->handle() : 0, x, y, z);
+
+    GLuint location_handle = 0;
+    if (location)
+        location_handle = SET_ERROR_VALUE_IF_ERROR(location->handle(m_current_program), GL_INVALID_OPERATION);
+
+    glUniform3f(location_handle, x, y, z);
 }
 
 void WebGLRenderingContextImpl::uniform4f(GC::Root<WebGLUniformLocation> location, float x, float y, float z, float w)
 {
     m_context->make_current();
-    glUniform4f(location ? location->handle() : 0, x, y, z, w);
+
+    GLuint location_handle = 0;
+    if (location)
+        location_handle = SET_ERROR_VALUE_IF_ERROR(location->handle(m_current_program), GL_INVALID_OPERATION);
+
+    glUniform4f(location_handle, x, y, z, w);
 }
 
 void WebGLRenderingContextImpl::uniform1i(GC::Root<WebGLUniformLocation> location, WebIDL::Long x)
 {
     m_context->make_current();
-    glUniform1i(location ? location->handle() : 0, x);
+
+    GLuint location_handle = 0;
+    if (location)
+        location_handle = SET_ERROR_VALUE_IF_ERROR(location->handle(m_current_program), GL_INVALID_OPERATION);
+
+    glUniform1i(location_handle, x);
 }
 
 void WebGLRenderingContextImpl::uniform2i(GC::Root<WebGLUniformLocation> location, WebIDL::Long x, WebIDL::Long y)
 {
     m_context->make_current();
-    glUniform2i(location ? location->handle() : 0, x, y);
+
+    GLuint location_handle = 0;
+    if (location)
+        location_handle = SET_ERROR_VALUE_IF_ERROR(location->handle(m_current_program), GL_INVALID_OPERATION);
+
+    glUniform2i(location_handle, x, y);
 }
 
 void WebGLRenderingContextImpl::uniform3i(GC::Root<WebGLUniformLocation> location, WebIDL::Long x, WebIDL::Long y, WebIDL::Long z)
 {
     m_context->make_current();
-    glUniform3i(location ? location->handle() : 0, x, y, z);
+
+    GLuint location_handle = 0;
+    if (location)
+        location_handle = SET_ERROR_VALUE_IF_ERROR(location->handle(m_current_program), GL_INVALID_OPERATION);
+
+    glUniform3i(location_handle, x, y, z);
 }
 
 void WebGLRenderingContextImpl::uniform4i(GC::Root<WebGLUniformLocation> location, WebIDL::Long x, WebIDL::Long y, WebIDL::Long z, WebIDL::Long w)
 {
     m_context->make_current();
-    glUniform4i(location ? location->handle() : 0, x, y, z, w);
+
+    GLuint location_handle = 0;
+    if (location)
+        location_handle = SET_ERROR_VALUE_IF_ERROR(location->handle(m_current_program), GL_INVALID_OPERATION);
+
+    glUniform4i(location_handle, x, y, z, w);
 }
 
 void WebGLRenderingContextImpl::use_program(GC::Root<WebGLProgram> program)
@@ -2067,6 +2295,12 @@ void WebGLRenderingContextImpl::vertex_attrib_pointer(WebIDL::UnsignedLong index
 {
     m_context->make_current();
 
+    // If no WebGLBuffer is bound to the ARRAY_BUFFER target and offset is non-zero, an INVALID_OPERATION error will be generated.
+    if (!m_array_buffer_binding && offset != 0) {
+        set_error(GL_INVALID_OPERATION);
+        return;
+    }
+
     glVertexAttribPointer(index, size, type, normalized, stride, reinterpret_cast<void*>(offset));
 }
 
@@ -2086,6 +2320,17 @@ void WebGLRenderingContextImpl::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_renderbuffer_binding);
     visitor.visit(m_texture_binding_2d);
     visitor.visit(m_texture_binding_cube_map);
+
+    visitor.visit(m_uniform_buffer_binding);
+    visitor.visit(m_copy_read_buffer_binding);
+    visitor.visit(m_copy_write_buffer_binding);
+    visitor.visit(m_transform_feedback_buffer_binding);
+    visitor.visit(m_texture_binding_2d_array);
+    visitor.visit(m_texture_binding_3d);
+    visitor.visit(m_transform_feedback_binding);
+    visitor.visit(m_pixel_pack_buffer_binding);
+    visitor.visit(m_pixel_unpack_buffer_binding);
+    visitor.visit(m_current_vertex_array);
 }
 
 }

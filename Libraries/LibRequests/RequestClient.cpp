@@ -4,6 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/JsonObject.h>
+#include <AK/JsonParser.h>
+#include <AK/JsonValue.h>
+#include <LibCore/Promise.h>
 #include <LibCore/System.h>
 #include <LibRequests/Request.h>
 #include <LibRequests/RequestClient.h>
@@ -24,7 +28,11 @@ void RequestClient::die()
             request->did_finish({}, {}, {}, NetworkError::RequestServerDied);
     }
 
+    for (auto& [id, promise] : m_pending_cache_size_estimations)
+        promise->reject(Error::from_string_literal("RequestServer process died"));
+
     m_requests.clear();
+    m_pending_cache_size_estimations.clear();
 }
 
 void RequestClient::ensure_connection(URL::URL const& url, ::RequestServer::CacheLevel cache_level)
@@ -32,16 +40,19 @@ void RequestClient::ensure_connection(URL::URL const& url, ::RequestServer::Cach
     async_ensure_connection(url, cache_level);
 }
 
-RefPtr<Request> RequestClient::start_request(ByteString const& method, URL::URL const& url, HTTP::HeaderMap const& request_headers, ReadonlyBytes request_body, Core::ProxyData const& proxy_data, u64 page_id)
+RefPtr<Request> RequestClient::start_request(ByteString const& method, URL::URL const& url, Optional<HTTP::HeaderList const&> request_headers, ReadonlyBytes request_body, Core::ProxyData const& proxy_data, u64 page_id)
 {
-    auto body_result = ByteBuffer::copy(request_body);
-    if (body_result.is_error())
+    auto body_result_or_error = ByteBuffer::copy(request_body);
+    if (body_result_or_error.is_error())
         return nullptr;
 
     static i32 s_next_request_id = 0;
     auto request_id = s_next_request_id++;
 
-    IPCProxy::async_start_request(request_id, method, url, request_headers, body_result.release_value(), proxy_data, page_id);
+    auto headers = request_headers.map([](auto const& headers) { return headers.headers().span(); }).value_or({});
+
+    auto body_result = body_result_or_error.release_value();
+    IPCProxy::async_start_request(request_id, method, url, headers, body_result, proxy_data, page_id);
     auto request = Request::create_from_id({}, *this, request_id);
     m_requests.set(request_id, request);
     return request;
@@ -73,6 +84,24 @@ bool RequestClient::set_certificate(Badge<Request>, Request& request, ByteString
     return IPCProxy::set_certificate(request.id(), move(certificate), move(key));
 }
 
+NonnullRefPtr<Core::Promise<CacheSizes>> RequestClient::estimate_cache_size_accessed_since(UnixDateTime since)
+{
+    auto promise = Core::Promise<CacheSizes>::construct();
+
+    auto cache_size_estimation_id = m_next_cache_size_estimation_id++;
+    m_pending_cache_size_estimations.set(cache_size_estimation_id, promise);
+
+    async_estimate_cache_size_accessed_since(cache_size_estimation_id, since);
+
+    return promise;
+}
+
+void RequestClient::estimated_cache_size(u64 cache_size_estimation_id, CacheSizes sizes)
+{
+    if (auto promise = m_pending_cache_size_estimations.take(cache_size_estimation_id); promise.has_value())
+        (*promise)->resolve(sizes);
+}
+
 void RequestClient::request_finished(i32 request_id, u64 total_size, RequestTimingInfo timing_info, Optional<NetworkError> network_error)
 {
     RefPtr<Request> request;
@@ -82,14 +111,49 @@ void RequestClient::request_finished(i32 request_id, u64 total_size, RequestTimi
     m_requests.remove(request_id);
 }
 
-void RequestClient::headers_became_available(i32 request_id, HTTP::HeaderMap response_headers, Optional<u32> status_code, Optional<String> reason_phrase)
+void RequestClient::headers_became_available(i32 request_id, Vector<HTTP::Header> response_headers, Optional<u32> status_code, Optional<String> reason_phrase)
 {
     auto request = const_cast<Request*>(m_requests.get(request_id).value_or(nullptr));
     if (!request) {
         warnln("Received headers for non-existent request {}", request_id);
         return;
     }
-    request->did_receive_headers({}, response_headers, status_code, reason_phrase);
+    request->did_receive_headers({}, HTTP::HeaderList::create(move(response_headers)), status_code, reason_phrase);
+}
+
+void RequestClient::security_alert(i32 request_id, u64 page_id, ByteString alert_json)
+{
+    auto request = const_cast<Request*>(m_requests.get(request_id).value_or(nullptr));
+    if (!request) {
+        warnln("Received security alert for non-existent request {}", request_id);
+        return;
+    }
+
+    dbgln("RequestClient: Security threat detected in download (request {}, page_id {})", request_id, page_id);
+    dbgln("Alert details: {}", alert_json);
+
+    // Parse the alert JSON to log specific details
+    auto json_result = JsonValue::from_string(alert_json);
+    if (!json_result.is_error() && json_result.value().is_object()) {
+        auto alert_obj = json_result.value().as_object();
+        if (auto matched_rules = alert_obj.get_array("matched_rules"sv); matched_rules.has_value()) {
+            dbgln("Matched {} YARA rule(s):", matched_rules->size());
+            for (auto const& rule : matched_rules->values()) {
+                if (rule.is_object()) {
+                    auto rule_obj = rule.as_object();
+                    auto rule_name = rule_obj.get_string("rule_name"sv).value_or("Unknown"_string);
+                    auto severity = rule_obj.get_string("severity"sv).value_or("unknown"_string);
+                    auto description = rule_obj.get_string("description"sv).value_or("No description"_string);
+                    dbgln("  - {} [{}]: {}", rule_name, severity, description);
+                }
+            }
+        }
+    }
+
+    // Call the on_security_alert callback if set (routes to ViewImplementation → Tab)
+    if (request->on_security_alert) {
+        request->on_security_alert(alert_json, request_id);
+    }
 }
 
 void RequestClient::certificate_requested(i32 request_id)
@@ -99,10 +163,10 @@ void RequestClient::certificate_requested(i32 request_id)
     }
 }
 
-RefPtr<WebSocket> RequestClient::websocket_connect(URL::URL const& url, ByteString const& origin, Vector<ByteString> const& protocols, Vector<ByteString> const& extensions, HTTP::HeaderMap const& request_headers)
+RefPtr<WebSocket> RequestClient::websocket_connect(URL::URL const& url, ByteString const& origin, Vector<ByteString> const& protocols, Vector<ByteString> const& extensions, HTTP::HeaderList const& request_headers)
 {
     auto websocket_id = m_next_websocket_id++;
-    IPCProxy::async_websocket_connect(websocket_id, url, origin, protocols, extensions, request_headers);
+    IPCProxy::async_websocket_connect(websocket_id, url, origin, protocols, extensions, request_headers.headers());
     auto connection = WebSocket::create_from_id({}, *this, websocket_id);
     m_websockets.set(websocket_id, connection);
     return connection;
@@ -158,6 +222,28 @@ void RequestClient::websocket_certificate_requested(i64 websocket_id)
     auto maybe_connection = m_websockets.get(websocket_id);
     if (maybe_connection.has_value())
         maybe_connection.value()->did_request_certificates({});
+}
+
+void RequestClient::traffic_alert_detected(u64 page_id, ByteString alert_json)
+{
+    dbgln("RequestClient: Network traffic alert detected for page {}", page_id);
+
+    // Parse the alert JSON for logging
+    auto json_result = JsonValue::from_string(alert_json);
+    if (!json_result.is_error() && json_result.value().is_object()) {
+        auto alert_obj = json_result.value().as_object();
+        auto threat_type = alert_obj.get_string("threat_type"sv).value_or("Unknown"_string);
+        auto risk_level = alert_obj.get_string("risk_level"sv).value_or("Unknown"_string);
+        auto domain = alert_obj.get_string("domain"sv).value_or("Unknown"_string);
+        auto score = alert_obj.get_double_with_precision_loss("score"sv).value_or(0.0);
+
+        dbgln("  Threat Type: {}, Risk Level: {}, Domain: {}, Score: {}", threat_type, risk_level, domain, score);
+    }
+
+    // Invoke the callback to route to WebContent/PageClient
+    if (on_traffic_alert) {
+        on_traffic_alert(page_id, alert_json);
+    }
 }
 
 }

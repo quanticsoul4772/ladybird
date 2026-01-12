@@ -145,13 +145,15 @@ Vector<String> const& available_calendars()
 }
 
 // https://tc39.es/proposal-temporal/#prod-MonthCode
-static bool is_valid_month_code_string(StringView month_code)
+static constexpr bool is_valid_month_code_string(StringView month_code)
 {
     // MonthCode :::
     //     M00L
     //     M0 NonZeroDigit L[opt]
     //     M NonZeroDigit DecimalDigit L[opt]
-    if (month_code.length() != 3 && month_code.length() != 4)
+    auto length = month_code.length();
+
+    if (length != 3 && length != 4)
         return false;
 
     if (month_code[0] != 'M')
@@ -160,7 +162,9 @@ static bool is_valid_month_code_string(StringView month_code)
     if (!is_ascii_digit(month_code[1]) || !is_ascii_digit(month_code[2]))
         return false;
 
-    if (month_code.length() == 4 && month_code[3] != 'L')
+    if (length == 3 && month_code[1] == '0' && month_code[2] == '0')
+        return false;
+    if (length == 4 && month_code[3] != 'L')
         return false;
 
     return true;
@@ -204,11 +208,7 @@ ThrowCompletionOr<MonthCode> parse_month_code(VM& vm, StringView month_code)
     // 7. Let monthNumber be ℝ(StringToNumber(monthCodeDigits)).
     auto month_number = month_code_digits.to_number<u8>().value();
 
-    // 8. If monthNumber is 0 and isLeapMonth is false, throw a RangeError exception.
-    if (month_number == 0 && !is_leap_month)
-        return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidMonthCode);
-
-    // 9. Return the Record { [[MonthNumber]]: monthNumber, [[IsLeapMonth]]: isLeapMonth }.
+    // 8. Return the Record { [[MonthNumber]]: monthNumber, [[IsLeapMonth]]: isLeapMonth }.
     return MonthCode { month_number, is_leap_month };
 }
 
@@ -625,24 +625,20 @@ ThrowCompletionOr<ISODate> calendar_date_from_fields(VM& vm, StringView calendar
 // 12.3.13 CalendarYearMonthFromFields ( calendar, fields, overflow ), https://tc39.es/proposal-temporal/#sec-temporal-calendaryearmonthfromfields
 ThrowCompletionOr<ISODate> calendar_year_month_from_fields(VM& vm, StringView calendar, CalendarFields& fields, Overflow overflow)
 {
-    // 1. Perform ? CalendarResolveFields(calendar, fields, YEAR-MONTH).
+    // 1. Set fields.[[Day]] to 1.
+    fields.day = 1;
+
+    // 2. Perform ? CalendarResolveFields(calendar, fields, YEAR-MONTH).
     TRY(calendar_resolve_fields(vm, calendar, fields, DateType::YearMonth));
 
-    // FIXME: 2. Let firstDayIndex be the 1-based index of the first day of the month described by fields (i.e., 1 unless the
-    //           month's first day is skipped by this calendar.)
-    static auto constexpr first_day_index = 1;
-
-    // 3. Set fields.[[Day]] to firstDayIndex.
-    fields.day = first_day_index;
-
-    // 4. Let result be ? CalendarDateToISO(calendar, fields, overflow).
+    // 3. Let result be ? CalendarDateToISO(calendar, fields, overflow).
     auto result = TRY(calendar_date_to_iso(vm, calendar, fields, overflow));
 
-    // 5. If ISOYearMonthWithinLimits(result) is false, throw a RangeError exception.
+    // 4. If ISOYearMonthWithinLimits(result) is false, throw a RangeError exception.
     if (!iso_year_month_within_limits(result))
         return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidISODate);
 
-    // 6. Return result.
+    // 5. Return result.
     return result;
 }
 
@@ -1007,11 +1003,9 @@ ThrowCompletionOr<void> calendar_resolve_fields(VM& vm, StringView calendar, Cal
             return {};
         }
 
-        // f. Assert: monthCode is a String.
-        VERIFY(month_code.has_value());
-
-        // g. Let parsedMonthCode be ? ParseMonthCode(monthCode).
-        auto parsed_month_code = TRY(parse_month_code(vm, *month_code));
+        // f. Assert: monthCode is a month code.
+        // g. Let parsedMonthCode be ! ParseMonthCode(monthCode).
+        auto parsed_month_code = MUST(parse_month_code(vm, *month_code));
 
         // h. If parsedMonthCode.[[IsLeapMonth]] is true, throw a RangeError exception.
         if (parsed_month_code.is_leap_month)

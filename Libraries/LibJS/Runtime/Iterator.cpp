@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2020, Matthew Olsson <mattco@serenityos.org>
  * Copyright (c) 2022-2023, Linus Groh <linusg@serenityos.org>
- * Copyright (c) 2023-2024, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2023-2025, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,7 +12,6 @@
 #include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/Iterator.h>
 #include <LibJS/Runtime/VM.h>
-#include <LibJS/Runtime/ValueInlines.h>
 
 namespace JS {
 
@@ -35,6 +34,19 @@ Iterator::Iterator(Object& prototype)
 {
 }
 
+void Iterator::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_iterated);
+}
+
+void IteratorRecord::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(iterator);
+    visitor.visit(next_method);
+}
+
 // 7.4.2 GetIteratorDirect ( obj ), https://tc39.es/ecma262/#sec-getiteratordirect
 ThrowCompletionOr<GC::Ref<IteratorRecord>> get_iterator_direct(VM& vm, Object& object)
 {
@@ -48,28 +60,34 @@ ThrowCompletionOr<GC::Ref<IteratorRecord>> get_iterator_direct(VM& vm, Object& o
 }
 
 // 7.4.3 GetIteratorFromMethod ( obj, method ), https://tc39.es/ecma262/#sec-getiteratorfrommethod
-ThrowCompletionOr<GC::Ref<IteratorRecord>> get_iterator_from_method(VM& vm, Value object, GC::Ref<FunctionObject> method)
+ThrowCompletionOr<IteratorRecordImpl> get_iterator_from_method_impl(VM& vm, Value object, GC::Ref<FunctionObject> method)
 {
     // 1. Let iterator be ? Call(method, obj).
     auto iterator = TRY(call(vm, *method, object));
 
     // 2. If iterator is not an Object, throw a TypeError exception.
     if (!iterator.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotIterable, object.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotIterable, object);
 
     // 3. Let nextMethod be ? Get(iterator, "next").
     static Bytecode::PropertyLookupCache cache;
     auto next_method = TRY(iterator.get(vm, vm.names.next, cache));
 
     // 4. Let iteratorRecord be the Iterator Record { [[Iterator]]: iterator, [[NextMethod]]: nextMethod, [[Done]]: false }.
-    auto iterator_record = vm.heap().allocate<IteratorRecord>(iterator.as_object(), next_method, false);
+    IteratorRecordImpl iterator_record { .done = false, .iterator = iterator.as_object(), .next_method = next_method };
 
     // 5. Return iteratorRecord.
     return iterator_record;
 }
 
+ThrowCompletionOr<GC::Ref<IteratorRecord>> get_iterator_from_method(VM& vm, Value object, GC::Ref<FunctionObject> method)
+{
+    auto iterator_record_impl = TRY(get_iterator_from_method_impl(vm, object, method));
+    return vm.heap().allocate<IteratorRecord>(iterator_record_impl.iterator, iterator_record_impl.next_method, iterator_record_impl.done);
+}
+
 // 7.4.4 GetIterator ( obj, kind ), https://tc39.es/ecma262/#sec-getiterator
-ThrowCompletionOr<GC::Ref<IteratorRecord>> get_iterator(VM& vm, Value object, IteratorHint kind)
+ThrowCompletionOr<IteratorRecordImpl> get_iterator_impl(VM& vm, Value object, IteratorHint kind)
 {
     GC::Ptr<FunctionObject> method;
 
@@ -86,7 +104,7 @@ ThrowCompletionOr<GC::Ref<IteratorRecord>> get_iterator(VM& vm, Value object, It
 
             // ii. If syncMethod is undefined, throw a TypeError exception.
             if (!sync_method)
-                return vm.throw_completion<TypeError>(ErrorType::NotIterable, object.to_string_without_side_effects());
+                return vm.throw_completion<TypeError>(ErrorType::NotIterable, object);
 
             // iii. Let syncIteratorRecord be ? GetIteratorFromMethod(obj, syncMethod).
             auto sync_iterator_record = TRY(get_iterator_from_method(vm, object, *sync_method));
@@ -104,10 +122,16 @@ ThrowCompletionOr<GC::Ref<IteratorRecord>> get_iterator(VM& vm, Value object, It
 
     // 3. If method is undefined, throw a TypeError exception.
     if (!method)
-        return vm.throw_completion<TypeError>(ErrorType::NotIterable, object.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotIterable, object);
 
     // 4. Return ? GetIteratorFromMethod(obj, method).
-    return TRY(get_iterator_from_method(vm, object, *method));
+    return TRY(get_iterator_from_method_impl(vm, object, *method));
+}
+
+ThrowCompletionOr<GC::Ref<IteratorRecord>> get_iterator(VM& vm, Value object, IteratorHint kind)
+{
+    auto iterator_record_impl = TRY(get_iterator_impl(vm, object, kind));
+    return vm.heap().allocate<IteratorRecord>(iterator_record_impl.iterator, iterator_record_impl.next_method, iterator_record_impl.done);
 }
 
 // 7.4.5 GetIteratorFlattenable ( obj, primitiveHandling ), https://tc39.es/ecma262/#sec-getiteratorflattenable
@@ -117,14 +141,14 @@ ThrowCompletionOr<GC::Ref<IteratorRecord>> get_iterator_flattenable(VM& vm, Valu
     if (!object.is_object()) {
         // a. If primitiveHandling is reject-primitives, throw a TypeError exception.
         if (primitive_handling == PrimitiveHandling::RejectPrimitives)
-            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, object.to_string_without_side_effects());
+            return vm.throw_completion<TypeError>(ErrorType::NotAnObject, object);
 
         // b. Assert: primitiveHandling is iterate-string-primitives.
         ASSERT(primitive_handling == PrimitiveHandling::IterateStringPrimitives);
 
         // c. If obj is not a String, throw a TypeError exception.
         if (!object.is_string())
-            return vm.throw_completion<TypeError>(ErrorType::NotAString, object.to_string_without_side_effects());
+            return vm.throw_completion<TypeError>(ErrorType::NotAString, object);
     }
 
     // 2. Let method be ? GetMethod(obj, %Symbol.iterator%).
@@ -146,14 +170,14 @@ ThrowCompletionOr<GC::Ref<IteratorRecord>> get_iterator_flattenable(VM& vm, Valu
 
     // 5. If iterator is not an Object, throw a TypeError exception.
     if (!iterator.is_object())
-        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, iterator.to_string_without_side_effects());
+        return vm.throw_completion<TypeError>(ErrorType::NotAnObject, iterator);
 
     // 6. Return ? GetIteratorDirect(iterator).
     return TRY(get_iterator_direct(vm, iterator.as_object()));
 }
 
 // 7.4.6 IteratorNext ( iteratorRecord [ , value ] ), https://tc39.es/ecma262/#sec-iteratornext
-ThrowCompletionOr<GC::Ref<Object>> iterator_next(VM& vm, IteratorRecord& iterator_record, Optional<Value> value)
+ThrowCompletionOr<GC::Ref<Object>> iterator_next(VM& vm, IteratorRecordImpl& iterator_record, Optional<Value> value)
 {
     auto result = [&]() {
         // 1. If value is not present, then
@@ -210,9 +234,9 @@ ThrowCompletionOr<Value> iterator_value(VM& vm, Object& iterator_result)
 }
 
 // 7.4.9 IteratorStep ( iteratorRecord ), https://tc39.es/ecma262/#sec-iteratorstep
-ThrowCompletionOr<IterationResultOrDone> iterator_step(VM& vm, IteratorRecord& iterator_record)
+ThrowCompletionOr<IterationResultOrDone> iterator_step(VM& vm, IteratorRecordImpl& iterator_record)
 {
-    if (auto* builtin_iterator = iterator_record.iterator->as_builtin_iterator_if_next_is_not_redefined(iterator_record)) {
+    if (auto* builtin_iterator = iterator_record.iterator->as_builtin_iterator_if_next_is_not_redefined(iterator_record.next_method)) {
         Value value;
         bool done = false;
         TRY(builtin_iterator->next(vm, done, value));
@@ -257,7 +281,7 @@ ThrowCompletionOr<IterationResultOrDone> iterator_step(VM& vm, IteratorRecord& i
 }
 
 // 7.4.10 IteratorStepValue ( iteratorRecord ), https://tc39.es/ecma262/#sec-iteratorstepvalue
-ThrowCompletionOr<Optional<Value>> iterator_step_value(VM& vm, IteratorRecord& iterator_record)
+ThrowCompletionOr<Optional<Value>> iterator_step_value(VM& vm, IteratorRecordImpl& iterator_record)
 {
     // 1. Let result be ? IteratorStep(iteratorRecord).
     IterationResultOrDone result = TRY(iterator_step(vm, iterator_record));
@@ -284,7 +308,7 @@ ThrowCompletionOr<Optional<Value>> iterator_step_value(VM& vm, IteratorRecord& i
 // 7.4.11 IteratorClose ( iteratorRecord, completion , https://tc39.es/ecma262/#sec-iteratorclose
 // 7.4.13 AsyncIteratorClose ( iteratorRecord, completion ), https://tc39.es/ecma262/#sec-asynciteratorclose
 // NOTE: These only differ in that async awaits the inner value after the call.
-static Completion iterator_close_impl(VM& vm, IteratorRecord const& iterator_record, Completion completion, IteratorHint iterator_hint)
+static Completion iterator_close_impl(VM& vm, IteratorRecordImpl const& iterator_record, Completion completion, IteratorHint iterator_hint)
 {
     // 1. Assert: Type(iteratorRecord.[[Iterator]]) is Object.
 
@@ -292,7 +316,7 @@ static Completion iterator_close_impl(VM& vm, IteratorRecord const& iterator_rec
     auto iterator = iterator_record.iterator;
 
     // OPTIMIZATION: "return" method is not defined on any of iterators we treat as built-in.
-    if (iterator->as_builtin_iterator_if_next_is_not_redefined(iterator_record))
+    if (iterator->as_builtin_iterator_if_next_is_not_redefined(iterator_record.next_method))
         return completion;
 
     // 3. Let innerResult be Completion(GetMethod(iterator, "return")).
@@ -337,18 +361,33 @@ static Completion iterator_close_impl(VM& vm, IteratorRecord const& iterator_rec
 }
 
 // 7.4.11 IteratorClose ( iteratorRecord, completion , https://tc39.es/ecma262/#sec-iteratorclose
-Completion iterator_close(VM& vm, IteratorRecord const& iterator_record, Completion completion)
+Completion iterator_close(VM& vm, IteratorRecordImpl const& iterator_record, Completion completion)
 {
     return iterator_close_impl(vm, iterator_record, move(completion), IteratorHint::Sync);
 }
 
-// 7.4.13 AsyncIteratorClose ( iteratorRecord, completion ), https://tc39.es/ecma262/#sec-asynciteratorclose
-Completion async_iterator_close(VM& vm, IteratorRecord const& iterator_record, Completion completion)
+// 7.4.12 IteratorCloseAll ( iters, completion ), https://tc39.es/ecma262/#sec-iteratorclose
+Completion iterator_close_all(VM& vm, ReadonlySpan<GC::Ref<IteratorRecord>> iterator_records, Completion completion)
+{
+    // 1. For each element iter of iters, in reverse List order, do
+    for (size_t i = iterator_records.size(); i > 0; --i) {
+        auto iterator_record = iterator_records[i - 1];
+
+        // a. Set completion to Completion(IteratorClose(iter, completion)).
+        completion = iterator_close(vm, iterator_record, completion);
+    }
+
+    // 2. Return ? completion.
+    return completion;
+}
+
+// 7.4.14 AsyncIteratorClose ( iteratorRecord, completion ), https://tc39.es/ecma262/#sec-asynciteratorclose
+Completion async_iterator_close(VM& vm, IteratorRecordImpl const& iterator_record, Completion completion)
 {
     return iterator_close_impl(vm, iterator_record, move(completion), IteratorHint::Async);
 }
 
-// 7.4.14 CreateIteratorResultObject ( value, done ), https://tc39.es/ecma262/#sec-createiterresultobject
+// 7.4.15 CreateIteratorResultObject ( value, done ), https://tc39.es/ecma262/#sec-createiterresultobject
 GC::Ref<Object> create_iterator_result_object(VM& vm, Value value, bool done)
 {
     auto& realm = *vm.current_realm();
@@ -366,7 +405,7 @@ GC::Ref<Object> create_iterator_result_object(VM& vm, Value value, bool done)
     return object;
 }
 
-// 7.4.16 IteratorToList ( iteratorRecord ), https://tc39.es/ecma262/#sec-iteratortolist
+// 7.4.17 IteratorToList ( iteratorRecord ), https://tc39.es/ecma262/#sec-iteratortolist
 ThrowCompletionOr<GC::RootVector<Value>> iterator_to_list(VM& vm, IteratorRecord& iterator_record)
 {
     // 1. Let values be a new empty List.
@@ -429,7 +468,7 @@ ThrowCompletionOr<void> setter_that_ignores_prototype_properties(VM& vm, Value t
 // Non-standard
 Completion get_iterator_values(VM& vm, Value iterable, IteratorValueCallback callback)
 {
-    auto iterator_record = TRY(get_iterator(vm, iterable, IteratorHint::Sync));
+    auto iterator_record = TRY(get_iterator_impl(vm, iterable, IteratorHint::Sync));
 
     while (true) {
         auto next = TRY(iterator_step_value(vm, iterator_record));
@@ -439,19 +478,6 @@ Completion get_iterator_values(VM& vm, Value iterable, IteratorValueCallback cal
         if (auto completion = callback(next.release_value()); completion.has_value())
             return iterator_close(vm, iterator_record, completion.release_value());
     }
-}
-
-void Iterator::visit_edges(Cell::Visitor& visitor)
-{
-    Base::visit_edges(visitor);
-    visitor.visit(m_iterated);
-}
-
-void IteratorRecord::visit_edges(Cell::Visitor& visitor)
-{
-    Base::visit_edges(visitor);
-    visitor.visit(iterator);
-    visitor.visit(next_method);
 }
 
 }

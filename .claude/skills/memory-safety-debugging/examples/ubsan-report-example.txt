@@ -1,0 +1,315 @@
+=================================================================
+# EXAMPLE 1: Signed Integer Overflow
+=================================================================
+
+LibIPC/Decoder.cpp:45:18: runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type 'int'
+
+# ↑ FILE AND LINE: LibIPC/Decoder.cpp line 45, column 18
+# ↑ ERROR: signed integer overflow
+# ↑ OPERATION: 2147483647 + 1 (INT_MAX + 1)
+
+    #0 0x7f8b2c123456 in IPC::Decoder::decode<int>() LibIPC/Decoder.cpp:45:18
+        # ↑ Template instantiation for decode<int>
+        # Likely code: return value + 1;
+
+    #1 0x7f8b2c234567 in RequestServer::ConnectionFromClient::handle_start_request() Services/RequestServer/ConnectionFromClient.cpp:89:12
+        # ↑ IPC message handler decoding request ID
+
+    #2 0x7f8b2c345678 in RequestServer::ConnectionFromClient::handle_message() Services/RequestServer/ConnectionFromClient.cpp:56:5
+        # ↑ Main IPC message dispatcher
+
+
+SUMMARY: UndefinedBehaviorSanitizer: signed-integer-overflow LibIPC/Decoder.cpp:45:18
+
+
+# ========================================================================
+# INTERPRETATION:
+# ========================================================================
+#
+# 1. ERROR TYPE: signed-integer-overflow
+#    - Signed integer overflow is UNDEFINED BEHAVIOR in C++
+#    - Can cause security vulnerabilities in IPC parsing
+#    - Attacker can send INT_MAX to bypass checks
+#
+# 2. CONTEXT: IPC Message Decoding
+#    - This is in IPC::Decoder - SECURITY CRITICAL
+#    - Untrusted input from other processes
+#    - Integer overflow can bypass size validation
+#
+# 3. FIX: Use checked arithmetic
+#    - Replace: return value + 1;
+#    - With:    return AK::checked_add(value, 1).value_or(Error);
+#
+# ========================================================================
+
+
+# EXAMPLE FIX:
+
+// Before (WRONG):
+template<>
+ErrorOr<int> Decoder::decode() {
+    int value;
+    TRY(m_stream.read_value(value));
+    return value + 1;  // OVERFLOW if value == INT_MAX
+}
+
+// After (CORRECT):
+template<>
+ErrorOr<int> Decoder::decode() {
+    int value;
+    TRY(m_stream.read_value(value));
+
+    auto result = AK::checked_add(value, 1);
+    if (result.has_overflow())
+        return Error::from_string_literal("Integer overflow in decode");
+
+    return result.value();
+}
+
+
+=================================================================
+# EXAMPLE 2: Null Pointer Dereference
+=================================================================
+
+LibWeb/DOM/Element.cpp:89:5: runtime error: member call on null pointer of type 'Web::DOM::Node'
+
+# ↑ Calling member function on null pointer (this == nullptr)
+
+    #0 0x7f8b2c123456 in Web::DOM::Element::remove() LibWeb/DOM/Element.cpp:89:5
+        # ↑ Calling a method with null 'this'
+        # Likely code: m_parent->remove_child(this);
+        #             ^^^^^^^^^ m_parent is null
+
+    #1 0x7f8b2c234567 in Web::HTML::HTMLElement::click() LibWeb/HTML/HTMLElement.cpp:45:9
+
+
+SUMMARY: UndefinedBehaviorSanitizer: null-pointer-dereference LibWeb/DOM/Element.cpp:89:5
+
+
+# ========================================================================
+# INTERPRETATION:
+# ========================================================================
+#
+# 1. ERROR TYPE: null-pointer-dereference
+#    - Attempting to call method on null pointer
+#    - Not a crash yet (UBSAN caught it)
+#    - Would crash with SIGSEGV if UBSAN not enabled
+#
+# 2. FIX: Null check before access
+#
+# ========================================================================
+
+
+# EXAMPLE FIX:
+
+// Before (WRONG):
+void Element::remove() {
+    m_parent->remove_child(this);  // Crash if m_parent is null
+}
+
+// After (CORRECT):
+void Element::remove() {
+    if (!m_parent)
+        return;  // Root element, no parent to remove from
+
+    m_parent->remove_child(this);
+}
+
+
+=================================================================
+# EXAMPLE 3: Array Bounds Violation
+=================================================================
+
+LibWeb/CSS/Parser/Parser.cpp:234:18: runtime error: index 48 out of bounds for type 'char [48]'
+
+# ↑ Array index 48 for array of size 48 (valid indices: 0-47)
+
+    #0 0x7f8b2c123456 in Web::CSS::Parser::parse_selector() LibWeb/CSS/Parser/Parser.cpp:234:18
+        # ↑ Accessing array[48] when size is 48
+        # Likely code: buffer[i] = input[i];
+        #             ^^^^^^^ off-by-one error
+
+
+SUMMARY: UndefinedBehaviorSanitizer: index-out-of-bounds LibWeb/CSS/Parser/Parser.cpp:234:18
+
+
+# ========================================================================
+# INTERPRETATION:
+# ========================================================================
+#
+# 1. ERROR TYPE: index-out-of-bounds
+#    - Off-by-one error in loop condition
+#    - Should be: i < 48, not i <= 48
+#
+# 2. FIX: Correct loop bounds
+#
+# ========================================================================
+
+
+# EXAMPLE FIX:
+
+// Before (WRONG):
+void parse_selector() {
+    char buffer[48];
+    for (size_t i = 0; i <= 48; ++i) {  // Off-by-one: <= instead of <
+        buffer[i] = input[i];
+    }
+}
+
+// After (CORRECT):
+void parse_selector() {
+    char buffer[48];
+    for (size_t i = 0; i < 48 && i < input.length(); ++i) {
+        buffer[i] = input[i];
+    }
+}
+
+// Better (use Vector):
+void parse_selector() {
+    Vector<char> buffer;
+    buffer.ensure_capacity(input.length());
+    for (size_t i = 0; i < input.length(); ++i) {
+        buffer.append(input[i]);
+    }
+}
+
+
+=================================================================
+# EXAMPLE 4: Misaligned Pointer
+=================================================================
+
+LibWeb/Layout/Box.cpp:156:23: runtime error: load of misaligned address 0x60700000eff9 for type 'int', which requires 4 byte alignment
+
+# ↑ Pointer not aligned to 4-byte boundary (required for int)
+
+    #0 0x7f8b2c123456 in Web::Layout::Box::compute_size() LibWeb/Layout/Box.cpp:156:23
+        # ↑ Likely: int value = *(int*)(buffer + 1);
+        #                       ^^^^^^^^ misaligned cast
+
+
+SUMMARY: UndefinedBehaviorSanitizer: misaligned-pointer-use LibWeb/Layout/Box.cpp:156:23
+
+
+# ========================================================================
+# INTERPRETATION:
+# ========================================================================
+#
+# 1. ERROR TYPE: misaligned-pointer-use
+#    - Pointer not aligned for type (int needs 4-byte alignment)
+#    - Can cause crashes on some architectures (ARM, MIPS)
+#    - Performance penalty even if it doesn't crash
+#
+# 2. FIX: Use memcpy for unaligned access
+#
+# ========================================================================
+
+
+# EXAMPLE FIX:
+
+// Before (WRONG):
+int read_value(u8* buffer) {
+    return *(int*)(buffer + 1);  // Misaligned if buffer is odd address
+}
+
+// After (CORRECT):
+int read_value(u8* buffer) {
+    int value;
+    memcpy(&value, buffer + 1, sizeof(int));  // Safe unaligned access
+    return value;
+}
+
+
+=================================================================
+# EXAMPLE 5: Invalid Enum Value
+=================================================================
+
+LibWeb/HTML/HTMLElement.cpp:78:12: runtime error: load of value 255, which is not a valid value for type 'Web::HTML::AttributeChangeType'
+
+# ↑ Enum value 255 is not in the valid enum range
+
+    #0 0x7f8b2c123456 in Web::HTML::HTMLElement::attribute_changed(Web::HTML::AttributeChangeType) LibWeb/HTML/HTMLElement.cpp:78:12
+
+
+SUMMARY: UndefinedBehaviorSanitizer: invalid-enum-value LibWeb/HTML/HTMLElement.cpp:78:12
+
+
+# ========================================================================
+# INTERPRETATION:
+# ========================================================================
+#
+# 1. ERROR TYPE: invalid-enum-value
+#    - Enum contains value not in enum definition
+#    - Likely from IPC deserialization without validation
+#    - Can break switch statements with undefined behavior
+#
+# 2. FIX: Validate enum values during deserialization
+#
+# ========================================================================
+
+
+# EXAMPLE FIX:
+
+// Enum definition:
+enum class AttributeChangeType : u8 {
+    Added = 0,
+    Removed = 1,
+    Modified = 2
+};
+
+// Before (WRONG):
+template<>
+ErrorOr<AttributeChangeType> Decoder::decode() {
+    u8 value;
+    TRY(m_stream.read_value(value));
+    return static_cast<AttributeChangeType>(value);  // No validation!
+}
+
+// After (CORRECT):
+template<>
+ErrorOr<AttributeChangeType> Decoder::decode() {
+    u8 value;
+    TRY(m_stream.read_value(value));
+
+    // Validate enum range
+    if (value > static_cast<u8>(AttributeChangeType::Modified))
+        return Error::from_string_literal("Invalid AttributeChangeType");
+
+    return static_cast<AttributeChangeType>(value);
+}
+
+
+=================================================================
+# ENABLING UBSAN OPTIONS
+=================================================================
+
+# Comprehensive UBSAN detection:
+export UBSAN_OPTIONS="\
+print_stacktrace=1:\
+halt_on_error=0:\
+report_error_type=1:\
+silence_unsigned_overflow=0"
+
+# Run Ladybird:
+./Build/sanitizers/bin/Ladybird
+
+# Stop on first error (for debugging):
+export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"
+
+
+=================================================================
+# COMMON UBSAN CHECKS
+=================================================================
+
+| Check                      | Detects                           |
+|----------------------------|-----------------------------------|
+| signed-integer-overflow    | Signed int overflow (UB in C++)   |
+| unsigned-integer-overflow  | Unsigned int overflow (wrapping)  |
+| null-pointer-dereference   | Null pointer access               |
+| index-out-of-bounds        | Array bounds violations           |
+| misaligned-pointer-use     | Unaligned pointer dereference     |
+| invalid-enum-value         | Invalid enum values               |
+| division-by-zero           | Integer division by zero          |
+| shift-base                 | Shifting negative values          |
+| shift-exponent             | Shift by >= bit width             |
+| vptr                       | Virtual function table corruption |
+| object-size                | Buffer overflow detection         |

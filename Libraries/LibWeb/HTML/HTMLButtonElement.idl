@@ -1,6 +1,6 @@
 #import <HTML/HTMLElement.idl>
 #import <HTML/HTMLFormElement.idl>
-#import <HTML/PopoverInvokerElement.idl>
+#import <HTML/PopoverTargetAttributes.idl>
 #import <HTML/ValidityState.idl>
 
 [MissingValueDefault=submit, InvalidValueDefault=submit]
@@ -26,7 +26,7 @@ interface HTMLButtonElement : HTMLElement {
     [CEReactions, Reflect=formtarget] attribute DOMString formTarget;
     [CEReactions, Reflect] attribute DOMString name;
     [CEReactions, ImplementedAs=type_for_bindings, Enumerated=ButtonTypeState] attribute DOMString type;
-    [CEReactions, Reflect] attribute Utf16DOMString value;
+    [CEReactions, Reflect] attribute DOMString value;
 
     readonly attribute boolean willValidate;
     readonly attribute ValidityState validity;
@@ -37,4 +37,4 @@ interface HTMLButtonElement : HTMLElement {
 
     readonly attribute NodeList labels;
 };
-HTMLButtonElement includes PopoverInvokerElement;
+HTMLButtonElement includes PopoverTargetAttributes;

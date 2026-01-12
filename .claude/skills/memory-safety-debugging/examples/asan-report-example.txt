@@ -1,0 +1,127 @@
+=================================================================
+==42185==ERROR: AddressSanitizer: heap-use-after-free on address 0x60700000eff8 at pc 0x7f8b2c3d4e56 bp 0x7ffc8d9e1a40 sp 0x7ffc8d9e1a38
+
+# ↓ What happened: READ (not write) of 8 bytes (pointer size on 64-bit)
+READ of size 8 at 0x60700000eff8 thread T0
+
+    # ↓ STACK TRACE: Where the use-after-free happened
+    #0 0x7f8b2c3d4e55 in Web::DOM::Node::parent() const LibWeb/DOM/Node.cpp:142:5
+        # ↑ This is the line that accessed freed memory
+        # Likely code: return m_parent.ptr();
+
+    #1 0x7f8b2c3d5123 in Web::DOM::Element::remove() LibWeb/DOM/Element.cpp:89:12
+        # ↑ Called parent() on a deleted node
+        # Likely code: auto* parent_node = parent();
+
+    #2 0x7f8b2c3d6789 in Web::HTML::HTMLElement::click() LibWeb/HTML/HTMLElement.cpp:45:9
+        # ↑ Triggered the removal
+
+    #3 0x7f8b2c3d7abc in Web::Bindings::HTMLElementPrototype::click() LibWeb/Bindings/HTMLElementPrototype.cpp:67:5
+        # ↑ JavaScript binding that called into C++
+
+    #4 0x7f8b2c3d8def in JS::NativeFunction::call() LibJS/Runtime/NativeFunction.cpp:34:12
+        # ↑ JavaScript VM calling the native function
+
+
+# ↓ MEMORY DETAILS: Information about the freed memory region
+0x60700000eff8 is located 8 bytes inside of 64-byte region [0x60700000eff0,0x60700000f030)
+
+# ↑ The accessed address (0x60700000eff8) is 8 bytes into the allocation
+# This suggests accessing a member variable (e.g., m_parent at offset 8)
+
+
+# ↓ WHERE IT WAS FREED: Stack trace of the free operation
+freed by thread T0 here:
+    #0 0x7f8b2d123456 in operator delete(void*) (/home/rbsmith4/ladybird/Build/sanitizers/bin/Ladybird+0x123456)
+        # ↑ The actual delete/free call
+
+    #1 0x7f8b2c3d4abc in Web::DOM::Node::~Node() LibWeb/DOM/Node.cpp:67:1
+        # ↑ Node destructor - where the object was destroyed
+
+    #2 0x7f8b2c3d4bcd in Web::DOM::Element::~Element() LibWeb/DOM/Element.cpp:45:1
+        # ↑ Element destructor (calls Node destructor)
+
+    #3 0x7f8b2c3d5def in Web::DOM::Document::remove_from_tree(Web::DOM::Node&) LibWeb/DOM/Document.cpp:234:5
+        # ↑ Document removed the node from the tree, triggering deletion
+        # Likely code: node.unref(); // RefPtr released, object deleted
+
+
+# ↓ WHERE IT WAS ALLOCATED: Stack trace of the allocation (optional info)
+previously allocated by thread T0 here:
+    #0 0x7f8b2d123789 in operator new(unsigned long) (/home/rbsmith4/ladybird/Build/sanitizers/bin/Ladybird+0x123789)
+
+    #1 0x7f8b2c3d3456 in Web::DOM::Node::create() LibWeb/DOM/Node.cpp:23:12
+        # ↑ Where the Node was created
+
+    #2 0x7f8b2c3d4567 in Web::HTML::HTMLParser::create_element_for(Web::HTML::Token const&) LibWeb/HTML/Parser/HTMLParser.cpp:456:15
+        # ↑ HTML parser created the element
+
+    #3 0x7f8b2c3d5678 in Web::HTML::HTMLParser::run() LibWeb/HTML/Parser/HTMLParser.cpp:123:18
+        # ↑ Parser processing HTML
+
+
+# ↓ SUMMARY
+SUMMARY: AddressSanitizer: heap-use-after-free LibWeb/DOM/Node.cpp:142:5 in Web::DOM::Node::parent() const
+
+
+# ========================================================================
+# HOW TO INTERPRET THIS REPORT
+# ========================================================================
+#
+# 1. ERROR TYPE: heap-use-after-free
+#    - Memory was allocated, freed, then accessed again
+#    - This is a critical security vulnerability (CVE-worthy)
+#
+# 2. ACCESS DETAILS:
+#    - READ of size 8 at 0x60700000eff8
+#    - Reading 8 bytes (pointer size) from freed memory
+#    - This is trying to read a member variable (m_parent)
+#
+# 3. USE SITE (where we accessed freed memory):
+#    - Web::DOM::Node::parent() at LibWeb/DOM/Node.cpp:142
+#    - Line 142 is: return m_parent.ptr();
+#    - We're accessing m_parent member of a DELETED object
+#
+# 4. FREE SITE (where memory was freed):
+#    - Web::DOM::Node::~Node() at LibWeb/DOM/Node.cpp:67
+#    - Object was destroyed when RefPtr count hit zero
+#    - Triggered by Document::remove_from_tree()
+#
+# 5. ROOT CAUSE:
+#    - HTMLElement::click() calls remove() on an element
+#    - remove() calls parent() on the element
+#    - BUT the element might have been deleted during the remove operation!
+#    - We have a dangling raw pointer or weak reference
+#
+# 6. FIX:
+#    - Use NonnullRefPtr<Node> instead of Node* to keep object alive
+#    - Change: Node* node = this;
+#    - To:     NonnullRefPtr<Node> node = *this;
+#    - This prevents deletion while we still need the object
+#
+# ========================================================================
+
+
+# EXAMPLE FIX:
+
+// Before (WRONG):
+void HTMLElement::click() {
+    if (auto* parent_node = parent()) {
+        remove();  // May delete 'this'
+        parent_node->update();  // USE-AFTER-FREE if parent was deleted
+    }
+}
+
+// After (CORRECT):
+void HTMLElement::click() {
+    auto parent_node = parent();
+    if (!parent_node)
+        return;
+
+    // Keep both objects alive
+    NonnullRefPtr<HTMLElement> protected_this = *this;
+    NonnullRefPtr<Node> protected_parent = *parent_node;
+
+    remove();  // Safe - RefPtr keeps objects alive
+    protected_parent->update();  // Safe - parent is still alive
+}

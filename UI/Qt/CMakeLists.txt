@@ -3,12 +3,17 @@ target_sources(ladybird PRIVATE
     Application.cpp
     Autocomplete.cpp
     BrowserWindow.cpp
+    EventLoopImplementationQt.cpp
+    EventLoopImplementationQtEventTarget.cpp
     FindInPageWidget.cpp
     Icon.cpp
     LocationEdit.cpp
     Menu.cpp
     NetworkAuditDialog.cpp
     ProxySettingsDialog.cpp
+    QuarantineManagerDialog.cpp
+    SecurityAlertDialog.cpp
+    SecurityNotificationBanner.cpp
     Settings.cpp
     StringUtils.cpp
     Tab.cpp
@@ -17,11 +22,11 @@ target_sources(ladybird PRIVATE
     WebContentView.cpp
     ladybird.qrc
 )
-target_link_libraries(ladybird PRIVATE Qt::Core Qt::Gui Qt::Widgets)
-lagom_copy_runtime_dlls(ladybird)
+target_link_libraries(ladybird PRIVATE Qt::Core Qt::Gui Qt::Widgets sentinelservice)
 create_ladybird_bundle(ladybird)
 
 if (WIN32)
+    lagom_windows_bin(ladybird CONSOLE)
     qt_generate_deploy_script(
         TARGET ladybird
         OUTPUT_SCRIPT ladybird_deploy_script
@@ -29,6 +34,7 @@ if (WIN32)
 qt_deploy_runtime_dependencies(
     EXECUTABLE $<TARGET_FILE:ladybird>
     PLUGINS_DIR $<TARGET_FILE_DIR:ladybird>
+    NO_TRANSLATIONS
 )
 ")
 

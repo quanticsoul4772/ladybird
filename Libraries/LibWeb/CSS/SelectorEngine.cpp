@@ -1015,7 +1015,7 @@ static inline bool matches_pseudo_class(CSS::Selector::SimpleSelector::PseudoCla
         // The :state(identifier) pseudo-class must match all custom elements whose states set's set entries contains identifier.
         if (!element.is_custom())
             return false;
-        if (auto* custom_state_set = element.custom_state_set())
+        if (auto custom_state_set = element.custom_state_set())
             return custom_state_set->has_state(pseudo_class.ident->string_value);
         return false;
     }
@@ -1085,6 +1085,13 @@ static ALWAYS_INLINE bool matches_namespace(
             return false;
 
         auto selector_namespace = style_sheet_for_rule->namespace_uri(qualified_name.namespace_);
+
+        // https://www.w3.org/TR/css-namespaces-3/#terminology
+        // In CSS Namespaces a namespace name consisting of the empty string is taken to represent the null namespace
+        // or lack of a namespace.
+        if (selector_namespace.has_value() && selector_namespace.value().is_empty())
+            return !element.namespace_uri().has_value();
+
         return selector_namespace.has_value() && selector_namespace.value() == element.namespace_uri();
     }
     VERIFY_NOT_REACHED();

@@ -12,6 +12,8 @@
 #include <AK/IterationDecision.h>
 #include <AK/NumericLimits.h>
 #include <AK/StringBuilder.h>
+#include <LibGfx/Bitmap.h>
+#include <LibGfx/ImmutableBitmap.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibUnicode/CharacterTypes.h>
 #include <LibUnicode/Locale.h>
@@ -31,6 +33,7 @@
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/CSS/StyleValues/LengthStyleValue.h>
 #include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
+#include <LibWeb/CSS/StyleValues/RandomValueSharingStyleValue.h>
 #include <LibWeb/DOM/Attr.h>
 #include <LibWeb/DOM/DOMTokenList.h>
 #include <LibWeb/DOM/Document.h>
@@ -123,6 +126,7 @@ void Element::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_inline_style);
     visitor.visit(m_class_list);
     visitor.visit(m_shadow_root);
+    visitor.visit(m_part_list);
     visitor.visit(m_custom_element_definition);
     visitor.visit(m_custom_state_set);
     visitor.visit(m_cascaded_properties);
@@ -208,9 +212,8 @@ GC::Ptr<Attr> Element::get_attribute_node_ns(Optional<FlyString> const& namespac
     return m_attributes->get_attribute_ns(namespace_, name);
 }
 
-// FIXME: Trusted Types integration with DOM is still under review https://github.com/whatwg/dom/pull/1268
-// https://whatpr.org/dom/1268.html#dom-element-setattribute
-WebIDL::ExceptionOr<void> Element::set_attribute(FlyString qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> const& value)
+// https://dom.spec.whatwg.org/#dom-element-setattribute
+WebIDL::ExceptionOr<void> Element::set_attribute_for_bindings(FlyString qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> const& value)
 {
     // 1. If qualifiedName is not a valid attribute local name, then throw an "InvalidCharacterError" DOMException.
     if (!is_valid_attribute_local_name(qualified_name))
@@ -228,26 +231,26 @@ WebIDL::ExceptionOr<void> Element::set_attribute(FlyString qualified_name, Varia
     // 4. Let attribute be the first attribute in this’s attribute list whose qualified name is qualifiedName, and null otherwise.
     auto* attribute = attributes()->get_attribute(qualified_name);
 
-    // 5. If attribute is null, create an attribute whose local name is qualifiedName, value is verifiedValue, and node document
-    //    is this’s node document, then append this attribute to this, and then return.
-    if (!attribute) {
-        auto new_attribute = Attr::create(document(), qualified_name, verified_value.to_utf8_but_should_be_ported_to_utf16());
-        m_attributes->append_attribute(new_attribute);
-
+    // 5. If attribute is non-null, then change attribute to verifiedValue and return.
+    if (attribute) {
+        attribute->change_attribute(verified_value.to_utf8_but_should_be_ported_to_utf16());
         return {};
     }
 
-    // 6. Change attribute to verifiedValue.
-    attribute->change_attribute(verified_value.to_utf8_but_should_be_ported_to_utf16());
+    // 6. Set attribute to a new attribute whose local name is qualifiedName, value is verifiedValue,
+    //    and node document is this’s node document.
+    attribute = Attr::create(document(), qualified_name, verified_value.to_utf8_but_should_be_ported_to_utf16());
+
+    // 7. Append attribute to this.
+    m_attributes->append_attribute(*attribute);
 
     return {};
 }
 
-// FIXME: Trusted Types integration with DOM is still under review https://github.com/whatwg/dom/pull/1268
-// https://whatpr.org/dom/1268.html#dom-element-setattribute
-WebIDL::ExceptionOr<void> Element::set_attribute(FlyString qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, String> const& value)
+// https://dom.spec.whatwg.org/#dom-element-setattribute
+WebIDL::ExceptionOr<void> Element::set_attribute_for_bindings(FlyString qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, String> const& value)
 {
-    return set_attribute(move(qualified_name),
+    return set_attribute_for_bindings(move(qualified_name),
         value.visit(
             [](auto const& trusted_type) -> Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> { return trusted_type; },
             [](String const& string) -> Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> { return Utf16String::from_utf8(string); }));
@@ -363,9 +366,8 @@ WebIDL::ExceptionOr<QualifiedName> validate_and_extract(JS::Realm& realm, Option
     return QualifiedName { local_name, prefix, namespace_ };
 }
 
-// FIXME: Trusted Types integration with DOM is still under review https://github.com/whatwg/dom/pull/1268
-// https://whatpr.org/dom/1268.html#dom-element-setattributens
-WebIDL::ExceptionOr<void> Element::set_attribute_ns(Optional<FlyString> const& namespace_, FlyString const& qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> const& value)
+// https://dom.spec.whatwg.org/#dom-element-setattributens
+WebIDL::ExceptionOr<void> Element::set_attribute_ns_for_bindings(Optional<FlyString> const& namespace_, FlyString const& qualified_name, Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> const& value)
 {
     // 1. Let (namespace, prefix, localName) be the result of validating and extracting namespace and qualifiedName given "element".
     auto extracted_qualified_name = TRY(validate_and_extract(realm(), namespace_, qualified_name, ValidationContext::Element));
@@ -376,9 +378,7 @@ WebIDL::ExceptionOr<void> Element::set_attribute_ns(Optional<FlyString> const& n
         extracted_qualified_name.local_name(),
         extracted_qualified_name.namespace_().has_value() ? Utf16String::from_utf8(extracted_qualified_name.namespace_().value()) : Optional<Utf16String>(),
         *this,
-        value.visit(
-            [](auto const& trusted_type) -> Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> { return trusted_type; },
-            [](String const& string) -> Variant<GC::Root<TrustedTypes::TrustedHTML>, GC::Root<TrustedTypes::TrustedScript>, GC::Root<TrustedTypes::TrustedScriptURL>, Utf16String> { return Utf16String::from_utf8(string); })));
+        value));
 
     // 3. Set an attribute value for this using localName, verifiedValue, and also prefix and namespace.
     set_attribute_value(extracted_qualified_name.local_name(), verified_value.to_utf8_but_should_be_ported_to_utf16(), extracted_qualified_name.prefix(), extracted_qualified_name.namespace_());
@@ -421,14 +421,14 @@ void Element::set_attribute_value(FlyString const& local_name, String const& val
 }
 
 // https://dom.spec.whatwg.org/#dom-element-setattributenode
-WebIDL::ExceptionOr<GC::Ptr<Attr>> Element::set_attribute_node(Attr& attr)
+WebIDL::ExceptionOr<GC::Ptr<Attr>> Element::set_attribute_node_for_bindings(Attr& attr)
 {
     // The setAttributeNode(attr) and setAttributeNodeNS(attr) methods steps are to return the result of setting an attribute given attr and this.
     return attributes()->set_attribute(attr);
 }
 
 // https://dom.spec.whatwg.org/#dom-element-setattributenodens
-WebIDL::ExceptionOr<GC::Ptr<Attr>> Element::set_attribute_node_ns(Attr& attr)
+WebIDL::ExceptionOr<GC::Ptr<Attr>> Element::set_attribute_node_ns_for_bindings(Attr& attr)
 {
     // The setAttributeNode(attr) and setAttributeNodeNS(attr) methods steps are to return the result of setting an attribute given attr and this.
     return attributes()->set_attribute(attr);
@@ -566,7 +566,7 @@ GC::Ptr<DOM::Element> Element::get_the_attribute_associated_element(FlyString co
 }
 
 // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#attr-associated-elements
-Optional<GC::RootVector<GC::Ref<DOM::Element>>> Element::get_the_attribute_associated_elements(FlyString const& content_attribute, Optional<Vector<GC::Weak<DOM::Element>>> const& explicitly_set_attribute_elements) const
+Optional<GC::RootVector<GC::Ref<DOM::Element>>> Element::get_the_attribute_associated_elements(FlyString const& content_attribute, Optional<Vector<GC::Weak<DOM::Element>> const&> explicitly_set_attribute_elements) const
 {
     // 1. Let elements be an empty list.
     GC::RootVector<GC::Ref<DOM::Element>> elements(heap());
@@ -697,7 +697,7 @@ static CSS::RequiredInvalidationAfterStyleChange compute_required_invalidation(C
 {
     CSS::RequiredInvalidationAfterStyleChange invalidation;
 
-    if (!old_style.computed_font_list().equals(new_style.computed_font_list()))
+    if (old_style.cached_computed_font_list() != new_style.cached_computed_font_list())
         invalidation.relayout = true;
 
     for (auto i = to_underlying(CSS::first_longhand_property_id); i <= to_underlying(CSS::last_longhand_property_id); ++i) {
@@ -830,44 +830,47 @@ CSS::RequiredInvalidationAfterStyleChange Element::recompute_inherited_style()
 
     CSS::RequiredInvalidationAfterStyleChange invalidation;
 
-    HashMap<size_t, RefPtr<CSS::StyleValue const>> old_values_with_relative_units;
+    HashMap<size_t, RefPtr<CSS::StyleValue const>> property_values_affected_by_inherited_style;
     for (auto i = to_underlying(CSS::first_longhand_property_id); i <= to_underlying(CSS::last_longhand_property_id); ++i) {
         auto property_id = static_cast<CSS::PropertyID>(i);
         // FIXME: We should use the specified value rather than the cascaded value as the cascaded value may include
         //        unresolved CSS-wide keywords (e.g. 'initial' or 'inherit') rather than the resolved value.
         auto const& preabsolutized_value = m_cascaded_properties->property(property_id);
         RefPtr old_value = computed_properties->property(property_id);
-        // FIXME: Consider other style values that rely on relative lengths (e.g. CalculatedStyleValue, StyleValues which contain lengths (e.g. StyleValueList))
-        // Update property if it uses relative units as it might have been affected by a change in ancestor element style.
-        if (preabsolutized_value && preabsolutized_value->is_length() && preabsolutized_value->as_length().length().is_font_relative()) {
-            auto is_inherited = computed_properties->is_property_inherited(property_id);
-            computed_properties->set_property(property_id, *preabsolutized_value, is_inherited ? CSS::ComputedProperties::Inherited::Yes : CSS::ComputedProperties::Inherited::No);
-            old_values_with_relative_units.set(i, old_value);
+
+        if (preabsolutized_value) {
+            // A property needs updating if:
+            // - It uses relative units as it might have been affected by a change in ancestor element style.
+            //   FIXME: Consider other style values that rely on relative lengths (e.g. CalculatedStyleValue,
+            //          StyleValues which contain lengths (e.g. StyleValueList))
+            // - font-weight is `bolder` or `lighter`
+            // - font-size is `larger` or `smaller`
+            // FIXME: Consider any other properties that rely on inherited values for computation.
+            auto needs_updating = (preabsolutized_value->is_length() && preabsolutized_value->as_length().length().is_font_relative())
+                || (property_id == CSS::PropertyID::FontWeight && first_is_one_of(preabsolutized_value->to_keyword(), CSS::Keyword::Bolder, CSS::Keyword::Lighter))
+                || (property_id == CSS::PropertyID::FontSize && first_is_one_of(preabsolutized_value->to_keyword(), CSS::Keyword::Larger, CSS::Keyword::Smaller));
+            if (needs_updating) {
+                computed_properties->set_property_without_modifying_flags(property_id, *preabsolutized_value);
+                property_values_affected_by_inherited_style.set(i, old_value);
+            }
         }
 
-        // FIXME: We should also consider properties which depend on their inherited values for computation (e.g.
-        //        relative font-sizes or font-weights)
         if (!computed_properties->is_property_inherited(property_id))
             continue;
 
-        RefPtr<CSS::StyleValue const> old_animated_value = computed_properties->animated_property_values().get(property_id).value_or({});
-        RefPtr<CSS::StyleValue const> new_animated_value = CSS::StyleComputer::get_animated_inherit_value(property_id, { *this })
-                                                               .map([&](auto& value) { return value.ptr(); })
-                                                               .value_or({});
-
-        invalidation |= CSS::compute_property_invalidation(property_id, old_animated_value, new_animated_value);
-
-        if (new_animated_value)
-            computed_properties->set_animated_property(property_id, new_animated_value.release_nonnull(), CSS::ComputedProperties::Inherited::Yes);
-        else if (old_animated_value && computed_properties->is_animated_property_inherited(property_id))
-            computed_properties->remove_animated_property(property_id);
+        if (computed_properties->is_animated_property_inherited(property_id) || !computed_properties->animated_property_values().contains(property_id)) {
+            if (auto new_animated_value = CSS::StyleComputer::get_animated_inherit_value(property_id, { *this }); new_animated_value.has_value())
+                computed_properties->set_animated_property(property_id, new_animated_value->value, new_animated_value->is_result_of_transition, CSS::ComputedProperties::Inherited::Yes);
+            else if (computed_properties->animated_property_values().contains(property_id))
+                computed_properties->remove_animated_property(property_id);
+        }
 
         RefPtr new_value = CSS::StyleComputer::get_non_animated_inherit_value(property_id, { *this });
         computed_properties->set_property(property_id, *new_value, CSS::ComputedProperties::Inherited::Yes);
-        invalidation |= CSS::compute_property_invalidation(property_id, old_value, new_value);
+        invalidation |= CSS::compute_property_invalidation(property_id, old_value, computed_properties->property(property_id));
     }
 
-    if (invalidation.is_none() && old_values_with_relative_units.is_empty())
+    if (invalidation.is_none() && property_values_affected_by_inherited_style.is_empty())
         return invalidation;
 
     AbstractElement abstract_element { *this };
@@ -875,7 +878,7 @@ CSS::RequiredInvalidationAfterStyleChange Element::recompute_inherited_style()
     document().style_computer().compute_font(*computed_properties, abstract_element);
     document().style_computer().compute_property_values(*computed_properties, abstract_element);
 
-    for (auto [property_id, old_value] : old_values_with_relative_units) {
+    for (auto const& [property_id, old_value] : property_values_affected_by_inherited_style) {
         auto const& new_value = computed_properties->property(static_cast<CSS::PropertyID>(property_id));
         invalidation |= CSS::compute_property_invalidation(static_cast<CSS::PropertyID>(property_id), old_value, new_value);
     }
@@ -887,11 +890,21 @@ CSS::RequiredInvalidationAfterStyleChange Element::recompute_inherited_style()
     return invalidation;
 }
 
-DOMTokenList* Element::class_list()
+GC::Ref<DOMTokenList> Element::class_list()
 {
     if (!m_class_list)
         m_class_list = DOMTokenList::create(*this, HTML::AttributeNames::class_);
-    return m_class_list;
+    return *m_class_list;
+}
+
+// https://drafts.csswg.org/css-shadow-parts/#dom-element-part
+GC::Ref<DOMTokenList> Element::part_list()
+{
+    // The part attribute’s getter must return a DOMTokenList object whose associated element is the context object and
+    // whose associated attribute’s local name is part.
+    if (!m_part_list)
+        m_part_list = DOMTokenList::create(*this, HTML::AttributeNames::part);
+    return *m_part_list;
 }
 
 // https://dom.spec.whatwg.org/#valid-shadow-host-name
@@ -1066,7 +1079,7 @@ WebIDL::ExceptionOr<void> Element::set_inner_html(TrustedTypes::TrustedHTMLOrStr
         TrustedTypes::TrustedTypeName::TrustedHTML,
         HTML::relevant_global_object(*this),
         value,
-        TrustedTypes::InjectionSink::ElementinnerHTML,
+        TrustedTypes::InjectionSink::Element_innerHTML,
         TrustedTypes::Script.to_string()));
 
     // 2. Let context be this.
@@ -1746,7 +1759,7 @@ i32 Element::tab_index() const
 // https://html.spec.whatwg.org/multipage/interaction.html#dom-tabindex
 void Element::set_tab_index(i32 tab_index)
 {
-    MUST(set_attribute(HTML::AttributeNames::tabindex, String::number(tab_index)));
+    set_attribute_value(HTML::AttributeNames::tabindex, String::number(tab_index));
 }
 
 // https://drafts.csswg.org/cssom-view/#potentially-scrollable
@@ -2120,7 +2133,7 @@ WebIDL::ExceptionOr<void> Element::set_outer_html(TrustedTypes::TrustedHTMLOrStr
         TrustedTypes::TrustedTypeName::TrustedHTML,
         HTML::relevant_global_object(*this),
         value,
-        TrustedTypes::InjectionSink::ElementouterHTML,
+        TrustedTypes::InjectionSink::Element_outerHTML,
         TrustedTypes::Script.to_string()));
 
     // 2. Let parent be this's parent.
@@ -2156,7 +2169,7 @@ WebIDL::ExceptionOr<void> Element::insert_adjacent_html(String const& position, 
         TrustedTypes::TrustedTypeName::TrustedHTML,
         HTML::relevant_global_object(*this),
         string,
-        TrustedTypes::InjectionSink::ElementinsertAdjacentHTML,
+        TrustedTypes::InjectionSink::Element_insertAdjacentHTML,
         TrustedTypes::Script.to_string()));
 
     // 2. Let context be null.
@@ -2300,12 +2313,24 @@ static CSSPixelPoint determine_the_scroll_into_view_position(Element& target, Bi
     // block flow direction position block, an inline base direction position inline, and a scrolling box scrolling box,
     // run the following steps:
 
-    if (!scrolling_box.is_document()) {
-        // FIXME: Add support for scrolling boxes other than the viewport.
+    // Get the scrolling box's rectangle
+    CSSPixelRect scrolling_box_rect;
+    if (scrolling_box.is_document()) {
+        // NOTE: For a viewport scrolling box is initial containing block
+        scrolling_box_rect = scrolling_box.document().viewport_rect();
+    } else if (scrolling_box.is_element()) {
+        // For element scroll containers, use the padding box (the scrollable area)
+        auto& element = static_cast<Element&>(scrolling_box);
+        auto* paintable_box = element.paintable_box();
+        if (!paintable_box)
+            return {};
+
+        // The scrolling box rect should be relative to the same coordinate system as the target's bounding box
+        // getBoundingClientRect returns viewport-relative coordinates
+        scrolling_box_rect = paintable_box->absolute_padding_box_rect();
+    } else {
         return {};
     }
-    // NOTE: For a viewport scrolling box is initial containing block
-    CSSPixelRect scrolling_box_rect = scrolling_box.document().viewport_rect();
 
     // FIXME: All of this needs to support different block/inline directions.
 
@@ -2464,7 +2489,30 @@ static ErrorOr<void> scroll_an_element_into_view(Element& target, Bindings::Scro
         if (true) {
             // -> If scrolling box is associated with an element
             if (scrolling_box.is_element()) {
-                // FIXME: Perform a scroll of the element’s scrolling box to position, with the element as the associated element and behavior as the scroll behavior.
+                // Perform a scroll of the element's scrolling box to position, with the element as the associated element and behavior as the scroll behavior.
+                auto& element = static_cast<Element&>(scrolling_box);
+                auto* paintable_box = element.paintable_box();
+                if (!paintable_box)
+                    continue;
+
+                // Get the current scroll offset
+                auto current_scroll_offset = paintable_box->scroll_offset();
+
+                // Calculate the new scroll offset
+                // The position returned by determine_the_scroll_into_view_position is in absolute coordinates,
+                // but we need to convert it to be relative to the scroll container's content area
+                auto scrolling_box_rect = paintable_box->absolute_padding_box_rect();
+
+                // Calculate the delta from the scrolling box's top-left to the desired position
+                CSSPixelPoint new_scroll_offset;
+                new_scroll_offset.set_x(current_scroll_offset.x() + (position.x() - scrolling_box_rect.x()));
+                new_scroll_offset.set_y(current_scroll_offset.y() + (position.y() - scrolling_box_rect.y()));
+
+                // FIXME: Implement smooth scrolling when behavior is ScrollBehavior::Smooth
+                (void)behavior;
+
+                // Set the scroll offset
+                (void)paintable_box->set_scroll_offset(new_scroll_offset);
             }
             // -> If scrolling box is associated with a viewport
             else if (scrolling_box.is_document()) {
@@ -2543,6 +2591,22 @@ ErrorOr<void> Element::scroll_into_view(Optional<Variant<bool, ScrollIntoViewOpt
 
     return {};
 }
+
+#define __ENUMERATE_ARIA_ATTRIBUTE(name, attribute)                  \
+    Optional<String> Element::name() const                           \
+    {                                                                \
+        return get_attribute(ARIA::AttributeNames::name);            \
+    }                                                                \
+                                                                     \
+    void Element::set_##name(Optional<String> const& value)          \
+    {                                                                \
+        if (value.has_value())                                       \
+            set_attribute_value(ARIA::AttributeNames::name, *value); \
+        else                                                         \
+            remove_attribute(ARIA::AttributeNames::name);            \
+    }
+ENUMERATE_ARIA_ATTRIBUTES
+#undef __ENUMERATE_ARIA_ATTRIBUTE
 
 void Element::invalidate_style_after_attribute_change(FlyString const& attribute_name, Optional<String> const& old_value, Optional<String> const& new_value)
 {
@@ -3403,7 +3467,7 @@ i32 Element::number_of_owned_list_items() const
 }
 
 // https://html.spec.whatwg.org/multipage/grouping-content.html#list-owner
-Element* Element::list_owner() const
+GC::Ptr<Element> Element::list_owner() const
 {
     // Any element whose computed value of 'display' is 'list-item' has a list owner, which is determined as follows:
     if (!m_is_contained_in_list_subtree && (!computed_properties() || !computed_properties()->display().is_list_item()))
@@ -3442,7 +3506,7 @@ Element* Element::list_owner() const
 
 void Element::maybe_invalidate_ordinals_for_list_owner(Optional<Element*> skip_node)
 {
-    if (Element* owner = list_owner())
+    if (auto owner = list_owner())
         owner->for_each_numbered_item_owned_by_list_owner([&](Element* item) {
             if (skip_node.has_value() && item == skip_node.value())
                 return IterationDecision::Continue;
@@ -3462,7 +3526,7 @@ i32 Element::ordinal_value()
     if (m_ordinal_value.has_value())
         return m_ordinal_value.value();
 
-    auto* owner = list_owner();
+    auto owner = list_owner();
     if (!owner)
         return 1;
 
@@ -3471,8 +3535,7 @@ i32 Element::ordinal_value()
     AK::Checked<i32> numbering = 1;
     auto reversed = false;
 
-    if (owner->is_html_olist_element()) {
-        auto const* ol_element = static_cast<HTML::HTMLOListElement const*>(owner);
+    if (auto* ol_element = as_if<HTML::HTMLOListElement>(owner.ptr())) {
         numbering = ol_element->starting_value().value();
         reversed = ol_element->has_attribute(HTML::AttributeNames::reversed);
     }
@@ -3807,9 +3870,13 @@ Element::Directionality Element::parent_directionality() const
 // https://dom.spec.whatwg.org/#concept-element-attributes-change-ext
 void Element::attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
 {
+    // AD-HOC: Everything below requires that there is no namespace, so return early if there is one.
+    if (namespace_.has_value())
+        return;
+
     // https://dom.spec.whatwg.org/#ref-for-concept-element-attributes-change-ext①
     // 1. If localName is slot and namespace is null, then:
-    if (local_name == HTML::AttributeNames::slot && !namespace_.has_value()) {
+    if (local_name == HTML::AttributeNames::slot) {
         // 1. If value is oldValue, then return.
         if (value == old_value)
             return;
@@ -3891,15 +3958,23 @@ void Element::attribute_changed(FlyString const& local_name, Optional<String> co
             m_dir = Dir::Auto;
         else
             m_dir = {};
+    } else if (local_name == HTML::AttributeNames::lang) {
+        for_each_in_inclusive_subtree_of_type<Element>([](auto& element) {
+            element.invalidate_lang_value();
+            return TraversalDecision::Continue;
+        });
+    } else if (local_name == HTML::AttributeNames::part) {
+        if (m_part_list)
+            m_part_list->associated_attribute_changed(value_or_empty);
     }
 
     // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#reflecting-content-attributes-in-idl-attributes:concept-element-attributes-change-ext
     // 1. If localName is not attr or namespace is not null, then return.
     // 2. Set element's explicitly set attr-element to null.
-#define __ENUMERATE_ARIA_ATTRIBUTE(attribute, referencing_attribute)                               \
-    else if (local_name == ARIA::AttributeNames::referencing_attribute && !namespace_.has_value()) \
-    {                                                                                              \
-        set_##attribute({});                                                                       \
+#define __ENUMERATE_ARIA_ATTRIBUTE(attribute, referencing_attribute)    \
+    else if (local_name == ARIA::AttributeNames::referencing_attribute) \
+    {                                                                   \
+        set_##attribute({});                                            \
     }
     ENUMERATE_ARIA_ELEMENT_REFERENCING_ATTRIBUTES
 #undef __ENUMERATE_ARIA_ATTRIBUTE
@@ -3907,10 +3982,10 @@ void Element::attribute_changed(FlyString const& local_name, Optional<String> co
     // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#reflecting-content-attributes-in-idl-attributes:concept-element-attributes-change-ext-2
     // 1. If localName is not attr or namespace is not null, then return.
     // 2. Set element's explicitly set attr-elements to null.
-#define __ENUMERATE_ARIA_ATTRIBUTE(attribute, referencing_attribute)                               \
-    else if (local_name == ARIA::AttributeNames::referencing_attribute && !namespace_.has_value()) \
-    {                                                                                              \
-        set_##attribute({});                                                                       \
+#define __ENUMERATE_ARIA_ATTRIBUTE(attribute, referencing_attribute)    \
+    else if (local_name == ARIA::AttributeNames::referencing_attribute) \
+    {                                                                   \
+        set_##attribute({});                                            \
     }
     ENUMERATE_ARIA_ELEMENT_LIST_REFERENCING_ATTRIBUTES
 #undef __ENUMERATE_ARIA_ATTRIBUTE
@@ -3968,7 +4043,7 @@ WebIDL::ExceptionOr<void> Element::set_html_unsafe(TrustedTypes::TrustedHTMLOrSt
         TrustedTypes::TrustedTypeName::TrustedHTML,
         HTML::relevant_global_object(*this),
         html,
-        TrustedTypes::InjectionSink::ElementsetHTMLUnsafe,
+        TrustedTypes::InjectionSink::Element_setHTMLUnsafe,
         TrustedTypes::Script.to_string()));
 
     // 2. Let target be this's template contents if this is a template element; otherwise this.
@@ -4004,7 +4079,7 @@ void Element::set_counters_set(OwnPtr<CSS::CountersSet>&& counters_set)
 // https://html.spec.whatwg.org/multipage/dom.html#the-lang-and-xml:lang-attributes
 Optional<String> Element::lang() const
 {
-    auto attempt_to_determine_lang_attribute = [&]() -> Optional<String> {
+    auto determine_lang_attribute = [&]() -> String {
         // 1. If the node is an element that has a lang attribute in the XML namespace set
         //      Use the value of that attribute.
         auto maybe_xml_lang = get_attribute_ns(Namespace::XML, HTML::AttributeNames::lang);
@@ -4023,23 +4098,23 @@ Optional<String> Element::lang() const
         //      Use the language of that shadow root's host.
         if (auto parent = parent_element()) {
             if (parent->is_shadow_root())
-                return parent->shadow_root()->host()->lang();
+                return parent->shadow_root()->host()->lang().value_or({});
         }
 
         // 4. If the node's parent element is not null
         //      Use the language of that parent element.
         if (auto parent = parent_element())
-            return parent->lang();
+            return parent->lang().value_or({});
 
         // 5. Otherwise
         //      - If there is a pragma-set default language set, then that is the language of the node.
         if (document().pragma_set_default_language().has_value()) {
-            return document().pragma_set_default_language();
+            return document().pragma_set_default_language().value_or({});
         }
 
         //      - If there is no pragma-set default language set, then language information from a higher-level protocol (such as HTTP),
         if (document().http_content_language().has_value()) {
-            return document().http_content_language();
+            return document().http_content_language().value_or({});
         }
 
         //        if any, must be used as the final fallback language instead.
@@ -4049,11 +4124,22 @@ Optional<String> Element::lang() const
         return {};
     };
 
+    if (!m_lang_value.has_value())
+        m_lang_value = determine_lang_attribute();
+
     // If the resulting value is the empty string, then it must be interpreted as meaning that the language of the node is explicitly unknown.
-    auto maybe_lang = attempt_to_determine_lang_attribute();
-    if (!maybe_lang.has_value() || maybe_lang->is_empty())
+    if (m_lang_value->is_empty())
         return {};
-    return maybe_lang.release_value();
+
+    return m_lang_value;
+}
+
+void Element::invalidate_lang_value()
+{
+    if (m_lang_value.has_value()) {
+        m_lang_value.clear();
+        set_needs_style_update(true);
+    }
 }
 
 template<typename Callback>
@@ -4161,6 +4247,10 @@ FlyString const& Element::html_uppercased_qualified_name() const
 
 void Element::play_or_cancel_animations_after_display_property_change()
 {
+    // OPTIMIZATION: We don't care about elements with no CSS defined animations
+    if (!has_css_defined_animations())
+        return;
+
     // OPTIMIZATION: We don't care about animations in disconnected subtrees.
     if (!is_connected())
         return;
@@ -4172,19 +4262,14 @@ void Element::play_or_cancel_animations_after_display_property_change()
 
     auto has_display_none_inclusive_ancestor = this->has_inclusive_ancestor_with_display_none();
 
-    auto play_or_cancel_depending_on_display = [&](HashMap<FlyString, GC::Ref<Animations::Animation>>& animations, Optional<CSS::PseudoElement> pseudo_element) {
+    auto play_or_cancel_depending_on_display = [&](HashMap<FlyString, GC::Ref<Animations::Animation>>& animations) {
         for (auto& [_, animation] : animations) {
             if (has_display_none_inclusive_ancestor) {
                 animation->cancel();
             } else {
-                auto play_state { CSS::AnimationPlayState::Running };
-                if (auto play_state_property = cascaded_properties(pseudo_element)->property(CSS::PropertyID::AnimationPlayState);
-                    play_state_property && play_state_property->is_keyword()) {
-                    if (auto play_state_value = keyword_to_animation_play_state(
-                            play_state_property->to_keyword());
-                        play_state_value.has_value())
-                        play_state = *play_state_value;
-                }
+                // NOTE: It is safe to assume this has a value as it is set when creating a CSS defined animation
+                auto play_state = animation->last_css_animation_play_state().value();
+
                 if (play_state == CSS::AnimationPlayState::Running) {
                     HTML::TemporaryExecutionContext context(realm());
                     animation->play().release_value_but_fixme_should_propagate_errors();
@@ -4196,11 +4281,11 @@ void Element::play_or_cancel_animations_after_display_property_change()
         }
     };
 
-    play_or_cancel_depending_on_display(*css_defined_animations({}), {});
+    play_or_cancel_depending_on_display(*css_defined_animations({}));
 
     for (auto i = 0; i < to_underlying(CSS::PseudoElement::KnownPseudoElementCount); i++) {
         auto pseudo_element = static_cast<CSS::PseudoElement>(i);
-        play_or_cancel_depending_on_display(*css_defined_animations(pseudo_element), pseudo_element);
+        play_or_cancel_depending_on_display(*css_defined_animations(pseudo_element));
     }
 }
 
@@ -4241,6 +4326,12 @@ bool Element::should_indicate_focus() const
     return false;
 }
 
+// https://html.spec.whatwg.org/multipage/interaction.html#tabindex-value
+bool Element::is_focusable() const
+{
+    return HTML::parse_integer(get_attribute_value(HTML::AttributeNames::tabindex)).has_value();
+}
+
 void Element::set_had_duplicate_attribute_during_tokenization(Badge<HTML::HTMLParser>)
 {
     m_had_duplicate_attribute_during_tokenization = true;
@@ -4269,6 +4360,28 @@ GC::Ref<CSS::StylePropertyMapReadOnly> Element::computed_style_map()
     return *m_computed_style_map_cache;
 }
 
+double Element::ensure_css_random_base_value(CSS::RandomCachingKey const& random_caching_key)
+{
+    // NB: We cache element-shared random base values on the Document and non-element-shared ones on the Element itself
+    //     so that when an element is removed it takes its non-shared cache with it.
+    if (!random_caching_key.element_id.has_value())
+        return document().ensure_element_shared_css_random_base_value(random_caching_key);
+
+    return m_element_specific_css_random_base_value_cache.ensure(random_caching_key, []() {
+        static XorShift128PlusRNG random_number_generator;
+        return random_number_generator.get();
+    });
+}
+
+GC::Ref<WebIDL::Promise> Element::request_pointer_lock(Optional<PointerLockOptions>)
+{
+    dbgln("FIXME: request_pointer_lock()");
+    auto promise = WebIDL::create_promise(realm());
+    auto error = WebIDL::NotSupportedError::create(realm(), "request_pointer_lock() is not implemented"_utf16);
+    WebIDL::reject_promise(realm(), promise, error);
+    return promise;
+}
+
 // The element to inherit style from.
 // If a pseudo-element is specified, this will return the element itself.
 // Otherwise, if this element is slotted somewhere, it will return the slot's element to inherit style from.
@@ -4280,6 +4393,37 @@ GC::Ptr<Element const> Element::element_to_inherit_style_from(Optional<CSS::Pseu
     while (auto const slot = assigned_slot_internal())
         return slot->element_to_inherit_style_from({});
     return parent_or_shadow_host_element();
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#block-rendering
+void Element::block_rendering()
+{
+    // 1. Let document be el's node document.
+    auto& document = this->document();
+
+    // 2. If document allows adding render-blocking elements, then append el to document's render-blocking element set.
+    if (document.allows_adding_render_blocking_elements()) {
+        document.add_render_blocking_element(*this);
+    }
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#unblock-rendering
+void Element::unblock_rendering()
+{
+    // 1. Let document be el's node document.
+    auto& document = this->document();
+
+    // 2. Remove el from document's render-blocking element set.
+    document.remove_render_blocking_element(*this);
+}
+
+// https://html.spec.whatwg.org/multipage/urls-and-fetching.html#potentially-render-blocking
+bool Element::is_potentially_render_blocking()
+{
+    // An element is potentially render-blocking if
+    // FIXME: its blocking tokens set contains "render",
+    // or if it is implicitly potentially render-blocking, which will be defined at the individual elements.
+    return is_implicitly_potentially_render_blocking();
 }
 
 }

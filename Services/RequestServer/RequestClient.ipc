@@ -1,4 +1,5 @@
-#include <LibHTTP/HeaderMap.h>
+#include <LibHTTP/Header.h>
+#include <LibRequests/CacheSizes.h>
 #include <LibRequests/NetworkError.h>
 #include <LibRequests/RequestTimingInfo.h>
 #include <LibURL/URL.h>
@@ -7,7 +8,13 @@ endpoint RequestClient
 {
     request_started(i32 request_id, IPC::File fd) =|
     request_finished(i32 request_id, u64 total_size, Requests::RequestTimingInfo timing_info, Optional<Requests::NetworkError> network_error) =|
-    headers_became_available(i32 request_id, HTTP::HeaderMap response_headers, Optional<u32> status_code, Optional<String> reason_phrase) =|
+    headers_became_available(i32 request_id, Vector<HTTP::Header> response_headers, Optional<u32> status_code, Optional<String> reason_phrase) =|
+    security_alert(i32 request_id, u64 page_id, ByteString alert_json) =|
+
+    // Network behavioral analysis alerts (Phase 6: Network Behavioral Analysis)
+    // Sent when TrafficMonitor detects suspicious network patterns: DGA domains, C2 beaconing, data exfiltration, DNS tunneling
+    // JSON: {alert_id, page_id, domain, threat_type, risk_level, score, confidence, indicators[], explanation, detected_at, timestamp_unix}
+    traffic_alert_detected(u64 page_id, ByteString alert_json) =|
 
     // Websocket API
     // FIXME: See if this can be merged with the regular APIs
@@ -21,4 +28,6 @@ endpoint RequestClient
 
     // Certificate requests
     certificate_requested(i32 request_id) =|
+
+    estimated_cache_size(u64 cache_size_estimation_id, Requests::CacheSizes sizes) =|
 }

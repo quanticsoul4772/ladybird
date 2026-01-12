@@ -12,13 +12,14 @@
 
 namespace Web::Painting {
 
-StackingContextTransform::StackingContextTransform(Gfx::FloatPoint origin, Gfx::FloatMatrix4x4 matrix, float scale)
+StackingContextTransform::StackingContextTransform(Gfx::FloatPoint origin, Gfx::FloatMatrix4x4 matrix, Optional<Gfx::FloatMatrix4x4> parent_perspective_matrix, float scale)
 {
     this->origin = origin.scaled(scale);
     matrix[0, 3] *= scale;
     matrix[1, 3] *= scale;
     matrix[2, 3] *= scale;
     this->matrix = matrix;
+    this->parent_perspective_matrix = parent_perspective_matrix;
 }
 
 DisplayListRecorder::DisplayListRecorder(DisplayList& command_list)
@@ -454,7 +455,7 @@ void DisplayListRecorder::apply_transform(Gfx::FloatPoint origin, Gfx::FloatMatr
     });
 }
 
-void DisplayListRecorder::apply_mask_bitmap(Gfx::IntPoint origin, Gfx::ImmutableBitmap const& bitmap, Gfx::Bitmap::MaskKind kind)
+void DisplayListRecorder::apply_mask_bitmap(Gfx::IntPoint origin, Gfx::ImmutableBitmap const& bitmap, Gfx::MaskKind kind)
 {
     APPEND(ApplyMaskBitmap {
         .origin = origin,

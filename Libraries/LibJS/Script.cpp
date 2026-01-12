@@ -18,25 +18,22 @@ GC_DEFINE_ALLOCATOR(Script);
 Result<GC::Ref<Script>, Vector<ParserError>> Script::parse(StringView source_text, Realm& realm, StringView filename, HostDefined* host_defined, size_t line_number_offset)
 {
     // 1. Let script be ParseText(sourceText, Script).
-    auto parser = Parser(Lexer(source_text, filename, line_number_offset));
+    auto parser = Parser(Lexer(SourceCode::create(String::from_utf8(filename).release_value_but_fixme_should_propagate_errors(), Utf16String::from_utf8(source_text)), line_number_offset));
     auto script = parser.parse_program();
 
     // 2. If script is a List of errors, return body.
     if (parser.has_errors())
         return parser.errors();
 
-    bool strict_mode = script->is_strict_mode();
-
     // 3. Return Script Record { [[Realm]]: realm, [[ECMAScriptCode]]: script, [[HostDefined]]: hostDefined }.
-    return realm.heap().allocate<Script>(realm, filename, move(script), host_defined, strict_mode);
+    return realm.heap().allocate<Script>(realm, filename, move(script), host_defined);
 }
 
-Script::Script(Realm& realm, StringView filename, NonnullRefPtr<Program> parse_node, HostDefined* host_defined, bool strict_mode)
+Script::Script(Realm& realm, StringView filename, NonnullRefPtr<Program> parse_node, HostDefined* host_defined)
     : m_realm(realm)
     , m_parse_node(move(parse_node))
     , m_filename(filename)
     , m_host_defined(host_defined)
-    , m_strict_mode(strict_mode)
 {
 }
 

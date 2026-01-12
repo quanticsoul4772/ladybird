@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<script src="include.js"></script>
+<style>
+    body {
+        margin: 0;
+    }
+
+    #container {
+        width: 300px;
+        height: 200px;
+        overflow: scroll;
+        border: 2px solid black;
+        margin: 20px;
+    }
+
+    .spacer {
+        height: 500px;
+        background: linear-gradient(white, lightblue);
+    }
+
+    #target {
+        height: 50px;
+        background: red;
+        margin: 10px;
+    }
+</style>
+<h1>ScrollIntoView Element Container Test</h1>
+<div id="container">
+    <div class="spacer"></div>
+    <div id="target">Target Element</div>
+    <div class="spacer"></div>
+</div>
+<script>
+    test(() => {
+        const container = document.getElementById('container');
+        const target = document.getElementById('target');
+
+        // Initially, container should be scrolled to top
+        println(`Initial scrollTop: ${container.scrollTop}`);
+
+        // Scroll the target into view with block: start
+        target.scrollIntoView({ block: "start" });
+
+        // After scrolling, target should be visible at the top of the container
+        println(`After scrollIntoView(start), scrollTop: ${container.scrollTop}`);
+
+        // Reset scroll position
+        container.scrollTop = 0;
+        println(`After reset, scrollTop: ${container.scrollTop}`);
+
+        // Scroll with block: center
+        target.scrollIntoView({ block: "center" });
+        println(`After scrollIntoView(center), scrollTop: ${container.scrollTop}`);
+
+        // Reset scroll position
+        container.scrollTop = 0;
+
+        // Scroll with block: end
+        target.scrollIntoView({ block: "end" });
+        println(`After scrollIntoView(end), scrollTop: ${container.scrollTop}`);
+    });
+</script>

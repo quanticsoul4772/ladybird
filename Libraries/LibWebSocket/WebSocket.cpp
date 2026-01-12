@@ -233,7 +233,7 @@ void WebSocket::send_client_handshake()
     }
 
     // 12. Additional headers
-    for (auto& header : m_connection.headers().headers()) {
+    for (auto const& header : m_connection.headers()) {
         builder.appendff("{}: {}\r\n", header.name, header.value);
     }
 
@@ -279,7 +279,7 @@ void WebSocket::read_server_handshake()
         }
         if (parts[1] != "101") {
             // 1. If the status code is not 101, handle as per HTTP procedures.
-            // FIXME : This could be a redirect or a 401 authentication request, which we do not handle.
+            // FIXME: This could be a redirect or a 401 authentication request, which we do not handle.
             fail_opening_handshake(ByteString::formatted("Server HTTP Handshake return status {} which isn't supported", parts[1]));
             return;
         }

@@ -7,8 +7,9 @@
 #pragma once
 
 #include <AK/HashMap.h>
-#include <LibHTTP/HeaderMap.h>
+#include <LibHTTP/HeaderList.h>
 #include <LibIPC/ConnectionToServer.h>
+#include <LibRequests/CacheSizes.h>
 #include <LibRequests/RequestTimingInfo.h>
 #include <LibRequests/WebSocket.h>
 #include <LibWebSocket/WebSocket.h>
@@ -30,16 +31,19 @@ public:
     explicit RequestClient(NonnullOwnPtr<IPC::Transport>);
     virtual ~RequestClient() override;
 
-    RefPtr<Request> start_request(ByteString const& method, URL::URL const&, HTTP::HeaderMap const& request_headers = {}, ReadonlyBytes request_body = {}, Core::ProxyData const& = {}, u64 page_id = 0);
+    RefPtr<Request> start_request(ByteString const& method, URL::URL const&, Optional<HTTP::HeaderList const&> request_headers = {}, ReadonlyBytes request_body = {}, Core::ProxyData const& = {}, u64 page_id = 0);
 
-    RefPtr<WebSocket> websocket_connect(URL::URL const&, ByteString const& origin = {}, Vector<ByteString> const& protocols = {}, Vector<ByteString> const& extensions = {}, HTTP::HeaderMap const& request_headers = {});
+    RefPtr<WebSocket> websocket_connect(URL::URL const&, ByteString const& origin, Vector<ByteString> const& protocols, Vector<ByteString> const& extensions, HTTP::HeaderList const& request_headers);
 
     void ensure_connection(URL::URL const&, ::RequestServer::CacheLevel);
 
     bool stop_request(Badge<Request>, Request&);
     bool set_certificate(Badge<Request>, Request&, ByteString, ByteString);
 
+    NonnullRefPtr<Core::Promise<CacheSizes>> estimate_cache_size_accessed_since(UnixDateTime since);
+
     Function<void()> on_request_server_died;
+    Function<void(u64 page_id, ByteString alert_json)> on_traffic_alert;
 
 private:
     virtual void die() override;
@@ -47,7 +51,8 @@ private:
     virtual void request_started(i32, IPC::File) override;
     virtual void request_finished(i32, u64, RequestTimingInfo, Optional<NetworkError>) override;
     virtual void certificate_requested(i32) override;
-    virtual void headers_became_available(i32, HTTP::HeaderMap, Optional<u32>, Optional<String>) override;
+    virtual void headers_became_available(i32, Vector<HTTP::Header>, Optional<u32>, Optional<String>) override;
+    virtual void security_alert(i32, u64, ByteString) override;
 
     virtual void websocket_connected(i64 websocket_id) override;
     virtual void websocket_received(i64 websocket_id, bool, ByteBuffer) override;
@@ -56,11 +61,17 @@ private:
     virtual void websocket_ready_state_changed(i64 websocket_id, u32 ready_state) override;
     virtual void websocket_subprotocol(i64 websocket_id, ByteString subprotocol) override;
     virtual void websocket_certificate_requested(i64 websocket_id) override;
+    virtual void traffic_alert_detected(u64 page_id, ByteString alert_json) override;
+
+    virtual void estimated_cache_size(u64 cache_size_estimation_id, CacheSizes sizes) override;
 
     HashMap<i32, RefPtr<Request>> m_requests;
-    HashMap<i64, NonnullRefPtr<WebSocket>> m_websockets;
 
+    HashMap<i64, NonnullRefPtr<WebSocket>> m_websockets;
     i64 m_next_websocket_id { 0 };
+
+    HashMap<u64, NonnullRefPtr<Core::Promise<CacheSizes>>> m_pending_cache_size_estimations;
+    u64 m_next_cache_size_estimation_id { 0 };
 };
 
 }

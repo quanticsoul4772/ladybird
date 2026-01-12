@@ -19,7 +19,7 @@
 #include <LibWeb/HTML/FileFilter.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/HTMLElement.h>
-#include <LibWeb/HTML/PopoverInvokerElement.h>
+#include <LibWeb/HTML/PopoverTargetAttributes.h>
 #include <LibWeb/Layout/ImageProvider.h>
 #include <LibWeb/WebIDL/DOMException.h>
 #include <LibWeb/WebIDL/Types.h>
@@ -55,7 +55,7 @@ class WEB_API HTMLInputElement final
     : public HTMLElement
     , public FormAssociatedTextControlElement
     , public Layout::ImageProvider
-    , public PopoverInvokerElement
+    , public PopoverTargetAttributes
     , public AutocompleteElement {
     WEB_PLATFORM_OBJECT(HTMLInputElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLInputElement);
@@ -76,7 +76,7 @@ public:
 
     StringView type() const;
     TypeAttributeState type_state() const { return m_type; }
-    WebIDL::ExceptionOr<void> set_type(String const&);
+    void set_type(String const&);
 
     String default_value() const { return get_attribute_value(HTML::AttributeNames::value); }
 
@@ -139,10 +139,10 @@ public:
     WebIDL::ExceptionOr<void> set_size(WebIDL::UnsignedLong value);
 
     WebIDL::UnsignedLong height() const;
-    WebIDL::ExceptionOr<void> set_height(WebIDL::UnsignedLong value);
+    void set_height(WebIDL::UnsignedLong value);
 
     WebIDL::UnsignedLong width() const;
-    WebIDL::ExceptionOr<void> set_width(WebIDL::UnsignedLong value);
+    void set_width(WebIDL::UnsignedLong value);
 
     struct SelectedCoordinate {
         int x { 0 };
@@ -223,6 +223,8 @@ public:
     bool checked_applies() const;
     bool has_selectable_text() const;
 
+    bool can_autofill() const;
+
     bool supports_a_picker() const;
     bool is_open() const { return m_is_open; }
     void set_is_open(bool);
@@ -257,6 +259,7 @@ private:
     HTMLInputElement(DOM::Document&, DOM::QualifiedName);
 
     void type_attribute_changed(TypeAttributeState old_state, TypeAttributeState new_state);
+    virtual void computed_properties_changed() override;
 
     virtual bool is_presentational_hint(FlyString const&) const override;
     virtual void apply_presentational_hints(GC::Ref<CSS::CascadedProperties>) const override;
@@ -285,6 +288,8 @@ private:
     virtual RefPtr<Gfx::ImmutableBitmap> current_image_bitmap_sized(Gfx::IntSize) const override;
     virtual void set_visible_in_viewport(bool) override;
     virtual GC::Ptr<DOM::Element const> to_html_element() const override { return *this; }
+    virtual size_t current_frame_index() const override { return 0; }
+    virtual GC::Ptr<HTML::DecodedImageData> decoded_image_data() const override { return image_data(); }
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
@@ -347,6 +352,8 @@ private:
     GC::Ptr<DOM::Element> m_inner_text_element;
     GC::Ptr<DOM::Text> m_text_node;
     bool m_checked { false };
+    GC::Ptr<DOM::Element> m_up_button_element;
+    GC::Ptr<DOM::Element> m_down_button_element;
 
     void update_color_well_element();
     GC::Ptr<DOM::Element> m_color_well_element;

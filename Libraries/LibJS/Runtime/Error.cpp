@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <andreas@ladybird.org>
+ * Copyright (c) 2020-2025, Andreas Kling <andreas@ladybird.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -10,6 +10,7 @@
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/ExecutionContext.h>
+#include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/SourceRange.h>
 
@@ -57,6 +58,13 @@ Error::Error(Object& prototype)
     populate_stack();
 }
 
+void Error::visit_edges(Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    for (auto& frame : m_traceback)
+        visitor.visit(frame.cached_source_range);
+}
+
 // 20.5.8.1 InstallErrorCause ( O, options ), https://tc39.es/ecma262/#sec-installerrorcause
 ThrowCompletionOr<void> Error::install_error_cause(Value options)
 {
@@ -90,7 +98,7 @@ void Error::populate_stack()
     for (auto& element : stack_trace) {
         auto* context = element.execution_context;
         TracebackFrame frame {
-            .function_name = context->function_name ? context->function_name->utf8_string() : ""_string,
+            .function_name = context->function ? context->function->name_for_call_stack() : ""_utf16,
             .cached_source_range = element.source_range,
         };
 
@@ -117,7 +125,7 @@ String Error::stack_string(CompactTraceback compact) const
             else
                 stack_string_builder.appendff("    at {} ({}:{}:{})\n", function_name, source_range.filename(), source_range.start.line, source_range.start.column);
         } else {
-            stack_string_builder.appendff("    at {}\n", function_name.is_empty() ? "<unknown>"sv : function_name);
+            stack_string_builder.appendff("    at {}\n", function_name.is_empty() ? "<unknown>"_utf16 : function_name);
         }
     };
 

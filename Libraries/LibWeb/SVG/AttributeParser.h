@@ -115,6 +115,7 @@ public:
     float resolve_relative_to(float length) const;
 
     float value() const { return m_value; }
+    bool is_percentage() const { return m_is_percentage; }
 
 private:
     float m_value;
@@ -148,6 +149,7 @@ public:
     static Optional<PreserveAspectRatio> parse_preserve_aspect_ratio(StringView input);
     static Optional<SVGUnits> parse_units(StringView input);
     static Optional<SpreadMethod> parse_spread_method(StringView input);
+    static Vector<float> parse_table_values(StringView);
     static Optional<ViewBox> parse_viewbox(StringView input);
 
 private:

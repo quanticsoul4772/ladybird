@@ -9,7 +9,6 @@
 
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/Font/FontStyleMapping.h>
-#include <LibGfx/Font/FontWeight.h>
 #include <LibWeb/CSS/CSSStyleValue.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/Parser/Parser.h>
@@ -56,10 +55,12 @@
 #include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/PositionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RadialGradientStyleValue.h>
+#include <LibWeb/CSS/StyleValues/RandomValueSharingStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RatioStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RectStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RepeatStyleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ResolutionStyleValue.h>
+#include <LibWeb/CSS/StyleValues/ScrollFunctionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ScrollbarColorStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ScrollbarGutterStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ShadowStyleValue.h>
@@ -68,6 +69,7 @@
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/CSS/StyleValues/SuperellipseStyleValue.h>
+#include <LibWeb/CSS/StyleValues/TextIndentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TextUnderlinePositionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TransformationStyleValue.h>
@@ -75,6 +77,7 @@
 #include <LibWeb/CSS/StyleValues/URLStyleValue.h>
 #include <LibWeb/CSS/StyleValues/UnicodeRangeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/UnresolvedStyleValue.h>
+#include <LibWeb/CSS/StyleValues/ViewFunctionStyleValue.h>
 #include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/Layout/Node.h>
 
@@ -152,6 +155,17 @@ GC::Ref<CSSStyleValue> StyleValue::reify(JS::Realm& realm, FlyString const& asso
 {
     // 1. Return a new CSSStyleValue object representing value whose [[associatedProperty]] internal slot is set to property.
     return CSSStyleValue::create(realm, associated_property, *this);
+}
+
+// https://drafts.css-houdini.org/css-typed-om-1/#subdivide-into-iterations
+StyleValueVector StyleValue::subdivide_into_iterations(PropertyNameAndID const&) const
+{
+    // To subdivide into iterations a CSS value whole value for a property property, execute the following steps:
+    // 1. If property is a single-valued property, return a list containing whole value.
+    // 2. Otherwise, divide whole value into individual iterations, as appropriate for property, and return a list
+    //    containing the iterations in order.
+    // NB: We do this by type. By default, we assume step 1 applies. For step 2, override this method.
+    return StyleValueVector { *this };
 }
 
 }
