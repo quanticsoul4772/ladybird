@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Badge.h>
 #include <AK/HashMap.h>
 #include <AK/SourceLocation.h>
 #include <LibDNS/Resolver.h>
@@ -14,20 +15,11 @@
 #include <LibIPC/NetworkIdentity.h>
 #include <LibIPC/RateLimiter.h>
 #include <LibWebSocket/WebSocket.h>
+#include <RequestServer/Forward.h>
 #include <RequestServer/RequestClientEndpoint.h>
 #include <RequestServer/RequestServerEndpoint.h>
 
 namespace RequestServer {
-
-struct Resolver : public RefCounted<Resolver>
-    , Weakable<Resolver> {
-    Resolver(Function<ErrorOr<DNS::Resolver::SocketResult>()> create_socket)
-        : dns(move(create_socket))
-    {
-    }
-
-    DNS::Resolver dns;
-};
 
 class ConnectionFromClient final
     : public IPC::ConnectionFromClient<RequestClientEndpoint, RequestServerEndpoint> {
@@ -41,6 +33,8 @@ public:
     // Network identity management (per-page for circuit isolation)
     [[nodiscard]] RefPtr<IPC::NetworkIdentity> network_identity_for_page(u64 page_id);
     [[nodiscard]] RefPtr<IPC::NetworkIdentity> get_or_create_network_identity_for_page(u64 page_id);
+
+    void request_complete(Badge<Request>, int request_id);
 
 private:
     explicit ConnectionFromClient(NonnullOwnPtr<IPC::Transport>);
@@ -81,17 +75,14 @@ private:
     virtual void websocket_close(i64 websocket_id, u16, ByteString) override;
     virtual Messages::RequestServer::WebsocketSetCertificateResponse websocket_set_certificate(i64, ByteString, ByteString) override;
 
-    struct ResumeRequestForFailedCacheEntry {
-        size_t start_offset { 0 };
-        int writer_fd { 0 };
-    };
-    void issue_network_request(i32 request_id, ByteString, URL::URL, HTTP::HeaderMap, ByteBuffer, Core::ProxyData, u64 page_id, Optional<ResumeRequestForFailedCacheEntry> = {});
-    void issue_network_request_with_optional_dns(i32 request_id, ByteString, URL::URL, HTTP::HeaderMap, ByteBuffer, Core::ProxyData, u64 page_id, Optional<ResumeRequestForFailedCacheEntry>, Optional<NonnullRefPtr<DNS::LookupResult>>);
-    void issue_ipfs_request(i32 request_id, ByteString method, URL::URL ipfs_url, HTTP::HeaderMap, ByteBuffer, Core::ProxyData, u64 page_id);
-    void issue_ipns_request(i32 request_id, ByteString method, URL::URL ipns_url, HTTP::HeaderMap, ByteBuffer, Core::ProxyData, u64 page_id);
-    void issue_ens_request(i32 request_id, ByteString method, URL::URL ens_url, HTTP::HeaderMap, ByteBuffer, Core::ProxyData, u64 page_id);
+    // Helper methods for IPFS/IPNS/ENS URL transformation
+    URL::URL transform_ipfs_url_to_gateway(i32 request_id, URL::URL const& ipfs_url, u64 page_id);
+    URL::URL transform_ipns_url_to_gateway(i32 request_id, URL::URL const& ipns_url, u64 page_id);
+    URL::URL transform_ens_url_to_gateway(i32 request_id, URL::URL const& ens_url, u64 page_id);
 
-    HashMap<i32, RefPtr<WebSocket::WebSocket>> m_websockets;
+    // IPFS callback setup methods
+    void setup_ipfs_verification(i32 request_id, Request& request, ByteString const& cid_string);
+    void setup_gateway_fallback(i32 request_id, Request& request, Request::ProtocolType protocol, ByteString const& resource_id, ByteString const& path, ByteString const& method, HTTP::HeaderMap const& headers, ByteBuffer const& body, Core::ProxyData const& proxy_data, u64 page_id);
 
     // Gateway fallback support for P2P protocols
     enum class GatewayProtocol {
@@ -101,7 +92,7 @@ private:
     };
 
     struct GatewayFallbackInfo {
-        GatewayProtocol protocol;
+        Request::ProtocolType protocol;
         size_t current_gateway_index { 0 };
         ByteString resource_identifier;  // CID for IPFS, name for IPNS, domain for ENS
         ByteString path;                 // Path component after CID/name/domain
@@ -112,17 +103,20 @@ private:
         u64 page_id;
     };
 
-    struct ActiveRequest;
-    friend struct ActiveRequest;
+    static int on_socket_callback(void*, int sockfd, int what, void* user_data, void*);
+    static int on_timeout_callback(void*, long timeout_ms, void* user_data);
+    void check_active_requests();
 
     static ErrorOr<IPC::File> create_client_socket();
 
-    static int on_socket_callback(void*, int sockfd, int what, void* user_data, void*);
-    static int on_timeout_callback(void*, long timeout_ms, void* user_data);
-    static size_t on_header_received(void* buffer, size_t size, size_t nmemb, void* user_data);
-    static size_t on_data_received(void* buffer, size_t size, size_t nmemb, void* user_data);
+    URL::URL build_gateway_url(GatewayFallbackInfo const& info, size_t gateway_index);
+    void retry_with_next_gateway(i32 request_id);
 
-    HashMap<i32, NonnullOwnPtr<ActiveRequest>> m_active_requests;
+
+    void* m_curl_multi { nullptr };
+
+    HashMap<i32, NonnullOwnPtr<Request>> m_active_requests;
+    HashMap<i32, RefPtr<WebSocket::WebSocket>> m_websockets;
 
     // IPFS content verification: Store CIDs for pending requests
     HashMap<i32, IPC::ParsedCID> m_pending_ipfs_verifications;
@@ -149,13 +143,10 @@ private:
         ".link"sv    // eth.link gateway (example.eth → example.eth.link)
     };
 
-    void retry_with_next_gateway(i32 request_id);
-
-    void check_active_requests();
-    void* m_curl_multi { nullptr };
     RefPtr<Core::Timer> m_timer;
     HashMap<int, NonnullRefPtr<Core::Notifier>> m_read_notifiers;
     HashMap<int, NonnullRefPtr<Core::Notifier>> m_write_notifiers;
+
     NonnullRefPtr<Resolver> m_resolver;
     ByteString m_alt_svc_cache_path;
 
@@ -320,8 +311,6 @@ private:
     static constexpr size_t s_max_validation_failures = 100;
 };
 
-// FIXME: Find a good home for this
-ByteString build_curl_resolve_list(DNS::LookupResult const&, StringView host, u16 port);
 constexpr inline uintptr_t websocket_private_tag = 0x1;
 
 }
