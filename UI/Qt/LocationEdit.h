@@ -36,6 +36,7 @@ protected:
 private:
     virtual void focusInEvent(QFocusEvent* event) override;
     virtual void focusOutEvent(QFocusEvent* event) override;
+    virtual void keyPressEvent(QKeyEvent* event) override;
 
     virtual void search_engine_changed() override;
 

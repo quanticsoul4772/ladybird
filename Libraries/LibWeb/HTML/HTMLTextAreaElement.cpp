@@ -22,7 +22,6 @@
 #include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/Infra/Strings.h>
 #include <LibWeb/Namespace.h>
-#include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/Selection/Selection.h>
 
 namespace Web::HTML {
@@ -81,6 +80,8 @@ void HTMLTextAreaElement::did_receive_focus()
 
     if (m_placeholder_text_node)
         m_placeholder_text_node->invalidate_style(DOM::StyleInvalidationReason::DidReceiveFocus);
+
+    document().get_selection()->remove_all_ranges();
 }
 
 void HTMLTextAreaElement::did_lose_focus()
@@ -435,6 +436,12 @@ void HTMLTextAreaElement::did_edit_text_node()
     m_dirty_value = true;
 
     update_placeholder_visibility();
+}
+
+EventResult HTMLTextAreaElement::handle_return_key(FlyString const&)
+{
+    handle_insert(Utf16String::from_code_point(0x0A)); // Avoid the platform codepoint
+    return EventResult::Handled;
 }
 
 void HTMLTextAreaElement::queue_firing_input_event()

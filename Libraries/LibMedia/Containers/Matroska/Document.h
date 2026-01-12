@@ -20,7 +20,7 @@ namespace Media::Matroska {
 
 struct EBMLHeader {
     String doc_type;
-    u32 doc_type_version;
+    u32 doc_type_version { 0 };
 };
 
 class SegmentInformation {
@@ -139,6 +139,8 @@ public:
     void set_seek_pre_roll(u64 seek_pre_roll) { m_seek_pre_roll = seek_pre_roll; }
     u64 timestamp_offset() const { return m_timestamp_offset; }
     void set_timestamp_offset(u64 timestamp_offset) { m_timestamp_offset = timestamp_offset; }
+    u64 default_duration() const { return m_default_duration; }
+    void set_default_duration(u64 default_duration) { m_default_duration = default_duration; }
     Optional<VideoTrack> video_track() const { return m_video_track; }
     void set_video_track(VideoTrack video_track) { m_video_track = video_track; }
     Optional<AudioTrack> audio_track() const { return m_audio_track; }
@@ -157,6 +159,7 @@ private:
     u64 m_codec_delay { 0 };
     u64 m_seek_pre_roll { 0 };
     u64 m_timestamp_offset { 0 };
+    u64 m_default_duration { 0 };
     Optional<VideoTrack> m_video_track;
     Optional<AudioTrack> m_audio_track;
 };
@@ -174,6 +177,8 @@ public:
     void set_track_number(u64 track_number) { m_track_number = track_number; }
     AK::Duration timestamp() const { return m_timestamp; }
     void set_timestamp(AK::Duration timestamp) { m_timestamp = timestamp; }
+    Optional<AK::Duration> duration() const { return m_duration; }
+    void set_duration(AK::Duration duration) { m_duration = duration; }
     bool only_keyframes() const { return m_only_keyframes; }
     void set_only_keyframes(bool only_keyframes) { m_only_keyframes = only_keyframes; }
     bool invisible() const { return m_invisible; }
@@ -182,20 +187,24 @@ public:
     void set_lacing(Lacing lacing) { m_lacing = lacing; }
     bool discardable() const { return m_discardable; }
     void set_discardable(bool discardable) { m_discardable = discardable; }
-
-    void set_frames(Vector<ReadonlyBytes>&& frames) { m_frames = move(frames); }
-    ReadonlyBytes const& frame(size_t index) const { return frames()[index]; }
-    u64 frame_count() const { return m_frames.size(); }
-    Vector<ReadonlyBytes> const& frames() const { return m_frames; }
+    size_t data_position() const { return m_data_position; }
+    size_t data_size() const { return m_data_size; }
+    void set_data(size_t position, size_t size)
+    {
+        m_data_position = position;
+        m_data_size = size;
+    }
 
 private:
     u64 m_track_number { 0 };
     AK::Duration m_timestamp { AK::Duration::zero() };
+    Optional<AK::Duration> m_duration;
     bool m_only_keyframes { false };
     bool m_invisible { false };
     Lacing m_lacing { None };
     bool m_discardable { true };
-    Vector<ReadonlyBytes> m_frames;
+    size_t m_data_position { 0 };
+    size_t m_data_size { 0 };
 };
 
 class Cluster {

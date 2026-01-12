@@ -60,6 +60,7 @@
 #include <LibWeb/HTML/HTMLQuoteElement.h>
 #include <LibWeb/HTML/HTMLScriptElement.h>
 #include <LibWeb/HTML/HTMLSelectElement.h>
+#include <LibWeb/HTML/HTMLSelectedContentElement.h>
 #include <LibWeb/HTML/HTMLSlotElement.h>
 #include <LibWeb/HTML/HTMLSourceElement.h>
 #include <LibWeb/HTML/HTMLSpanElement.h>
@@ -97,6 +98,7 @@
 #include <LibWeb/SVG/SVGFEColorMatrixElement.h>
 #include <LibWeb/SVG/SVGFEComponentTransferElement.h>
 #include <LibWeb/SVG/SVGFECompositeElement.h>
+#include <LibWeb/SVG/SVGFEDropShadowElement.h>
 #include <LibWeb/SVG/SVGFEFloodElement.h>
 #include <LibWeb/SVG/SVGFEFuncAElement.h>
 #include <LibWeb/SVG/SVGFEFuncBElement.h>
@@ -239,6 +241,8 @@ ErrorOr<FixedArray<FlyString>> valid_local_names_for_given_html_element_interfac
         return FixedArray<FlyString>::create({ HTML::TagNames::blockquote, HTML::TagNames::q });
     if (html_element_interface_name == "HTMLScriptElement"sv)
         return FixedArray<FlyString>::create({ HTML::TagNames::script });
+    if (html_element_interface_name == "HTMLSelectedContentElement"sv)
+        return FixedArray<FlyString>::create({ HTML::TagNames::selectedcontent });
     if (html_element_interface_name == "HTMLSelectElement"sv)
         return FixedArray<FlyString>::create({ HTML::TagNames::select });
     if (html_element_interface_name == "HTMLSlotElement"sv)
@@ -413,6 +417,8 @@ static GC::Ref<Element> create_html_element(JS::Realm& realm, Document& document
         return realm.create<HTML::HTMLQuoteElement>(document, move(qualified_name));
     if (tag_name == HTML::TagNames::script)
         return realm.create<HTML::HTMLScriptElement>(document, move(qualified_name));
+    if (tag_name == HTML::TagNames::selectedcontent)
+        return realm.create<HTML::HTMLSelectedContentElement>(document, move(qualified_name));
     if (tag_name == HTML::TagNames::select)
         return realm.create<HTML::HTMLSelectElement>(document, move(qualified_name));
     if (tag_name == HTML::TagNames::slot)
@@ -487,6 +493,8 @@ static GC::Ref<SVG::SVGElement> create_svg_element(JS::Realm& realm, Document& d
         return realm.create<SVG::SVGFEComponentTransferElement>(document, move(qualified_name));
     if (local_name == SVG::TagNames::feComposite)
         return realm.create<SVG::SVGFECompositeElement>(document, move(qualified_name));
+    if (local_name == SVG::TagNames::feDropShadow)
+        return realm.create<SVG::SVGFEDropShadowElement>(document, move(qualified_name));
     if (local_name == SVG::TagNames::feFlood)
         return realm.create<SVG::SVGFEFloodElement>(document, move(qualified_name));
     if (local_name == SVG::TagNames::feFuncA)

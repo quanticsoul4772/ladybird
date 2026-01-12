@@ -46,6 +46,8 @@ class WEB_API Navigable : public JS::Cell {
     GC_DECLARE_ALLOCATOR(Navigable);
 
 public:
+    static constexpr bool OVERRIDES_FINALIZE = true;
+
     virtual ~Navigable() override;
 
     using NullOrError = Optional<String>;
@@ -168,7 +170,7 @@ public:
     CSSPixelRect viewport_rect() const { return { m_viewport_scroll_offset, m_viewport_size }; }
     CSSPixelSize viewport_size() const { return m_viewport_size; }
     void set_viewport_size(CSSPixelSize);
-    void perform_scroll_of_viewport(CSSPixelPoint position);
+    void perform_scroll_of_viewport_scrolling_box(CSSPixelPoint position);
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#rendering-opportunity
     [[nodiscard]] bool has_a_rendering_opportunity() const;
@@ -219,7 +221,8 @@ public:
     template<typename T>
     bool fast_is() const = delete;
 
-    void scroll_viewport_by_delta(CSSPixelPoint delta);
+    GC::Ref<WebIDL::Promise> scroll_viewport_by_delta(CSSPixelPoint delta);
+    GC::Ref<WebIDL::Promise> perform_a_scroll_of_the_viewport(CSSPixelPoint position);
     void reset_zoom();
 
 protected:

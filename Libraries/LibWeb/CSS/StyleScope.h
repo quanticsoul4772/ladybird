@@ -32,11 +32,14 @@ struct MatchingRule {
     CascadeOrigin cascade_origin;
     bool contains_pseudo_element { false };
     bool slotted { false };
+    bool contains_part_pseudo_element { false };
 
     // Helpers to deal with the fact that `rule` might be a CSSStyleRule or a CSSNestedDeclarations
     CSSStyleProperties const& declaration() const;
     SelectorList const& absolutized_selectors() const;
     FlyString const& qualified_layer_name() const;
+
+    void visit_edges(GC::Cell::Visitor&);
 };
 
 struct RuleCache {
@@ -47,17 +50,22 @@ struct RuleCache {
     Array<Vector<MatchingRule>, to_underlying(CSS::PseudoElement::KnownPseudoElementCount)> rules_by_pseudo_element;
     Vector<MatchingRule> root_rules;
     Vector<MatchingRule> slotted_rules;
+    Vector<MatchingRule> part_rules;
     Vector<MatchingRule> other_rules;
 
     HashMap<FlyString, NonnullRefPtr<Animations::KeyframeEffect::KeyFrameSet>> rules_by_animation_keyframes;
 
     void add_rule(MatchingRule const&, Optional<PseudoElement>, bool contains_root_pseudo_class);
     void for_each_matching_rules(DOM::AbstractElement, Function<IterationDecision(Vector<MatchingRule> const&)> callback) const;
+
+    void visit_edges(GC::Cell::Visitor&);
 };
 
 struct RuleCaches {
     RuleCache main;
     HashMap<FlyString, NonnullOwnPtr<RuleCache>> by_layer;
+
+    void visit_edges(GC::Cell::Visitor&);
 };
 
 struct SelectorInsights {

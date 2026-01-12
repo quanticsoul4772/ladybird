@@ -17,6 +17,11 @@ namespace Web::CSS {
 
 class BorderRadiusStyleValue final : public StyleValueWithDefaultOperators<BorderRadiusStyleValue> {
 public:
+    static ValueComparingNonnullRefPtr<BorderRadiusStyleValue const> create_zero()
+    {
+        return create(LengthStyleValue::create(Length::make_px(0)), LengthStyleValue::create(Length::make_px(0)));
+    }
+
     static ValueComparingNonnullRefPtr<BorderRadiusStyleValue const> create(ValueComparingNonnullRefPtr<StyleValue const> const& horizontal_radius, ValueComparingNonnullRefPtr<StyleValue const> const& vertical_radius)
     {
         return adopt_ref(*new (nothrow) BorderRadiusStyleValue(horizontal_radius, vertical_radius));
@@ -27,7 +32,7 @@ public:
     ValueComparingNonnullRefPtr<StyleValue const> const& vertical_radius() const { return m_properties.vertical_radius; }
     bool is_elliptical() const { return m_properties.is_elliptical; }
 
-    virtual String to_string(SerializationMode) const override;
+    virtual void serialize(StringBuilder&, SerializationMode) const override;
 
     bool properties_equal(BorderRadiusStyleValue const& other) const { return m_properties == other.m_properties; }
 

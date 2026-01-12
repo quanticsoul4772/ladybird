@@ -40,11 +40,6 @@ namespace JS {
 VM* VM::s_the = nullptr;
 static size_t s_vm_count = 0;
 
-VM& VM::the()
-{
-    return *s_the;
-}
-
 NonnullRefPtr<VM> VM::create()
 {
     // NOTE: We only allow a single VM instance per process.
@@ -197,6 +192,21 @@ VM::VM(ErrorMessages error_messages)
         return HandledByHost::Handled;
     };
 
+    // 25.2.2.4 HostGrowSharedArrayBuffer ( buffer, newByteLength ), https://tc39.es/ecma262/#sec-hostgrowsharedarraybuffer
+    host_grow_shared_array_buffer = [](ArrayBuffer&, size_t) -> ThrowCompletionOr<HandledByHost> {
+        // The host-defined abstract operation HostGrowSharedArrayBuffer takes arguments buffer (a SharedArrayBuffer)
+        // and newByteLength (a non-negative integer) and returns either a normal completion containing either handled
+        // or unhandled, or a throw completion. It gives the host an opportunity to perform implementation-defined
+        // growing of buffer. If the host chooses not to handle growing of buffer, it may return unhandled for the default behaviour.
+
+        // The implementation of HostGrowSharedArrayBuffer must conform to the following requirements:
+        // - If the abstract operation does not complete normally with unhandled, and newByteLength < the current byte length of the buffer or newByteLength > buffer.[[ArrayBufferMaxByteLength]], throw a RangeError exception.
+        // - Let AR be the Agent Record of the surrounding agent. Let isLittleEndian be AR.[[LittleEndian]]. If the abstract operation completes normally with handled, a WriteSharedMemory or ReadModifyWriteSharedMemory event whose [[Order]] is seq-cst, [[Payload]] is NumericToRawBytes(biguint64, newByteLength, isLittleEndian), [[Block]] is buffer.[[ArrayBufferByteLengthData]], [[ByteIndex]] is 0, and [[ElementSize]] is 8 is added to the surrounding agent's candidate execution such that racing calls to SharedArrayBuffer.prototype.grow ( newLength ) are not "lost", i.e. silently do nothing.
+
+        // The default implementation of HostGrowSharedArrayBuffer is to return NormalCompletion(unhandled).
+        return HandledByHost::Unhandled;
+    };
+
     // 3.6.1 HostInitializeShadowRealm ( realm, context, O ), https://tc39.es/proposal-shadowrealm/#sec-hostinitializeshadowrealm
     host_initialize_shadow_realm = [](Realm&, NonnullOwnPtr<ExecutionContext>, ShadowRealm&) -> ThrowCompletionOr<void> {
         // The host-defined abstract operation HostInitializeShadowRealm takes arguments realm (a Realm Record),
@@ -248,6 +258,14 @@ struct ExecutionContextRootsCollector : public Cell::Visitor {
     virtual void visit_impl(GC::Cell& cell) override
     {
         roots.set(&cell);
+    }
+
+    virtual void visit_impl(ReadonlySpan<GC::NanBoxedValue> values) override
+    {
+        for (auto const& value : values) {
+            if (value.is_cell())
+                roots.set(value.as_cell());
+        }
     }
 
     virtual void visit_possible_values(ReadonlyBytes) override
@@ -470,7 +488,7 @@ void VM::enqueue_promise_job(GC::Ref<GC::Function<ThrowCompletionOr<Value>()>> j
 void VM::run_queued_finalization_registry_cleanup_jobs()
 {
     while (!m_finalization_registry_cleanup_jobs.is_empty()) {
-        auto registry = m_finalization_registry_cleanup_jobs.take_first();
+        auto registry = m_finalization_registry_cleanup_jobs.take_last();
         // FIXME: Handle any uncatched exceptions here.
         (void)registry->cleanup();
     }
@@ -479,7 +497,7 @@ void VM::run_queued_finalization_registry_cleanup_jobs()
 // 9.10.4.1 HostEnqueueFinalizationRegistryCleanupJob ( finalizationRegistry ), https://tc39.es/ecma262/#sec-host-cleanup-finalization-registry
 void VM::enqueue_finalization_registry_cleanup_job(FinalizationRegistry& registry)
 {
-    m_finalization_registry_cleanup_jobs.append(&registry);
+    m_finalization_registry_cleanup_jobs.append(registry);
 }
 
 // 27.2.1.9 HostPromiseRejectionTracker ( promise, operation ), https://tc39.es/ecma262/#sec-host-promise-rejection-tracker

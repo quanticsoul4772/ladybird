@@ -39,7 +39,7 @@ struct EncapsulatedBits {
     Optional<ByteBuffer> shared_key;
     Optional<ByteBuffer> ciphertext;
 
-    JS::ThrowCompletionOr<GC::Ref<JS::Object>> to_object(JS::Realm&);
+    JS::ThrowCompletionOr<GC::Ref<JS::Object>> to_object(JS::Realm&) const;
 };
 
 struct HashAlgorithmIdentifier : public AlgorithmIdentifier {
@@ -377,9 +377,14 @@ public:
         return WebIDL::NotSupportedError::create(m_realm, "unwwrapKey is not supported"_utf16);
     }
 
-    virtual WebIDL::ExceptionOr<GC::Ref<EncapsulatedBits>> encapsulate(AlgorithmParams const&, GC::Ref<CryptoKey>)
+    virtual WebIDL::ExceptionOr<EncapsulatedBits> encapsulate(AlgorithmParams const&, GC::Ref<CryptoKey>)
     {
         return WebIDL::NotSupportedError::create(m_realm, "encapsulate is not supported"_utf16);
+    }
+
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> decapsulate(AlgorithmParams const&, GC::Ref<CryptoKey>, ByteBuffer const&)
+    {
+        return WebIDL::NotSupportedError::create(m_realm, "decalpsulate is not supported"_utf16);
     }
 
     static NonnullOwnPtr<AlgorithmMethods> create(JS::Realm& realm) { return adopt_own(*new AlgorithmMethods(realm)); }
@@ -702,6 +707,38 @@ private:
     }
 };
 
+class MLKEM : public AlgorithmMethods {
+public:
+    virtual WebIDL::ExceptionOr<Variant<GC::Ref<CryptoKey>, GC::Ref<CryptoKeyPair>>> generate_key(AlgorithmParams const&, bool, Vector<Bindings::KeyUsage> const&) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<CryptoKey>> import_key(AlgorithmParams const&, Bindings::KeyFormat, CryptoKey::InternalKeyData, bool, Vector<Bindings::KeyUsage> const&) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::Object>> export_key(Bindings::KeyFormat, GC::Ref<CryptoKey>) override;
+    virtual WebIDL::ExceptionOr<EncapsulatedBits> encapsulate(AlgorithmParams const&, GC::Ref<CryptoKey>) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> decapsulate(AlgorithmParams const&, GC::Ref<CryptoKey>, ByteBuffer const&) override;
+
+    static NonnullOwnPtr<AlgorithmMethods> create(JS::Realm& realm) { return adopt_own(*new MLKEM(realm)); }
+
+private:
+    explicit MLKEM(JS::Realm& realm)
+        : AlgorithmMethods(realm)
+    {
+    }
+};
+
+class Argon2 : public AlgorithmMethods {
+public:
+    virtual WebIDL::ExceptionOr<GC::Ref<CryptoKey>> import_key(AlgorithmParams const&, Bindings::KeyFormat, CryptoKey::InternalKeyData, bool, Vector<Bindings::KeyUsage> const&) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> derive_bits(AlgorithmParams const&, GC::Ref<CryptoKey>, Optional<u32>) override;
+    virtual WebIDL::ExceptionOr<JS::Value> get_key_length(AlgorithmParams const&) override;
+
+    static NonnullOwnPtr<AlgorithmMethods> create(JS::Realm& realm) { return adopt_own(*new Argon2(realm)); }
+
+private:
+    explicit Argon2(JS::Realm& realm)
+        : AlgorithmMethods(realm)
+    {
+    }
+};
+
 struct EcdhKeyDeriveParams : public AlgorithmParams {
     virtual ~EcdhKeyDeriveParams() override;
 
@@ -744,6 +781,32 @@ struct Ed448Params : public AlgorithmParams {
 
 // https://wicg.github.io/webcrypto-modern-algos/#dfn-ContextParams
 using ContextParams = Ed448Params;
+
+// https://wicg.github.io/webcrypto-modern-algos/#argon2-params
+struct Argon2Params : public AlgorithmParams {
+    virtual ~Argon2Params() override;
+
+    Argon2Params(ByteBuffer nonce, u32 parallelism, u32 memory, u32 passes, Optional<u8> version, Optional<ByteBuffer> secret_value, Optional<ByteBuffer> associated_data)
+        : nonce(move(nonce))
+        , parallelism(parallelism)
+        , memory(memory)
+        , passes(passes)
+        , version(version)
+        , secret_value(secret_value)
+        , associated_data(associated_data)
+    {
+    }
+
+    ByteBuffer nonce;
+    u32 parallelism;
+    u32 memory;
+    u32 passes;
+    Optional<u8> version;
+    Optional<ByteBuffer> secret_value;
+    Optional<ByteBuffer> associated_data;
+
+    static JS::ThrowCompletionOr<NonnullOwnPtr<AlgorithmParams>> from_value(JS::VM&, JS::Value);
+};
 
 ErrorOr<String> base64_url_uint_encode(::Crypto::UnsignedBigInteger);
 WebIDL::ExceptionOr<ByteBuffer> base64_url_bytes_decode(JS::Realm&, String const& base64_url_string);

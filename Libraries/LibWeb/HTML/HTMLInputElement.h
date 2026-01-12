@@ -85,8 +85,9 @@ public:
     WebIDL::ExceptionOr<void> set_value(Utf16String const&);
 
     // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-textarea/input-relevant-value
-    virtual Utf16String relevant_value() override { return value(); }
+    virtual Utf16String relevant_value() const override { return value(); }
     WebIDL::ExceptionOr<void> set_relevant_value(Utf16String const& value) override { return set_value(value); }
+    virtual Optional<Utf16String> selected_text_for_stringifier() const override;
 
     virtual void set_dirty_value_flag(bool flag) override { m_dirty_value = flag; }
 
@@ -263,6 +264,7 @@ private:
 
     virtual bool is_presentational_hint(FlyString const&) const override;
     virtual void apply_presentational_hints(GC::Ref<CSS::CascadedProperties>) const override;
+    virtual EventResult handle_return_key(FlyString const& ui_input_type) override;
 
     // ^DOM::Node
     virtual bool is_html_input_element() const final { return true; }
@@ -419,5 +421,15 @@ namespace Web::DOM {
 
 template<>
 inline bool Node::fast_is<HTML::HTMLInputElement>() const { return is_html_input_element(); }
+
+}
+
+namespace JS {
+
+template<>
+inline bool Object::fast_is<Web::HTML::HTMLInputElement>() const
+{
+    return is_dom_node() && static_cast<Web::DOM::Node const&>(*this).is_html_input_element();
+}
 
 }

@@ -88,7 +88,7 @@ public:
     Utf16String api_value() const;
 
     // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-textarea/input-relevant-value
-    virtual Utf16String relevant_value() override { return api_value(); }
+    virtual Utf16String relevant_value() const override { return api_value(); }
     virtual WebIDL::ExceptionOr<void> set_relevant_value(Utf16String const& value) override;
 
     virtual void set_dirty_value_flag(bool flag) override { m_dirty_value = flag; }
@@ -137,6 +137,10 @@ public:
 private:
     HTMLTextAreaElement(DOM::Document&, DOM::QualifiedName);
 
+    virtual EventResult handle_return_key(FlyString const& ui_input_type) override;
+
+    virtual bool is_html_textarea_element() const final { return true; }
+
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
 
@@ -173,5 +177,12 @@ private:
     // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-fe-api-value
     mutable Optional<Utf16String> m_api_value;
 };
+
+}
+
+namespace Web::DOM {
+
+template<>
+inline bool Node::fast_is<HTML::HTMLTextAreaElement>() const { return is_html_textarea_element(); }
 
 }

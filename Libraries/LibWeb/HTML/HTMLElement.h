@@ -196,6 +196,9 @@ public:
     // https://html.spec.whatwg.org/multipage/rendering.html#button-layout
     virtual bool uses_button_layout() const { return false; }
 
+    WebIDL::UnsignedLong computed_heading_level() const;
+    WebIDL::UnsignedLong computed_heading_offset() const;
+
 protected:
     HTMLElement(DOM::Document&, DOM::QualifiedName);
 
@@ -273,5 +276,15 @@ namespace Web::DOM {
 
 template<>
 inline bool Node::fast_is<HTML::HTMLElement>() const { return is_html_element(); }
+
+}
+
+namespace JS {
+
+template<>
+inline bool Object::fast_is<Web::HTML::HTMLElement>() const
+{
+    return is_dom_node() && static_cast<Web::DOM::Node const&>(*this).is_html_element();
+}
 
 }

@@ -5,20 +5,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Enumerate.h>
 #include <AK/GenericShorthands.h>
-#include <AK/JsonObject.h>
-#include <AK/JsonParser.h>
-#include <AK/JsonValue.h>
-#include <LibCore/File.h>
 #include <LibCore/Notifier.h>
-#include <LibCore/System.h>
 #include <LibHTTP/Cache/DiskCache.h>
 #include <LibHTTP/Cache/Utilities.h>
 #include <LibTextCodec/Decoder.h>
 #include <RequestServer/CURL.h>
 #include <RequestServer/ConnectionFromClient.h>
-#include <RequestServer/Quarantine.h>
 #include <RequestServer/Request.h>
 #include <RequestServer/Resolver.h>
 
@@ -27,7 +20,7 @@ namespace RequestServer {
 static long s_connect_timeout_seconds = 90L;
 
 NonnullOwnPtr<Request> Request::fetch(
-    i32 request_id,
+    u64 request_id,
     Optional<HTTP::DiskCache&> disk_cache,
     ConnectionFromClient& client,
     void* curl_multi,
@@ -37,18 +30,16 @@ NonnullOwnPtr<Request> Request::fetch(
     NonnullRefPtr<HTTP::HeaderList> request_headers,
     ByteBuffer request_body,
     ByteString alt_svc_cache_path,
-    Core::ProxyData proxy_data,
-    RefPtr<IPC::NetworkIdentity> network_identity)
+    Core::ProxyData proxy_data)
 {
-    auto request = adopt_own(*new Request { request_id, disk_cache, client, curl_multi, resolver, move(url), move(method), move(request_headers), move(request_body), move(alt_svc_cache_path), proxy_data });
-    request->m_network_identity = move(network_identity);
+    auto request = adopt_own(*new Request { request_id, Type::Fetch, disk_cache, client, curl_multi, resolver, move(url), move(method), move(request_headers), move(request_body), move(alt_svc_cache_path), proxy_data });
     request->process();
 
     return request;
 }
 
 NonnullOwnPtr<Request> Request::connect(
-    i32 request_id,
+    u64 request_id,
     ConnectionFromClient& client,
     void* curl_multi,
     Resolver& resolver,
@@ -69,8 +60,28 @@ NonnullOwnPtr<Request> Request::connect(
     return request;
 }
 
+NonnullOwnPtr<Request> Request::revalidate(
+    u64 request_id,
+    Optional<HTTP::DiskCache&> disk_cache,
+    ConnectionFromClient& client,
+    void* curl_multi,
+    Resolver& resolver,
+    URL::URL url,
+    ByteString method,
+    NonnullRefPtr<HTTP::HeaderList> request_headers,
+    ByteBuffer request_body,
+    ByteString alt_svc_cache_path,
+    Core::ProxyData proxy_data)
+{
+    auto request = adopt_own(*new Request { request_id, Type::BackgroundRevalidation, disk_cache, client, curl_multi, resolver, move(url), move(method), move(request_headers), move(request_body), move(alt_svc_cache_path), proxy_data });
+    request->process();
+
+    return request;
+}
+
 Request::Request(
-    i32 request_id,
+    u64 request_id,
+    Type type,
     Optional<HTTP::DiskCache&> disk_cache,
     ConnectionFromClient& client,
     void* curl_multi,
@@ -82,7 +93,7 @@ Request::Request(
     ByteString alt_svc_cache_path,
     Core::ProxyData proxy_data)
     : m_request_id(request_id)
-    , m_type(Type::Fetch)
+    , m_type(type)
     , m_disk_cache(disk_cache)
     , m_client(client)
     , m_curl_multi_handle(curl_multi)
@@ -98,7 +109,7 @@ Request::Request(
 }
 
 Request::Request(
-    i32 request_id,
+    u64 request_id,
     ConnectionFromClient& client,
     void* curl_multi,
     Resolver& resolver,
@@ -142,10 +153,13 @@ void Request::notify_request_unblocked(Badge<HTTP::DiskCache>)
 
 void Request::notify_fetch_complete(Badge<ConnectionFromClient>, int result_code)
 {
-    if (m_cache_entry_reader.has_value() && m_cache_entry_reader->must_revalidate()) {
+    if (is_revalidation_request()) {
         if (acquire_status_code() == 304) {
+            if (m_type == Type::BackgroundRevalidation && m_disk_cache->mode() == HTTP::DiskCache::Mode::Testing)
+                m_response_headers->set({ HTTP::TEST_CACHE_REVALIDATION_STATUS_HEADER, "fresh"sv });
+
             m_cache_entry_reader->revalidation_succeeded(m_response_headers);
-            transition_to_state(State::ReadCache);
+            transition_to_state(m_type == Type::Fetch ? State::ReadCache : State::Complete);
             return;
         }
 
@@ -163,6 +177,7 @@ void Request::notify_fetch_complete(Badge<ConnectionFromClient>, int result_code
 
 void Request::transition_to_state(State state)
 {
+    dbgln_if(REQUESTSERVER_DEBUG, "Request::Transition[{}]: {} -> {} ({} {})", m_request_id, state_name(m_state), state_name(state), m_method, m_url);
     m_state = state;
     process();
 }
@@ -188,13 +203,6 @@ void Request::process()
     case State::Fetch:
         handle_fetch_state();
         break;
-    case State::WaitingForPolicy:
-        handle_waiting_for_policy_state();
-        break;
-    case State::PolicyBlocked:
-    case State::PolicyQuarantined:
-        // These states are terminal - they transition to Complete or Error
-        break;
     case State::Complete:
         handle_complete_state();
         break;
@@ -207,16 +215,27 @@ void Request::process()
 void Request::handle_initial_state()
 {
     if (m_disk_cache.has_value()) {
-        m_disk_cache->open_entry(*this, m_url, m_method, m_request_headers)
+        auto open_mode = m_type == Type::BackgroundRevalidation
+            ? HTTP::DiskCache::OpenMode::Revalidate
+            : HTTP::DiskCache::OpenMode::Read;
+
+        m_disk_cache->open_entry(*this, m_url, m_method, m_request_headers, open_mode)
             .visit(
                 [&](Optional<HTTP::CacheEntryReader&> cache_entry_reader) {
                     m_cache_entry_reader = cache_entry_reader;
 
                     if (m_cache_entry_reader.has_value()) {
-                        if (m_cache_entry_reader->must_revalidate())
+                        if (m_cache_entry_reader->revalidation_type() == HTTP::CacheEntryReader::RevalidationType::StaleWhileRevalidate)
+                            m_client.start_revalidation_request({}, m_method, m_url, m_request_headers, m_request_body, m_proxy_data);
+
+                        if (is_revalidation_request())
                             transition_to_state(State::DNSLookup);
                         else
                             transition_to_state(State::ReadCache);
+                    } else if (m_type == Type::BackgroundRevalidation) {
+                        // If we were not able to open a cache entry reader for revalidation requests, there's no point
+                        // in issuing a request over the network.
+                        transition_to_state(State::Complete);
                     }
                 },
                 [&](HTTP::DiskCache::CacheHasOpenEntry) {
@@ -277,18 +296,6 @@ void Request::handle_read_cache_state()
 
 void Request::handle_dns_lookup_state()
 {
-    // Skip DNS lookup for SOCKS5H proxy (Tor) - let proxy handle DNS resolution
-    if (m_network_identity && m_network_identity->has_proxy()) {
-        auto const& proxy_config = m_network_identity->proxy_config();
-        if (proxy_config.has_value() && proxy_config->type == IPC::ProxyType::SOCKS5H) {
-            auto host = m_url.serialized_host().to_byte_string();
-            dbgln("RequestServer: Skipping DNS lookup for '{}' (using SOCKS5H proxy - DNS via Tor)", host);
-            // Skip DNS, transition directly to fetch state
-            transition_to_state(State::Fetch);
-            return;
-        }
-    }
-
     auto host = m_url.serialized_host().to_byte_string();
     auto const& dns_info = DNSInfo::the();
 
@@ -303,7 +310,7 @@ void Request::handle_dns_lookup_state()
                 dbgln("Request::handle_dns_lookup_state: DNS lookup failed for '{}'", host);
                 m_network_error = Requests::NetworkError::UnableToResolveHost;
                 transition_to_state(State::Error);
-            } else if (m_type == Type::Fetch) {
+            } else if (m_type == Type::Fetch || m_type == Type::BackgroundRevalidation) {
                 m_dns_result = move(dns_result);
                 transition_to_state(State::Fetch);
             } else {
@@ -346,7 +353,7 @@ void Request::handle_fetch_state()
         return;
     }
 
-    auto is_revalidation_request = m_cache_entry_reader.has_value() && m_cache_entry_reader->must_revalidate();
+    auto is_revalidation_request = this->is_revalidation_request();
 
     if (!is_revalidation_request) {
         if (inform_client_request_started().is_error())
@@ -430,46 +437,8 @@ void Request::handle_fetch_state()
         m_curl_string_lists.append(curl_headers);
     }
 
-    // Apply proxy configuration from NetworkIdentity (Tor/VPN support)
-    if (m_network_identity && m_network_identity->has_proxy()) {
-        auto const& proxy_config = m_network_identity->proxy_config();
-        if (proxy_config.has_value()) {
-            // Set proxy URL (e.g., "socks5h://localhost:9050" for Tor)
-            auto proxy_url = proxy_config->to_curl_proxy_url();
-            set_option(CURLOPT_PROXY, proxy_url.characters());
-
-            // Set proxy type for libcurl
-            switch (proxy_config->type) {
-            case IPC::ProxyType::SOCKS5H:
-                set_option(CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5_HOSTNAME);  // DNS via proxy
-                dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: Using SOCKS5H proxy at {} (DNS via proxy)", proxy_url);
-                break;
-            case IPC::ProxyType::SOCKS5:
-                set_option(CURLOPT_PROXYTYPE, CURLPROXY_SOCKS5);  // Local DNS
-                dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: Using SOCKS5 proxy at {}", proxy_url);
-                break;
-            case IPC::ProxyType::HTTP:
-                set_option(CURLOPT_PROXYTYPE, CURLPROXY_HTTP);
-                dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: Using HTTP proxy at {}", proxy_url);
-                break;
-            case IPC::ProxyType::HTTPS:
-                set_option(CURLOPT_PROXYTYPE, CURLPROXY_HTTPS);
-                dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: Using HTTPS proxy at {}", proxy_url);
-                break;
-            case IPC::ProxyType::None:
-                break;
-            }
-
-            // Set SOCKS5 authentication for stream isolation (Tor circuit isolation)
-            if (auto auth = proxy_config->to_curl_auth_string(); auth.has_value()) {
-                set_option(CURLOPT_PROXYUSERPWD, auth->characters());
-                dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: Using proxy authentication for circuit isolation");
-            }
-        }
-    } else {
-        // FIXME: Set up proxy if applicable
-        (void)m_proxy_data;
-    }
+    // FIXME: Set up proxy if applicable
+    (void)m_proxy_data;
 
     set_option(CURLOPT_HEADERFUNCTION, &on_header_received);
     set_option(CURLOPT_HEADERDATA, this);
@@ -477,28 +446,18 @@ void Request::handle_fetch_state()
     set_option(CURLOPT_WRITEFUNCTION, &on_data_received);
     set_option(CURLOPT_WRITEDATA, this);
 
-    // Only apply DNS resolution if we have a DNS result
-    // For SOCKS5H proxy, m_dns_result will be null and proxy handles DNS
-    if (m_dns_result) {
-        auto formatted_address = build_curl_resolve_list(*m_dns_result, m_url.serialized_host(), m_url.port_or_default());
+    VERIFY(m_dns_result);
+    auto formatted_address = build_curl_resolve_list(*m_dns_result, m_url.serialized_host(), m_url.port_or_default());
 
-        if (curl_slist* resolve_list = curl_slist_append(nullptr, formatted_address.characters())) {
-            set_option(CURLOPT_RESOLVE, resolve_list);
-            m_curl_string_lists.append(resolve_list);
-        } else {
-            VERIFY_NOT_REACHED();
-        }
+    if (curl_slist* resolve_list = curl_slist_append(nullptr, formatted_address.characters())) {
+        set_option(CURLOPT_RESOLVE, resolve_list);
+        m_curl_string_lists.append(resolve_list);
     } else {
-        dbgln_if(REQUESTSERVER_DEBUG, "RequestServer: Skipping CURLOPT_RESOLVE (DNS resolution via proxy)");
+        VERIFY_NOT_REACHED();
     }
 
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
     VERIFY(result == CURLM_OK);
-
-    // Log request for audit trail
-    if (m_network_identity) {
-        m_network_identity->log_request(m_url, m_method);
-    }
 }
 
 void Request::handle_complete_state()
@@ -523,254 +482,27 @@ void Request::handle_complete_state()
                 char const* curl_error_message = curl_easy_strerror(static_cast<CURLcode>(*m_curl_result_code));
                 dbgln("Request::handle_complete_state: Unable to map error ({}): \"\033[31;1m{}\033[0m\"", *m_curl_result_code, curl_error_message);
             }
-        }
 
-        // IPFS Integration: Content verification hook
-        // Note: Verification happens on data already sent to client. If verification fails,
-        // the error will be reported but data has already been transferred.
-        if (m_content_verification_callback && !m_network_error.has_value() && m_bytes_transferred_to_client > 0) {
-            // Allocate buffer for post-transfer verification check
-            // FIXME: For large files, this could be memory-intensive. Consider streaming verification.
-            auto buffer_size = m_response_buffer.used_buffer_size();
-            if (buffer_size > 0) {
-                auto verification_buffer_result = ByteBuffer::create_uninitialized(buffer_size);
-                if (verification_buffer_result.is_error()) {
-                    dbgln("Request::handle_complete_state: Failed to allocate buffer for content verification");
-                    m_network_error = Requests::NetworkError::Unknown;
-                } else {
-                    auto& verification_buffer = verification_buffer_result.value();
-                    auto read_result = m_response_buffer.read_until_filled(verification_buffer);
-
-                    if (read_result.is_error()) {
-                        dbgln("Request::handle_complete_state: Failed to read response buffer for verification: {}", read_result.error());
-                        m_network_error = Requests::NetworkError::Unknown;
-                    } else {
-                        auto verification_result = m_content_verification_callback(verification_buffer.bytes());
-                        if (verification_result.is_error()) {
-                            dbgln("Request::handle_complete_state: Content verification failed: {}", verification_result.error());
-                            m_network_error = Requests::NetworkError::Unknown;
-                        } else if (!verification_result.value()) {
-                            dbgln("Request::handle_complete_state: Content integrity check failed");
-                            m_network_error = Requests::NetworkError::Unknown;
-                        }
-                    }
-                }
+            if (m_cache_entry_writer.has_value()) {
+                m_cache_entry_writer->on_network_error();
+                m_cache_entry_writer.clear();
             }
         }
 
         m_client.async_request_finished(m_request_id, m_bytes_transferred_to_client, timing_info, m_network_error);
-
-        // Log response for audit trail
-        if (m_network_identity && !m_network_error.has_value()) {
-            auto status_code = acquire_status_code();
-            // Calculate total bytes for this request
-            size_t bytes_sent = m_request_body.size();
-            size_t bytes_received = m_bytes_transferred_to_client;
-
-            m_network_identity->log_response(m_url, static_cast<u16>(status_code), bytes_sent, bytes_received);
-
-            // Record traffic for behavioral analysis (Phase 6 Milestone 0.4)
-            m_client.record_traffic({}, m_url, bytes_sent, bytes_received);
-        }
-
-        // Sentinel SecurityTap integration - inspect downloads for threats
-        if (m_security_tap && should_inspect_download() && !m_network_error.has_value()) {
-            auto buffer_size = m_response_buffer.used_buffer_size();
-            if (buffer_size > 0) {
-                // Read content from response buffer
-                auto content_buffer_result = ByteBuffer::create_uninitialized(buffer_size);
-                if (!content_buffer_result.is_error()) {
-                    auto content_buffer = content_buffer_result.release_value();
-                    auto read_result = m_response_buffer.read_until_filled(content_buffer);
-
-                    if (!read_result.is_error()) {
-                        // Extract download metadata
-                        auto metadata = extract_download_metadata();
-
-                        // Compute SHA256 hash
-                        auto sha256_result = SecurityTap::compute_sha256(content_buffer.bytes());
-                        if (!sha256_result.is_error()) {
-                            const_cast<SecurityTap::DownloadMetadata&>(metadata).sha256 = sha256_result.release_value();
-
-                            // Scan the content with YARA/ML
-                            auto scan_result = m_security_tap->inspect_download(metadata, content_buffer.bytes());
-
-                            bool is_threat = false;
-                            String threat_explanation;
-
-                            if (!scan_result.is_error() && scan_result.value().is_threat) {
-                                dbgln("SecurityTap: Threat detected in download: {}", metadata.filename);
-                                is_threat = true;
-                                // Store alert JSON for quarantine (Phase 3 Day 19)
-                                m_security_alert_json = scan_result.value().alert_json.value();
-                            } else if (scan_result.is_error()) {
-                                dbgln("SecurityTap: Scan failed: {}", scan_result.error());
-                            }
-
-                            // Sandbox analysis (Milestone 0.5 Phase 1) - deeper inspection for suspicious files
-                            // Run sandbox if YARA/ML didn't find a definite threat OR if we want deeper analysis
-                            auto* sandbox = m_client.sandbox_orchestrator();
-                            if (sandbox && !is_threat && metadata.size_bytes > 0) {
-                                dbgln("Sandbox: Analyzing '{}' ({} bytes)", metadata.filename, metadata.size_bytes);
-
-                                auto sandbox_result = sandbox->analyze_file(content_buffer, String::from_byte_string(metadata.filename).value_or("download"_string));
-
-                                if (!sandbox_result.is_error()) {
-                                    auto const& result = sandbox_result.value();
-
-                                    dbgln("Sandbox: Analysis complete - Threat: {}, Confidence: {:.2f}, Composite: {:.2f}",
-                                        static_cast<int>(result.threat_level), result.confidence, result.composite_score);
-
-                                    if (result.is_malicious()) {
-                                        dbgln("Sandbox: MALWARE DETECTED - {}", result.verdict_explanation);
-                                        is_threat = true;
-                                        threat_explanation = result.verdict_explanation;
-
-                                        // Generate alert JSON for quarantine
-                                        // Format: {"verdict":"malicious","score":0.85,"explanation":"..."}
-                                        StringBuilder alert_builder;
-                                        alert_builder.append("{\"verdict\":\"malicious\",\"score\":"sv);
-                                        alert_builder.appendff("{:.2f}", result.composite_score);
-                                        alert_builder.append(",\"explanation\":\""sv);
-                                        alert_builder.append(result.verdict_explanation);
-                                        alert_builder.append("\"}"sv);
-
-                                        m_security_alert_json = alert_builder.to_byte_string();
-                                    } else if (result.is_suspicious()) {
-                                        dbgln("Sandbox: Suspicious file detected - {}", result.verdict_explanation);
-                                        // TODO: In future, send warning to UI (not blocking)
-                                    }
-                                } else {
-                                    dbgln("Sandbox: Analysis failed: {}", sandbox_result.error());
-                                }
-                            }
-
-                            // Send security alert if threat detected by either scanner
-                            if (is_threat && m_security_alert_json.has_value()) {
-                                m_client.async_security_alert(m_request_id, m_page_id, m_security_alert_json.value());
-                            }
-                        }
-
-                        // Note: AllocatingMemoryStream is already at the correct position
-                        // No need to rewind - the read_until_filled() doesn't move the position
-                    }
-                }
-            }
-        }
     }
 
-    m_client.request_complete({}, m_request_id);
+    m_client.request_complete({}, *this);
 }
 
 void Request::handle_error_state()
 {
-    // IPFS Integration: Try gateway fallback if available for recoverable errors
-    if (m_gateway_fallback_callback) {
-        auto error = m_network_error.value_or(Requests::NetworkError::Unknown);
-        // Retry on DNS, connection, timeout, or unknown errors (typical gateway failures)
-        if (error == Requests::NetworkError::UnableToResolveHost
-            || error == Requests::NetworkError::UnableToConnect
-            || error == Requests::NetworkError::TimeoutReached
-            || error == Requests::NetworkError::Unknown) {
-            dbgln("Request::handle_error_state: Triggering gateway fallback for error: {}", static_cast<int>(error));
-            m_gateway_fallback_callback();
-            // Don't send async_request_finished - fallback will create new request
-            m_client.request_complete({}, m_request_id);
-            return;
-        }
-    }
-
     if (m_type == Type::Fetch) {
         // FIXME: Implement timing info for failed requests.
         m_client.async_request_finished(m_request_id, m_bytes_transferred_to_client, {}, m_network_error.value_or(Requests::NetworkError::Unknown));
     }
 
-    m_client.request_complete({}, m_request_id);
-}
-
-bool Request::should_inspect_download() const
-{
-    // Only inspect actual downloads, not page navigations or API responses
-
-    // Check Content-Disposition header
-    auto content_disposition = m_response_headers.get("Content-Disposition"sv);
-    if (content_disposition.has_value() && content_disposition->contains("attachment"sv))
-        return true;
-
-    // Check for common download MIME types
-    auto content_type = m_response_headers.get("Content-Type"sv);
-    if (content_type.has_value()) {
-        // Applications (executables, archives, documents)
-        if (content_type->starts_with("application/"sv))
-            return true;
-        // Executables
-        if (content_type->contains("executable"sv) || content_type->contains("x-ms"sv))
-            return true;
-    }
-
-    // Check URL file extension for common download types
-    auto path = m_url.serialize_path().to_byte_string();
-    if (path.ends_with(".exe"sv) || path.ends_with(".msi"sv) || path.ends_with(".dmg"sv)
-        || path.ends_with(".zip"sv) || path.ends_with(".rar"sv) || path.ends_with(".7z"sv)
-        || path.ends_with(".tar"sv) || path.ends_with(".gz"sv)
-        || path.ends_with(".ps1"sv) || path.ends_with(".bat"sv) || path.ends_with(".sh"sv)
-        || path.ends_with(".apk"sv) || path.ends_with(".deb"sv) || path.ends_with(".rpm"sv))
-        return true;
-
-    return false;
-}
-
-SecurityTap::DownloadMetadata Request::extract_download_metadata() const
-{
-    // Extract filename from Content-Disposition header or URL
-    ByteString filename = "unknown"sv;
-
-    auto disposition = m_response_headers.get("Content-Disposition"sv);
-    if (disposition.has_value()) {
-        // Parse: Content-Disposition: attachment; filename="file.exe"
-        auto filename_pos = disposition->find("filename="sv);
-        if (filename_pos.has_value()) {
-            auto start = *filename_pos + 9; // length of "filename="
-            auto filename_part = disposition->substring_view(start);
-
-            // Remove quotes if present
-            if (filename_part.starts_with('"')) {
-                filename_part = filename_part.substring_view(1);
-                if (auto quote_end = filename_part.find('"'); quote_end.has_value())
-                    filename_part = filename_part.substring_view(0, *quote_end);
-            } else {
-                // Without quotes, filename ends at semicolon or end of string
-                if (auto semicolon = filename_part.find(';'); semicolon.has_value())
-                    filename_part = filename_part.substring_view(0, *semicolon);
-            }
-
-            filename = filename_part.trim_whitespace();
-        }
-    }
-
-    // Fallback: extract from URL path
-    if (filename == "unknown"sv) {
-        auto path = m_url.serialize_path().to_byte_string();
-        if (auto last_slash = path.find_last('/'); last_slash.has_value()) {
-            filename = path.substring_view(*last_slash + 1);
-        } else {
-            filename = path;
-        }
-
-        // If still empty, use a generic name
-        if (filename.is_empty())
-            filename = "download"sv;
-    }
-
-    auto mime_type = m_response_headers.get("Content-Type"sv).value_or("application/octet-stream"sv);
-
-    return SecurityTap::DownloadMetadata {
-        .url = m_url.to_byte_string(),
-        .filename = filename,
-        .mime_type = mime_type,
-        .sha256 = ""sv, // Computed by SecurityTap
-        .size_bytes = m_response_buffer.used_buffer_size()
-    };
+    m_client.request_complete({}, *this);
 }
 
 size_t Request::on_header_received(void* buffer, size_t size, size_t nmemb, void* user_data)
@@ -811,7 +543,7 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
 {
     auto& request = *static_cast<Request*>(user_data);
 
-    if (request.m_cache_entry_reader.has_value() && request.m_cache_entry_reader->must_revalidate()) {
+    if (request.is_revalidation_request()) {
         // If we arrive here, we did not receive an HTTP 304 response code. We must remove the cache entry and inform
         // the client of the new response headers and data.
         if (request.revalidation_failed().is_error())
@@ -833,108 +565,14 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
     auto total_size = size * nmemb;
     ReadonlyBytes bytes { static_cast<u8 const*>(buffer), total_size };
 
-    // Sentinel integration: Incremental scanning for malware detection
-    if (request.m_security_tap && request.should_inspect_download()) {
-        // Write to response buffer first (needed for scanning)
-        auto write_result = request.m_response_buffer.write_some(bytes);
-        if (write_result.is_error()) {
-            dbgln("Request::on_data_received: Failed to write to response buffer: {}", write_result.error());
-            return CURL_WRITEFUNC_ERROR;
-        }
+    auto result = [&] -> ErrorOr<void> {
+        TRY(request.m_response_buffer.write_some(bytes));
+        return request.write_queued_bytes_without_blocking();
+    }();
 
-        // Scan the accumulated content incrementally
-        auto buffer_size = request.m_response_buffer.used_buffer_size();
-        if (buffer_size > 0) {
-            auto content_buffer_result = ByteBuffer::create_uninitialized(buffer_size);
-            if (!content_buffer_result.is_error()) {
-                auto content_buffer = content_buffer_result.release_value();
-
-                // Peek at the data (don't consume it)
-                request.m_response_buffer.peek_some(content_buffer.span());
-
-                // Extract download metadata
-                auto metadata = request.extract_download_metadata();
-
-                // Compute SHA256 hash
-                auto sha256_result = SecurityTap::compute_sha256(content_buffer.bytes());
-                if (!sha256_result.is_error()) {
-                    const_cast<SecurityTap::DownloadMetadata&>(metadata).sha256 = sha256_result.release_value();
-
-                    // Scan the content with YARA/ML
-                    auto scan_result = request.m_security_tap->inspect_download(metadata, content_buffer.bytes());
-
-                    bool is_threat = false;
-
-                    if (!scan_result.is_error() && scan_result.value().is_threat) {
-                        dbgln("SecurityTap: Threat detected during download: {}", metadata.filename);
-                        is_threat = true;
-                        // Store alert JSON for quarantine (Phase 3 Day 19)
-                        request.m_security_alert_json = scan_result.value().alert_json.value();
-                    }
-
-                    // Sandbox analysis (Milestone 0.5 Phase 1) - deeper inspection
-                    auto* sandbox = request.m_client.sandbox_orchestrator();
-                    if (sandbox && !is_threat && metadata.size_bytes > 0) {
-                        dbgln("Sandbox: Analyzing '{}' during download ({} bytes)", metadata.filename, metadata.size_bytes);
-
-                        auto sandbox_result = sandbox->analyze_file(content_buffer, String::from_byte_string(metadata.filename).value_or("download"_string));
-
-                        if (!sandbox_result.is_error()) {
-                            auto const& result = sandbox_result.value();
-
-                            dbgln("Sandbox: Analysis complete - Threat: {}, Confidence: {:.2f}",
-                                static_cast<int>(result.threat_level), result.confidence);
-
-                            if (result.is_malicious()) {
-                                dbgln("Sandbox: MALWARE DETECTED during download - {}", result.verdict_explanation);
-                                is_threat = true;
-
-                                // Generate alert JSON
-                                StringBuilder alert_builder;
-                                alert_builder.append("{\"verdict\":\"malicious\",\"score\":"sv);
-                                alert_builder.appendff("{:.2f}", result.composite_score);
-                                alert_builder.append(",\"explanation\":\""sv);
-                                alert_builder.append(result.verdict_explanation);
-                                alert_builder.append("\"}"sv);
-
-                                request.m_security_alert_json = alert_builder.to_byte_string();
-                            }
-                        } else {
-                            dbgln("Sandbox: Analysis failed: {}", sandbox_result.error());
-                        }
-                    }
-
-                    if (is_threat && request.m_security_alert_json.has_value()) {
-                        // Send security alert to browser via IPC
-                        request.m_client.async_security_alert(request.m_request_id, request.m_page_id, request.m_security_alert_json.value());
-
-                        // Transition to WaitingForPolicy state
-                        request.transition_to_state(State::WaitingForPolicy);
-
-                        // Pause CURL transfer
-                        return CURL_WRITEFUNC_PAUSE;
-                    }
-                }
-            }
-        }
-
-        // Continue normal processing
-        auto flush_result = request.write_queued_bytes_without_blocking();
-        if (flush_result.is_error()) {
-            dbgln("Request::on_data_received: Aborting request because error occurred whilst writing data to the client: {}", flush_result.error());
-            return CURL_WRITEFUNC_ERROR;
-        }
-    } else {
-        // Normal path (no security scanning)
-        auto result = [&] -> ErrorOr<void> {
-            TRY(request.m_response_buffer.write_some(bytes));
-            return request.write_queued_bytes_without_blocking();
-        }();
-
-        if (result.is_error()) {
-            dbgln("Request::on_data_received: Aborting request because error occurred whilst writing data to the client: {}", result.error());
-            return CURL_WRITEFUNC_ERROR;
-        }
+    if (result.is_error()) {
+        dbgln("Request::on_data_received: Aborting request because error occurred whilst writing data to the client: {}", result.error());
+        return CURL_WRITEFUNC_ERROR;
     }
 
     return total_size;
@@ -942,6 +580,9 @@ size_t Request::on_data_received(void* buffer, size_t size, size_t nmemb, void* 
 
 ErrorOr<void> Request::inform_client_request_started()
 {
+    if (m_type == Type::BackgroundRevalidation)
+        return {};
+
     auto request_pipe = RequestPipe::create();
     if (request_pipe.is_error()) {
         dbgln("Request::handle_read_from_cache_state: Failed to create pipe: {}", request_pipe.error());
@@ -974,6 +615,9 @@ void Request::transfer_headers_to_client_if_needed()
         }
     }
 
+    if (m_type == Type::BackgroundRevalidation)
+        return;
+
     if (m_disk_cache.has_value() && m_disk_cache->mode() == HTTP::DiskCache::Mode::Testing) {
         switch (m_cache_status) {
         case CacheStatus::Unknown:
@@ -995,6 +639,30 @@ void Request::transfer_headers_to_client_if_needed()
 
 ErrorOr<void> Request::write_queued_bytes_without_blocking()
 {
+    Vector<u8> bytes_to_send;
+    bytes_to_send.resize(m_response_buffer.used_buffer_size());
+    m_response_buffer.peek_some(bytes_to_send);
+
+    auto write_bytes_to_disk_cache = [&](size_t byte_count) {
+        if (!m_cache_entry_writer.has_value())
+            return;
+
+        auto bytes_to_write = bytes_to_send.span().slice(0, byte_count);
+
+        if (m_cache_entry_writer->write_data(bytes_to_write).is_error())
+            m_cache_entry_writer.clear();
+    };
+
+    if (m_type == Type::BackgroundRevalidation) {
+        write_bytes_to_disk_cache(bytes_to_send.size());
+        MUST(m_response_buffer.discard(bytes_to_send.size()));
+
+        if (m_response_buffer.is_eof() && m_curl_result_code.has_value())
+            transition_to_state(State::Complete);
+
+        return {};
+    }
+
     if (!m_client_writer_notifier) {
         m_client_writer_notifier = Core::Notifier::construct(m_client_request_pipe->writer_fd(), Core::NotificationType::Write);
         m_client_writer_notifier->set_enabled(false);
@@ -1005,10 +673,6 @@ ErrorOr<void> Request::write_queued_bytes_without_blocking()
         };
     }
 
-    Vector<u8> bytes_to_send;
-    bytes_to_send.resize(m_response_buffer.used_buffer_size());
-    m_response_buffer.peek_some(bytes_to_send);
-
     auto result = m_client_request_pipe->write(bytes_to_send);
     if (result.is_error()) {
         if (!first_is_one_of(result.error().code(), EAGAIN, EWOULDBLOCK))
@@ -1018,15 +682,10 @@ ErrorOr<void> Request::write_queued_bytes_without_blocking()
         return {};
     }
 
-    if (m_cache_entry_writer.has_value()) {
-        auto bytes_sent = bytes_to_send.span().slice(0, result.value());
-
-        if (m_cache_entry_writer->write_data(bytes_sent).is_error())
-            m_cache_entry_writer.clear();
-    }
+    write_bytes_to_disk_cache(result.value());
+    MUST(m_response_buffer.discard(result.value()));
 
     m_bytes_transferred_to_client += result.value();
-    MUST(m_response_buffer.discard(result.value()));
 
     m_client_writer_notifier->set_enabled(!m_response_buffer.is_eof());
     if (m_response_buffer.is_eof() && m_curl_result_code.has_value())
@@ -1035,8 +694,24 @@ ErrorOr<void> Request::write_queued_bytes_without_blocking()
     return {};
 }
 
+bool Request::is_revalidation_request() const
+{
+    switch (m_type) {
+    case Type::Fetch:
+        return m_cache_entry_reader.has_value() && m_cache_entry_reader->revalidation_type() == HTTP::CacheEntryReader::RevalidationType::MustRevalidate;
+    case Type::Connect:
+        return false;
+    case Type::BackgroundRevalidation:
+        return m_cache_entry_reader.has_value();
+    }
+    VERIFY_NOT_REACHED();
+}
+
 ErrorOr<void> Request::revalidation_failed()
 {
+    if (m_type == Type::BackgroundRevalidation && m_disk_cache->mode() == HTTP::DiskCache::Mode::Testing)
+        m_response_headers->set({ HTTP::TEST_CACHE_REVALIDATION_STATUS_HEADER, "expired"sv });
+
     m_cache_entry_reader->revalidation_failed();
     m_cache_entry_reader.clear();
 
@@ -1123,232 +798,5 @@ Requests::RequestTimingInfo Request::acquire_timing_info() const
         .http_version_alpn_identifier = http_version_alpn,
     };
 }
-
-// IPFS Integration: Start
-void Request::set_content_verification_callback(Function<ErrorOr<bool>(ReadonlyBytes)> callback)
-{
-    m_content_verification_callback = move(callback);
-}
-
-void Request::set_gateway_fallback_callback(Function<void()> callback)
-{
-    m_gateway_fallback_callback = move(callback);
-}
-// IPFS Integration: End
-
-// Sentinel Security Policy Enforcement: Start
-
-void Request::handle_waiting_for_policy_state()
-{
-    // Do nothing; we are waiting for the user to make a security decision.
-    // The ConnectionFromClient::enforce_security_policy() method will call
-    // resume_download(), block_download(), or quarantine_download() based on the user's choice.
-}
-
-void Request::resume_download()
-{
-    dbgln("Request::resume_download: Resuming download for request {}", m_request_id);
-
-    if (m_state != State::WaitingForPolicy) {
-        dbgln("Request::resume_download: Warning - request {} is not in WaitingForPolicy state (current state: {})",
-              m_request_id, static_cast<int>(m_state));
-        return;
-    }
-
-    if (!m_curl_easy_handle) {
-        dbgln("Request::resume_download: Error - no CURL handle for request {}", m_request_id);
-        transition_to_state(State::Error);
-        return;
-    }
-
-    // Unpause the CURL transfer
-    auto result = curl_easy_pause(m_curl_easy_handle, CURLPAUSE_RECV);
-    if (result != CURLE_OK) {
-        dbgln("Request::resume_download: Failed to unpause CURL transfer: {}", curl_easy_strerror(result));
-        transition_to_state(State::Error);
-        return;
-    }
-
-    // Transition back to Fetch state to continue receiving data
-    transition_to_state(State::Fetch);
-}
-
-void Request::block_download()
-{
-    dbgln("Request::block_download: Blocking download for request {}", m_request_id);
-
-    if (m_state != State::WaitingForPolicy) {
-        dbgln("Request::block_download: Warning - request {} is not in WaitingForPolicy state (current state: {})",
-              m_request_id, static_cast<int>(m_state));
-        return;
-    }
-
-    // Transition to PolicyBlocked state
-    m_state = State::PolicyBlocked;
-
-    // Set network error to indicate the download was blocked
-    m_network_error = Requests::NetworkError::Unknown;
-
-    // Abort the CURL transfer
-    if (m_curl_easy_handle) {
-        auto result = curl_multi_remove_handle(m_curl_multi_handle, m_curl_easy_handle);
-        if (result != CURLM_OK)
-            dbgln("Request::block_download: Failed to remove CURL handle");
-
-        curl_easy_cleanup(m_curl_easy_handle);
-        m_curl_easy_handle = nullptr;
-    }
-
-    // Clear the response buffer (delete partial download)
-    m_response_buffer = AllocatingMemoryStream();
-
-    // Transition to Complete state to finalize the request
-    transition_to_state(State::Complete);
-}
-
-void Request::quarantine_download()
-{
-    dbgln("Request::quarantine_download: Quarantining download for request {}", m_request_id);
-
-    if (m_state != State::WaitingForPolicy) {
-        dbgln("Request::quarantine_download: Warning - request {} is not in WaitingForPolicy state (current state: {})",
-              m_request_id, static_cast<int>(m_state));
-        return;
-    }
-
-    // Check if we have a security alert stored
-    if (!m_security_alert_json.has_value()) {
-        dbgln("Request::quarantine_download: Error - no security alert stored for quarantine");
-        transition_to_state(State::Error);
-        return;
-    }
-
-    // Parse the security alert JSON to extract metadata
-    auto json_result = JsonValue::from_string(m_security_alert_json.value());
-    if (json_result.is_error()) {
-        dbgln("Request::quarantine_download: Error - failed to parse security alert JSON: {}", json_result.error());
-        transition_to_state(State::Error);
-        return;
-    }
-
-    auto json = json_result.value();
-    if (!json.is_object()) {
-        dbgln("Request::quarantine_download: Error - security alert JSON is not an object");
-        transition_to_state(State::Error);
-        return;
-    }
-
-    auto obj = json.as_object();
-
-    // Extract metadata from alert JSON
-    QuarantineMetadata metadata;
-
-    // Get download metadata
-    auto download_metadata = extract_download_metadata();
-    metadata.original_url = download_metadata.url;
-    metadata.filename = download_metadata.filename;
-    metadata.sha256 = download_metadata.sha256;
-    metadata.file_size = download_metadata.size_bytes;
-
-    // Get detection time (use current time as ISO 8601)
-    auto now = UnixDateTime::now();
-    time_t timestamp = now.seconds_since_epoch();
-    struct tm tm_buf;
-    struct tm* tm_info = gmtime_r(&timestamp, &tm_buf);
-
-    if (tm_info) {
-        metadata.detection_time = ByteString::formatted("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-            tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday,
-            tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec);
-    } else {
-        metadata.detection_time = "1970-01-01T00:00:00Z"_string.to_byte_string();
-    }
-
-    // Extract rule names from alert JSON
-    auto matches = obj.get_array("matches"sv);
-    if (matches.has_value()) {
-        for (size_t i = 0; i < matches->size(); i++) {
-            auto match = matches->at(i);
-            if (match.is_object()) {
-                auto rule_name = match.as_object().get_string("rule_name"sv);
-                if (rule_name.has_value()) {
-                    metadata.rule_names.append(rule_name.value().to_byte_string());
-                }
-            }
-        }
-    }
-
-    // Write response buffer to a temporary file
-    auto buffer_size = m_response_buffer.used_buffer_size();
-    if (buffer_size == 0) {
-        dbgln("Request::quarantine_download: Error - no content to quarantine");
-        transition_to_state(State::Error);
-        return;
-    }
-
-    // Create temporary file in /tmp
-    auto temp_path_result = String::formatted("/tmp/ladybird_quarantine_temp_{}", m_request_id);
-    if (temp_path_result.is_error()) {
-        dbgln("Request::quarantine_download: Error - failed to create temp path");
-        transition_to_state(State::Error);
-        return;
-    }
-    auto temp_path = temp_path_result.release_value();
-
-    // Read content from response buffer
-    auto content_buffer_result = ByteBuffer::create_uninitialized(buffer_size);
-    if (content_buffer_result.is_error()) {
-        dbgln("Request::quarantine_download: Error - failed to allocate buffer: {}", content_buffer_result.error());
-        transition_to_state(State::Error);
-        return;
-    }
-    auto content_buffer = content_buffer_result.release_value();
-
-    auto read_result = m_response_buffer.read_until_filled(content_buffer);
-    if (read_result.is_error()) {
-        dbgln("Request::quarantine_download: Error - failed to read response buffer: {}", read_result.error());
-        transition_to_state(State::Error);
-        return;
-    }
-
-    // Write to temporary file
-    auto file_result = Core::File::open(temp_path, Core::File::OpenMode::Write);
-    if (file_result.is_error()) {
-        dbgln("Request::quarantine_download: Error - failed to open temp file: {}", file_result.error());
-        transition_to_state(State::Error);
-        return;
-    }
-    auto file = file_result.release_value();
-
-    auto write_result = file->write_until_depleted(content_buffer.bytes());
-    if (write_result.is_error()) {
-        dbgln("Request::quarantine_download: Error - failed to write to temp file: {}", write_result.error());
-        (void)Core::System::unlink(temp_path);
-        transition_to_state(State::Error);
-        return;
-    }
-
-    file->close();
-
-    // Move file to quarantine directory
-    auto quarantine_result = Quarantine::quarantine_file(temp_path, metadata);
-    if (quarantine_result.is_error()) {
-        dbgln("Request::quarantine_download: Error - failed to quarantine file: {}", quarantine_result.error());
-        (void)Core::System::unlink(temp_path);
-        transition_to_state(State::Error);
-        return;
-    }
-
-    auto quarantine_id = quarantine_result.release_value();
-    dbgln("Request::quarantine_download: Successfully quarantined file with ID: {}", quarantine_id);
-
-    // Set CURL result code as OK before completing (download was interrupted but successful)
-    m_curl_result_code = CURLE_OK;
-
-    // Transition to Complete state
-    transition_to_state(State::Complete);
-}
-
-// Sentinel Security Policy Enforcement: End
 
 }

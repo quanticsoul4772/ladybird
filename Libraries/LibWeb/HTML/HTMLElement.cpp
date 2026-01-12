@@ -35,6 +35,7 @@
 #include <LibWeb/HTML/HTMLLabelElement.h>
 #include <LibWeb/HTML/HTMLObjectElement.h>
 #include <LibWeb/HTML/HTMLParagraphElement.h>
+#include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/PopoverTargetAttributes.h>
 #include <LibWeb/HTML/ToggleEvent.h>
 #include <LibWeb/HTML/Window.h>
@@ -445,6 +446,18 @@ Utf16String HTMLElement::outer_text()
     return get_the_text_steps();
 }
 
+static bool any_ancestor_establishes_a_fixed_position_containing_block(Layout::NodeWithStyle const& node)
+{
+    // https://www.w3.org/TR/css-position-3/#fixed-positioning-containing-block
+    // The containing block is established by the nearest ancestor box that establishes an fixed positioning containing
+    // block, with the bounds of the containing block determined identically to the absolute positioning containing block.
+    for (auto ancestor = node.containing_block(); ancestor; ancestor = ancestor->containing_block()) {
+        if (ancestor->establishes_a_fixed_positioning_containing_block())
+            return true;
+    }
+    return false;
+}
+
 // https://drafts.csswg.org/cssom-view/#dom-htmlelement-scrollparent
 GC::Ptr<DOM::Element> HTMLElement::scroll_parent() const
 {
@@ -455,12 +468,15 @@ GC::Ptr<DOM::Element> HTMLElement::scroll_parent() const
     //    - The element does not have an associated box.
     //    - The element is the root element.
     //    - The element is the body element.
-    //    - FIXME: The element’s computed value of the position property is fixed and no ancestor establishes a fixed position containing block.
+    //    - The element’s computed value of the position property is fixed and no ancestor establishes a fixed position containing block.
     if (!layout_node())
         return nullptr;
     if (is_document_element())
         return nullptr;
     if (is_html_body_element())
+        return nullptr;
+    bool const no_ancestor_establishes_a_fixed_position_containing_block = !any_ancestor_establishes_a_fixed_position_containing_block(*layout_node());
+    if (layout_node()->is_fixed_position() && no_ancestor_establishes_a_fixed_position_containing_block)
         return nullptr;
 
     // 2. Let ancestor be the containing block of the element in the flat tree and repeat these substeps:
@@ -482,8 +498,10 @@ GC::Ptr<DOM::Element> HTMLElement::scroll_parent() const
             return const_cast<Element*>(static_cast<DOM::Element const*>(ancestor->dom_node()));
         }
 
-        // FIXME: 3. If the computed value of the position property of ancestor is fixed, and no ancestor establishes a fixed
+        // 3. If the computed value of the position property of ancestor is fixed, and no ancestor establishes a fixed
         //    position containing block, terminate this algorithm and return null.
+        if (ancestor->computed_values().position() == CSS::Positioning::Fixed && no_ancestor_establishes_a_fixed_position_containing_block)
+            return nullptr;
 
         // 4. Let ancestor be the containing block of ancestor in the flat tree.
         ancestor = ancestor->containing_block();
@@ -492,51 +510,63 @@ GC::Ptr<DOM::Element> HTMLElement::scroll_parent() const
     return nullptr;
 }
 
-// https://www.w3.org/TR/cssom-view-1/#dom-htmlelement-offsetparent
+// https://drafts.csswg.org/cssom-view-1/#dom-htmlelement-offsetparent
 GC::Ptr<DOM::Element> HTMLElement::offset_parent() const
 {
+    // NOTE: We have to ensure that the layout is up-to-date before querying the layout tree.
     const_cast<DOM::Document&>(document()).update_layout(DOM::UpdateLayoutReason::HTMLElementOffsetParent);
 
     // 1. If any of the following holds true return null and terminate this algorithm:
     //    - The element does not have an associated box.
     //    - The element is the root element.
     //    - The element is the HTML body element.
-    //    - The element’s computed value of the position property is fixed.
+    //    - The element’s computed value of the position property is fixed and no ancestor establishes a fixed position containing block.
     if (!layout_node())
         return nullptr;
     if (is_document_element())
         return nullptr;
     if (is_html_body_element())
         return nullptr;
-    if (layout_node()->is_fixed_position())
+    bool const no_ancestor_establishes_a_fixed_position_containing_block = !any_ancestor_establishes_a_fixed_position_containing_block(*layout_node());
+    if (layout_node()->is_fixed_position() && no_ancestor_establishes_a_fixed_position_containing_block)
         return nullptr;
 
     // 2. Let ancestor be the parent of the element in the flat tree and repeat these substeps:
     auto ancestor = shadow_including_first_ancestor_of_type<DOM::Element>();
     while (true) {
+        // 1. If ancestor is closed-shadow-hidden from the element, its computed value of the position property is
+        //    fixed, and no ancestor establishes a fixed position containing block, terminate this algorithm and return
+        //    null.
         bool ancestor_is_closed_shadow_hidden = ancestor->is_closed_shadow_hidden_from(*this);
-        // 1. If ancestor is closed-shadow-hidden from the element and its computed value of the position property is
-        //   fixed, terminate this algorithm and return null.
-        if (ancestor_is_closed_shadow_hidden && ancestor->computed_properties()->position() == CSS::Positioning::Fixed)
+        if (ancestor_is_closed_shadow_hidden
+            && ancestor->computed_properties()->position() == CSS::Positioning::Fixed
+            && no_ancestor_establishes_a_fixed_position_containing_block)
             return nullptr;
 
         // 2. If ancestor is not closed-shadow-hidden from the element and satisfies at least one of the following,
         //    terminate this algorithm and return ancestor.
         if (!ancestor_is_closed_shadow_hidden) {
-            // - ancestor is a containing block of absolutely-positioned descendants (regardless of whether there are
-            //    any absolutely-positioned descendants).
-            if (ancestor->layout_node()->is_positioned())
+            // - The element is in a fixed position containing block, and ancestor is a containing block for
+            //   fixed-positioned descendants.
+            // FIXME: This is ambiguous but I believe it means any ancestor establishes a fixed position containing block.
+            //        https://github.com/w3c/csswg-drafts/pull/12531/commits/48e905bb3859f80ce822299f7e6b76515d867fc3#r2623785087
+            if (!no_ancestor_establishes_a_fixed_position_containing_block && ancestor->layout_node()->establishes_a_fixed_positioning_containing_block())
                 return const_cast<Element*>(ancestor);
-
+            // - The element is not in a fixed position containing block, and:
+            if (no_ancestor_establishes_a_fixed_position_containing_block) {
+                // - ancestor is a containing block of absolutely-positioned descendants (regardless of whether there
+                //   are any absolutely-positioned descendants).
+                if (ancestor->layout_node()->is_positioned())
+                    return const_cast<Element*>(ancestor);
+                // - It is the body element.
+                if (ancestor->is_html_body_element())
+                    return const_cast<Element*>(ancestor);
+                // - The computed value of the position property of the element is static and the ancestor is one of
+                //   the following HTML elements: td, th, or table.
+                if (computed_properties()->position() == CSS::Positioning::Static && ancestor->local_name().is_one_of(HTML::TagNames::td, HTML::TagNames::th, HTML::TagNames::table))
+                    return const_cast<Element*>(ancestor);
+            }
             // - FIXME: The element has a different effective zoom than ancestor.
-
-            // - It is the body element.
-            if (ancestor->is_html_body_element())
-                return const_cast<Element*>(ancestor);
-
-            // - The computed value of the position property of the element is static and the ancestor is one of the following HTML elements: td, th, or table.
-            if (computed_properties()->position() == CSS::Positioning::Static && ancestor->local_name().is_one_of(HTML::TagNames::td, HTML::TagNames::th, HTML::TagNames::table))
-                return const_cast<Element*>(ancestor);
         }
 
         // 3. If there is no more parent of ancestor in the flat tree, terminate this algorithm and return null.
@@ -2385,6 +2415,85 @@ void HTMLElement::set_autocorrect(bool given_value)
         set_attribute_value(HTML::AttributeNames::autocorrect, "on"_string);
     else
         set_attribute_value(HTML::AttributeNames::autocorrect, "off"_string);
+}
+
+// https://html.spec.whatwg.org/multipage/sections.html#get-an-element's-computed-heading-level
+WebIDL::UnsignedLong HTMLElement::computed_heading_level() const
+{
+    // 1. Let level be 0.
+    auto level = 0u;
+
+    // 2. If element's local name is h1, then set level to 1.
+    if (local_name() == TagNames::h1)
+        level = 1;
+    // 3. If element's local name is h2, then set level to 2.
+    else if (local_name() == TagNames::h2)
+        level = 2;
+    // 4. If element's local name is h3, then set level to 3.
+    else if (local_name() == TagNames::h3)
+        level = 3;
+    // 5. If element's local name is h4, then set level to 4.
+    else if (local_name() == TagNames::h4)
+        level = 4;
+    // 6. If element's local name is h5, then set level to 5.
+    else if (local_name() == TagNames::h5)
+        level = 5;
+    // 7. If element's local name is h6, then set level to 6.
+    else if (local_name() == TagNames::h6)
+        level = 6;
+
+    // 8. Assert: level is not 0.
+    VERIFY(level != 0);
+
+    // 9. Increment level by the result of getting an element's computed heading offset given element.
+    level += computed_heading_offset();
+
+    // 10. If level is greater than 9, then return 9.
+    if (level > 9)
+        return 9;
+
+    // 11. Return level.
+    return level;
+}
+
+WebIDL::UnsignedLong HTMLElement::computed_heading_offset() const
+{
+    // 1. Let offset be 0.
+    auto offset = 0u;
+
+    // 2. Let inclusiveAncestor be element.
+    DOM::Node const* inclusive_ancestor = this;
+
+    // 3. While inclusiveAncestor is not null:
+    while (inclusive_ancestor) {
+        // 1. Let nextOffset be 0.
+        auto next_offset = 0u;
+
+        // 2. If inclusiveAncestor is an HTML element and has a headingoffset attribute, then parse its value using the
+        //    rules for parsing non-negative integers.
+        //    If the result of parsing the value is not an error, then set nextOffset to that value.
+        auto const* inclusive_ancestor_html_element = as_if<HTMLElement>(*inclusive_ancestor);
+        if (inclusive_ancestor_html_element) {
+            if (auto attribute = inclusive_ancestor_html_element->get_attribute(AttributeNames::headingoffset); attribute.has_value()) {
+                if (auto heading_offset = parse_non_negative_integer(attribute.value()); heading_offset.has_value())
+                    next_offset = *heading_offset;
+            }
+        }
+
+        // 3. Increment offset by nextOffset.
+        offset += next_offset;
+
+        // 4. If inclusiveAncestor is an HTML element and has a headingreset attribute, then return offset.
+        if (inclusive_ancestor_html_element && inclusive_ancestor_html_element->has_attribute(AttributeNames::headingreset))
+            return offset;
+
+        // 5. Set inclusiveAncestor to the parent node of inclusiveAncestor within the flat tree.
+        // FIXME: Flat tree parent means following slots.
+        inclusive_ancestor = inclusive_ancestor->parent();
+    }
+
+    // 4. Return offset.
+    return offset;
 }
 
 }

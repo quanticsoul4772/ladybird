@@ -239,7 +239,7 @@ ThrowCompletionOr<bool> Value::is_array(VM& vm) const
         return true;
 
     // 3. If argument is a Proxy exotic object, then
-    if (auto const* proxy = as_if<ProxyObject>(object)) {
+    if (auto const* proxy = ::as_if<ProxyObject>(object)) {
 
         // a. Perform ? ValidateNonRevokedProxy(argument).
         TRY(proxy->validate_non_revoked_proxy());
@@ -429,7 +429,7 @@ ThrowCompletionOr<GC::Ref<PrimitiveString>> Value::to_primitive_string(VM& vm)
 {
     if (is_string())
         return as_string();
-    if (is_int32() && as_i32() >= 0)
+    if (is_non_negative_int32())
         return PrimitiveString::create_from_unsigned_integer(vm, static_cast<u32>(as_i32()));
     auto string = TRY(to_utf16_string(vm));
     return PrimitiveString::create(vm, move(string));
@@ -971,7 +971,7 @@ ThrowCompletionOr<double> Value::to_double(VM& vm) const
 ThrowCompletionOr<PropertyKey> Value::to_property_key(VM& vm) const
 {
     // OPTIMIZATION: Return the value as a numeric PropertyKey, if possible.
-    if (is_int32() && as_i32() >= 0)
+    if (is_non_negative_int32())
         return PropertyKey { as_i32() };
 
     // OPTIMIZATION: If this is already a string, we can skip all the ceremony.

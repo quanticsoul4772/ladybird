@@ -163,6 +163,7 @@ Float64Array
 FocusEvent
 FontFace
 FontFaceSet
+FontFaceSetLoadEvent
 FormData
 FormDataEvent
 Function
@@ -233,6 +234,7 @@ HTMLProgressElement
 HTMLQuoteElement
 HTMLScriptElement
 HTMLSelectElement
+HTMLSelectedContentElement
 HTMLSlotElement
 HTMLSourceElement
 HTMLSpanElement
@@ -322,6 +324,7 @@ OfflineAudioContext
 OffscreenCanvas
 OffscreenCanvasRenderingContext2D
 Option
+Origin
 OscillatorNode
 PageTransitionEvent
 PannerNode
@@ -346,6 +349,7 @@ ProcessingInstruction
 ProgressEvent
 Promise
 PromiseRejectionEvent
+QuotaExceededError
 RadioNodeList
 Range
 RangeError
@@ -383,6 +387,7 @@ SVGFEBlendElement
 SVGFEColorMatrixElement
 SVGFEComponentTransferElement
 SVGFECompositeElement
+SVGFEDropShadowElement
 SVGFEFloodElement
 SVGFEFuncAElement
 SVGFEFuncBElement
@@ -542,6 +547,7 @@ XMLSerializer
 XPathEvaluator
 XPathExpression
 XPathResult
+XRSystem
 __finishTest
 __preventMultipleTestFunctions
 animationFrame

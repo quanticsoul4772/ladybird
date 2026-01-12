@@ -22,6 +22,26 @@ GC::Ref<CSSMathSum> CSSMathSum::create(JS::Realm& realm, NumericType type, GC::R
     return realm.create<CSSMathSum>(realm, move(type), move(values));
 }
 
+WebIDL::ExceptionOr<GC::Ref<CSSMathSum>> CSSMathSum::add_all_types_into_math_sum(JS::Realm& realm, GC::RootVector<GC::Ref<CSSNumericValue>> const& values)
+{
+    auto type = values.first()->type();
+    bool first = true;
+    for (auto const& value : values) {
+        if (first) {
+            first = false;
+            continue;
+        }
+        if (auto added_types = type.added_to(value->type()); added_types.has_value()) {
+            type = added_types.release_value();
+        } else {
+            return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot create a CSSMathSum with values of incompatible types"sv };
+        }
+    }
+
+    auto values_array = CSSNumericArray::create(realm, { values });
+    return CSSMathSum::create(realm, type, values_array);
+}
+
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-cssmathsum-cssmathsum
 WebIDL::ExceptionOr<GC::Ref<CSSMathSum>> CSSMathSum::construct_impl(JS::Realm& realm, Vector<CSSNumberish> values)
 {
@@ -39,23 +59,8 @@ WebIDL::ExceptionOr<GC::Ref<CSSMathSum>> CSSMathSum::construct_impl(JS::Realm& r
         return WebIDL::SyntaxError::create(realm, "Cannot create an empty CSSMathSum"_utf16);
 
     // 3. Let type be the result of adding the types of all the items of args. If type is failure, throw a TypeError.
-    auto type = converted_values.first()->type();
-    bool first = true;
-    for (auto const& value : converted_values) {
-        if (first) {
-            first = false;
-            continue;
-        }
-        if (auto added_types = type.added_to(value->type()); added_types.has_value()) {
-            type = added_types.release_value();
-        } else {
-            return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot create a CSSMathSum with values of incompatible types"sv };
-        }
-    }
-
     // 4. Return a new CSSMathSum whose values internal slot is set to args.
-    auto values_array = CSSNumericArray::create(realm, { converted_values });
-    return CSSMathSum::create(realm, move(type), move(values_array));
+    return add_all_types_into_math_sum(realm, converted_values);
 }
 
 CSSMathSum::CSSMathSum(JS::Realm& realm, NumericType type, GC::Ref<CSSNumericArray> values)
@@ -79,11 +84,10 @@ void CSSMathSum::visit_edges(Visitor& visitor)
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#serialize-a-cssmathvalue
-String CSSMathSum::serialize_math_value(Nested nested, Parens parens) const
+void CSSMathSum::serialize_math_value(StringBuilder& s, Nested nested, Parens parens) const
 {
     // NB: Only steps 1 and 3 apply here.
     // 1. Let s initially be the empty string.
-    StringBuilder s;
 
     // 3. Otherwise, if this is a CSSMathSum:
     {
@@ -91,7 +95,7 @@ String CSSMathSum::serialize_math_value(Nested nested, Parens parens) const
         //    otherwise, append "calc(" to s.
         if (parens == Parens::With) {
             if (nested == Nested::Yes) {
-                s.append("("sv);
+                s.append('(');
             } else {
                 s.append("calc("sv);
             }
@@ -99,9 +103,9 @@ String CSSMathSum::serialize_math_value(Nested nested, Parens parens) const
 
         // 2. Serialize the first item in this’s values internal slot with nested set to true, and append the result
         //    to s.
-        s.append(m_values->values().first()->to_string({ .nested = true }));
+        m_values->values().first()->serialize(s, { .nested = true });
 
-        // 3. For each arg in this’s values internal slot beyond the first:
+        // 3. For each arg in this's values internal slot beyond the first:
         bool first = true;
         for (auto const& arg : m_values->values()) {
             if (first) {
@@ -113,22 +117,21 @@ String CSSMathSum::serialize_math_value(Nested nested, Parens parens) const
             //    set to true, and append the result to s.
             if (auto* negate = as_if<CSSMathNegate>(*arg)) {
                 s.append(" - "sv);
-                s.append(negate->value()->to_string({ .nested = true }));
+                negate->value()->serialize(s, { .nested = true });
             }
 
             // 2. Otherwise, append " + " to s, then serialize arg with nested set to true, and append the result to s.
             else {
                 s.append(" + "sv);
-                s.append(arg->to_string({ .nested = true }));
+                arg->serialize(s, { .nested = true });
             }
         }
 
         // 4. If paren-less is false, append ")" to s,
         if (parens == Parens::With)
-            s.append(")"sv);
+            s.append(')');
 
         // 5. Return s.
-        return s.to_string_without_validation();
     }
 }
 

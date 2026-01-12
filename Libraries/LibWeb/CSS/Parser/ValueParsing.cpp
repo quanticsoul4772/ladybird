@@ -29,6 +29,8 @@
 #include <LibWeb/CSS/StyleValues/AngleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BackgroundSizeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BasicShapeStyleValue.h>
+#include <LibWeb/CSS/StyleValues/BorderRadiusRectStyleValue.h>
+#include <LibWeb/CSS/StyleValues/BorderRadiusStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorFunctionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorMixStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
@@ -60,6 +62,7 @@
 #include <LibWeb/CSS/StyleValues/PositionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RGBColorStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RadialGradientStyleValue.h>
+#include <LibWeb/CSS/StyleValues/RadialSizeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RandomValueSharingStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RatioStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RectStyleValue.h>
@@ -2200,6 +2203,7 @@ RefPtr<StyleValue const> Parser::parse_color_mix_function(TokenStream<ComponentV
         // <custom-color-space> = <dashed-ident>
         // <hue-interpolation-method> = [ shorter | longer | increasing | decreasing ] hue
         // <color-interpolation-method> = in [ <rectangular-color-space> | <polar-color-space> <hue-interpolation-method>? | <custom-color-space> ]
+        auto transaction = function_tokens.begin_transaction();
         function_tokens.discard_whitespace();
         if (!function_tokens.consume_a_token().is_ident("in"sv))
             return {};
@@ -2240,6 +2244,7 @@ RefPtr<StyleValue const> Parser::parse_color_mix_function(TokenStream<ComponentV
             return color_space_name;
         };
 
+        transaction.commit();
         return ColorMixStyleValue::ColorInterpolationMethod {
             .color_space = canonical_color_space_name(color_space),
             .hue_interpolation_method = hue_interpolation_method,
@@ -2280,9 +2285,8 @@ RefPtr<StyleValue const> Parser::parse_color_mix_function(TokenStream<ComponentV
         };
     };
 
-    // color-mix() = color-mix( <color-interpolation-method> , [ <color> && <percentage [0,100]>? ]#)
+    // color-mix() = color-mix( <color-interpolation-method>? , [ <color> && <percentage [0,100]>? ]#)
     // FIXME: Update color-mix to accept 1+ colors instead of exactly 2.
-    // FIXME: <color-interpolation-method> is optional in the current spec.
     auto transaction = tokens.begin_transaction();
     tokens.discard_whitespace();
 
@@ -2293,11 +2297,11 @@ RefPtr<StyleValue const> Parser::parse_color_mix_function(TokenStream<ComponentV
     auto context_guard = push_temporary_value_parsing_context(FunctionContext { function_token.function().name });
     auto function_tokens = TokenStream { function_token.function().value };
     auto color_interpolation_method = parse_color_interpolation_method(function_tokens);
-    if (!color_interpolation_method.has_value())
-        return {};
-    function_tokens.discard_whitespace();
-    if (!function_tokens.consume_a_token().is(Token::Type::Comma))
-        return {};
+    if (color_interpolation_method.has_value()) {
+        function_tokens.discard_whitespace();
+        if (!function_tokens.consume_a_token().is(Token::Type::Comma))
+            return {};
+    }
 
     auto first_component = parse_component(function_tokens);
     if (!first_component.has_value())
@@ -2321,7 +2325,7 @@ RefPtr<StyleValue const> Parser::parse_color_mix_function(TokenStream<ComponentV
         return {};
 
     transaction.commit();
-    return ColorMixStyleValue::create(move(*color_interpolation_method), move(*first_component), move(*second_component));
+    return ColorMixStyleValue::create(move(color_interpolation_method), move(*first_component), move(*second_component));
 }
 
 // https://drafts.csswg.org/css-color-5/#funcdef-light-dark
@@ -2847,9 +2851,9 @@ RefPtr<PositionStyleValue const> Parser::parse_position_value(TokenStream<Compon
         }
 
         // [ <length-percentage> ]
-        if (auto maybe_percentage = parse_length_percentage(tokens); maybe_percentage.has_value()) {
+        if (auto maybe_percentage = parse_length_percentage_value(tokens)) {
             transaction.commit();
-            return PositionStyleValue::create(EdgeStyleValue::create({}, *maybe_percentage), EdgeStyleValue::create(PositionEdge::Center, {}));
+            return PositionStyleValue::create(EdgeStyleValue::create({}, maybe_percentage), EdgeStyleValue::create(PositionEdge::Center, {}));
         }
 
         return nullptr;
@@ -2906,8 +2910,8 @@ RefPtr<PositionStyleValue const> Parser::parse_position_value(TokenStream<Compon
                 return EdgeStyleValue::create(position, {});
             }
 
-            auto maybe_length = parse_length_percentage(tokens);
-            if (!maybe_length.has_value())
+            auto maybe_length = parse_length_percentage_value(tokens);
+            if (!maybe_length)
                 return nullptr;
 
             return EdgeStyleValue::create({}, maybe_length);
@@ -2932,7 +2936,7 @@ RefPtr<PositionStyleValue const> Parser::parse_position_value(TokenStream<Compon
     auto alternative_4 = [&]() -> RefPtr<PositionStyleValue const> {
         struct PositionAndLength {
             PositionEdge position;
-            LengthPercentage length;
+            NonnullRefPtr<StyleValue const> length;
         };
 
         auto parse_position_and_length = [&]() -> Optional<PositionAndLength> {
@@ -2944,13 +2948,13 @@ RefPtr<PositionStyleValue const> Parser::parse_position_value(TokenStream<Compon
 
             tokens.discard_whitespace();
 
-            auto maybe_length = parse_length_percentage(tokens);
-            if (!maybe_length.has_value())
+            auto maybe_length = parse_length_percentage_value(tokens);
+            if (!maybe_length)
                 return {};
 
             return PositionAndLength {
                 .position = maybe_position.release_value(),
-                .length = maybe_length.release_value(),
+                .length = maybe_length.release_nonnull(),
             };
         };
 
@@ -2990,7 +2994,7 @@ RefPtr<PositionStyleValue const> Parser::parse_position_value(TokenStream<Compon
 
         struct PositionAndMaybeLength {
             PositionEdge position;
-            Optional<LengthPercentage> length;
+            RefPtr<StyleValue const> length;
         };
 
         // [ <position> <length-percentage>? ]
@@ -3004,17 +3008,17 @@ RefPtr<PositionStyleValue const> Parser::parse_position_value(TokenStream<Compon
 
             tokens.discard_whitespace();
 
-            auto maybe_length = parse_length_percentage(tokens);
-            if (maybe_length.has_value()) {
+            auto maybe_length = parse_length_percentage_value(tokens);
+            if (maybe_length) {
                 // 'center' cannot be followed by a <length-percentage>
-                if (maybe_position.value() == PositionEdge::Center && maybe_length.has_value())
+                if (maybe_position.value() == PositionEdge::Center && maybe_length)
                     return {};
             }
 
             inner_transaction.commit();
             return PositionAndMaybeLength {
                 .position = maybe_position.release_value(),
-                .length = move(maybe_length),
+                .length = maybe_length,
             };
         };
 
@@ -3030,7 +3034,7 @@ RefPtr<PositionStyleValue const> Parser::parse_position_value(TokenStream<Compon
         auto group2 = maybe_group2.release_value();
 
         // 2-value or 4-value if both <length-percentage>s are present or missing.
-        if (group1.length.has_value() == group2.length.has_value())
+        if ((group1.length && group2.length) || (!group1.length && !group2.length))
             return nullptr;
 
         // If 'left' or 'right' is given, that position is X and the other is Y.
@@ -3299,7 +3303,7 @@ Optional<URL> Parser::parse_url_function(TokenStream<ComponentValue>& tokens)
             auto& modifier_token = url_tokens.consume_a_token();
             if (modifier_token.is_function("cross-origin"sv)) {
                 // Reject duplicates
-                if (request_url_modifiers.first_matching([](auto& modifier) { return modifier.type() == RequestURLModifier::Type::CrossOrigin; }).has_value())
+                if (request_url_modifiers.contains([](auto& modifier) { return modifier.type() == RequestURLModifier::Type::CrossOrigin; }))
                     return {};
                 // <cross-origin-modifier> = cross-origin(anonymous | use-credentials)
                 TokenStream modifier_tokens { modifier_token.function().value };
@@ -3317,7 +3321,7 @@ Optional<URL> Parser::parse_url_function(TokenStream<ComponentValue>& tokens)
                 }
             } else if (modifier_token.is_function("integrity"sv)) {
                 // Reject duplicates
-                if (request_url_modifiers.first_matching([](auto& modifier) { return modifier.type() == RequestURLModifier::Type::Integrity; }).has_value())
+                if (request_url_modifiers.contains([](auto& modifier) { return modifier.type() == RequestURLModifier::Type::Integrity; }))
                     return {};
                 // <integrity-modifier> = integrity(<string>)
                 TokenStream modifier_tokens { modifier_token.function().value };
@@ -3329,7 +3333,7 @@ Optional<URL> Parser::parse_url_function(TokenStream<ComponentValue>& tokens)
                 request_url_modifiers.append(RequestURLModifier::create_integrity(maybe_string.token().string()));
             } else if (modifier_token.is_function("referrer-policy"sv)) {
                 // Reject duplicates
-                if (request_url_modifiers.first_matching([](auto& modifier) { return modifier.type() == RequestURLModifier::Type::ReferrerPolicy; }).has_value())
+                if (request_url_modifiers.contains([](auto& modifier) { return modifier.type() == RequestURLModifier::Type::ReferrerPolicy; }))
                     return {};
 
                 // <referrer-policy-modifier> = (no-referrer | no-referrer-when-downgrade | same-origin | origin | strict-origin | origin-when-cross-origin | strict-origin-when-cross-origin | unsafe-url)
@@ -3378,30 +3382,167 @@ RefPtr<URLStyleValue const> Parser::parse_url_value(TokenStream<ComponentValue>&
     return URLStyleValue::create(url.release_value());
 }
 
-// https://www.w3.org/TR/css-shapes-1/#typedef-shape-radius
-RefPtr<StyleValue const> Parser::parse_shape_radius(TokenStream<ComponentValue>& tokens)
+RefPtr<BorderRadiusRectStyleValue const> Parser::parse_border_radius_rect_value(TokenStream<ComponentValue>& tokens)
 {
-    // FIXME: <shape-radius> has been replaced <radial-size> as defined in CSS Images:
-    //        https://drafts.csswg.org/css-images-3/#typedef-radial-size
+    auto top_left = [&](StyleValueVector& radii) { return radii[0]; };
+    auto top_right = [&](StyleValueVector& radii) {
+        switch (radii.size()) {
+        case 4:
+        case 3:
+        case 2:
+            return radii[1];
+        case 1:
+            return radii[0];
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    };
+    auto bottom_right = [&](StyleValueVector& radii) {
+        switch (radii.size()) {
+        case 4:
+        case 3:
+            return radii[2];
+        case 2:
+        case 1:
+            return radii[0];
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    };
+    auto bottom_left = [&](StyleValueVector& radii) {
+        switch (radii.size()) {
+        case 4:
+            return radii[3];
+        case 3:
+        case 2:
+            return radii[1];
+        case 1:
+            return radii[0];
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    };
 
+    StyleValueVector horizontal_radii;
+    StyleValueVector vertical_radii;
+    bool reading_vertical = false;
     auto transaction = tokens.begin_transaction();
     tokens.discard_whitespace();
 
-    if (auto length_percentage = parse_length_percentage_value(tokens); length_percentage) {
-        // Negative radius is invalid.
-        if ((length_percentage->is_length() && length_percentage->as_length().raw_value() < 0) || (length_percentage->is_percentage() && length_percentage->as_percentage().raw_value() < 0))
+    auto context_guard = push_temporary_value_parsing_context(SpecialContext::BorderRadius);
+
+    while (tokens.has_next_token()) {
+        if (tokens.next_token().is_delim('/')) {
+            if (reading_vertical || horizontal_radii.is_empty())
+                return nullptr;
+
+            reading_vertical = true;
+            tokens.discard_a_token(); // `/`
+            tokens.discard_whitespace();
+            continue;
+        }
+
+        auto maybe_dimension = parse_length_percentage_value(tokens);
+        if (!maybe_dimension)
+            return nullptr;
+        if (maybe_dimension->is_length() && maybe_dimension->as_length().length().raw_value() < 0)
+            return nullptr;
+        if (maybe_dimension->is_percentage() && maybe_dimension->as_percentage().percentage().value() < 0)
+            return nullptr;
+        if (reading_vertical) {
+            vertical_radii.append(maybe_dimension.release_nonnull());
+        } else {
+            horizontal_radii.append(maybe_dimension.release_nonnull());
+        }
+        tokens.discard_whitespace();
+    }
+
+    if (horizontal_radii.size() > 4 || vertical_radii.size() > 4
+        || horizontal_radii.is_empty()
+        || (reading_vertical && vertical_radii.is_empty()))
+        return nullptr;
+
+    auto top_left_radius = BorderRadiusStyleValue::create(top_left(horizontal_radii),
+        vertical_radii.is_empty() ? top_left(horizontal_radii) : top_left(vertical_radii));
+    auto top_right_radius = BorderRadiusStyleValue::create(top_right(horizontal_radii),
+        vertical_radii.is_empty() ? top_right(horizontal_radii) : top_right(vertical_radii));
+    auto bottom_right_radius = BorderRadiusStyleValue::create(bottom_right(horizontal_radii),
+        vertical_radii.is_empty() ? bottom_right(horizontal_radii) : bottom_right(vertical_radii));
+    auto bottom_left_radius = BorderRadiusStyleValue::create(bottom_left(horizontal_radii),
+        vertical_radii.is_empty() ? bottom_left(horizontal_radii) : bottom_left(vertical_radii));
+
+    transaction.commit();
+    return BorderRadiusRectStyleValue::create(top_left_radius, top_right_radius, bottom_right_radius, bottom_left_radius);
+}
+
+// https://drafts.csswg.org/css-images-4/#radial-size
+RefPtr<RadialSizeStyleValue const> Parser::parse_radial_size(TokenStream<ComponentValue>& tokens)
+{
+    // <radial-size> = <radial-extent>{1,2} | <length-percentage [0,∞]>{1,2}
+    // <radial-extent> = closest-corner | closest-side | farthest-corner | farthest-side
+    // AD-HOC: The grammar by the spec above is incorrect as it disallows mixing of <length-percentage> and
+    //         <radial-extent> which breaks backwards compatibility with `<shape-radius>` which it is intended to
+    //         replace (see https://github.com/w3c/csswg-drafts/issues/9729). To avoid this issue we instead use the
+    //         following grammar:
+    //         `<radial-size> = [ <radial-extent> | <length-percentage [0,∞]> ]{1,2}`
+    auto parse_radial_extent = [&](TokenStream<ComponentValue>& tokens) -> Optional<RadialExtent> {
+        auto radial_extent_transaction = tokens.begin_transaction();
+
+        auto keyword_value = parse_keyword_value(tokens);
+        if (!keyword_value)
             return {};
 
-        transaction.commit();
-        return length_percentage;
+        auto radial_extent = keyword_to_radial_extent(keyword_value->to_keyword());
+        if (!radial_extent.has_value())
+            return {};
+
+        radial_extent_transaction.commit();
+        return radial_extent;
+    };
+
+    auto parse_nonnegative_length_percentage_value = [&](TokenStream<ComponentValue>& tokens) -> RefPtr<StyleValue const> {
+        auto length_percentage_transaction = tokens.begin_transaction();
+
+        auto context_guard = push_temporary_value_parsing_context(SpecialContext::RadialSizeLengthPercentage);
+
+        auto length_percentage_value = parse_length_percentage_value(tokens);
+        if (!length_percentage_value)
+            return nullptr;
+
+        if (length_percentage_value->is_length() && length_percentage_value->as_length().length().raw_value() < 0)
+            return nullptr;
+
+        if (length_percentage_value->is_percentage() && length_percentage_value->as_percentage().percentage().value() < 0)
+            return nullptr;
+
+        length_percentage_transaction.commit();
+        return length_percentage_value;
+    };
+
+    auto transaction = tokens.begin_transaction();
+    Vector<RadialSizeStyleValue::Component> values;
+
+    while (tokens.has_next_token() && values.size() < 2) {
+        tokens.discard_whitespace();
+
+        if (auto radial_extent = parse_radial_extent(tokens); radial_extent.has_value()) {
+            values.append(*radial_extent);
+            continue;
+        }
+
+        if (auto length_percentage = parse_nonnegative_length_percentage_value(tokens); length_percentage) {
+            values.append(length_percentage.release_nonnull());
+            continue;
+        }
+
+        break;
     }
 
-    if (auto keyword = parse_keyword_value(tokens); keyword && keyword_to_fit_side(keyword->to_keyword()).has_value()) {
-        transaction.commit();
-        return keyword;
-    }
+    if (values.is_empty())
+        return nullptr;
 
-    return nullptr;
+    transaction.commit();
+    return RadialSizeStyleValue::create(values);
 }
 
 RefPtr<FitContentStyleValue const> Parser::parse_fit_content_value(TokenStream<ComponentValue>& tokens)
@@ -3465,7 +3606,6 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
     // FIXME: Implement path(). See: https://www.w3.org/TR/css-shapes-1/#basic-shape-functions
     if (function_name.equals_ignoring_ascii_case("inset"sv)) {
         // inset() = inset( <length-percentage>{1,4} [ round <'border-radius'> ]? )
-        // FIXME: Parse the border-radius.
         auto arguments_tokens = TokenStream { component_value.function().value };
 
         // If less than four <length-percentage> values are provided,
@@ -3495,16 +3635,29 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             left = right;
 
         arguments_tokens.discard_whitespace();
+
+        NonnullRefPtr<StyleValue const> border_radius = BorderRadiusRectStyleValue::create_zero();
+        if (arguments_tokens.next_token().is_ident("round"sv)) {
+            arguments_tokens.discard_a_token(); // 'round'
+            auto parsed_border_radius = parse_border_radius_rect_value(arguments_tokens);
+
+            if (!parsed_border_radius)
+                return nullptr;
+
+            border_radius = parsed_border_radius.release_nonnull();
+
+            arguments_tokens.discard_whitespace();
+        }
+
         if (arguments_tokens.has_next_token())
             return nullptr;
 
         transaction.commit();
-        return BasicShapeStyleValue::create(Inset { top.release_nonnull(), right.release_nonnull(), bottom.release_nonnull(), left.release_nonnull() });
+        return BasicShapeStyleValue::create(Inset { top.release_nonnull(), right.release_nonnull(), bottom.release_nonnull(), left.release_nonnull(), border_radius });
     }
 
     if (function_name.equals_ignoring_ascii_case("xywh"sv)) {
         // xywh() = xywh( <length-percentage>{2} <length-percentage [0,∞]>{2} [ round <'border-radius'> ]? )
-        // FIXME: Parse the border-radius.
         auto arguments_tokens = TokenStream { component_value.function().value };
 
         arguments_tokens.discard_whitespace();
@@ -3528,6 +3681,20 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             return nullptr;
 
         arguments_tokens.discard_whitespace();
+
+        NonnullRefPtr<StyleValue const> border_radius = BorderRadiusRectStyleValue::create_zero();
+        if (arguments_tokens.next_token().is_ident("round"sv)) {
+            arguments_tokens.discard_a_token(); // 'round'
+            auto parsed_border_radius = parse_border_radius_rect_value(arguments_tokens);
+
+            if (!parsed_border_radius)
+                return nullptr;
+
+            border_radius = parsed_border_radius.release_nonnull();
+
+            arguments_tokens.discard_whitespace();
+        }
+
         if (arguments_tokens.has_next_token())
             return nullptr;
 
@@ -3539,12 +3706,11 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             return nullptr;
 
         transaction.commit();
-        return BasicShapeStyleValue::create(Xywh { x.release_nonnull(), y.release_nonnull(), width.release_nonnull(), height.release_nonnull() });
+        return BasicShapeStyleValue::create(Xywh { x.release_nonnull(), y.release_nonnull(), width.release_nonnull(), height.release_nonnull(), border_radius });
     }
 
     if (function_name.equals_ignoring_ascii_case("rect"sv)) {
         // rect() = rect( [ <length-percentage> | auto ]{4} [ round <'border-radius'> ]? )
-        // FIXME: Parse the border-radius.
         auto arguments_tokens = TokenStream { component_value.function().value };
 
         auto parse_length_percentage_or_auto = [this](TokenStream<ComponentValue>& tokens) -> RefPtr<StyleValue const> {
@@ -3565,23 +3731,41 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             return nullptr;
 
         arguments_tokens.discard_whitespace();
+
+        NonnullRefPtr<StyleValue const> border_radius = BorderRadiusRectStyleValue::create_zero();
+        if (arguments_tokens.next_token().is_ident("round"sv)) {
+            arguments_tokens.discard_a_token(); // 'round'
+
+            auto parsed_border_radius = parse_border_radius_rect_value(arguments_tokens);
+
+            if (!parsed_border_radius)
+                return nullptr;
+
+            border_radius = parsed_border_radius.release_nonnull();
+
+            arguments_tokens.discard_whitespace();
+        }
+
         if (arguments_tokens.has_next_token())
             return nullptr;
 
         transaction.commit();
-        return BasicShapeStyleValue::create(Rect { top.release_nonnull(), right.release_nonnull(), bottom.release_nonnull(), left.release_nonnull() });
+        return BasicShapeStyleValue::create(Rect { top.release_nonnull(), right.release_nonnull(), bottom.release_nonnull(), left.release_nonnull(), border_radius });
     }
 
     if (function_name.equals_ignoring_ascii_case("circle"sv)) {
-        // circle() = circle( <shape-radius>? [ at <position> ]? )
+        // circle() = circle( <radial-size>? [ at <position> ]? )
         auto arguments_tokens = TokenStream { component_value.function().value };
 
-        auto radius = parse_shape_radius(arguments_tokens);
+        auto radius = parse_radial_size(arguments_tokens);
+
+        if (radius && radius->components().size() != 1)
+            return nullptr;
 
         if (!radius)
-            radius = KeywordStyleValue::create(Keyword::ClosestSide);
+            radius = RadialSizeStyleValue::create({ RadialExtent::ClosestSide });
 
-        auto position = PositionStyleValue::create_center();
+        RefPtr<PositionStyleValue const> position;
         arguments_tokens.discard_whitespace();
         if (arguments_tokens.next_token().is_ident("at"sv)) {
             arguments_tokens.discard_a_token();
@@ -3590,7 +3774,7 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             if (maybe_position.is_null())
                 return nullptr;
 
-            position = maybe_position.release_nonnull();
+            position = maybe_position->with_resolved_keywords();
         }
 
         arguments_tokens.discard_whitespace();
@@ -3602,21 +3786,22 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
     }
 
     if (function_name.equals_ignoring_ascii_case("ellipse"sv)) {
-        // ellipse() = ellipse( [ <shape-radius>{2} ]? [ at <position> ]? )
+        // ellipse() = ellipse( <radial-size>? [ at <position> ]? )
         auto arguments_tokens = TokenStream { component_value.function().value };
 
-        auto radius_x = parse_shape_radius(arguments_tokens);
-        auto radius_y = parse_shape_radius(arguments_tokens);
+        auto radius = parse_radial_size(arguments_tokens);
 
-        if (radius_x && !radius_y)
+        // NB: The spec doesn't specify whether a single value radius is valid here but WPT expects it to not be.
+        if (radius && radius->components().size() != 2)
             return nullptr;
 
-        if (!radius_x) {
-            radius_x = KeywordStyleValue::create(Keyword::ClosestSide);
-            radius_y = KeywordStyleValue::create(Keyword::ClosestSide);
+        if (!radius) {
+            // AD-HOC: The spec calls for this to default to `closest-side` but as outlined above it's not clear whether
+            //         the spec intends for single value radii to be valid.
+            radius = RadialSizeStyleValue::create({ RadialExtent::ClosestSide, RadialExtent::ClosestSide });
         }
 
-        auto position = PositionStyleValue::create_center();
+        RefPtr<PositionStyleValue const> position;
         arguments_tokens.discard_whitespace();
         if (arguments_tokens.next_token().is_ident("at"sv)) {
             arguments_tokens.discard_a_token();
@@ -3625,7 +3810,7 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             if (maybe_position.is_null())
                 return nullptr;
 
-            position = maybe_position.release_nonnull();
+            position = maybe_position->with_resolved_keywords();
         }
 
         arguments_tokens.discard_whitespace();
@@ -3633,7 +3818,7 @@ RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentVa
             return nullptr;
 
         transaction.commit();
-        return BasicShapeStyleValue::create(Ellipse { radius_x.release_nonnull(), radius_y.release_nonnull(), position });
+        return BasicShapeStyleValue::create(Ellipse { radius.release_nonnull(), position });
     }
 
     if (function_name.equals_ignoring_ascii_case("polygon"sv)) {
@@ -4458,9 +4643,19 @@ RefPtr<CalculatedStyleValue const> Parser::parse_calculated_value(ComponentValue
                 switch (special_context) {
                 case SpecialContext::AngularColorStopList:
                     return CalculationContext { .percentages_resolve_as = ValueType::Angle };
+                case SpecialContext::BorderRadius:
+                    return CalculationContext {
+                        .percentages_resolve_as = ValueType::Length,
+                        .accepted_type_ranges = {
+                            { ValueType::Length, { 0, NumericLimits<float>::max() } },
+                            { ValueType::Percentage, { 0, NumericLimits<float>::max() } } },
+                    };
                 case SpecialContext::CubicBezierFunctionXCoordinate:
                     // Coordinates on the X axis must be between 0 and 1
                     return CalculationContext { .accepted_type_ranges = { { ValueType::Number, { 0, 1 } } } };
+                case SpecialContext::RadialSizeLengthPercentage:
+                    // Radial size length-percentages are nonnegative
+                    return CalculationContext { .percentages_resolve_as = ValueType::Length, .accepted_type_ranges = { { ValueType::Length, { 0, NumericLimits<float>::max() } } } };
                 case SpecialContext::RandomValueSharingFixedValue:
                     // Fixed values have to be less than one and numbers serialize with six digits of precision
                     return CalculationContext { .accepted_type_ranges = { { ValueType::Number, { 0, 0.999999 } } } };

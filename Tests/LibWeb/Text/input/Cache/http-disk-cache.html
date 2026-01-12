@@ -1,10 +1,25 @@
 <!DOCTYPE html>
 <script src="../include.js"></script>
 <script>
+    // RequestServer custom headers.
     const TEST_CACHE_ENABLED_HEADER = "X-Ladybird-Enable-Disk-Cache";
     const TEST_CACHE_STATUS_HEADER = "X-Ladybird-Disk-Cache-Status";
+    const TEST_CACHE_REVALIDATION_STATUS_HEADER = "X-Ladybird-Revalidation-Status";
     const TEST_CACHE_REQUEST_TIME_OFFSET = "X-Ladybird-Request-Time-Offset";
+
+    // http-test-server custom headers.
+    const TEST_CACHE_RESPOND_WITH_INCOMPLETE_RESPONSE = "X-Ladybird-Respond-With-Incomplete-Response";
     const TEST_CACHE_RESPOND_WITH_NOT_MODIFIED = "X-Ladybird-Respond-With-Not-Modified";
+
+    const ACCESS_CONTROL_ALLOW_HEADERS = [
+        "Range",
+        TEST_CACHE_ENABLED_HEADER,
+        TEST_CACHE_REQUEST_TIME_OFFSET,
+        TEST_CACHE_RESPOND_WITH_INCOMPLETE_RESPONSE,
+        TEST_CACHE_RESPOND_WITH_NOT_MODIFIED,
+    ].join(", ");
+
+    const ACCESS_CONTROL_EXPOSE_HEADERS = [TEST_CACHE_STATUS_HEADER, TEST_CACHE_REVALIDATION_STATUS_HEADER].join(", ");
 
     const server = httpTestServer();
 
@@ -30,14 +45,14 @@
         await server.createEcho("OPTIONS", path, {
             status: 200,
             headers: {
-                "Access-Control-Allow-Headers": `${TEST_CACHE_ENABLED_HEADER}, ${TEST_CACHE_REQUEST_TIME_OFFSET}, ${TEST_CACHE_RESPOND_WITH_NOT_MODIFIED}`,
+                "Access-Control-Allow-Headers": ACCESS_CONTROL_ALLOW_HEADERS,
                 "Access-Control-Allow-Methods": options.method,
                 "Access-Control-Allow-Origin": location.origin,
             },
         });
 
         options.headers["Access-Control-Allow-Origin"] = location.origin;
-        options.headers["Access-Control-Expose-Headers"] = TEST_CACHE_STATUS_HEADER;
+        options.headers["Access-Control-Expose-Headers"] = ACCESS_CONTROL_EXPOSE_HEADERS;
 
         return server.createEcho(options.method, path, {
             status: options.status,
@@ -71,7 +86,16 @@
 
         if (result !== status) {
             println(`Expected ${url} to contain a cache status of '${status}': received: '${result}'`);
-            anyTestFailed = false;
+            anyTestFailed = true;
+        }
+    }
+
+    function expectRevalidationStatus(url, response, status) {
+        const result = response.headers.get(TEST_CACHE_REVALIDATION_STATUS_HEADER);
+
+        if (result !== status) {
+            println(`Expected ${url} to contain a revalidation status of '${status}': received: '${result}'`);
+            anyTestFailed = true;
         }
     }
 
@@ -154,6 +178,50 @@
             });
 
             response = await cacheFetch(url);
+            expectCacheStatus(url, response, "not-cached");
+        })();
+
+        // Incomplete responses are not cached.
+        await (async () => {
+            url = await createRequest(`/cache-test/incomplete`, {
+                headers: {
+                    "Cache-Control": "max-age=999",
+                },
+            });
+
+            response = await cacheFetch(url, {
+                headers: {
+                    [TEST_CACHE_RESPOND_WITH_INCOMPLETE_RESPONSE]: "1",
+                },
+            });
+
+            try {
+                await response.text();
+
+                println(`Expected ${url} to result in an error while reading the response body`);
+                anyTestFailed = true;
+            } catch (e) {}
+
+            response = await cacheFetch(url);
+            expectCacheStatus(url, response, "written-to-cache");
+
+            response = await cacheFetch(url);
+            expectCacheStatus(url, response, "read-from-cache");
+        })();
+
+        // Responses for range requests are not cached (for now).
+        await (async () => {
+            url = await createRequest(`/cache-test/range`, {
+                headers: {
+                    "Cache-Control": "max-age=999",
+                },
+            });
+
+            response = await cacheFetch(url, {
+                headers: {
+                    Range: "0-10",
+                },
+            });
             expectCacheStatus(url, response, "not-cached");
         })();
 
@@ -307,6 +375,94 @@
             response = await cacheFetch(url, {
                 headers: {
                     [TEST_CACHE_REQUEST_TIME_OFFSET]: 90 * 60,
+                },
+            });
+            expectCacheStatus(url, response, "written-to-cache");
+        })();
+
+        // Expired responses are cached until their max-age and stale-while-revalidate directives are reached. The
+        // response is successfully revalidated in the background.
+        await (async () => {
+            url = await createRequest("/cache-test/stale-while-revalidate-fresh", {
+                headers: {
+                    "Cache-Control": "max-age=10,stale-while-revalidate=10",
+                    "Last-Modified": new Date().toUTCString(),
+                },
+            });
+
+            response = await cacheFetch(url);
+            expectCacheStatus(url, response, "written-to-cache");
+
+            response = await cacheFetch(url);
+            expectCacheStatus(url, response, "read-from-cache");
+
+            response = await cacheFetch(url, {
+                headers: {
+                    [TEST_CACHE_REQUEST_TIME_OFFSET]: 12,
+                    [TEST_CACHE_RESPOND_WITH_NOT_MODIFIED]: "1",
+                },
+            });
+            expectCacheStatus(url, response, "read-from-cache");
+            expectRevalidationStatus(url, response, null);
+
+            // We must issue another request to inspect the status of the background revalidation request triggered by
+            // the previous request.
+            response = await cacheFetch(url, {
+                headers: {
+                    [TEST_CACHE_REQUEST_TIME_OFFSET]: 15,
+                    [TEST_CACHE_RESPOND_WITH_NOT_MODIFIED]: "1",
+                },
+            });
+            expectCacheStatus(url, response, "read-from-cache");
+            expectRevalidationStatus(url, response, "fresh");
+
+            response = await cacheFetch(url, {
+                headers: {
+                    [TEST_CACHE_REQUEST_TIME_OFFSET]: 60,
+                },
+            });
+            expectCacheStatus(url, response, "written-to-cache");
+        })();
+
+        // Expired responses are cached until their max-age and stale-while-revalidate directives are reached. The
+        // response is unsuccessfully revalidated in the background.
+        await (async () => {
+            url = await createRequest("/cache-test/stale-while-revalidate-expired", {
+                headers: {
+                    "Cache-Control": "max-age=10,stale-while-revalidate=10",
+                    "Last-Modified": new Date().toUTCString(),
+                },
+            });
+
+            response = await cacheFetch(url);
+            expectCacheStatus(url, response, "written-to-cache");
+
+            response = await cacheFetch(url);
+            expectCacheStatus(url, response, "read-from-cache");
+
+            // By not attaching a TEST_CACHE_RESPOND_WITH_NOT_MODIFIED header, we tell http-test-server to respond to
+            // revalidation requests with an HTTP 200 (i.e. revalidation fails).
+            response = await cacheFetch(url, {
+                headers: {
+                    [TEST_CACHE_REQUEST_TIME_OFFSET]: 12,
+                },
+            });
+            expectCacheStatus(url, response, "read-from-cache");
+
+            // We must issue another request to inspect the status of the background revalidation request triggered by
+            // the previous request. Even though revalidation failed, the revalidation request itself will have written
+            // a fresh response to disk, thus this request is served from cache.
+            response = await cacheFetch(url, {
+                headers: {
+                    [TEST_CACHE_REQUEST_TIME_OFFSET]: 15,
+                },
+            });
+            expectCacheStatus(url, response, "read-from-cache");
+            expectRevalidationStatus(url, response, "expired");
+
+            response = await cacheFetch(url, {
+                headers: {
+                    [TEST_CACHE_REQUEST_TIME_OFFSET]: 60,
                 },
             });
             expectCacheStatus(url, response, "written-to-cache");

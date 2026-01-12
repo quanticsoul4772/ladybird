@@ -28,14 +28,22 @@ public:
             EdgeStyleValue::create(PositionEdge::Center, {}),
             EdgeStyleValue::create(PositionEdge::Center, {})));
     }
+    static ValueComparingNonnullRefPtr<PositionStyleValue const> create_computed_center()
+    {
+        return adopt_ref(*new (nothrow) PositionStyleValue(
+            EdgeStyleValue::create({}, PercentageStyleValue::create(Percentage { 50 })),
+            EdgeStyleValue::create({}, PercentageStyleValue::create(Percentage { 50 }))));
+    }
     virtual ~PositionStyleValue() override = default;
 
     ValueComparingNonnullRefPtr<EdgeStyleValue const> edge_x() const { return m_properties.edge_x; }
     ValueComparingNonnullRefPtr<EdgeStyleValue const> edge_y() const { return m_properties.edge_y; }
-    bool is_center() const;
+    bool is_center(SerializationMode) const;
     CSSPixelPoint resolved(Layout::Node const&, CSSPixelRect const&) const;
 
-    virtual String to_string(SerializationMode) const override;
+    ValueComparingNonnullRefPtr<PositionStyleValue const> with_resolved_keywords() const;
+    virtual ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const& computation_context) const override;
+    virtual void serialize(StringBuilder&, SerializationMode) const override;
 
     bool properties_equal(PositionStyleValue const& other) const { return m_properties == other.m_properties; }
 

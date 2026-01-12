@@ -28,7 +28,7 @@ public:
     {
         auto width = natural_width();
         auto height = natural_height();
-        if (width.has_value() && height.has_value())
+        if (width.has_value() && height.has_value() && *height != 0)
             return *width / *height;
         return {};
     }
@@ -79,10 +79,8 @@ struct InterpolationMethod {
     GradientSpace color_space;
     HueMethod hue_method = HueMethod::Shorter;
 
-    String to_string() const
+    void serialize(StringBuilder& builder) const
     {
-        StringBuilder builder;
-
         switch (color_space) {
         case GradientSpace::OKLab:
             builder.append("in oklab"sv);
@@ -142,8 +140,13 @@ struct InterpolationMethod {
             builder.append(" decreasing hue"sv);
             break;
         }
+    }
 
-        return MUST(builder.to_string());
+    String to_string() const
+    {
+        StringBuilder builder;
+        serialize(builder);
+        return builder.to_string_without_validation();
     }
 
     static GradientSpace default_color_space(ColorSyntax color_syntax)
@@ -158,16 +161,11 @@ struct InterpolationMethod {
 };
 
 struct ColorStopListElement {
-    struct ColorHint {
-        NonnullRefPtr<StyleValue const> value;
-        bool operator==(ColorHint const&) const = default;
-    };
-
-    Optional<ColorHint> transition_hint;
+    ValueComparingRefPtr<StyleValue const> transition_hint;
     struct ColorStop {
-        RefPtr<StyleValue const> color;
-        RefPtr<StyleValue const> position;
-        RefPtr<StyleValue const> second_position {};
+        ValueComparingRefPtr<StyleValue const> color;
+        ValueComparingRefPtr<StyleValue const> position;
+        ValueComparingRefPtr<StyleValue const> second_position {};
         bool operator==(ColorStop const&) const = default;
     } color_stop;
 

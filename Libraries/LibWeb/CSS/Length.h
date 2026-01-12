@@ -8,6 +8,7 @@
 #pragma once
 
 #include <AK/String.h>
+#include <AK/StringBuilder.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/Rect.h>
 #include <LibWeb/CSS/SerializationMode.h>
@@ -102,16 +103,17 @@ public:
         VERIFY_NOT_REACHED();
     }
 
-    ALWAYS_INLINE CSSPixels absolute_length_to_px() const
+    [[nodiscard]] ALWAYS_INLINE CSSPixels absolute_length_to_px() const
     {
         return CSSPixels::nearest_value_for(absolute_length_to_px_without_rounding());
     }
 
-    ALWAYS_INLINE double absolute_length_to_px_without_rounding() const
+    [[nodiscard]] ALWAYS_INLINE double absolute_length_to_px_without_rounding() const
     {
         return ratio_between_units(m_unit, LengthUnit::Px) * m_value;
     }
 
+    void serialize(StringBuilder&, SerializationMode = SerializationMode::Normal) const;
     String to_string(SerializationMode = SerializationMode::Normal) const;
 
     bool operator==(Length const& other) const
@@ -125,8 +127,7 @@ public:
     double viewport_relative_length_to_px_without_rounding(CSSPixelRect const& viewport_rect) const;
 
     // Returns empty optional if it's already absolute.
-    Optional<Length> absolutize(CSSPixelRect const& viewport_rect, FontMetrics const& font_metrics, FontMetrics const& root_font_metrics) const;
-    Length absolutized(CSSPixelRect const& viewport_rect, FontMetrics const& font_metrics, FontMetrics const& root_font_metrics) const;
+    Optional<Length> absolutize(ResolutionContext const&) const;
 
     static Length resolve_calculated(NonnullRefPtr<CalculatedStyleValue const> const&, Layout::Node const&, Length const& reference_value);
     static Length resolve_calculated(NonnullRefPtr<CalculatedStyleValue const> const&, Layout::Node const&, CSSPixels reference_value);
@@ -152,11 +153,19 @@ public:
 
     Length const& length() const { return m_length.value(); }
 
-    String to_string(SerializationMode mode = SerializationMode::Normal) const
+    void serialize(StringBuilder& builder, SerializationMode mode = SerializationMode::Normal) const
     {
         if (is_auto())
-            return "auto"_string;
-        return m_length->to_string(mode);
+            builder.append("auto"sv);
+        else
+            m_length->serialize(builder, mode);
+    }
+
+    String to_string(SerializationMode mode = SerializationMode::Normal) const
+    {
+        StringBuilder builder;
+        serialize(builder, mode);
+        return builder.to_string_without_validation();
     }
 
     CSSPixels to_px_or_zero(Layout::Node const& node) const

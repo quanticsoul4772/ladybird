@@ -267,13 +267,18 @@ Utf16String FormAssociatedElement::validation_message() const
     if (!is_candidate_for_constraint_validation() || satisfies_its_constraints())
         return {};
 
-    // FIXME:
     // 2. Return a suitably localized message that the user agent would show the user if this were the only form
     //    control with a validity constraint problem. If the user agent would not actually show a textual message in
     //    such a situation (e.g., it would show a graphical cue instead), then return a suitably localized message that
-    //    expresses (one or more of) the validity constraint(s) that the control does not satisfy. If the element is a
-    //    candidate for constraint validation and is suffering from a custom error, then the custom validity error
-    //    message should be present in the return value.
+    //    expresses (one or more of) the validity constraint(s) that the control does not satisfy.
+
+    // If the element is a candidate for constraint validation and is suffering from a custom error, then
+    // the custom validity error message should be present in the return value.
+    if (suffering_from_a_custom_error()) {
+        return Utf16String::from_utf8(m_custom_validity_error_message);
+    }
+
+    // FIXME: Return more specific localized messages
     return "Invalid form"_utf16;
 }
 
@@ -885,18 +890,16 @@ void FormAssociatedTextControlElement::handle_delete(DeleteDirection direction)
     did_edit_text_node();
 }
 
-EventResult FormAssociatedTextControlElement::handle_return_key(FlyString const&)
+Optional<Utf16String> FormAssociatedTextControlElement::selected_text_for_stringifier() const
 {
-    auto* input_element = as_if<HTMLInputElement>(form_associated_element_to_html_element());
-    if (!input_element)
-        return EventResult::Dropped;
+    // https://w3c.github.io/selection-api/#dom-selection-stringifier
+    // Used for clipboard copy and window.getSelection().toString() when this element is active.
+    size_t start = this->selection_start();
+    size_t end = this->selection_end();
+    if (start >= end)
+        return {};
 
-    if (auto* form = input_element->form())
-        form->implicitly_submit_form().release_value_but_fixme_should_propagate_errors();
-    else
-        input_element->commit_pending_changes();
-
-    return EventResult::Handled;
+    return Utf16String::from_utf16(relevant_value().substring_view(start, end - start));
 }
 
 void FormAssociatedTextControlElement::collapse_selection_to_offset(size_t position)

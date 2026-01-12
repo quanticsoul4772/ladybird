@@ -38,13 +38,10 @@ WeakRef::WeakRef(Symbol& value, Object& prototype)
 
 void WeakRef::remove_dead_cells(Badge<GC::Heap>)
 {
-    if (m_value.visit([](Cell* cell) -> bool { return cell->state() == Cell::State::Live; }, [](Empty) -> bool { VERIFY_NOT_REACHED(); }))
+    if (m_value.visit([](Cell* cell) -> bool { return cell->state() == Cell::State::Live; }, [](Empty) -> bool { return true; }))
         return;
 
     m_value = Empty {};
-    // This is an optimization, we deregister from the garbage collector early (even if we were not garbage collected ourself yet)
-    // to reduce the garbage collection overhead, which we can do because a cleared weak ref cannot be reused.
-    WeakContainer::deregister();
 }
 
 void WeakRef::visit_edges(Visitor& visitor)

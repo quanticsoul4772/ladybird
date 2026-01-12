@@ -10,14 +10,15 @@
 #include <LibMedia/CodedFrame.h>
 #include <LibMedia/Containers/Matroska/Utilities.h>
 #include <LibMedia/DecoderError.h>
+#include <LibMedia/IncrementallyPopulatedStream.h>
 
 #include "MatroskaDemuxer.h"
 
 namespace Media::Matroska {
 
-DecoderErrorOr<NonnullRefPtr<MatroskaDemuxer>> MatroskaDemuxer::from_data(ReadonlyBytes data)
+DecoderErrorOr<NonnullRefPtr<MatroskaDemuxer>> MatroskaDemuxer::from_stream(IncrementallyPopulatedStream::Cursor& stream_cursor)
 {
-    return make_ref_counted<MatroskaDemuxer>(TRY(Reader::from_data(data)));
+    return make_ref_counted<MatroskaDemuxer>(TRY(Reader::from_stream(stream_cursor)));
 }
 
 static TrackEntry::TrackType matroska_track_type_from_track_type(TrackType type)
@@ -82,6 +83,14 @@ static Track track_from_track_entry(TrackEntry const& track_entry)
     return track;
 }
 
+DecoderErrorOr<void> MatroskaDemuxer::create_context_for_track(Track const& track, NonnullRefPtr<IncrementallyPopulatedStream::Cursor> const& stream_cursor)
+{
+    auto iterator = TRY(m_reader.create_sample_iterator(stream_cursor, track.identifier()));
+    Threading::MutexLocker locker(m_track_statuses_mutex);
+    VERIFY(m_track_statuses.set(track, TrackStatus(move(iterator))) == HashSetResult::InsertedNewEntry);
+    return {};
+}
+
 DecoderErrorOr<Vector<Track>> MatroskaDemuxer::get_tracks_for_type(TrackType type)
 {
     auto matroska_track_type = matroska_track_type_from_track_type(type);
@@ -108,11 +117,7 @@ DecoderErrorOr<Optional<Track>> MatroskaDemuxer::get_preferred_track_for_type(Tr
 
 DecoderErrorOr<MatroskaDemuxer::TrackStatus*> MatroskaDemuxer::get_track_status(Track const& track)
 {
-    if (!m_track_statuses.contains(track)) {
-        auto iterator = TRY(m_reader.create_sample_iterator(track.identifier()));
-        DECODER_TRY_ALLOC(m_track_statuses.try_set(track, TrackStatus(move(iterator))));
-    }
-
+    Threading::MutexLocker locker(m_track_statuses_mutex);
     return &m_track_statuses.get(track).release_value();
 }
 
@@ -129,12 +134,6 @@ DecoderErrorOr<ReadonlyBytes> MatroskaDemuxer::get_codec_initialization_data_for
 
 DecoderErrorOr<DemuxerSeekResult> MatroskaDemuxer::seek_to_most_recent_keyframe(Track const& track, AK::Duration timestamp, DemuxerSeekOptions options)
 {
-    // Removing the track status will cause us to start from the beginning.
-    if (timestamp.is_zero()) {
-        m_track_statuses.remove(track);
-        return DemuxerSeekResult::MovedPosition;
-    }
-
     auto& track_status = *TRY(get_track_status(track));
     auto seeked_iterator = TRY(m_reader.seek_to_random_access_point(track_status.iterator, timestamp));
 
@@ -150,6 +149,7 @@ DecoderErrorOr<DemuxerSeekResult> MatroskaDemuxer::seek_to_most_recent_keyframe(
 
     track_status.iterator = move(seeked_iterator);
     track_status.block = {};
+    track_status.frames = {};
     track_status.frame_index = 0;
     return DemuxerSeekResult::MovedPosition;
 }
@@ -160,11 +160,16 @@ DecoderErrorOr<CodedFrame> MatroskaDemuxer::get_next_sample_for_track(Track cons
     //        Matroska should make a RefPtr<ByteBuffer>, probably.
     auto& status = *TRY(get_track_status(track));
 
-    if (!status.block.has_value() || status.frame_index >= status.block->frame_count()) {
+    if (!status.block.has_value() || status.frame_index >= status.frames.size()) {
         status.block = TRY(status.iterator.next_block());
+        status.frames = TRY(status.iterator.get_frames(status.block.value()));
         status.frame_index = 0;
     }
 
+    VERIFY(status.block.has_value());
+
+    auto timestamp = status.block->timestamp();
+    auto duration = status.block->duration().value_or(AK::Duration::zero());
     auto flags = status.block->only_keyframes() ? FrameFlags::Keyframe : FrameFlags::None;
     auto aux_data = [&] -> CodedFrame::AuxiliaryData {
         if (track.type() == TrackType::Video) {
@@ -175,13 +180,12 @@ DecoderErrorOr<CodedFrame> MatroskaDemuxer::get_next_sample_for_track(Track cons
         }
         VERIFY_NOT_REACHED();
     }();
-    auto sample_data = DECODER_TRY_ALLOC(ByteBuffer::copy(status.block->frame(status.frame_index++)));
-    return CodedFrame(status.block->timestamp(), flags, move(sample_data), aux_data);
+    return CodedFrame(timestamp, duration, flags, move(status.frames[status.frame_index++]), aux_data);
 }
 
 DecoderErrorOr<AK::Duration> MatroskaDemuxer::total_duration()
 {
-    auto duration = TRY(m_reader.segment_information()).duration();
+    auto duration = m_reader.duration();
     return duration.value_or(AK::Duration::zero());
 }
 

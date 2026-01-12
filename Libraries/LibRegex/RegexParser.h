@@ -53,17 +53,17 @@ struct NamedCaptureGroup {
 class REGEX_API Parser {
 public:
     struct Result {
-        ByteCode bytecode;
-        size_t capture_groups_count;
-        size_t named_capture_groups_count;
-        size_t match_length_minimum;
-        Error error;
-        Token error_token;
-        Vector<FlyString> capture_groups;
-        AllOptions options;
+        Variant<ByteCode, FlatByteCode> bytecode;
+        size_t capture_groups_count { 0 };
+        size_t named_capture_groups_count { 0 };
+        size_t match_length_minimum { 0 };
+        Error error { Error::NoError };
+        Token error_token {};
+        Vector<FlyString> capture_groups {};
+        AllOptions options {};
 
         struct {
-            Optional<ByteString> pure_substring_search;
+            Optional<Vector<u16>> pure_substring_search;
             // If populated, the pattern only accepts strings that start with a character in these ranges.
             Vector<CharRange> starting_ranges;
             Vector<CharRange> starting_ranges_insensitive;
@@ -118,7 +118,9 @@ protected:
         size_t capture_groups_count { 0 };
         size_t named_capture_groups_count { 0 };
         size_t match_length_minimum { 0 };
+        bool greedy_lookaround { true };
         size_t repetition_mark_count { 0 };
+        bool in_negated_character_class { false };
         AllOptions regex_options;
         HashMap<size_t, size_t> capture_group_minimum_lengths;
         OrderedHashMap<FlyString, Vector<NamedCaptureGroup>> named_capture_groups;
@@ -295,6 +297,17 @@ private:
     bool has_duplicate_in_current_alternative(FlyString const& name);
 
     size_t ensure_total_number_of_capturing_parenthesis();
+
+    auto save_parser_state()
+    {
+        auto saved_token = m_parser_state.current_token;
+        auto saved_lexer_index = m_parser_state.lexer.tell();
+
+        return ArmedScopeGuard { [this, saved_token, saved_lexer_index] {
+            m_parser_state.current_token = saved_token;
+            m_parser_state.lexer.back(m_parser_state.lexer.tell() - saved_lexer_index);
+        } };
+    }
 
     void enter_capture_group_scope() { m_capture_groups_in_scope.empend(); }
 

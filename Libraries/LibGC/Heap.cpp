@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2025, Andreas Kling <andreas@ladybird.org>
- * Copyright (c) 2023, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
+ * Copyright (c) 2023-2025, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -99,7 +99,7 @@ void Heap::find_min_and_max_block_addresses(FlatPtr& min_address, FlatPtr& max_a
     max_address = 0;
     for (auto& allocator : m_all_cell_allocators) {
         min_address = min(min_address, allocator.min_block_address());
-        max_address = max(max_address, allocator.max_block_address() + HeapBlockBase::block_size);
+        max_address = max(max_address, allocator.max_block_address() + HeapBlock::BLOCK_SIZE);
     }
 }
 
@@ -150,6 +150,12 @@ public:
         m_work_queue.append(cell);
     }
 
+    virtual void visit_impl(ReadonlySpan<NanBoxedValue> values) override
+    {
+        for (auto const& value : values)
+            visit(value);
+    }
+
     virtual void visit_possible_values(ReadonlyBytes bytes) override
     {
         HashMap<FlatPtr, HeapRoot> possible_pointers;
@@ -159,10 +165,13 @@ public:
             add_possible_value(possible_pointers, raw_pointer_sized_values[i], HeapRoot { .type = HeapRoot::Type::HeapFunctionCapturedPointer }, m_min_block_address, m_max_block_address);
 
         for_each_cell_among_possible_pointers(m_all_live_heap_blocks, possible_pointers, [&](Cell* cell, FlatPtr) {
+            if (cell->state() != Cell::State::Live)
+                return;
+
             if (m_node_being_visited)
                 m_node_being_visited->edges.set(reinterpret_cast<FlatPtr>(cell));
 
-            if (m_graph.get(reinterpret_cast<FlatPtr>(&cell)).has_value())
+            if (m_graph.get(reinterpret_cast<FlatPtr>(cell)).has_value())
                 return;
             m_work_queue.append(*cell);
         });
@@ -193,6 +202,12 @@ public:
                 auto type = it.value.root_origin->type;
                 auto location = it.value.root_origin->location;
                 switch (type) {
+                case HeapRoot::Type::ConservativeVector:
+                    node.set("root"sv, "ConservativeVector"sv);
+                    break;
+                case HeapRoot::Type::MustSurviveGC:
+                    node.set("root"sv, "MustSurviveGC"sv);
+                    break;
                 case HeapRoot::Type::Root:
                     node.set("root"sv, MUST(String::formatted("Root {} {}:{}", location->function_name(), location->filename(), location->line_number())));
                     break;
@@ -240,7 +255,8 @@ private:
 AK::JsonObject Heap::dump_graph()
 {
     HashMap<Cell*, HeapRoot> roots;
-    gather_roots(roots);
+    HashTable<HeapBlock*> all_live_heap_blocks;
+    gather_roots(roots, all_live_heap_blocks);
     GraphConstructorVisitor visitor(*this, roots);
     visitor.visit_all_cells();
     return visitor.dump();
@@ -263,17 +279,94 @@ void Heap::collect_garbage(CollectionType collection_type, bool print_report)
                 return;
             }
             HashMap<Cell*, HeapRoot> roots;
-            gather_roots(roots);
-            mark_live_cells(roots);
+            HashTable<HeapBlock*> all_live_heap_blocks;
+            gather_roots(roots, all_live_heap_blocks);
+            mark_live_cells(roots, all_live_heap_blocks);
         }
         finalize_unmarked_cells();
         sweep_weak_blocks();
         sweep_dead_cells(print_report, collection_measurement_timer);
+
+        if (print_report)
+            dump_allocators();
     }
 
+    run_post_gc_tasks();
+}
+
+void Heap::run_post_gc_tasks()
+{
     auto tasks = move(m_post_gc_tasks);
     for (auto& task : tasks)
         task();
+}
+
+void Heap::dump_allocators()
+{
+    size_t total_in_committed_blocks = 0;
+    size_t total_waste = 0;
+    for (auto& allocator : m_all_cell_allocators) {
+        struct BlockStats {
+            HeapBlock& block;
+            size_t live_cells { 0 };
+            size_t dead_cells { 0 };
+            size_t total_cells { 0 };
+        };
+        Vector<BlockStats> blocks;
+
+        size_t total_live_cells = 0;
+        size_t total_dead_cells = 0;
+        size_t cell_count = (HeapBlock::BLOCK_SIZE - sizeof(HeapBlock)) / allocator.cell_size();
+
+        allocator.for_each_block([&](HeapBlock& heap_block) {
+            BlockStats block { heap_block };
+
+            heap_block.for_each_cell([&](Cell* cell) {
+                if (cell->state() == Cell::State::Live)
+                    ++block.live_cells;
+                else if (cell->state() == Cell::State::Dead)
+                    ++block.dead_cells;
+                else
+                    VERIFY_NOT_REACHED();
+            });
+            total_live_cells += block.live_cells;
+            total_dead_cells += block.dead_cells;
+
+            blocks.append({ block });
+            return IterationDecision::Continue;
+        });
+
+        if (blocks.is_empty())
+            continue;
+
+        total_in_committed_blocks += blocks.size() * HeapBlock::BLOCK_SIZE;
+
+        StringBuilder builder;
+        if (allocator.class_name().is_null())
+            builder.appendff("generic ({}b)", allocator.cell_size());
+        else
+            builder.appendff("{} ({}b)", allocator.class_name(), allocator.cell_size());
+
+        builder.appendff(" x {}", total_live_cells);
+
+        size_t cost = blocks.size() * HeapBlock::BLOCK_SIZE / KiB;
+        size_t reserved = allocator.block_allocator().blocks().size() * HeapBlock::BLOCK_SIZE / KiB;
+        builder.appendff(", cost: {} KiB, reserved: {} KiB", cost, reserved);
+
+        size_t total_dead_bytes = ((blocks.size() * cell_count) - total_live_cells) * allocator.cell_size();
+        if (total_dead_bytes) {
+            builder.appendff(", waste: {} KiB", total_dead_bytes / KiB);
+            total_waste += total_dead_bytes;
+        }
+
+        dbgln("{}", builder.string_view());
+
+        for (auto& block : blocks) {
+            dbgln("  block at {:p}: live {} / dead {} / total {} cells", &block.block, block.live_cells, block.dead_cells, block.block.cell_count());
+        }
+    }
+    dbgln("Total allocated: {} KiB", total_in_committed_blocks / KiB);
+    dbgln("Total wasted on fragmentation: {} KiB", total_waste / KiB);
 }
 
 void Heap::enqueue_post_gc_task(AK::Function<void()> task)
@@ -281,10 +374,24 @@ void Heap::enqueue_post_gc_task(AK::Function<void()> task)
     m_post_gc_tasks.append(move(task));
 }
 
-void Heap::gather_roots(HashMap<Cell*, HeapRoot>& roots)
+void Heap::gather_roots(HashMap<Cell*, HeapRoot>& roots, HashTable<HeapBlock*>& all_live_heap_blocks)
 {
+    for_each_block([&](auto& block) {
+        all_live_heap_blocks.set(&block);
+
+        if (block.overrides_must_survive_garbage_collection()) {
+            block.template for_each_cell_in_state<Cell::State::Live>([&](Cell* cell) {
+                if (cell->must_survive_garbage_collection()) {
+                    roots.set(cell, HeapRoot { .type = HeapRoot::Type::MustSurviveGC });
+                }
+            });
+        }
+
+        return IterationDecision::Continue;
+    });
+
     m_gather_embedder_roots(roots);
-    gather_conservative_roots(roots);
+    gather_conservative_roots(roots, all_live_heap_blocks);
 
     for (auto& root : m_roots)
         roots.set(root.cell(), HeapRoot { .type = HeapRoot::Type::Root, .location = &root.source_location() });
@@ -324,7 +431,7 @@ void Heap::gather_asan_fake_stack_roots(HashMap<FlatPtr, HeapRoot>&, FlatPtr, Fl
 }
 #endif
 
-NO_SANITIZE_ADDRESS void Heap::gather_conservative_roots(HashMap<Cell*, HeapRoot>& roots)
+NO_SANITIZE_ADDRESS void Heap::gather_conservative_roots(HashMap<Cell*, HeapRoot>& roots, HashTable<HeapBlock*> const& all_live_heap_blocks)
 {
     FlatPtr dummy;
 
@@ -357,12 +464,6 @@ NO_SANITIZE_ADDRESS void Heap::gather_conservative_roots(HashMap<Cell*, HeapRoot
         }
     }
 
-    HashTable<HeapBlock*> all_live_heap_blocks;
-    for_each_block([&](auto& block) {
-        all_live_heap_blocks.set(&block);
-        return IterationDecision::Continue;
-    });
-
     for_each_cell_among_possible_pointers(all_live_heap_blocks, possible_pointers, [&](Cell* cell, FlatPtr possible_pointer) {
         if (cell->state() == Cell::State::Live) {
             dbgln_if(HEAP_DEBUG, "  ?-> {}", (void const*)cell);
@@ -375,15 +476,11 @@ NO_SANITIZE_ADDRESS void Heap::gather_conservative_roots(HashMap<Cell*, HeapRoot
 
 class MarkingVisitor final : public Cell::Visitor {
 public:
-    explicit MarkingVisitor(Heap& heap, HashMap<Cell*, HeapRoot> const& roots)
+    explicit MarkingVisitor(Heap& heap, HashMap<Cell*, HeapRoot> const& roots, HashTable<HeapBlock*> const& all_live_heap_blocks)
         : m_heap(heap)
+        , m_all_live_heap_blocks(all_live_heap_blocks)
     {
         m_heap.find_min_and_max_block_addresses(m_min_block_address, m_max_block_address);
-        m_heap.for_each_block([&](auto& block) {
-            m_all_live_heap_blocks.set(&block);
-            return IterationDecision::Continue;
-        });
-
         for (auto* root : roots.keys()) {
             visit(root);
         }
@@ -397,6 +494,23 @@ public:
 
         cell.set_marked(true);
         m_work_queue.append(cell);
+    }
+
+    virtual void visit_impl(ReadonlySpan<NanBoxedValue> values) override
+    {
+        m_work_queue.grow_capacity(m_work_queue.size() + values.size());
+
+        for (auto value : values) {
+            if (!value.is_cell())
+                continue;
+            auto& cell = value.as_cell();
+            if (cell.is_marked())
+                continue;
+            dbgln_if(HEAP_DEBUG, "  ! {}", &cell);
+
+            cell.set_marked(true);
+            m_work_queue.unchecked_append(cell);
+        }
     }
 
     virtual void visit_possible_values(ReadonlyBytes bytes) override
@@ -427,43 +541,29 @@ public:
 private:
     Heap& m_heap;
     Vector<Ref<Cell>> m_work_queue;
-    HashTable<HeapBlock*> m_all_live_heap_blocks;
+    HashTable<HeapBlock*> const& m_all_live_heap_blocks;
     FlatPtr m_min_block_address;
     FlatPtr m_max_block_address;
 };
 
-void Heap::mark_live_cells(HashMap<Cell*, HeapRoot> const& roots)
+void Heap::mark_live_cells(HashMap<Cell*, HeapRoot> const& roots, HashTable<HeapBlock*> const& all_live_heap_blocks)
 {
     dbgln_if(HEAP_DEBUG, "mark_live_cells:");
 
-    MarkingVisitor visitor(*this, roots);
-
+    MarkingVisitor visitor(*this, roots, all_live_heap_blocks);
     visitor.mark_all_live_cells();
 
     for (auto& inverse_root : m_uprooted_cells)
         inverse_root->set_marked(false);
 
-    for_each_block([&](auto& block) {
-        block.template for_each_cell_in_state<Cell::State::Live>([&](Cell* cell) {
-            if (!cell->is_marked() && cell_must_survive_garbage_collection(*cell))
-                cell->visit_edges(visitor);
-        });
-        return IterationDecision::Continue;
-    });
-
     m_uprooted_cells.clear();
-}
-
-bool Heap::cell_must_survive_garbage_collection(Cell const& cell)
-{
-    if (!cell.overrides_must_survive_garbage_collection({}))
-        return false;
-    return cell.must_survive_garbage_collection();
 }
 
 void Heap::finalize_unmarked_cells()
 {
     for_each_block([&](auto& block) {
+        if (!block.overrides_finalize())
+            return IterationDecision::Continue;
         block.template for_each_cell_in_state<Cell::State::Live>([](Cell* cell) {
             if (!cell->is_marked())
                 cell->finalize();
@@ -557,8 +657,8 @@ void Heap::sweep_dead_cells(bool print_report, Core::ElapsedTimer const& measure
         dbgln("     Time spent: {} ms", time_spent.to_milliseconds());
         dbgln("     Live cells: {} ({} bytes)", live_cells, live_cell_bytes);
         dbgln("Collected cells: {} ({} bytes)", collected_cells, collected_cell_bytes);
-        dbgln("    Live blocks: {} ({} bytes)", live_block_count, live_block_count * HeapBlock::block_size);
-        dbgln("   Freed blocks: {} ({} bytes)", empty_blocks.size(), empty_blocks.size() * HeapBlock::block_size);
+        dbgln("    Live blocks: {} ({} bytes)", live_block_count, live_block_count * HeapBlock::BLOCK_SIZE);
+        dbgln("   Freed blocks: {} ({} bytes)", empty_blocks.size(), empty_blocks.size() * HeapBlock::BLOCK_SIZE);
         dbgln("=============================================");
     }
 }

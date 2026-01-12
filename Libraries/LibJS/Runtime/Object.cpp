@@ -7,6 +7,7 @@
 
 #include <AK/ByteString.h>
 #include <AK/TypeCasts.h>
+#include <LibJS/Bytecode/PropertyAccess.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Accessor.h>
 #include <LibJS/Runtime/Array.h>
@@ -153,6 +154,14 @@ ThrowCompletionOr<void> Object::set(PropertyKey const& property_key, Value value
 
     // 3. Return unused.
     return {};
+}
+
+ThrowCompletionOr<void> Object::set(PropertyKey const& property_key, Value value, Bytecode::PropertyLookupCache& cache)
+{
+    Strict strict = Strict::No;
+    if (auto function = vm().running_execution_context().function; function && function->is_strict_mode())
+        strict = Strict::Yes;
+    return Bytecode::put_by_property_key<Bytecode::PutKind::Normal>(vm(), this, this, value, {}, property_key, strict, &cache);
 }
 
 // 7.3.5 CreateDataProperty ( O, P, V ), https://tc39.es/ecma262/#sec-createdataproperty
@@ -1330,7 +1339,7 @@ void Object::define_native_accessor(Realm& realm, PropertyKey const& property_ke
     FunctionObject* setter_function = nullptr;
     if (setter)
         setter_function = NativeFunction::create(realm, move(setter), 1, property_key, &realm, "set"sv);
-    return define_direct_accessor(property_key, getter_function, setter_function, attribute);
+    define_direct_accessor(property_key, getter_function, setter_function, attribute);
 }
 
 void Object::define_direct_accessor(PropertyKey const& property_key, FunctionObject* getter, FunctionObject* setter, PropertyAttributes attributes)
@@ -1419,8 +1428,6 @@ void Object::define_native_function(Realm& realm, PropertyKey const& property_ke
 {
     auto function = NativeFunction::create(realm, move(native_function), length, property_key, &realm, {}, builtin);
     define_direct_property(property_key, function, attribute);
-    if (builtin.has_value())
-        realm.define_builtin(builtin.value(), function);
 }
 
 void Object::define_native_javascript_backed_function(PropertyKey const& property_key, GC::Ref<NativeJavaScriptBackedFunction> function, i32, PropertyAttributes attributes)
@@ -1525,13 +1532,11 @@ void Object::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_shape);
     visitor.visit(m_storage);
 
-    m_indexed_properties.for_each_value([&visitor](auto& value) {
-        visitor.visit(value);
-    });
+    m_indexed_properties.visit_edges(visitor);
 
     if (m_private_elements) {
         for (auto& private_element : *m_private_elements)
-            visitor.visit(private_element.value);
+            private_element.visit_edges(visitor);
     }
 }
 

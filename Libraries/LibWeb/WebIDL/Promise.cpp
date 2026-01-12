@@ -113,7 +113,7 @@ GC::Ref<Promise> react_to_promise(Promise const& promise, GC::Ptr<ReactionSteps>
         return result;
     };
 
-    // 2. Let onFulfilled be CreateBuiltinFunction(onFulfilledSteps, « »):
+    // 2. Let onFulfilled be CreateBuiltinFunction(onFulfilledSteps, 1, "", « »):
     auto on_fulfilled = JS::NativeFunction::create(realm, move(on_fulfilled_steps), 1);
 
     // 3. Let onRejectedSteps be the following steps given argument R:
@@ -130,7 +130,7 @@ GC::Ref<Promise> react_to_promise(Promise const& promise, GC::Ptr<ReactionSteps>
         return result;
     };
 
-    // 4. Let onRejected be CreateBuiltinFunction(onRejectedSteps, « »):
+    // 4. Let onRejected be CreateBuiltinFunction(onRejectedSteps, 1, "", « »):
     auto on_rejected = JS::NativeFunction::create(realm, move(on_rejected_steps), 1);
 
     // 5. Let constructor be promise.[[Promise]].[[Realm]].[[Intrinsics]].[[%Promise%]].
@@ -140,13 +140,12 @@ GC::Ref<Promise> react_to_promise(Promise const& promise, GC::Ptr<ReactionSteps>
     // NOTE: When called with %Promise%, NewPromiseCapability can't throw.
     auto new_capability = MUST(JS::new_promise_capability(vm, constructor));
 
-    // 7. Return PerformPromiseThen(promise.[[Promise]], onFulfilled, onRejected, newCapability).
-    // FIXME: https://github.com/whatwg/webidl/issues/1443
-    //  Returning newCapability instead of newCapability.[[Promise].
+    // 7. Perform PerformPromiseThen(promise.[[Promise]], onFulfilled, onRejected, newCapability).
     auto promise_object = as<JS::Promise>(promise.promise().ptr());
     auto value = promise_object->perform_then(on_fulfilled, on_rejected, new_capability);
-
     VERIFY(value == new_capability->promise());
+
+    // 8. Return newCapability.
     return new_capability;
 }
 
@@ -239,7 +238,7 @@ void wait_for_all(JS::Realm& realm, Vector<GC::Ref<Promise>> const& promises, Fu
         return JS::js_undefined();
     };
 
-    // 4. Let rejectionHandler be CreateBuiltinFunction(rejectionHandlerSteps, « »):
+    // 4. Let rejectionHandler be CreateBuiltinFunction(rejectionHandlerSteps, 1, "", « »):
     auto rejection_handler = JS::NativeFunction::create(realm, move(rejection_handler_steps), 1);
 
     // 5. Let total be promises’s size.
@@ -287,7 +286,7 @@ void wait_for_all(JS::Realm& realm, Vector<GC::Ref<Promise>> const& promises, Fu
             return JS::js_undefined();
         };
 
-        // 3. Let fulfillmentHandler be CreateBuiltinFunction(fulfillmentHandler, « »):
+        // 3. Let fulfillmentHandler be CreateBuiltinFunction(fulfillmentHandler, 1, "", « »):
         auto fulfillment_handler = JS::NativeFunction::create(realm, move(fulfillment_handler_steps), 1);
 
         // 4. Perform PerformPromiseThen(promise, fulfillmentHandler, rejectionHandler).

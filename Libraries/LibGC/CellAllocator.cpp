@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2023, Andreas Kling <andreas@ladybird.org>
+ * Copyright (c) 2020-2025, Andreas Kling <andreas@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,9 +12,11 @@
 
 namespace GC {
 
-CellAllocator::CellAllocator(size_t cell_size, char const* class_name)
+CellAllocator::CellAllocator(size_t cell_size, StringView class_name, bool overrides_must_survive_garbage_collection, bool overrides_finalize)
     : m_class_name(class_name)
     , m_cell_size(cell_size)
+    , m_overrides_must_survive_garbage_collection(overrides_must_survive_garbage_collection)
+    , m_overrides_finalize(overrides_finalize)
 {
 }
 
@@ -24,7 +26,7 @@ Cell* CellAllocator::allocate_cell(Heap& heap)
         heap.register_cell_allocator({}, *this);
 
     if (m_usable_blocks.is_empty()) {
-        auto block = HeapBlock::create_with_cell_size(heap, *this, m_cell_size, m_class_name);
+        auto block = HeapBlock::create_with_cell_size(heap, *this, m_cell_size, m_class_name, m_overrides_must_survive_garbage_collection, m_overrides_finalize);
         auto block_ptr = reinterpret_cast<FlatPtr>(block.ptr());
         if (m_min_block_address > block_ptr)
             m_min_block_address = block_ptr;

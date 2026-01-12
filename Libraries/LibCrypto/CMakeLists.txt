@@ -14,6 +14,7 @@ set(SOURCES
     ConstantTimeComparison.cpp
     Curves/EdwardsCurve.cpp
     Curves/SECPxxxr1.cpp
+    Hash/Argon2.cpp
     Hash/BLAKE2b.cpp
     Hash/HKDF.cpp
     Hash/MD5.cpp
@@ -23,6 +24,7 @@ set(SOURCES
     Hash/SHA3.cpp
     PK/EC.cpp
     PK/MLDSA.cpp
+    PK/MLKEM.cpp
     PK/RSA.cpp
     SecureRandom.cpp
 )

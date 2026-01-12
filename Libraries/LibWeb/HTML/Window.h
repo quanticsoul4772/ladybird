@@ -74,6 +74,8 @@ class WEB_API Window final
     GC_DECLARE_ALLOCATOR(Window);
 
 public:
+    static constexpr bool OVERRIDES_FINALIZE = true;
+
     [[nodiscard]] static GC::Ref<Window> create(JS::Realm&);
 
     ~Window();
@@ -99,6 +101,8 @@ public:
 
     // ^JS::Object
     virtual JS::ThrowCompletionOr<bool> internal_set_prototype_of(JS::Object* prototype) override;
+
+    virtual Optional<URL::Origin> extract_an_origin() const override { return window_or_worker_global_scope_extract_an_origin(); }
 
     Page& page();
     Page const& page() const;
@@ -220,10 +224,10 @@ public:
 
     double scroll_x() const;
     double scroll_y() const;
-    void scroll(ScrollToOptions const&);
-    void scroll(double x, double y);
-    void scroll_by(ScrollToOptions);
-    void scroll_by(double x, double y);
+    GC::Ref<WebIDL::Promise> scroll(ScrollToOptions const&);
+    GC::Ref<WebIDL::Promise> scroll(double x, double y);
+    GC::Ref<WebIDL::Promise> scroll_by(ScrollToOptions);
+    GC::Ref<WebIDL::Promise> scroll_by(double x, double y);
 
     i32 screen_x() const;
     i32 screen_y() const;

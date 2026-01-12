@@ -4,7 +4,7 @@
  * Copyright (c) 2021-2025, Luke Wilde <luke@ladybird.org>
  * Copyright (c) 2022, Ali Mohammad Pur <mpfard@serenityos.org>
  * Copyright (c) 2023-2024, Kenneth Myhra <kennethmyhra@serenityos.org>
- * Copyright (c) 2023-2025, Shannon Booth <shannon@serenityos.org>
+ * Copyright (c) 2023-2026, Shannon Booth <shannon@serenityos.org>
  * Copyright (c) 2023-2024, Matthew Olsson <mattco@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -105,6 +105,7 @@ static bool is_platform_object(Type const& type)
         "Node"sv,
         "OffscreenCanvas"sv,
         "OffscreenCanvasRenderingContext2D"sv,
+        "Origin"sv,
         "PasswordCredential"sv,
         "Path2D"sv,
         "PerformanceEntry"sv,
@@ -2216,7 +2217,7 @@ static void generate_wrap_statement(SourceGenerator& generator, ByteString const
         @result_expression@ JS::js_null();
     }
 )~~~");
-    } else if (is_optional) {
+    } else if (is_optional && !is<UnionType>(type)) {
         // Optional return values should not be assigned any value (including null) if the value is not present.
         scoped_generator.append(R"~~~(
     }
@@ -3576,11 +3577,13 @@ static void generate_prototype_or_global_mixin_initialization(IDL::Interface con
     bool define_on_existing_object = is_global_interface || generate_unforgeables == GenerateUnforgeables::Yes;
 
     if (define_on_existing_object) {
+        generator.set("define_direct_accessor", "object.define_direct_accessor");
         generator.set("define_direct_property", "object.define_direct_property");
         generator.set("define_native_accessor", "object.define_native_accessor");
         generator.set("define_native_function", "object.define_native_function");
         generator.set("set_prototype", "object.set_prototype");
     } else {
+        generator.set("define_direct_accessor", "define_direct_accessor");
         generator.set("define_direct_property", "define_direct_property");
         generator.set("define_native_accessor", "define_native_accessor");
         generator.set("define_native_function", "define_native_function");
@@ -3685,11 +3688,33 @@ void @class_name@::initialize(JS::Realm& realm)
 
         attribute_generator.set("attribute.name", attribute.name);
         attribute_generator.set("attribute.getter_callback", attribute.getter_callback_name);
+        attribute_generator.set("attribute.setter_callback", attribute.setter_callback_name);
 
-        if (!attribute.readonly || attribute.extended_attributes.contains("Replaceable"sv) || attribute.extended_attributes.contains("PutForwards"sv))
-            attribute_generator.set("attribute.setter_callback", attribute.setter_callback_name);
-        else
-            attribute_generator.set("attribute.setter_callback", "nullptr");
+        if (has_unforgeable_attribute) {
+            attribute_generator.append(R"~~~(
+    auto native_@attribute.getter_callback@ = host_defined_intrinsics(realm).ensure_web_unforgeable_function("@namespaced_name@"_utf16_fly_string, "@attribute.name@"_utf16_fly_string, @attribute.getter_callback@, UnforgeableKey::Type::Getter);
+)~~~");
+        } else {
+            attribute_generator.append(R"~~~(
+    auto native_@attribute.getter_callback@ = JS::NativeFunction::create(realm, @attribute.getter_callback@, 0, "@attribute.name@"_utf16_fly_string, &realm, "get"sv);
+)~~~");
+        }
+
+        if (!attribute.readonly || attribute.extended_attributes.contains("Replaceable"sv) || attribute.extended_attributes.contains("PutForwards"sv)) {
+            if (has_unforgeable_attribute) {
+                attribute_generator.append(R"~~~(
+    auto native_@attribute.setter_callback@ = host_defined_intrinsics(realm).ensure_web_unforgeable_function("@namespaced_name@"_utf16_fly_string, "@attribute.name@"_utf16_fly_string, @attribute.setter_callback@, UnforgeableKey::Type::Setter);
+)~~~");
+            } else {
+                attribute_generator.append(R"~~~(
+    auto native_@attribute.setter_callback@ = JS::NativeFunction::create(realm, @attribute.setter_callback@, 1, "@attribute.name@"_utf16_fly_string, &realm, "set"sv);
+)~~~");
+            }
+        } else {
+            attribute_generator.append(R"~~~(
+    GC::Ptr<JS::NativeFunction> native_@attribute.setter_callback@;
+)~~~");
+        }
 
         if (attribute.extended_attributes.contains("Unscopable")) {
             attribute_generator.append(R"~~~(
@@ -3698,7 +3723,7 @@ void @class_name@::initialize(JS::Realm& realm)
         }
 
         attribute_generator.append(R"~~~(
-    @define_native_accessor@(realm, "@attribute.name@"_utf16_fly_string, @attribute.getter_callback@, @attribute.setter_callback@, default_attributes);
+    @define_direct_accessor@("@attribute.name@"_utf16_fly_string, native_@attribute.getter_callback@, native_@attribute.setter_callback@, default_attributes);
 )~~~");
     }
 
@@ -3950,9 +3975,13 @@ static void generate_prototype_or_global_mixin_definitions(IDL::Interface const&
         }
 
         if (attribute.extended_attributes.contains("Reflect")) {
+            // https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#using-reflect-via-idl-extended-attributes:reflected-content-attribute-name
+            // For one of these primary reflection extended attributes, its reflected content attribute name is the
+            // string value it takes, if one is provided; otherwise it is the IDL attribute name converted to ASCII
+            // lowercase.
             auto attribute_name = attribute.extended_attributes.get("Reflect").value();
             if (attribute_name.is_empty())
-                attribute_name = attribute.name;
+                attribute_name = attribute.name.to_lowercase();
 
             attribute_generator.set("attribute.reflect_name", attribute_name);
         } else {
@@ -4899,6 +4928,10 @@ private:
 
     if (interface.extended_attributes.contains("WithFinalizer"sv)) {
         generator.append(R"~~~(
+public:
+    static constexpr bool OVERRIDES_FINALIZE = true;
+
+private:
     virtual void finalize() override;
 )~~~");
     }
@@ -4977,6 +5010,7 @@ using namespace Web::WebGL;
 using namespace Web::WebGL::Extensions;
 using namespace Web::WebIDL;
 using namespace Web::WebVTT;
+using namespace Web::WebXR;
 using namespace Web::XHR;
 using namespace Web::XPath;
 )~~~"sv);

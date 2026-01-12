@@ -148,9 +148,11 @@ class WEB_API Node : public EventTarget
     WEB_PLATFORM_OBJECT(Node, EventTarget);
 
 public:
+    static constexpr bool OVERRIDES_FINALIZE = true;
+
     ParentNode* parent_or_shadow_host();
     ParentNode const* parent_or_shadow_host() const { return const_cast<Node*>(this)->parent_or_shadow_host(); }
-
+    Node const* parent_or_shadow_host_node() const;
     Element* parent_or_shadow_host_element();
     Element const* parent_or_shadow_host_element() const { return const_cast<Node*>(this)->parent_or_shadow_host_element(); }
 
@@ -175,6 +177,7 @@ public:
     virtual bool is_svg_container() const { return false; }
     virtual bool is_svg_element() const { return false; }
     virtual bool is_svg_graphics_element() const { return false; }
+    virtual bool is_svg_mask_element() const { return false; }
     virtual bool is_svg_script_element() const { return false; }
     virtual bool is_svg_style_element() const { return false; }
     virtual bool is_svg_svg_element() const { return false; }
@@ -203,11 +206,15 @@ public:
     virtual bool is_html_base_element() const { return false; }
     virtual bool is_html_body_element() const { return false; }
     virtual bool is_html_head_element() const { return false; }
+    virtual bool is_html_heading_element() const { return false; }
     virtual bool is_html_input_element() const { return false; }
     virtual bool is_html_link_element() const { return false; }
     virtual bool is_html_media_element() const { return false; }
+    virtual bool is_html_optgroup_element() const { return false; }
+    virtual bool is_html_option_element() const { return false; }
     virtual bool is_html_progress_element() const { return false; }
     virtual bool is_html_script_element() const { return false; }
+    virtual bool is_html_select_element() const { return false; }
     virtual bool is_html_style_element() const { return false; }
     virtual bool is_html_template_element() const { return false; }
     virtual bool is_html_table_element() const { return false; }
@@ -225,6 +232,7 @@ public:
     virtual bool is_html_iframe_element() const { return false; }
     virtual bool is_html_div_element() const { return false; }
     virtual bool is_html_span_element() const { return false; }
+    virtual bool is_html_textarea_element() const { return false; }
     virtual bool is_html_frameset_element() const { return false; }
     virtual bool is_html_fieldset_element() const { return false; }
     virtual bool is_html_li_element() const { return false; }
@@ -459,6 +467,17 @@ public:
     template<typename U>
     U* shadow_including_first_ancestor_of_type();
 
+    template<typename Predicate>
+    requires requires(Predicate& predicate, Node const& node) { { predicate(node) } -> ConvertibleTo<bool>; }
+    Node const* find_in_shadow_including_ancestry(Predicate&& predicate) const
+    {
+        for (Node const* it = this; it; it = it->parent_or_shadow_host_node()) {
+            if (predicate(*it))
+                return it;
+        }
+        return nullptr;
+    }
+
     ErrorOr<String> accessible_name(Document const&, ShouldComputeRole = ShouldComputeRole::Yes) const;
     ErrorOr<String> accessible_description(Document const&) const;
 
@@ -466,10 +485,17 @@ public:
     Optional<String> lookup_namespace_uri(Optional<String> prefix) const;
     Optional<String> lookup_prefix(Optional<String> namespace_) const;
     bool is_default_namespace(Optional<String> namespace_) const;
+    Vector<FlyString> get_in_scope_prefixes() const;
 
     bool is_inert() const;
 
     bool has_inclusive_ancestor_with_display_none();
+
+    GC::Ptr<ShadowRoot> containing_shadow_root();
+    GC::Ptr<ShadowRoot const> containing_shadow_root() const
+    {
+        return const_cast<Node*>(this)->containing_shadow_root();
+    }
 
 protected:
     Node(JS::Realm&, Document&, NodeType);

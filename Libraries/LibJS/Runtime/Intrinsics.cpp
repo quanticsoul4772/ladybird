@@ -255,10 +255,8 @@ void Intrinsics::initialize_intrinsics(Realm& realm)
     m_normal_function_shape->set_prototype_without_transition(m_function_prototype);
     m_normal_function_shape->add_property_without_transition(vm.names.length, Attribute::Configurable);
     m_normal_function_shape->add_property_without_transition(vm.names.name, Attribute::Configurable);
-    m_normal_function_shape->add_property_without_transition(vm.names.prototype, Attribute::Writable);
     m_normal_function_length_offset = m_normal_function_shape->lookup(vm.names.length).value().offset;
     m_normal_function_name_offset = m_normal_function_shape->lookup(vm.names.name).value().offset;
-    m_normal_function_prototype_offset = m_normal_function_shape->lookup(vm.names.prototype).value().offset;
 
     m_native_function_shape = heap().allocate<Shape>(realm);
     m_native_function_shape->set_prototype_without_transition(m_function_prototype);
@@ -370,6 +368,15 @@ void Intrinsics::initialize_intrinsics(Realm& realm)
 
     VERIFY(array_prototype()->indexed_properties().is_empty());
     VERIFY(object_prototype()->indexed_properties().is_empty());
+
+    m_regexp_builtin_exec_array_shape = heap().allocate<Shape>(realm);
+    m_regexp_builtin_exec_array_shape->set_prototype_without_transition(realm.intrinsics().array_prototype());
+    m_regexp_builtin_exec_array_shape->add_property_without_transition(vm.names.index, Attribute::Writable | Attribute::Configurable | Attribute::Enumerable);
+    m_regexp_builtin_exec_array_shape->add_property_without_transition(vm.names.input, Attribute::Writable | Attribute::Configurable | Attribute::Enumerable);
+    m_regexp_builtin_exec_array_shape->add_property_without_transition(vm.names.groups, Attribute::Writable | Attribute::Configurable | Attribute::Enumerable);
+    m_regexp_builtin_exec_array_index_offset = m_regexp_builtin_exec_array_shape->lookup(vm.names.index).value().offset;
+    m_regexp_builtin_exec_array_input_offset = m_regexp_builtin_exec_array_shape->lookup(vm.names.input).value().offset;
+    m_regexp_builtin_exec_array_groups_offset = m_regexp_builtin_exec_array_shape->lookup(vm.names.groups).value().offset;
 }
 
 template<typename T>
@@ -470,6 +477,7 @@ void Intrinsics::visit_edges(Visitor& visitor)
     visitor.visit(m_native_function_shape);
     visitor.visit(m_unmapped_arguments_object_shape);
     visitor.visit(m_mapped_arguments_object_shape);
+    visitor.visit(m_regexp_builtin_exec_array_shape);
     visitor.visit(m_default_array_prototype_shape);
     visitor.visit(m_default_object_prototype_shape);
     visitor.visit(m_proxy_constructor);

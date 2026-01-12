@@ -155,7 +155,8 @@ public:
 
     bool establishes_stacking_context() const;
 
-    bool can_contain_boxes_with_position_absolute() const;
+    bool establishes_an_absolute_positioning_containing_block() const;
+    bool establishes_a_fixed_positioning_containing_block() const;
 
     Gfx::Font const& first_available_font() const;
     Gfx::Font const& font(DisplayListRecordingContext&) const;
@@ -188,9 +189,9 @@ public:
     {
         auto const& computed_values = this->computed_values();
         return !computed_values.transformations().is_empty()
-            || computed_values.rotate().has_value()
-            || computed_values.translate().has_value()
-            || computed_values.scale().has_value();
+            || computed_values.rotate()
+            || computed_values.translate()
+            || computed_values.scale();
     }
 
     // https://drafts.csswg.org/css-ui/#propdef-user-select

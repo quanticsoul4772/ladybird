@@ -11,6 +11,7 @@
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Accessor.h>
 #include <LibJS/Runtime/Completion.h>
+#include <LibJS/Runtime/ECMAScriptFunctionObject.h>
 #include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/Shape.h>
 #include <LibJS/Runtime/VM.h>
@@ -47,7 +48,7 @@ ALWAYS_INLINE GC::Ptr<Object> base_object_for_get_impl(VM& vm, Value base_value)
 }
 
 template<typename GetBaseIdentifier, typename GetPropertyName>
-ALWAYS_INLINE Completion throw_null_or_undefined_property_get(VM& vm, Value base_value, GetBaseIdentifier get_base_identifier, GetPropertyName get_property_name)
+COLD Completion throw_null_or_undefined_property_get(VM& vm, Value base_value, GetBaseIdentifier get_base_identifier, GetPropertyName get_property_name)
 {
     VERIFY(base_value.is_nullish());
 
@@ -60,7 +61,7 @@ ALWAYS_INLINE Completion throw_null_or_undefined_property_get(VM& vm, Value base
 template<typename GetBaseIdentifier, typename GetPropertyName>
 ALWAYS_INLINE ThrowCompletionOr<GC::Ref<Object>> base_object_for_get(VM& vm, Value base_value, GetBaseIdentifier get_base_identifier, GetPropertyName get_property_name)
 {
-    if (auto base_object = base_object_for_get_impl(vm, base_value))
+    if (auto base_object = base_object_for_get_impl(vm, base_value)) [[likely]]
         return GC::Ref { *base_object };
 
     // NOTE: At this point this is guaranteed to throw (null or undefined).
@@ -87,10 +88,6 @@ ALWAYS_INLINE ThrowCompletionOr<Value> get_by_id(VM& vm, GetBaseIdentifier get_b
 
     auto& shape = base_obj->shape();
 
-    GC::Ptr<PrototypeChainValidity> prototype_chain_validity;
-    if (shape.prototype())
-        prototype_chain_validity = shape.prototype()->shape().prototype_chain_validity();
-
     for (auto& cache_entry : cache.entries) {
         auto cached_prototype = cache_entry.prototype.ptr();
         if (cached_prototype) {
@@ -100,8 +97,7 @@ ALWAYS_INLINE ThrowCompletionOr<Value> get_by_id(VM& vm, GetBaseIdentifier get_b
                     return false;
 
                 if (shape.is_dictionary()) {
-                    VERIFY(cache_entry.shape_dictionary_generation.has_value());
-                    if (shape.dictionary_generation() != cache_entry.shape_dictionary_generation.value()) [[unlikely]] {
+                    if (shape.dictionary_generation() != cache_entry.shape_dictionary_generation) [[unlikely]] {
                         return false;
                     }
                 }
@@ -114,7 +110,7 @@ ALWAYS_INLINE ThrowCompletionOr<Value> get_by_id(VM& vm, GetBaseIdentifier get_b
                 return true;
             }();
             if (can_use_cache) [[likely]] {
-                auto value = cached_prototype->get_direct(cache_entry.property_offset.value());
+                auto value = cached_prototype->get_direct(cache_entry.property_offset);
                 if (value.is_accessor())
                     return TRY(call(vm, value.as_accessor().getter(), this_value));
                 return value;
@@ -123,14 +119,13 @@ ALWAYS_INLINE ThrowCompletionOr<Value> get_by_id(VM& vm, GetBaseIdentifier get_b
             // OPTIMIZATION: If the shape of the object hasn't changed, we can use the cached property offset.
             bool can_use_cache = true;
             if (shape.is_dictionary()) {
-                VERIFY(cache_entry.shape_dictionary_generation.has_value());
-                if (shape.dictionary_generation() != cache_entry.shape_dictionary_generation.value()) [[unlikely]] {
+                if (shape.dictionary_generation() != cache_entry.shape_dictionary_generation) [[unlikely]] {
                     can_use_cache = false;
                 }
             }
 
             if (can_use_cache) [[likely]] {
-                auto value = base_obj->get_direct(cache_entry.property_offset.value());
+                auto value = base_obj->get_direct(cache_entry.property_offset);
                 if (value.is_accessor()) {
                     return TRY(call(vm, value.as_accessor().getter(), this_value));
                 }
@@ -138,6 +133,9 @@ ALWAYS_INLINE ThrowCompletionOr<Value> get_by_id(VM& vm, GetBaseIdentifier get_b
             }
         }
     }
+    GC::Ptr<PrototypeChainValidity> prototype_chain_validity;
+    if (shape.prototype())
+        prototype_chain_validity = shape.prototype()->shape().prototype_chain_validity();
 
     CacheableGetPropertyMetadata cacheable_metadata;
     auto value = TRY(base_obj->internal_get(get_property_name(), this_value, &cacheable_metadata));
@@ -175,6 +173,259 @@ ALWAYS_INLINE ThrowCompletionOr<Value> get_by_id(VM& vm, GetBaseIdentifier get_b
     }
 
     return value;
+}
+
+template<typename BaseType, typename PropertyType>
+COLD Completion throw_null_or_undefined_property_access(VM& vm, Value base_value, BaseType const& base_identifier, PropertyType const& property_identifier)
+{
+    VERIFY(base_value.is_nullish());
+
+    bool has_base_identifier = true;
+    bool has_property_identifier = true;
+
+    if constexpr (requires { base_identifier.has_value(); })
+        has_base_identifier = base_identifier.has_value();
+    if constexpr (requires { property_identifier.has_value(); })
+        has_property_identifier = property_identifier.has_value();
+
+    if (has_base_identifier && has_property_identifier)
+        return vm.throw_completion<TypeError>(ErrorType::ToObjectNullOrUndefinedWithPropertyAndName, property_identifier, base_value, base_identifier);
+    if (has_property_identifier)
+        return vm.throw_completion<TypeError>(ErrorType::ToObjectNullOrUndefinedWithProperty, property_identifier, base_value);
+    if (has_base_identifier)
+        return vm.throw_completion<TypeError>(ErrorType::ToObjectNullOrUndefinedWithName, base_identifier, base_value);
+    return vm.throw_completion<TypeError>(ErrorType::ToObjectNullOrUndefined);
+}
+
+template<PutKind kind>
+ThrowCompletionOr<void> put_by_property_key(VM& vm, Value base, Value this_value, Value value, Optional<Utf16FlyString const&> const base_identifier, PropertyKey const& name, Strict strict, PropertyLookupCache* caches = nullptr)
+{
+    // Better error message than to_object would give
+    if (strict == Strict::Yes && base.is_nullish()) [[unlikely]]
+        return vm.throw_completion<TypeError>(ErrorType::ReferenceNullishSetProperty, name, base);
+
+    // a. Let baseObj be ? ToObject(V.[[Base]]).
+    auto maybe_object = base.to_object(vm);
+    if (maybe_object.is_error()) [[unlikely]]
+        return throw_null_or_undefined_property_access(vm, base, base_identifier, name);
+    auto object = maybe_object.release_value();
+
+    if constexpr (kind == PutKind::Getter || kind == PutKind::Setter) {
+        // The generator should only pass us functions for getters and setters.
+        VERIFY(value.is_function());
+    }
+    switch (kind) {
+    case PutKind::Getter: {
+        auto& function = value.as_function();
+        if (is<ECMAScriptFunctionObject>(function) && static_cast<ECMAScriptFunctionObject const&>(function).name().is_empty())
+            static_cast<ECMAScriptFunctionObject*>(&function)->set_name(Utf16String::formatted("get {}", name));
+        object->define_direct_accessor(name, &function, nullptr, Attribute::Configurable | Attribute::Enumerable);
+        break;
+    }
+    case PutKind::Setter: {
+        auto& function = value.as_function();
+        if (is<ECMAScriptFunctionObject>(function) && static_cast<ECMAScriptFunctionObject const&>(function).name().is_empty())
+            static_cast<ECMAScriptFunctionObject*>(&function)->set_name(Utf16String::formatted("set {}", name));
+        object->define_direct_accessor(name, nullptr, &function, Attribute::Configurable | Attribute::Enumerable);
+        break;
+    }
+    case PutKind::Normal: {
+        auto this_value_object = MUST(this_value.to_object(vm));
+        auto& from_shape = this_value_object->shape();
+        if (caches) [[likely]] {
+            for (size_t i = 0; i < caches->entries.size(); ++i) {
+                switch (caches->types[i]) {
+                case PropertyLookupCache::Entry::Type::Empty:
+                    break;
+                case PropertyLookupCache::Entry::Type::ChangePropertyInPrototypeChain: {
+                    auto& cache = caches->entries[i];
+                    auto cached_prototype = cache.prototype.ptr();
+                    if (!cached_prototype) [[unlikely]]
+                        break;
+                    auto cached_shape = cache.shape.ptr();
+                    // OPTIMIZATION: If the prototype chain hasn't been mutated in a way that would invalidate the cache, we can use it.
+                    bool can_use_cache = [&]() -> bool {
+                        if (&object->shape() != cached_shape) [[unlikely]]
+                            return false;
+
+                        if (cached_shape->is_dictionary()) {
+                            if (object->shape().dictionary_generation() != cache.shape_dictionary_generation) [[unlikely]]
+                                return false;
+                        }
+
+                        auto cached_prototype_chain_validity = cache.prototype_chain_validity.ptr();
+                        if (!cached_prototype_chain_validity) [[unlikely]]
+                            return false;
+                        if (!cached_prototype_chain_validity->is_valid()) [[unlikely]]
+                            return false;
+                        return true;
+                    }();
+                    if (can_use_cache) [[likely]] {
+                        auto value_in_prototype = cached_prototype->get_direct(cache.property_offset);
+                        if (value_in_prototype.is_accessor()) [[unlikely]] {
+                            (void)TRY(call(vm, value_in_prototype.as_accessor().setter(), this_value, value));
+                            return {};
+                        }
+                    }
+                    break;
+                }
+                case PropertyLookupCache::Entry::Type::ChangeOwnProperty: {
+                    auto& cache = caches->entries[i];
+                    auto cached_shape = cache.shape.ptr();
+                    if (cached_shape != &object->shape()) [[unlikely]]
+                        break;
+
+                    if (cached_shape->is_dictionary()) {
+                        if (cached_shape->dictionary_generation() != cache.shape_dictionary_generation)
+                            break;
+                    }
+
+                    auto value_in_object = object->get_direct(cache.property_offset);
+                    if (value_in_object.is_accessor()) [[unlikely]] {
+                        (void)TRY(call(vm, value_in_object.as_accessor().setter(), this_value, value));
+                    } else {
+                        object->put_direct(cache.property_offset, value);
+                    }
+                    return {};
+                }
+                case PropertyLookupCache::Entry::Type::AddOwnProperty: {
+                    auto& cache = caches->entries[i];
+                    // OPTIMIZATION: If the object's shape is the same as the one cached before adding the new property, we can
+                    //               reuse the resulting shape from the cache.
+                    if (cache.from_shape != &object->shape()) [[unlikely]]
+                        break;
+                    auto cached_shape = cache.shape.ptr();
+                    if (!cached_shape) [[unlikely]]
+                        break;
+
+                    // Cannot add properties to non-extensible objects (frozen, sealed, or preventExtensions).
+                    if (!TRY(object->internal_is_extensible())) [[unlikely]]
+                        break;
+
+                    if (cached_shape->is_dictionary()) {
+                        if (object->shape().dictionary_generation() != cache.shape_dictionary_generation)
+                            break;
+                    }
+
+                    // The cache is invalid if the prototype chain has been mutated, since such a mutation could have added a setter for the property.
+                    auto cached_prototype_chain_validity = cache.prototype_chain_validity.ptr();
+                    if (cached_prototype_chain_validity && !cached_prototype_chain_validity->is_valid()) [[unlikely]]
+                        break;
+                    object->unsafe_set_shape(*cached_shape);
+                    object->put_direct(cache.property_offset, value);
+                    return {};
+                }
+                default:
+                    VERIFY_NOT_REACHED();
+                }
+            }
+        }
+
+        CacheableSetPropertyMetadata cacheable_metadata;
+        bool succeeded = TRY(object->internal_set(name, value, this_value, &cacheable_metadata));
+
+        if (succeeded && caches && cacheable_metadata.type == CacheableSetPropertyMetadata::Type::AddOwnProperty) {
+            caches->update(PropertyLookupCache::Entry::Type::AddOwnProperty, [&](auto& cache) {
+                cache.from_shape = from_shape;
+                cache.property_offset = cacheable_metadata.property_offset.value();
+                cache.shape = &object->shape();
+                if (cacheable_metadata.prototype) {
+                    cache.prototype_chain_validity = *cacheable_metadata.prototype->shape().prototype_chain_validity();
+                }
+                if (object->shape().is_dictionary()) {
+                    cache.shape_dictionary_generation = object->shape().dictionary_generation();
+                }
+            });
+        }
+
+        // If internal_set() caused object's shape change, we can no longer be sure
+        // that collected metadata is valid, e.g. if setter in prototype chain added
+        // property with the same name into the object itself.
+        if (succeeded && caches && &from_shape == &object->shape()) {
+            switch (cacheable_metadata.type) {
+            case CacheableSetPropertyMetadata::Type::AddOwnProperty:
+                // Something went wrong if we ended up here, because cacheable addition of a new property should've changed the shape.
+                VERIFY_NOT_REACHED();
+                break;
+            case CacheableSetPropertyMetadata::Type::ChangeOwnProperty:
+                caches->update(PropertyLookupCache::Entry::Type::ChangeOwnProperty, [&](auto& cache) {
+                    cache.shape = object->shape();
+                    cache.property_offset = cacheable_metadata.property_offset.value();
+
+                    if (object->shape().is_dictionary()) {
+                        cache.shape_dictionary_generation = object->shape().dictionary_generation();
+                    }
+                });
+                break;
+            case CacheableSetPropertyMetadata::Type::ChangePropertyInPrototypeChain:
+                caches->update(PropertyLookupCache::Entry::Type::ChangePropertyInPrototypeChain, [&](auto& cache) {
+                    cache.shape = object->shape();
+                    cache.property_offset = cacheable_metadata.property_offset.value();
+                    cache.prototype = *cacheable_metadata.prototype;
+                    cache.prototype_chain_validity = *cacheable_metadata.prototype->shape().prototype_chain_validity();
+
+                    if (object->shape().is_dictionary()) {
+                        cache.shape_dictionary_generation = object->shape().dictionary_generation();
+                    }
+                });
+                break;
+            case CacheableSetPropertyMetadata::Type::NotCacheable:
+                break;
+            default:
+                VERIFY_NOT_REACHED();
+            }
+        }
+
+        if (!succeeded && strict == Strict::Yes) [[unlikely]] {
+            if (base.is_object())
+                return vm.throw_completion<TypeError>(ErrorType::ReferenceNullishSetProperty, name, base);
+            return vm.throw_completion<TypeError>(ErrorType::ReferencePrimitiveSetProperty, name, base.typeof_(vm)->utf8_string(), base);
+        }
+        break;
+    }
+    case PutKind::Own: {
+        if (caches) [[likely]] {
+            for (size_t i = 0; i < caches->entries.size(); ++i) {
+                if (caches->types[i] == PropertyLookupCache::Entry::Type::AddOwnProperty) {
+                    auto& cache = caches->entries[i];
+                    if (cache.from_shape != &object->shape()) [[unlikely]]
+                        continue;
+                    auto cached_shape = cache.shape.ptr();
+                    if (!cached_shape) [[unlikely]]
+                        continue;
+                    if (cached_shape->is_dictionary()) {
+                        if (object->shape().dictionary_generation() != cache.shape_dictionary_generation)
+                            continue;
+                    }
+                    object->unsafe_set_shape(*cached_shape);
+                    object->put_direct(cache.property_offset, value);
+                    return {};
+                }
+            }
+        }
+
+        auto& from_shape = object->shape();
+        object->define_direct_property(name, value, Attribute::Enumerable | Attribute::Writable | Attribute::Configurable);
+
+        if (caches && &from_shape != &object->shape()) {
+            caches->update(PropertyLookupCache::Entry::Type::AddOwnProperty, [&](auto& cache) {
+                cache.from_shape = from_shape;
+                cache.shape = &object->shape();
+                cache.property_offset = object->shape().lookup(name)->offset;
+                if (object->shape().is_dictionary()) {
+                    cache.shape_dictionary_generation = object->shape().dictionary_generation();
+                }
+            });
+        }
+        break;
+    }
+    case PutKind::Prototype:
+        if (value.is_object() || value.is_null()) [[likely]]
+            MUST(object->internal_set_prototype_of(value.is_object() ? &value.as_object() : nullptr));
+        break;
+    }
+
+    return {};
 }
 
 }

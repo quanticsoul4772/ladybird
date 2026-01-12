@@ -68,11 +68,19 @@ protected:
 
     virtual void visit_edges(Visitor&) override;
 
+    // NB: This belongs to FunctionEnvironment, but we keep it here to pack better.
+    ThisBindingStatus m_this_binding_status { ThisBindingStatus::Uninitialized }; // [[ThisBindingStatus]]
+
 private:
+    virtual bool is_environment() const final { return true; }
+
     bool m_permanently_screwed_by_eval { false };
     bool m_declarative { false };
 
     GC::Ptr<Environment> m_outer_environment;
 };
+
+template<>
+inline bool Cell::fast_is<Environment>() const { return is_environment(); }
 
 }

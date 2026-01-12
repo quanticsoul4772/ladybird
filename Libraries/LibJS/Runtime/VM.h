@@ -58,7 +58,7 @@ public:
     static NonnullRefPtr<VM> create();
     ~VM();
 
-    static VM& the();
+    ALWAYS_INLINE static VM& the() { return *s_the; }
 
     GC::Heap& heap() const { return const_cast<GC::Heap&>(m_heap); }
 
@@ -292,6 +292,7 @@ public:
     Function<ThrowCompletionOr<void>(Realm&, ReadonlySpan<String>, StringView, StringView, CompilationType, ReadonlySpan<Value>, Value)> host_ensure_can_compile_strings;
     Function<ThrowCompletionOr<void>(Object&)> host_ensure_can_add_private_element;
     Function<ThrowCompletionOr<HandledByHost>(ArrayBuffer&, size_t)> host_resize_array_buffer;
+    Function<ThrowCompletionOr<HandledByHost>(ArrayBuffer&, size_t)> host_grow_shared_array_buffer;
     Function<void(StringView)> host_unrecognized_date_string;
     Function<ThrowCompletionOr<void>(Realm&, NonnullOwnPtr<ExecutionContext>, ShadowRealm&)> host_initialize_shadow_realm;
     Function<Crypto::SignedBigInteger(Object const& global)> host_system_utc_epoch_nanoseconds;
@@ -338,7 +339,7 @@ private:
 
     Vector<GC::Ref<GC::Function<ThrowCompletionOr<Value>()>>> m_promise_jobs;
 
-    Vector<GC::Ptr<FinalizationRegistry>> m_finalization_registry_cleanup_jobs;
+    Vector<GC::Ref<FinalizationRegistry>> m_finalization_registry_cleanup_jobs;
 
     GC::Ptr<PrimitiveString> m_empty_string;
     GC::Ptr<PrimitiveString> m_single_ascii_character_strings[128] {};

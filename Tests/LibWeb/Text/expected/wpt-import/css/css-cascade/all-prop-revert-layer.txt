@@ -1,8 +1,8 @@
 Harness status: OK
 
-Found 278 tests
+Found 279 tests
 
-272 Pass
+273 Pass
 6 Fail
 Pass	accent-color
 Pass	border-collapse
@@ -48,6 +48,7 @@ Pass	overflow-wrap
 Pass	paint-order
 Pass	pointer-events
 Pass	quotes
+Pass	scrollbar-color
 Pass	shape-rendering
 Pass	stroke
 Pass	stroke-dasharray
@@ -236,6 +237,7 @@ Pass	perspective
 Pass	perspective-origin
 Pass	position
 Pass	r
+Pass	resize
 Pass	right
 Pass	rotate
 Pass	row-gap
@@ -244,7 +246,6 @@ Pass	ry
 Pass	scale
 Pass	scroll-timeline-axis
 Pass	scroll-timeline-name
-Pass	scrollbar-color
 Pass	scrollbar-gutter
 Pass	scrollbar-width
 Pass	shape-image-threshold

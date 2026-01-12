@@ -7,6 +7,7 @@
 #pragma once
 
 #include <LibJS/Runtime/PromiseCapability.h>
+#include <LibWeb/Animations/TimeValue.h>
 #include <LibWeb/Bindings/AnimationPrototype.h>
 #include <LibWeb/DOM/AbstractElement.h>
 #include <LibWeb/DOM/EventTarget.h>
@@ -28,6 +29,8 @@ class Animation : public DOM::EventTarget {
     GC_DECLARE_ALLOCATOR(Animation);
 
 public:
+    static constexpr bool OVERRIDES_FINALIZE = true;
+
     static GC::Ref<Animation> create(JS::Realm&, GC::Ptr<AnimationEffect>, Optional<GC::Ptr<AnimationTimeline>>);
     static WebIDL::ExceptionOr<GC::Ref<Animation>> construct_impl(JS::Realm&, GC::Ptr<AnimationEffect>, Optional<GC::Ptr<AnimationTimeline>>);
 
@@ -40,11 +43,21 @@ public:
     GC::Ptr<AnimationTimeline> timeline() const { return m_timeline; }
     void set_timeline(GC::Ptr<AnimationTimeline>);
 
-    Optional<double> const& start_time() const { return m_start_time; }
-    void set_start_time(Optional<double> const&);
+    // https://drafts.csswg.org/web-animations-2/#dom-animation-starttime
+    NullableCSSNumberish start_time_for_bindings() const
+    {
+        return NullableCSSNumberish::from_optional_css_numberish_time(start_time());
+    }
+    Optional<TimeValue> start_time() const { return m_start_time; }
+    WebIDL::ExceptionOr<void> set_start_time_for_bindings(Optional<CSS::CSSNumberish> const&);
 
-    Optional<double> current_time() const;
-    WebIDL::ExceptionOr<void> set_current_time(Optional<double> const&);
+    // https://drafts.csswg.org/web-animations-2/#dom-animation-currenttime
+    NullableCSSNumberish current_time_for_bindings() const
+    {
+        return NullableCSSNumberish::from_optional_css_numberish_time(current_time());
+    }
+    Optional<TimeValue> current_time() const;
+    WebIDL::ExceptionOr<void> set_current_time_for_bindings(Optional<CSS::CSSNumberish> const&);
 
     double playback_rate() const { return m_playback_rate; }
     WebIDL::ExceptionOr<void> set_playback_rate(double value);
@@ -94,11 +107,11 @@ public:
     WebIDL::ExceptionOr<void> reverse();
     void persist();
 
-    Optional<double> convert_an_animation_time_to_timeline_time(Optional<double>) const;
-    Optional<double> convert_a_timeline_time_to_an_origin_relative_time(Optional<double>) const;
+    Optional<TimeValue> convert_an_animation_time_to_timeline_time(Optional<TimeValue>) const;
+    Optional<double> convert_a_timeline_time_to_an_origin_relative_time(Optional<TimeValue>) const;
 
     GC::Ptr<DOM::Document> document_for_timing() const;
-    void notify_timeline_time_did_change();
+    void update();
 
     void effect_timing_changed(Badge<AnimationEffect>);
 
@@ -115,7 +128,8 @@ public:
 
     auto release_saved_cancel_time() { return move(m_saved_cancel_time); }
 
-    double associated_effect_end() const;
+    TimeValue associated_effect_end() const;
+
     Optional<CSS::AnimationPlayState> last_css_animation_play_state() const { return m_last_css_animation_play_state; }
     void set_last_css_animation_play_state(CSS::AnimationPlayState state) { m_last_css_animation_play_state = state; }
 
@@ -124,6 +138,7 @@ protected:
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
+    virtual void finalize() override;
 
 private:
     enum class TaskState {
@@ -143,12 +158,17 @@ private:
 
     double effective_playback_rate() const;
 
+    WebIDL::ExceptionOr<Optional<TimeValue>> validate_a_css_numberish_time(Optional<CSS::CSSNumberish> const&) const;
+
     void apply_any_pending_playback_rate();
-    WebIDL::ExceptionOr<void> silently_set_current_time(Optional<double>);
+    WebIDL::ExceptionOr<void> silently_set_current_time(Optional<TimeValue>);
     void update_finished_state(DidSeek, SynchronouslyNotify);
     void reset_an_animations_pending_tasks();
 
+    bool is_ready() const;
     void run_pending_play_task();
+
+    bool is_ready_to_run_pending_pause_task() const;
     void run_pending_pause_task();
 
     GC::Ref<WebIDL::Promise> current_ready_promise() const;
@@ -169,13 +189,13 @@ private:
     GC::Ptr<AnimationTimeline> m_timeline;
 
     // https://www.w3.org/TR/web-animations-1/#animation-start-time
-    Optional<double> m_start_time {};
+    Optional<TimeValue> m_start_time {};
 
     // https://www.w3.org/TR/web-animations-1/#animation-hold-time
-    Optional<double> m_hold_time {};
+    Optional<TimeValue> m_hold_time {};
 
     // https://www.w3.org/TR/web-animations-1/#previous-current-time
-    Optional<double> m_previous_current_time {};
+    Optional<TimeValue> m_previous_current_time {};
 
     // https://www.w3.org/TR/web-animations-1/#playback-rate
     double m_playback_rate { 1.0 };
@@ -205,9 +225,8 @@ private:
 
     Optional<HTML::TaskID> m_pending_finish_microtask_id;
 
-    Optional<double> m_saved_play_time;
-    Optional<double> m_saved_pause_time;
-    Optional<double> m_saved_cancel_time;
+    Optional<TimeValue> m_saved_cancel_time;
+
     Optional<CSS::AnimationPlayState> m_last_css_animation_play_state;
 };
 

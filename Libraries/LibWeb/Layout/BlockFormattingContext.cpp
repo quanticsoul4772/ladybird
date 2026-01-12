@@ -74,6 +74,16 @@ static bool margins_collapse_through(Box const& box, LayoutState& state)
 
 void BlockFormattingContext::run(AvailableSpace const& available_space)
 {
+    FORMATTING_CONTEXT_TRACE();
+    // https://drafts.csswg.org/css-multicol-2/#the-multi-column-model
+    auto root_state = m_state.get(root());
+    auto column_count = determine_used_value_for_column_count(root_state.content_width());
+    if (column_count.has_value()) {
+        auto column_width = determine_used_value_for_column_width(root_state.content_width(), column_count.value());
+        // FIXME: Do multi-column layout.
+        (void)column_width;
+    }
+
     if (is<Viewport>(root())) {
         layout_viewport(available_space);
         return;
@@ -837,11 +847,27 @@ void BlockFormattingContext::layout_block_level_box(Box const& box, BlockContain
 
     if (independent_formatting_context) {
         // This box establishes a new formatting context. Pass control to it.
-        independent_formatting_context->run(box_state.available_inner_space_or_constraints_from(available_space));
+        auto inner_available_space = box_state.available_inner_space_or_constraints_from(available_space);
+
+        // For boxes with auto height but non-auto min-height, we need to determine if the content height is less than
+        // min-height. If so, we run layout with min-height as the available height.
+        if (should_treat_height_as_auto(box, available_space) && !box.computed_values().min_height().is_auto()) {
+            LayoutState throwaway_state;
+            auto measuring_context = create_independent_formatting_context_if_needed(throwaway_state, m_layout_mode, box);
+            measuring_context->run(inner_available_space);
+            auto content_height = measuring_context->automatic_content_height();
+            auto min_height = calculate_inner_height(box, available_space, box.computed_values().min_height());
+            if (content_height < min_height) {
+                inner_available_space.height = AvailableSize::make_definite(min_height);
+            }
+        }
+
+        independent_formatting_context->run(inner_available_space);
     } else {
         // This box participates in the current block container's flow.
+        auto space_available_for_children = box.is_anonymous() ? available_space : box_state.available_inner_space_or_constraints_from(available_space);
         if (box.children_are_inline()) {
-            layout_inline_children(as<BlockContainer>(box), box_state.available_inner_space_or_constraints_from(available_space));
+            layout_inline_children(as<BlockContainer>(box), space_available_for_children);
         } else {
             if (box_state.border_top > 0 || box_state.padding_top > 0) {
                 // margin-top of block container can't collapse with it's children if it has non zero border or padding
@@ -854,8 +880,6 @@ void BlockFormattingContext::layout_block_level_box(Box const& box, BlockContain
                     }
                 });
             }
-
-            auto space_available_for_children = box.is_anonymous() ? available_space : box_state.available_inner_space_or_constraints_from(available_space);
             layout_block_level_children(as<BlockContainer>(box), space_available_for_children);
         }
     }
@@ -1409,6 +1433,40 @@ CSSPixels BlockFormattingContext::greatest_child_width(Box const& box) const
         });
     }
     return max_width;
+}
+
+// https://drafts.csswg.org/css-multicol/#pseudo-algorithm
+// The pseudo-algorithm below determines the used values for column-count (N) and column-width (W). There is
+// one other variable in the pseudo-algorithm: U is the used width of the multi-column container.
+Optional<int> BlockFormattingContext::determine_used_value_for_column_count(CSSPixels const& U) const
+{
+    auto const& computed_values = root().computed_values();
+    if (computed_values.column_width().is_auto() && computed_values.column_count().is_auto()) {
+        return {};
+    }
+    if (computed_values.column_width().is_auto()) {
+        return computed_values.column_count().value();
+    }
+    auto column_gap = get_column_gap_used_value_for_multicol(U);
+    auto column_width = computed_values.column_width().to_px(root(), U);
+    if (computed_values.column_count().is_auto()) {
+        return max(1, ((U + column_gap) / (column_width + column_gap)).to_int());
+    }
+    return min(computed_values.column_count().value(), max(1, ((U + column_gap) / (column_width + column_gap)).to_int()));
+}
+CSSPixels BlockFormattingContext::determine_used_value_for_column_width(CSSPixels const& U, int N) const
+{
+    auto column_gap = get_column_gap_used_value_for_multicol(U);
+    return max(CSSPixels(0), (U + column_gap) / N - column_gap);
+}
+
+// https://www.w3.org/TR/css-align-3/#column-row-gap
+CSSPixels BlockFormattingContext::get_column_gap_used_value_for_multicol(CSSPixels const& U) const
+{
+    // The 'normal' represents a used value of '1em' on multi-column containers
+    return root().computed_values().column_gap().visit(
+        [&](CSS::NormalGap) { return CSS::Length(1, CSS::LengthUnit::Em).to_px(root()); },
+        [&](auto const& gap) { return gap.to_px(root(), U); });
 }
 
 }

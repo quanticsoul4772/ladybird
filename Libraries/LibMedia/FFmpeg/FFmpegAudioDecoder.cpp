@@ -12,7 +12,7 @@
 
 namespace Media::FFmpeg {
 
-DecoderErrorOr<NonnullOwnPtr<FFmpegAudioDecoder>> FFmpegAudioDecoder::try_create(CodecID codec_id, ReadonlyBytes codec_initialization_data)
+DecoderErrorOr<NonnullOwnPtr<FFmpegAudioDecoder>> FFmpegAudioDecoder::try_create(CodecID codec_id, Audio::SampleSpecification const& sample_specification, ReadonlyBytes codec_initialization_data)
 {
     AVCodecContext* codec_context = nullptr;
     AVPacket* packet = nullptr;
@@ -36,6 +36,17 @@ DecoderErrorOr<NonnullOwnPtr<FFmpegAudioDecoder>> FFmpegAudioDecoder::try_create
 
     codec_context->time_base = { 1, 1'000'000 };
     codec_context->thread_count = static_cast<int>(min(Core::System::hardware_concurrency(), 4));
+
+    if (sample_specification.sample_rate() > NumericLimits<int>::max())
+        return DecoderError::with_description(DecoderErrorCategory::Corrupted, "Sample rate is too large"sv);
+    codec_context->sample_rate = static_cast<int>(sample_specification.sample_rate());
+
+    if (sample_specification.channel_map().is_valid()) {
+        auto channel_layout_result = channel_map_to_av_channel_layout(sample_specification.channel_map());
+        if (channel_layout_result.is_error())
+            return DecoderError::format(DecoderErrorCategory::Invalid, channel_layout_result.error().string_literal());
+        codec_context->ch_layout = channel_layout_result.release_value();
+    }
 
     if (!codec_initialization_data.is_empty()) {
         if (codec_initialization_data.size() > NumericLimits<int>::max())
@@ -121,7 +132,7 @@ static float float_sample_from_frame_data(u8** data, size_t plane, size_t index)
 template<>
 float float_sample_from_frame_data<u8>(u8** data, size_t plane, size_t index)
 {
-    return static_cast<float>(data[plane][index] - 127) / 255;
+    return static_cast<float>(data[plane][index] - 128) / 128;
 }
 
 template<typename T>
@@ -146,15 +157,18 @@ DecoderErrorOr<void> FFmpegAudioDecoder::write_next_block(AudioBlock& block)
 
     switch (result) {
     case 0: {
+        if (m_frame->sample_rate <= 0)
+            return DecoderError::corrupted("FFmpeg decoder created a packet with an invalid sample rate"sv);
+
         auto timestamp = AK::Duration::from_microseconds(m_frame->pts);
 
-        if (m_frame->ch_layout.nb_channels > 2)
-            return DecoderError::not_implemented();
+        auto channel_map_result = av_channel_layout_to_channel_map(m_frame->ch_layout);
+        if (channel_map_result.is_error())
+            return DecoderError::with_description(DecoderErrorCategory::NotImplemented, channel_map_result.error().string_literal());
+        auto channel_map = channel_map_result.release_value();
+        auto sample_specification = Audio::SampleSpecification(m_frame->sample_rate, channel_map);
 
-        VERIFY(m_frame->sample_rate > 0);
-        VERIFY(m_frame->ch_layout.nb_channels > 0);
-
-        block.emplace(m_frame->sample_rate, m_frame->ch_layout.nb_channels, timestamp, [&](AudioBlock::Data& data) {
+        block.emplace(sample_specification, timestamp, [&](AudioBlock::Data& data) {
             auto format = static_cast<AVSampleFormat>(m_frame->format);
             auto is_planar = av_sample_fmt_is_planar(format) != 0;
             auto planar_format = av_get_planar_sample_fmt(format);

@@ -10,9 +10,9 @@
 #include <AK/NonnullOwnPtr.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
-#include <LibCore/MappedFile.h>
 #include <LibMedia/DecoderError.h>
 #include <LibMedia/Export.h>
+#include <LibMedia/IncrementallyPopulatedStream.h>
 
 #include "Document.h"
 
@@ -21,46 +21,52 @@ namespace Media::Matroska {
 class SampleIterator;
 class Streamer;
 
+struct TrackCuePoint {
+    AK::Duration timestamp;
+    CueTrackPosition position;
+};
+
+enum class CuePointTarget : u8 {
+    Cluster,
+    Block,
+};
+
 class MEDIA_API Reader {
 public:
     typedef Function<DecoderErrorOr<IterationDecision>(TrackEntry const&)> TrackEntryCallback;
 
-    static DecoderErrorOr<Reader> from_data(ReadonlyBytes data);
+    static DecoderErrorOr<Reader> from_stream(IncrementallyPopulatedStream::Cursor&);
 
-    EBMLHeader const& header() const { return m_header.value(); }
+    static bool is_matroska_or_webm(IncrementallyPopulatedStream::Cursor&);
 
-    DecoderErrorOr<SegmentInformation> segment_information();
+    Optional<AK::Duration> duration() { return m_segment_information.duration(); }
 
     DecoderErrorOr<void> for_each_track(TrackEntryCallback);
     DecoderErrorOr<void> for_each_track_of_type(TrackEntry::TrackType, TrackEntryCallback);
     DecoderErrorOr<NonnullRefPtr<TrackEntry>> track_for_track_number(u64);
     DecoderErrorOr<size_t> track_count();
 
-    DecoderErrorOr<SampleIterator> create_sample_iterator(u64 track_number);
+    DecoderErrorOr<SampleIterator> create_sample_iterator(NonnullRefPtr<IncrementallyPopulatedStream::Cursor> const& stream_consumer, u64 track_number);
     DecoderErrorOr<SampleIterator> seek_to_random_access_point(SampleIterator, AK::Duration);
-    DecoderErrorOr<Optional<Vector<CuePoint> const&>> cue_points_for_track(u64 track_number);
-    DecoderErrorOr<bool> has_cues_for_track(u64 track_number);
 
 private:
-    Reader(ReadonlyBytes data)
-        : m_data(data)
-    {
-    }
+    Reader() = default;
 
-    DecoderErrorOr<void> parse_initial_data();
+    DecoderErrorOr<void> parse_initial_data(Streamer&);
 
-    DecoderErrorOr<Optional<size_t>> find_first_top_level_element_with_id([[maybe_unused]] StringView element_name, u32 element_id);
+    DecoderErrorOr<Optional<size_t>> find_first_top_level_element_with_id(Streamer&, StringView element_name, u32 element_id);
 
-    DecoderErrorOr<void> ensure_tracks_are_parsed();
+    DecoderErrorOr<void> parse_segment_information(Streamer&);
+
     DecoderErrorOr<void> parse_tracks(Streamer&);
     void fix_track_quirks();
     void fix_ffmpeg_webm_quirk();
 
     DecoderErrorOr<void> parse_cues(Streamer&);
-    DecoderErrorOr<void> ensure_cues_are_parsed();
-    DecoderErrorOr<void> seek_to_cue_for_timestamp(SampleIterator&, AK::Duration const&);
 
-    ReadonlyBytes m_data;
+    Optional<Vector<TrackCuePoint> const&> cue_points_for_track(u64 track_number);
+    bool has_cues_for_track(u64 track_number);
+    DecoderErrorOr<void> seek_to_cue_for_timestamp(SampleIterator&, AK::Duration const&, Vector<TrackCuePoint> const&, CuePointTarget);
 
     Optional<EBMLHeader> m_header;
 
@@ -70,18 +76,20 @@ private:
     HashMap<u32, size_t> m_seek_entries;
     size_t m_last_top_level_element_position { 0 };
 
-    Optional<SegmentInformation> m_segment_information;
+    SegmentInformation m_segment_information;
 
     OrderedHashMap<u64, NonnullRefPtr<TrackEntry>> m_tracks;
 
+    size_t m_first_cluster_position { 0 };
+
     // The vectors must be sorted by timestamp at all times.
-    HashMap<u64, Vector<CuePoint>> m_cues;
-    bool m_cues_have_been_parsed { false };
+    HashMap<u64, Vector<TrackCuePoint>> m_cues;
 };
 
 class MEDIA_API SampleIterator {
 public:
     DecoderErrorOr<Block> next_block();
+    DecoderErrorOr<Vector<ByteBuffer>> get_frames(Block);
     Cluster const& current_cluster() const { return *m_current_cluster; }
     Optional<AK::Duration> const& last_timestamp() const { return m_last_timestamp; }
     TrackEntry const& track() const { return *m_track; }
@@ -89,19 +97,21 @@ public:
 private:
     friend class Reader;
 
-    SampleIterator(ReadonlyBytes data, TrackEntry& track, u64 timestamp_scale, size_t position)
-        : m_data(data)
+    SampleIterator(NonnullRefPtr<IncrementallyPopulatedStream::Cursor> const& stream_cursor, TrackEntry& track, u64 timestamp_scale, size_t segment_contents_position, size_t position)
+        : m_stream_cursor(stream_cursor)
         , m_track(track)
         , m_segment_timestamp_scale(timestamp_scale)
+        , m_segment_contents_position(segment_contents_position)
         , m_position(position)
     {
     }
 
-    DecoderErrorOr<void> seek_to_cue_point(CuePoint const& cue_point);
+    DecoderErrorOr<void> seek_to_cue_point(TrackCuePoint const& cue_point, CuePointTarget);
 
-    ReadonlyBytes m_data;
+    NonnullRefPtr<IncrementallyPopulatedStream::Cursor> m_stream_cursor;
     NonnullRefPtr<TrackEntry> m_track;
     u64 m_segment_timestamp_scale { 0 };
+    size_t m_segment_contents_position { 0 };
 
     // Must always point to an element ID or the end of the stream.
     size_t m_position { 0 };
@@ -113,14 +123,10 @@ private:
 
 class Streamer {
 public:
-    Streamer(ReadonlyBytes data)
-        : m_data(data)
+    Streamer(NonnullRefPtr<IncrementallyPopulatedStream::Cursor> const& stream_cursor)
+        : m_stream_cursor(stream_cursor)
     {
     }
-
-    u8 const* data() { return m_data.data() + m_position; }
-
-    char const* data_as_chars() { return reinterpret_cast<char const*>(data()); }
 
     size_t octets_read() { return m_octets_read.last(); }
 
@@ -133,33 +139,28 @@ public:
             m_octets_read.last() += popped;
     }
 
-    ErrorOr<u8> read_octet();
+    DecoderErrorOr<u8> read_octet();
 
-    ErrorOr<i16> read_i16();
+    DecoderErrorOr<i16> read_i16();
 
-    ErrorOr<u64> read_variable_size_integer(bool mask_length = true);
-    ErrorOr<i64> read_variable_size_signed_integer();
+    DecoderErrorOr<u64> read_variable_size_integer(bool mask_length = true);
+    DecoderErrorOr<i64> read_variable_size_signed_integer();
 
-    ErrorOr<u64> read_u64();
-    ErrorOr<double> read_float();
+    DecoderErrorOr<u64> read_u64();
+    DecoderErrorOr<double> read_float();
 
-    ErrorOr<String> read_string();
+    DecoderErrorOr<String> read_string();
 
-    ErrorOr<void> read_unknown_element();
+    DecoderErrorOr<void> read_unknown_element();
 
-    ErrorOr<ReadonlyBytes> read_raw_octets(size_t num_octets);
+    DecoderErrorOr<ByteBuffer> read_raw_octets(size_t num_octets);
 
-    size_t position() const { return m_position; }
-    size_t remaining() const { return m_data.size() - position(); }
+    size_t position() const { return m_stream_cursor->position(); }
 
-    bool at_end() const { return remaining() == 0; }
-    bool has_octet() const { return remaining() >= 1; }
-
-    ErrorOr<void> seek_to_position(size_t position);
+    DecoderErrorOr<void> seek_to_position(size_t position);
 
 private:
-    ReadonlyBytes m_data;
-    size_t m_position { 0 };
+    NonnullRefPtr<IncrementallyPopulatedStream::Cursor> m_stream_cursor;
     Vector<size_t> m_octets_read { 0 };
 };
 

@@ -61,6 +61,25 @@
 #include <LibWeb/WebIDL/DOMException.h>
 #include <LibWeb/WebIDL/ExceptionOr.h>
 
+namespace {
+
+bool is_integral_multiple(double value, double step)
+{
+    VERIFY(step > 0);
+
+    // The step is so small, that the integral multiple closest to the value cannot be accurately expressed as a double
+    if (fabs(value) / ldexp(1.0, NumericLimits<double>::digits()) > step)
+        return true;
+
+    auto division_remainder = fabs(remainder(value, step));
+    // NOTE: There is no spec for the integral multiple. However, chromium uses tolerance so we comply here.
+    //       https://github.com/chromium/chromium/blob/18aeefb6d0fe94e267c08e1aaeaf2632937f4ce2/third_party/blink/renderer/core/html/forms/step_range.cc#L67
+    double acceptable_error = round(step) == step ? 0 : step / static_cast<double>(1 << NumericLimits<float>::digits());
+    return division_remainder <= acceptable_error || division_remainder >= (step - acceptable_error);
+}
+
+}
+
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(HTMLInputElement);
@@ -1428,6 +1447,9 @@ void HTMLInputElement::did_receive_focus()
 
     if (m_placeholder_text_node)
         m_placeholder_text_node->invalidate_style(DOM::StyleInvalidationReason::DidReceiveFocus);
+
+    if (has_selectable_text())
+        document().get_selection()->remove_all_ranges();
 }
 
 void HTMLInputElement::did_lose_focus()
@@ -1962,6 +1984,15 @@ void HTMLInputElement::form_associated_element_was_inserted()
             });
         }
     }
+}
+
+EventResult HTMLInputElement::handle_return_key(FlyString const&)
+{
+    if (auto* form = this->form())
+        form->implicitly_submit_form().release_value_but_fixme_should_propagate_errors();
+    else
+        commit_pending_changes();
+    return EventResult::Handled;
 }
 
 bool HTMLInputElement::is_presentational_hint(FlyString const& name) const
@@ -2949,7 +2980,7 @@ WebIDL::ExceptionOr<void> HTMLInputElement::step_up_or_down(bool is_down, WebIDL
 
     // 7. If value subtracted from the step base is not an integral multiple of the allowed value step, then set value to the nearest value that,
     // when subtracted from the step base, is an integral multiple of the allowed value step, and that is less than value if the method invoked was the stepDown() method, and more than value otherwise.
-    if (fmod(step_base() - value, allowed_value_step) != 0) {
+    if (!is_integral_multiple(step_base() - value, allowed_value_step)) {
         if (is_down) {
             value = step_base() + floor((value - step_base()) / allowed_value_step) * allowed_value_step;
         } else {
@@ -3270,6 +3301,7 @@ bool HTMLInputElement::has_selectable_text() const
     case TypeAttributeState::Time:
     case TypeAttributeState::LocalDateAndTime:
     case TypeAttributeState::Number:
+    case TypeAttributeState::Email:
         return true;
     default:
         return false;
@@ -3686,7 +3718,7 @@ bool HTMLInputElement::is_number_mismatching_step(double number) const
     double allowed_value_step = *maybe_allowed_value_step;
     // and that number subtracted from the step base is not an integral multiple of the allowed value step, the element
     // is suffering from a step mismatch.
-    return fmod(step_base() - number, allowed_value_step) != 0;
+    return !is_integral_multiple(step_base() - number, allowed_value_step);
 }
 
 // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#suffering-from-bad-input
@@ -3801,6 +3833,33 @@ bool HTMLInputElement::uses_button_layout() const
 
     return first_is_one_of(type_state(), TypeAttributeState::SubmitButton, TypeAttributeState::ResetButton,
         TypeAttributeState::Button, TypeAttributeState::Color, TypeAttributeState::FileUpload);
+}
+
+Optional<Utf16String> HTMLInputElement::selected_text_for_stringifier() const
+{
+    // https://w3c.github.io/selection-api/#dom-selection-stringifier
+    // Used for clipboard copy and window.getSelection().toString() when this element is active.
+    if (!has_selectable_text())
+        return {};
+
+    size_t start = this->selection_start();
+    size_t end = this->selection_end();
+    if (start >= end)
+        return {};
+
+    switch (type_state()) {
+    case TypeAttributeState::Text:
+    case TypeAttributeState::Search:
+    case TypeAttributeState::Telephone:
+    case TypeAttributeState::URL:
+    case TypeAttributeState::Email:
+        return Utf16String::from_utf16(relevant_value().substring_view(start, end - start));
+
+    case TypeAttributeState::Password:
+        return Utf16String::repeated(0x2022, end - start); // 0x2022 is BULLET character
+    default:
+        return {};
+    }
 }
 
 }

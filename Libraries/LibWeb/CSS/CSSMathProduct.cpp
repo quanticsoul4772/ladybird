@@ -22,6 +22,26 @@ GC::Ref<CSSMathProduct> CSSMathProduct::create(JS::Realm& realm, NumericType typ
     return realm.create<CSSMathProduct>(realm, move(type), move(values));
 }
 
+WebIDL::ExceptionOr<GC::Ref<CSSMathProduct>> CSSMathProduct::multiply_all_types_into_math_product(JS::Realm& realm, GC::RootVector<GC::Ref<CSSNumericValue>> const& values)
+{
+    auto type = values.first()->type();
+    bool first = true;
+    for (auto const& value : values) {
+        if (first) {
+            first = false;
+            continue;
+        }
+        if (auto multiplied_types = type.multiplied_by(value->type()); multiplied_types.has_value()) {
+            type = multiplied_types.release_value();
+        } else {
+            return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot create a CSSMathProduct with values of incompatible types"sv };
+        }
+    }
+
+    auto values_array = CSSNumericArray::create(realm, { values });
+    return CSSMathProduct::create(realm, type, values_array);
+}
+
 // https://drafts.css-houdini.org/css-typed-om-1/#dom-cssmathproduct-cssmathproduct
 WebIDL::ExceptionOr<GC::Ref<CSSMathProduct>> CSSMathProduct::construct_impl(JS::Realm& realm, Vector<CSSNumberish> values)
 {
@@ -41,23 +61,8 @@ WebIDL::ExceptionOr<GC::Ref<CSSMathProduct>> CSSMathProduct::construct_impl(JS::
         return WebIDL::SyntaxError::create(realm, "Cannot create an empty CSSMathProduct"_utf16);
 
     // 3. Let type be the result of multiplying the types of all the items of args. If type is failure, throw a TypeError.
-    auto type = converted_values.first()->type();
-    bool first = true;
-    for (auto const& value : converted_values) {
-        if (first) {
-            first = false;
-            continue;
-        }
-        if (auto multiplied_types = type.multiplied_by(value->type()); multiplied_types.has_value()) {
-            type = multiplied_types.release_value();
-        } else {
-            return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot create a CSSMathProduct with values of incompatible types"sv };
-        }
-    }
-
     // 4. Return a new CSSMathProduct whose values internal slot is set to args.
-    auto values_array = CSSNumericArray::create(realm, { converted_values });
-    return CSSMathProduct::create(realm, move(type), move(values_array));
+    return multiply_all_types_into_math_product(realm, converted_values);
 }
 
 CSSMathProduct::CSSMathProduct(JS::Realm& realm, NumericType type, GC::Ref<CSSNumericArray> values)
@@ -81,11 +86,10 @@ void CSSMathProduct::visit_edges(Visitor& visitor)
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#serialize-a-cssmathvalue
-String CSSMathProduct::serialize_math_value(Nested nested, Parens parens) const
+void CSSMathProduct::serialize_math_value(StringBuilder& s, Nested nested, Parens parens) const
 {
     // NB: Only steps 1 and 5 apply here.
     // 1. Let s initially be the empty string.
-    StringBuilder s;
 
     // 5. Otherwise, if this is a CSSMathProduct:
     {
@@ -93,14 +97,14 @@ String CSSMathProduct::serialize_math_value(Nested nested, Parens parens) const
         //    otherwise, append "calc(" to s.
         if (parens == Parens::With) {
             if (nested == Nested::Yes) {
-                s.append("("sv);
+                s.append('(');
             } else {
                 s.append("calc("sv);
             }
         }
 
         // 2. Serialize the first item in this’s values internal slot with nested set to true, and append the result to s.
-        s.append(m_values->values().first()->to_string({ .nested = true }));
+        m_values->values().first()->serialize(s, { .nested = true });
 
         // 3. For each arg in this’s values internal slot beyond the first:
         bool first = true;
@@ -114,22 +118,21 @@ String CSSMathProduct::serialize_math_value(Nested nested, Parens parens) const
             //    set to true, and append the result to s.
             if (auto* invert = as_if<CSSMathInvert>(*arg)) {
                 s.append(" / "sv);
-                s.append(invert->value()->to_string({ .nested = true }));
+                invert->value()->serialize(s, { .nested = true });
             }
 
             // 2. Otherwise, append " * " to s, then serialize arg with nested set to true, and append the result to s.
             else {
                 s.append(" * "sv);
-                s.append(arg->to_string({ .nested = true }));
+                arg->serialize(s, { .nested = true });
             }
         }
 
         // 4. If paren-less is false, append ")" to s,
         if (parens == Parens::With)
-            s.append(")"sv);
+            s.append(')');
 
         // 5. Return s.
-        return s.to_string_without_validation();
     }
 }
 

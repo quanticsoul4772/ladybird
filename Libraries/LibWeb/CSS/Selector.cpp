@@ -17,19 +17,11 @@ static bool component_value_contains_nesting_selector(Parser::ComponentValue con
     if (component_value.is_delim('&'))
         return true;
 
-    if (component_value.is_block()) {
-        for (auto const& child_value : component_value.block().value) {
-            if (component_value_contains_nesting_selector(child_value))
-                return true;
-        }
-    }
+    if (component_value.is_block())
+        return component_value.block().value.contains(component_value_contains_nesting_selector);
 
-    if (component_value.is_function()) {
-        for (auto const& child_value : component_value.function().value) {
-            if (component_value_contains_nesting_selector(child_value))
-                return true;
-        }
-    }
+    if (component_value.is_function())
+        return component_value.function().value.contains(component_value_contains_nesting_selector);
 
     return false;
 }
@@ -48,6 +40,7 @@ static bool can_selector_use_fast_matches(Selector const& selector)
                 if (!first_is_one_of(pseudo_class,
                         PseudoClass::Active,
                         PseudoClass::AnyLink,
+                        PseudoClass::Autofill,
                         PseudoClass::Checked,
                         PseudoClass::Disabled,
                         PseudoClass::Empty,
@@ -156,33 +149,69 @@ void Selector::collect_ancestor_hashes()
         return false;
     };
 
-    auto last_combinator = m_compound_selectors.last().combinator;
-    for (ssize_t compound_selector_index = static_cast<ssize_t>(m_compound_selectors.size()) - 2; compound_selector_index >= 0; --compound_selector_index) {
-        auto const& compound_selector = m_compound_selectors[compound_selector_index];
-        if (last_combinator == Combinator::Descendant || last_combinator == Combinator::ImmediateChild) {
-            m_can_use_ancestor_filter = true;
-            for (auto const& simple_selector : compound_selector.simple_selectors) {
-                switch (simple_selector.type) {
-                case SimpleSelector::Type::Id:
-                case SimpleSelector::Type::Class:
-                    if (append_unique_hash(simple_selector.name().hash()))
-                        return;
-                    break;
-                case SimpleSelector::Type::TagName:
-                    if (append_unique_hash(simple_selector.qualified_name().name.lowercase_name.hash()))
-                        return;
-                    break;
-                case SimpleSelector::Type::Attribute:
-                    if (append_unique_hash(simple_selector.attribute().qualified_name.name.lowercase_name.hash()))
-                        return;
-                    break;
-                default:
-                    break;
-                }
+    auto append_hashes_from_compound = [&](CompoundSelector const& compound_selector) {
+        for (auto const& simple_selector : compound_selector.simple_selectors) {
+            switch (simple_selector.type) {
+            case SimpleSelector::Type::Id:
+            case SimpleSelector::Type::Class:
+                if (append_unique_hash(simple_selector.name().hash()))
+                    return true;
+                break;
+            case SimpleSelector::Type::TagName:
+                if (append_unique_hash(simple_selector.qualified_name().name.lowercase_name.hash()))
+                    return true;
+                break;
+            case SimpleSelector::Type::Attribute:
+                if (append_unique_hash(simple_selector.attribute().qualified_name.name.lowercase_name.hash()))
+                    return true;
+                break;
+            default:
+                break;
             }
         }
-        last_combinator = compound_selector.combinator;
+        return false;
+    };
+
+    // Walk from the compound immediately to the left of the subject toward the left.
+    // The combinator that connects `i` to `i+1` is stored on `i+1`.
+    auto combinator_to_right = m_compound_selectors.last().combinator;
+
+    // If we cross a sibling combinator, compounds further to the left are not ancestors of the subject,
+    // but they *are* ancestors of that sibling and therefore shared ancestors of the subject (since siblings
+    // share all ancestors above their parent). We can safely require tokens from those shared ancestors.
+    for (ssize_t i = static_cast<ssize_t>(m_compound_selectors.size()) - 2; i >= 0; --i) {
+        auto const& compound_selector = m_compound_selectors[i];
+
+        switch (combinator_to_right) {
+        case Combinator::Descendant:
+        case Combinator::ImmediateChild:
+            // This compound is on the ancestor axis (directly, or as a shared ancestor past a sibling boundary).
+            if (append_hashes_from_compound(compound_selector)) {
+                m_can_use_ancestor_filter = (next_hash_index > 0);
+                return;
+            }
+            break;
+
+        case Combinator::NextSibling:
+        case Combinator::SubsequentSibling:
+            // The compound immediately to the left is a sibling constraint, not an ancestor.
+            // Do not collect hashes from it.
+            break;
+
+        case Combinator::Column:
+        default:
+            // Not representable by the ancestor-hash filter.
+            next_hash_index = 0;
+            m_can_use_ancestor_filter = false;
+            for (auto& slot : m_ancestor_hashes)
+                slot = 0;
+            return;
+        }
+
+        combinator_to_right = compound_selector.combinator;
     }
+
+    m_can_use_ancestor_filter = (next_hash_index > 0);
 
     for (size_t i = next_hash_index; i < m_ancestor_hashes.size(); ++i)
         m_ancestor_hashes[i] = 0;
@@ -266,9 +295,14 @@ u32 Selector::specificity() const
                 ++tag_names;
                 break;
             case SimpleSelector::Type::PseudoElement:
+                // https://drafts.csswg.org/css-view-transitions-1/#named-view-transition-pseudo
+                // The specificity of a named view transition pseudo-element selector with a <custom-ident> argument is equivalent
+                // to a type selector. The specificity of a named view transition pseudo-element selector with a '*' argument is zero.
+                // NB: We just break before adding to the type (tag name) specificity in case this is a named view transition pseudo that uses '*'
+                if (first_is_one_of(simple_selector.pseudo_element().type(), CSS::PseudoElement::ViewTransitionGroup, CSS::PseudoElement::ViewTransitionImagePair, CSS::PseudoElement::ViewTransitionOld, CSS::PseudoElement::ViewTransitionNew) && simple_selector.pseudo_element().pt_name_selector().is_universal)
+                    break;
+
                 // count the number of type selectors and pseudo-elements in the selector (= C)
-                // FIXME: This needs special handling for view transition pseudos:
-                //        https://drafts.csswg.org/css-view-transitions-1/#named-view-transition-pseudo
                 ++tag_names;
                 break;
             case SimpleSelector::Type::Universal:
@@ -652,11 +686,9 @@ bool Selector::contains_unknown_webkit_pseudo_element() const
     for (auto const& compound_selector : m_compound_selectors) {
         for (auto const& simple_selector : compound_selector.simple_selectors) {
             if (simple_selector.type == SimpleSelector::Type::PseudoClass) {
-                for (auto const& child_selector : simple_selector.pseudo_class().argument_selector_list) {
-                    if (child_selector->contains_unknown_webkit_pseudo_element()) {
-                        return true;
-                    }
-                }
+                auto const& selector_list = simple_selector.pseudo_class().argument_selector_list;
+                if (selector_list.contains([](auto const& s) { return s->contains_unknown_webkit_pseudo_element(); }))
+                    return true;
             }
             if (simple_selector.type == SimpleSelector::Type::PseudoElement && simple_selector.pseudo_element().type() == PseudoElement::UnknownWebKit)
                 return true;

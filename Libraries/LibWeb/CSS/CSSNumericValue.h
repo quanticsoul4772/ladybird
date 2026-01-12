@@ -26,9 +26,6 @@ struct CSSNumericType {
     Optional<Bindings::CSSNumericBaseType> percent_hint;
 };
 
-// https://drafts.css-houdini.org/css-typed-om-1/#typedefdef-cssnumberish
-using CSSNumberish = Variant<double, GC::Root<CSSNumericValue>>;
-
 // https://drafts.css-houdini.org/css-typed-om-1/#cssnumericvalue-sum-value
 struct SumValueItem {
     double value;
@@ -50,10 +47,20 @@ public:
     };
     virtual ~CSSNumericValue() override = default;
 
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> add(Vector<CSSNumberish> const&);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> sub(Vector<CSSNumberish> const&);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> mul(Vector<CSSNumberish> const&);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> div(Vector<CSSNumberish> const&);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> min(Vector<CSSNumberish> const&);
+    WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> max(Vector<CSSNumberish> const&);
+
     bool equals_for_bindings(Vector<CSSNumberish>) const;
     virtual bool is_equal_numeric_value(GC::Ref<CSSNumericValue> other) const = 0;
 
     WebIDL::ExceptionOr<GC::Ref<CSSUnitValue>> to(FlyString const& unit) const;
+
+    CSSNumberish negate();
+    WebIDL::ExceptionOr<CSSNumberish> invert();
 
     virtual Optional<SumValue> create_a_sum_value() const = 0;
 
@@ -61,6 +68,7 @@ public:
     NumericType const& type() const { return m_type; }
 
     virtual WebIDL::ExceptionOr<String> to_string() const final override { return to_string({}); }
+    void serialize(StringBuilder&, SerializationParams const&) const;
     String to_string(SerializationParams const&) const;
 
     static WebIDL::ExceptionOr<GC::Ref<CSSNumericValue>> parse(JS::VM&, String const& css_text);

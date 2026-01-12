@@ -138,6 +138,8 @@ void Window::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_scrollbars);
     visitor.visit(m_statusbar);
     visitor.visit(m_toolbar);
+    for (auto& descriptor : m_cross_origin_property_descriptor_map)
+        descriptor.value.visit_edges(visitor);
 }
 
 void Window::finalize()
@@ -1312,7 +1314,9 @@ GC::Ref<CSS::CSSStyleProperties> Window::get_computed_style(DOM::Element& elemen
         // https://drafts.csswg.org/css-view-transitions-1/#update-pseudo-element-styles
         // This algorithm must be executed to update styles in user-agent origin if its effects can be observed by a web API.
         // NB: View transition pseudo-elements only ever originate from the document element and only ::view-transition-group() and its descendants can be affected by update_pseudo_element_styles().
-        if (element.is_document_element() && first_is_one_of(type.value().type(), CSS::PseudoElement::ViewTransitionGroup, CSS::PseudoElement::ViewTransitionImagePair, CSS::PseudoElement::ViewTransitionOld, CSS::PseudoElement::ViewTransitionNew)) {
+        if (element.is_document_element()
+            && first_is_one_of(type.value().type(), CSS::PseudoElement::ViewTransitionGroup, CSS::PseudoElement::ViewTransitionImagePair, CSS::PseudoElement::ViewTransitionOld, CSS::PseudoElement::ViewTransitionNew)
+            && element.document().active_view_transition()) {
             (void)element.document().active_view_transition()->update_pseudo_element_styles();
         }
     }
@@ -1470,30 +1474,37 @@ double Window::scroll_y() const
     return 0;
 }
 
-// https://w3c.github.io/csswg-drafts/cssom-view/#dom-window-scroll
-void Window::scroll(ScrollToOptions const& options)
+// https://drafts.csswg.org/cssom-view/#dom-window-scroll
+GC::Ref<WebIDL::Promise> Window::scroll(ScrollToOptions const& options)
 {
-    // 4. If there is no viewport, abort these steps.
+    // 4. If there is no viewport, return a resolved Promise and abort the remaining steps.
+    // AD-HOC: Done here as step 1 requires the viewport.
     auto navigable = associated_document().navigable();
     if (!navigable)
-        return;
+        return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
 
     // 1. If invoked with one argument, follow these substeps:
+    // NB: This Window::scroll() overload always has one argument.
 
-    // 1. Let options be the argument.
+    //    1. Let options be the argument.
     auto viewport_rect = navigable->viewport_rect().to_type<float>();
 
-    // 2. Let x be the value of the left dictionary member of options, if present, or the viewport’s current scroll
+    //    2. Let x be the value of the left dictionary member of options, if present, or the viewport’s current scroll
     //    position on the x axis otherwise.
     auto x = options.left.value_or(viewport_rect.x());
 
-    // 3. Let y be the value of the top dictionary member of options, if present, or the viewport’s current scroll
-    //    position on the y axis otherwise.
+    //    3. Let y be the value of the top dictionary member of options, if present, or the viewport’s current scroll
+    //       position on the y axis otherwise.
     auto y = options.top.value_or(viewport_rect.y());
+
+    // 2. If invoked with two arguments, follow these substeps:
+    // NB: Implemented by other Window::scroll() overload.
 
     // 3. Normalize non-finite values for x and y.
     x = HTML::normalize_non_finite_values(x);
     y = HTML::normalize_non_finite_values(y);
+
+    // AD-HOC: Step 4 is done at the start.
 
     // 5. Let viewport width be the width of the viewport excluding the width of the scroll bar, if any.
     auto viewport_width = viewport_rect.width();
@@ -1504,7 +1515,7 @@ void Window::scroll(ScrollToOptions const& options)
     auto const document = navigable->active_document();
     VERIFY(document);
 
-    // Make sure layout is up-to-date before looking at scrollable overflow metrics.
+    // NB: Make sure layout is up-to-date before looking at scrollable overflow metrics.
     document->update_layout(DOM::UpdateLayoutReason::WindowScroll);
 
     VERIFY(document->paintable_box());
@@ -1530,37 +1541,47 @@ void Window::scroll(ScrollToOptions const& options)
     auto position = Gfx::FloatPoint { x, y };
 
     // 10. If position is the same as the viewport’s current scroll position, and the viewport does not have an ongoing
-    //     smooth scroll, abort these steps.
-    if (position == viewport_rect.location())
-        return;
+    //     smooth scroll, return a resolved Promise and abort the remaining steps.
+    if (position == viewport_rect.location()) {
+        TemporaryExecutionContext temporary_execution_context { realm() };
+        return WebIDL::create_resolved_promise(realm(), JS::js_undefined());
+    }
 
     // 11. Let document be the viewport’s associated Document.
-    //     NOTE: document is already defined above.
+    // NB: document is already defined above.
 
     // 12. Perform a scroll of the viewport to position, document’s root element as the associated element, if there is
     //     one, or null otherwise, and the scroll behavior being the value of the behavior dictionary member of options.
-    navigable->perform_scroll_of_viewport({ x, y });
+    //     Let scrollPromise be the Promise returned from this step.
+    auto scroll_promise = navigable->perform_a_scroll_of_the_viewport({ x, y });
+
+    // 13. Return scrollPromise.
+    return scroll_promise;
 }
 
-// https://w3c.github.io/csswg-drafts/cssom-view/#dom-window-scroll
-void Window::scroll(double x, double y)
+// https://drafts.csswg.org/cssom-view/#dom-window-scroll
+GC::Ref<WebIDL::Promise> Window::scroll(double x, double y)
 {
+    // NB: This just implements step 2, and then forwards to the other Window::scroll() overload.
+
     // 2. If invoked with two arguments, follow these substeps:
 
-    // 1. Let options be null converted to a ScrollToOptions dictionary. [WEBIDL]
+    //    1. Let options be null converted to a ScrollToOptions dictionary. [WEBIDL]
     auto options = ScrollToOptions {};
 
-    // 2. Let x and y be the arguments, respectively.
-
+    //    2. Let x and y be the arguments, respectively.
     options.left = x;
     options.top = y;
 
-    scroll(options);
+    return scroll(options);
 }
 
-// https://w3c.github.io/csswg-drafts/cssom-view/#dom-window-scrollby
-void Window::scroll_by(ScrollToOptions options)
+// https://drafts.csswg.org/cssom-view/#dom-window-scrollby
+GC::Ref<WebIDL::Promise> Window::scroll_by(ScrollToOptions options)
 {
+    // 1. If invoked with two arguments, follow these substeps:
+    // NB: Implemented by the other overload, which then calls this.
+
     // 2. Normalize non-finite values for the left and top dictionary members of options.
     auto left = HTML::normalize_non_finite_values(options.left);
     auto top = HTML::normalize_non_finite_values(options.top);
@@ -1571,27 +1592,28 @@ void Window::scroll_by(ScrollToOptions options)
     // 4. Add the value of scrollY to the top dictionary member.
     options.top = top + scroll_y();
 
-    // 5. Act as if the scroll() method was invoked with options as the only argument.
-    scroll(options);
+    // 5. Return the Promise returned from scroll() after the method is invoked with options as the only argument.
+    return scroll(options);
 }
 
-// https://w3c.github.io/csswg-drafts/cssom-view/#dom-window-scrollby
-void Window::scroll_by(double x, double y)
+// https://drafts.csswg.org/cssom-view/#dom-window-scrollby
+GC::Ref<WebIDL::Promise> Window::scroll_by(double x, double y)
 {
     // 1. If invoked with two arguments, follow these substeps:
 
-    // 1. Let options be null converted to a ScrollToOptions dictionary. [WEBIDL]
+    //    1. Let options be null converted to a ScrollToOptions dictionary. [WEBIDL]
     auto options = ScrollToOptions {};
 
-    // 2. Let x and y be the arguments, respectively.
+    //    2. Let x and y be the arguments, respectively.
 
-    // 3. Let the left dictionary member of options have the value x.
+    //    3. Let the left dictionary member of options have the value x.
     options.left = x;
 
-    // 4. Let the top dictionary member of options have the value y.
+    //    4. Let the top dictionary member of options have the value y.
     options.top = y;
 
-    scroll_by(options);
+    // NB: Complete the algorithm using the other overload.
+    return scroll_by(options);
 }
 
 // https://w3c.github.io/csswg-drafts/cssom-view/#dom-window-screenx

@@ -26,6 +26,14 @@
 
 namespace Web::CSS {
 
+struct TransitionProperties {
+    Vector<PropertyID> properties;
+    double duration;
+    EasingFunction timing_function;
+    double delay;
+    TransitionBehavior transition_behavior;
+};
+
 enum class AnimatedPropertyResultOfTransition : u8 {
     No,
     Yes
@@ -98,6 +106,7 @@ public:
     CSSPixels text_underline_offset() const;
     TextUnderlinePosition text_underline_position() const;
     Vector<BackgroundLayerData> background_layers() const;
+    BackgroundBox background_color_clip() const;
     Length border_spacing_horizontal(Layout::Node const&) const;
     Length border_spacing_vertical(Layout::Node const&) const;
     CaptionSide caption_side() const;
@@ -205,18 +214,19 @@ public:
         FlyString name;
     };
     Vector<AnimationProperties> animations() const;
+    Vector<TransitionProperties> transitions() const;
 
     Display display_before_box_type_transformation() const;
     void set_display_before_box_type_transformation(Display value);
 
-    static Vector<Transformation> transformations_for_style_value(StyleValue const& value);
-    Vector<Transformation> transformations() const;
+    static Vector<NonnullRefPtr<TransformationStyleValue const>> transformations_for_style_value(StyleValue const& value);
+    Vector<NonnullRefPtr<TransformationStyleValue const>> transformations() const;
     TransformBox transform_box() const;
     TransformOrigin transform_origin() const;
     TransformStyle transform_style() const;
-    Optional<Transformation> rotate() const;
-    Optional<Transformation> translate() const;
-    Optional<Transformation> scale() const;
+    RefPtr<TransformationStyleValue const> rotate() const;
+    RefPtr<TransformationStyleValue const> translate() const;
+    RefPtr<TransformationStyleValue const> scale() const;
     Optional<CSSPixels> perspective() const;
     Position perspective_origin() const;
 
@@ -258,6 +268,7 @@ public:
 
     ScrollbarColorData scrollbar_color(Layout::NodeWithStyle const& layout_node) const;
     ScrollbarWidth scrollbar_width() const;
+    Resize resize() const;
 
     static NonnullRefPtr<Gfx::Font const> font_fallback(bool monospace, bool bold, float point_size);
 

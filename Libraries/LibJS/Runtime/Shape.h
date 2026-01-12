@@ -34,6 +34,11 @@ struct TransitionKey {
     {
         return property_key == other.property_key && attributes == other.attributes;
     }
+
+    void visit_edges(Cell::Visitor& visitor)
+    {
+        property_key.visit_edges(visitor);
+    }
 };
 
 class PrototypeChainValidity final : public Cell {
@@ -100,11 +105,6 @@ public:
     OrderedHashMap<PropertyKey, PropertyMetadata> const& property_table() const;
     u32 property_count() const { return m_property_count; }
 
-    struct Property {
-        PropertyKey key;
-        PropertyMetadata value;
-    };
-
     void set_prototype_without_transition(Object* new_prototype);
 
 private:
@@ -125,6 +125,13 @@ private:
 
     void ensure_property_table() const;
 
+    PropertyAttributes m_attributes { 0 };
+    TransitionType m_transition_type { TransitionType::Invalid };
+
+    bool m_dictionary : 1 { false };
+    bool m_cacheable : 1 { true };
+    bool m_is_prototype_shape : 1 { false };
+
     GC::Ref<Realm> m_realm;
 
     mutable OwnPtr<OrderedHashMap<PropertyKey, PropertyMetadata>> m_property_table;
@@ -140,14 +147,11 @@ private:
 
     u32 m_property_count { 0 };
     u32 m_dictionary_generation { 0 };
-
-    PropertyAttributes m_attributes { 0 };
-    TransitionType m_transition_type { TransitionType::Invalid };
-
-    bool m_dictionary : 1 { false };
-    bool m_cacheable : 1 { true };
-    bool m_is_prototype_shape : 1 { false };
 };
+
+#if !defined(AK_OS_WINDOWS)
+static_assert(sizeof(Shape) == 96, "Keep the size of JS::Shape down!");
+#endif
 
 }
 

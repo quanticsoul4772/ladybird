@@ -15,6 +15,7 @@
 #include <LibWeb/CSS/Length.h>
 #include <LibWeb/CSS/Number.h>
 #include <LibWeb/CSS/PercentageOr.h>
+#include <LibWeb/CSS/StyleValues/StyleValue.h>
 #include <LibWeb/CSS/URL.h>
 
 namespace Web::CSS {
@@ -31,7 +32,7 @@ struct DropShadow {
     LengthOrCalculated offset_x;
     LengthOrCalculated offset_y;
     Optional<LengthOrCalculated> radius;
-    Optional<Color> color;
+    ValueComparingRefPtr<StyleValue const> color;
     bool operator==(DropShadow const&) const = default;
 };
 
@@ -70,7 +71,7 @@ public:
 
     bool contains_url() const;
 
-    virtual String to_string(SerializationMode) const override;
+    virtual void serialize(StringBuilder&, SerializationMode) const override;
 
     virtual ~FilterValueListStyleValue() override = default;
 

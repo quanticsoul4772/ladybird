@@ -12,6 +12,7 @@ set(SOURCES
     Bytecode/Instruction.cpp
     Bytecode/Interpreter.cpp
     Bytecode/Label.cpp
+    Bytecode/PropertyKeyTable.cpp
     Bytecode/RegexTable.cpp
     Bytecode/ScopedOperand.cpp
     Bytecode/StringTable.cpp
@@ -64,6 +65,7 @@ set(SOURCES
     Runtime/BooleanObject.cpp
     Runtime/BooleanPrototype.cpp
     Runtime/BoundFunction.cpp
+    Runtime/ClassFieldDefinition.cpp
     Runtime/Completion.cpp
     Runtime/CompletionCell.cpp
     Runtime/ConsoleObjectPrototype.cpp

@@ -14,6 +14,7 @@
 #include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
 #include <AK/String.h>
+#include <AK/StringBuilder.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
 #include <AK/WeakPtr.h>
@@ -38,6 +39,7 @@ namespace Web::CSS {
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(BasicShape, basic_shape, BasicShapeStyleValue)                                   \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(BorderImageSlice, border_image_slice, BorderImageSliceStyleValue)                \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(BorderRadius, border_radius, BorderRadiusStyleValue)                             \
+    __ENUMERATE_CSS_STYLE_VALUE_TYPE(BorderRadiusRect, border_radius_rect, BorderRadiusRectStyleValue)                \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(Calculated, calculated, CalculatedStyleValue)                                    \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(ColorScheme, color_scheme, ColorSchemeStyleValue)                                \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(Color, color, ColorStyleValue)                                                   \
@@ -73,6 +75,7 @@ namespace Web::CSS {
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(Percentage, percentage, PercentageStyleValue)                                    \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(Position, position, PositionStyleValue)                                          \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(RadialGradient, radial_gradient, RadialGradientStyleValue)                       \
+    __ENUMERATE_CSS_STYLE_VALUE_TYPE(RadialSize, radial_size, RadialSizeStyleValue)                                   \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(RandomValueSharing, random_value_sharing, RandomValueSharingStyleValue)          \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(Ratio, ratio, RatioStyleValue)                                                   \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(Rect, rect, RectStyleValue)                                                      \
@@ -148,8 +151,6 @@ private:
     using RefPtr<T>::operator==;
 };
 
-using StyleValueVector = Vector<ValueComparingNonnullRefPtr<StyleValue const>>;
-
 struct ColorResolutionContext {
     Optional<PreferredColorScheme> color_scheme;
     Optional<Color> current_color;
@@ -212,7 +213,8 @@ public:
     virtual Optional<Color> to_color(ColorResolutionContext) const { return {}; }
     Keyword to_keyword() const;
 
-    virtual String to_string(SerializationMode) const = 0;
+    String to_string(SerializationMode) const;
+    virtual void serialize(StringBuilder&, SerializationMode) const = 0;
     virtual Vector<Parser::ComponentValue> tokenize() const;
     virtual GC::Ref<CSSStyleValue> reify(JS::Realm&, FlyString const& associated_property) const;
     virtual StyleValueVector subdivide_into_iterations(PropertyNameAndID const&) const;

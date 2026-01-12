@@ -63,14 +63,13 @@ elseif (CMAKE_SYSTEM_PROCESSOR STREQUAL "riscv64")
     # ISA or target string. Unfortunately hardware probing is also neither easy nor reliable at the moment.
     # For the time being use the defaults for the best compatibility with existing hardware and toolchains.
     # FIXME: Remove this branch once -march=native is supported.
-else()
+elseif (NOT CMAKE_CROSSCOMPILING)
     # In all other cases, compile for the native architecture of the host system.
     add_cxx_compile_options(-march=native)
 endif()
 
 # FIXME: Rework these flags to remove the suspicious ones.
 if (WIN32)
-    add_compile_options(-Wno-reinterpret-base-class)
     add_compile_options(-Wno-microsoft-unqualified-friend) # MSVC doesn't support unqualified friends
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS) # _s replacements not desired (or implemented on any other platform other than VxWorks)
     add_compile_definitions(_CRT_NONSTDC_NO_WARNINGS) # POSIX names are just fine, thanks

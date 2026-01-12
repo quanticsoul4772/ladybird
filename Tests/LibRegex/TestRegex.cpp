@@ -357,7 +357,7 @@ TEST_CASE(ini_file_entries)
     RegexResult result;
 
     if constexpr (REGEX_DEBUG) {
-        RegexDebug regex_dbg(stderr);
+        RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
         regex_dbg.print_raw_bytecode(re);
         regex_dbg.print_header();
         regex_dbg.print_bytecode(re);
@@ -406,7 +406,7 @@ TEST_CASE(named_capture_group)
     RegexResult result;
 
     if constexpr (REGEX_DEBUG) {
-        RegexDebug regex_dbg(stderr);
+        RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
         regex_dbg.print_raw_bytecode(re);
         regex_dbg.print_header();
         regex_dbg.print_bytecode(re);
@@ -417,10 +417,10 @@ TEST_CASE(named_capture_group)
     EXPECT_EQ(result.count, 2u);
     EXPECT_EQ(result.matches.at(0).view, "Opacity=255");
     EXPECT_EQ(result.capture_group_matches.at(0).at(0).view, "255");
-    EXPECT_EQ(re.parser_result.bytecode.get_string(result.capture_group_matches.at(0).at(0).capture_group_name), "Test");
+    EXPECT_EQ(re.parser_result.bytecode.visit([&](auto& bytecode) { return bytecode.get_string(result.capture_group_matches.at(0).at(0).capture_group_name); }), "Test");
     EXPECT_EQ(result.matches.at(1).view, "AudibleBeep=0");
     EXPECT_EQ(result.capture_group_matches.at(1).at(0).view, "0");
-    EXPECT_EQ(re.parser_result.bytecode.get_string(result.capture_group_matches.at(1).at(0).capture_group_name), "Test");
+    EXPECT_EQ(re.parser_result.bytecode.visit([&](auto& bytecode) { return bytecode.get_string(result.capture_group_matches.at(1).at(0).capture_group_name); }), "Test");
 }
 
 TEST_CASE(ecma262_named_capture_group_with_dollar_sign)
@@ -429,7 +429,7 @@ TEST_CASE(ecma262_named_capture_group_with_dollar_sign)
     RegexResult result;
 
     if constexpr (REGEX_DEBUG) {
-        RegexDebug regex_dbg(stderr);
+        RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
         regex_dbg.print_raw_bytecode(re);
         regex_dbg.print_header();
         regex_dbg.print_bytecode(re);
@@ -440,10 +440,10 @@ TEST_CASE(ecma262_named_capture_group_with_dollar_sign)
     EXPECT_EQ(result.count, 2u);
     EXPECT_EQ(result.matches.at(0).view, "Opacity=255");
     EXPECT_EQ(result.capture_group_matches.at(0).at(0).view, "255");
-    EXPECT_EQ(re.parser_result.bytecode.get_string(result.capture_group_matches.at(0).at(0).capture_group_name), "$Test$");
+    EXPECT_EQ(re.parser_result.bytecode.visit([&](auto& bytecode) { return bytecode.get_string(result.capture_group_matches.at(0).at(0).capture_group_name); }), "$Test$");
     EXPECT_EQ(result.matches.at(1).view, "AudibleBeep=0");
     EXPECT_EQ(result.capture_group_matches.at(1).at(0).view, "0");
-    EXPECT_EQ(re.parser_result.bytecode.get_string(result.capture_group_matches.at(1).at(0).capture_group_name), "$Test$");
+    EXPECT_EQ(re.parser_result.bytecode.visit([&](auto& bytecode) { return bytecode.get_string(result.capture_group_matches.at(1).at(0).capture_group_name); }), "$Test$");
 }
 
 TEST_CASE(a_star)
@@ -452,7 +452,7 @@ TEST_CASE(a_star)
     RegexResult result;
 
     if constexpr (REGEX_DEBUG) {
-        RegexDebug regex_dbg(stderr);
+        RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
         regex_dbg.print_raw_bytecode(re);
         regex_dbg.print_header();
         regex_dbg.print_bytecode(re);
@@ -581,11 +581,18 @@ TEST_CASE(ECMA262_parse)
         { "a{9007199254740991}"sv }, // 2^53 - 1
         { "a{9007199254740991,}"sv },
         { "a{9007199254740991,9007199254740991}"sv },
-        { "a{9007199254740992}"sv, regex::Error::InvalidBraceContent },
-        { "a{9007199254740992,}"sv, regex::Error::InvalidBraceContent },
-        { "a{9007199254740991,9007199254740992}"sv, regex::Error::InvalidBraceContent },
-        { "a{9007199254740992,9007199254740991}"sv, regex::Error::InvalidBraceContent },
-        { "a{9007199254740992,9007199254740992}"sv, regex::Error::InvalidBraceContent },
+        { "a{9007199254740992}"sv },
+        { "a{9007199254740992,}"sv },
+        { "a{9007199254740991,9007199254740992}"sv },
+        { "a{9007199254740992,9007199254740991}"sv },
+        { "a{9007199254740992,9007199254740992}"sv },
+        { "a{1,99999999999999999999999999999999999999999999999999}"sv },
+        { "a{99999999999999999999999999999999999999999999999999,1}"sv, regex::Error::InvalidBraceContent },
+        { "a{99999999999999999999999999999999999999999999999999}"sv },
+        { "a{2147483647}"sv }, // 2^31 - 1
+        { "a{2147483648}"sv }, // 2^31
+        { "a{2147483648,2147483647}"sv },
+        { "a{2147483647,2147483646}"sv, regex::Error::InvalidBraceContent },
         { "(?<a>a)(?<a>b)"sv, regex::Error::DuplicateNamedCapture },
         { "(?<a>a)(?<b>b)(?<a>c)"sv, regex::Error::DuplicateNamedCapture },
         { "(?<a>(?<a>a))"sv, regex::Error::DuplicateNamedCapture },
@@ -608,7 +615,7 @@ TEST_CASE(ECMA262_parse)
         EXPECT_EQ(re.parser_result.error, test.expected_error);
         if constexpr (REGEX_DEBUG) {
             dbgln("\n");
-            RegexDebug regex_dbg(stderr);
+            RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
             regex_dbg.print_raw_bytecode(re);
             regex_dbg.print_header();
             regex_dbg.print_bytecode(re);
@@ -741,13 +748,19 @@ TEST_CASE(ECMA262_match)
         // Optimizer bug: nested 'or' compare ops caused a crash, ladybird#6647.
         { "([[[]]])*0"sv, ""sv, false, ECMAScriptFlags::UnicodeSets },
         { "(([[[]]]{2,})\\s)*"sv, ""sv, true, (ECMAScriptFlags::UnicodeSets | ECMAScriptFlags::Global).value() },
+        // Optimizer bug: duplicated rseekto ops output for the same fork.
+        { "(.*a)?(x)"sv, "x"sv, true },
+        // Optimizer bug: invalid forkif jump target calculation in tree-layout alternatives
+        { "ab|a(?:^|x)"sv, "ab"sv, true },
+        // Optimizer bug: process rseekto candidates in the correct order.
+        { "(.*)/client-(.*)\\.js$"sv, "/client-abc.js"sv, true },
     };
 
     for (auto& test : tests) {
         Regex<ECMA262> re(test.pattern, test.options);
         if constexpr (REGEX_DEBUG) {
             dbgln("\n");
-            RegexDebug regex_dbg(stderr);
+            RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
             regex_dbg.print_raw_bytecode(re);
             regex_dbg.print_header();
             regex_dbg.print_bytecode(re);
@@ -755,6 +768,57 @@ TEST_CASE(ECMA262_match)
         }
         EXPECT_EQ(re.parser_result.error, regex::Error::NoError);
         EXPECT_EQ(re.match(test.subject).success, test.matches);
+    }
+}
+
+TEST_CASE(lookbehind)
+{
+    struct _test {
+        StringView pattern;
+        StringView subject;
+        bool matches { true };
+        ECMAScriptFlags options {};
+    };
+    constexpr _test tests[] {
+        { "(?<=(ab|abc))d"sv, "abcd"sv, true, (ECMAScriptFlags)regex::AllFlags::Global },
+        { "(?<=a.*)b"sv, "a b"sv, true, (ECMAScriptFlags)regex::AllFlags::Global },
+        { "(?<=[a|b|c]*)[^a|b|c]{3}"sv, "abcdef"sv, true, (ECMAScriptFlags)regex::AllFlags::Global },
+        { "(?<=\\b)\\b"sv, "ab"sv, true, (ECMAScriptFlags)regex::AllFlags::Global },
+    };
+
+    for (auto& test : tests) {
+        Regex<ECMA262> re(test.pattern, test.options);
+        if constexpr (REGEX_DEBUG) {
+            dbgln("\n");
+            RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
+            regex_dbg.print_raw_bytecode(re);
+            regex_dbg.print_header();
+            regex_dbg.print_bytecode(re);
+            dbgln("\n");
+        }
+        EXPECT_EQ(re.parser_result.error, regex::Error::NoError);
+        EXPECT_EQ(re.match(test.subject).success, test.matches);
+    }
+
+    struct _captureTest {
+        StringView pattern;
+        StringView subject;
+        size_t capture_index;
+        StringView expected_match;
+        ECMAScriptFlags options {};
+    };
+
+    constexpr _captureTest capture_tests[] {
+        { "(?<=(a|cc))b"sv, "ccb"sv, 0, "cc"sv, ECMAScriptFlags::Global },
+        { "((?<=\\b)[d-f]{3})"sv, "abc def"sv, 0, "def"sv, (ECMAScriptFlags)regex::AllFlags::Global },
+        { "(?<=(b+))c"sv, "abbbbbbc"sv, 0, "bbbbbb"sv, ECMAScriptFlags::Global },
+        { "(?<=((?:b\\d{2})+))c"sv, "ab12b23b34c"sv, 0, "b12b23b34"sv, ECMAScriptFlags::Global },
+    };
+
+    for (auto& test : capture_tests) {
+        Regex<ECMA262> re(test.pattern, test.options);
+        auto result = re.match(test.subject);
+        EXPECT_EQ(result.capture_group_matches.first()[test.capture_index].view.to_byte_string(), test.expected_match);
     }
 }
 
@@ -843,7 +907,7 @@ TEST_CASE(ECMA262_unicode_match)
 
         if constexpr (REGEX_DEBUG) {
             dbgln("\n");
-            RegexDebug regex_dbg(stderr);
+            RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
             regex_dbg.print_raw_bytecode(re);
             regex_dbg.print_header();
             regex_dbg.print_bytecode(re);
@@ -865,6 +929,14 @@ TEST_CASE(ECMA262_unicode_sets_parser_error)
     constexpr _test tests[] {
         { "[[]"sv, regex::Error::InvalidPattern },
         { "[[x[]]]"sv, regex::Error::NoError }, // #23691, should not crash on empty charclass within AndOr.
+        { "[[^\\u0430-\\u044f][\\p{RGI_Emoji}]]"sv, regex::Error::NoError },
+        { "[^[[\\p{RGI_Emoji}]--[A-Z]]]"sv, regex::Error::NegatedCharacterClassStrings },
+        { "[^[^\\p{RGI_Emoji}]]"sv, regex::Error::NegatedCharacterClassStrings },
+        { "[\\[]"sv, regex::Error::NoError },
+        { "[\\[\\]]"sv, regex::Error::NoError },
+        { "[\\S[\\[]]"sv, regex::Error::NoError },
+        { "[\\S&&[\\[]]"sv, regex::Error::NoError },
+        { "[\\S--[\\[]]"sv, regex::Error::NoError },
     };
 
     for (auto test : tests) {
@@ -901,7 +973,7 @@ TEST_CASE(ECMA262_unicode_sets_match)
         Regex<ECMA262> re(test.pattern, (ECMAScriptFlags)regex::AllFlags::UnicodeSets | test.options);
         if constexpr (REGEX_DEBUG) {
             dbgln("\n");
-            RegexDebug regex_dbg(stderr);
+            RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
             regex_dbg.print_raw_bytecode(re);
             regex_dbg.print_header();
             regex_dbg.print_bytecode(re);
@@ -977,7 +1049,7 @@ TEST_CASE(ECMA262_property_match)
 
         if constexpr (REGEX_DEBUG) {
             dbgln("\n");
-            RegexDebug regex_dbg(stderr);
+            RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
             regex_dbg.print_raw_bytecode(re);
             regex_dbg.print_header();
             regex_dbg.print_bytecode(re);
@@ -1011,7 +1083,7 @@ TEST_CASE(replace)
         Regex<ECMA262> re(test.pattern, test.options);
         if constexpr (REGEX_DEBUG) {
             dbgln("\n");
-            RegexDebug regex_dbg(stderr);
+            RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
             regex_dbg.print_raw_bytecode(re);
             regex_dbg.print_header();
             regex_dbg.print_bytecode(re);
@@ -1144,7 +1216,7 @@ TEST_CASE(optimizer_char_class_lut)
 
     if constexpr (REGEX_DEBUG) {
         dbgln("\n");
-        RegexDebug regex_dbg(stderr);
+        RegexDebug<regex::FlatByteCode> regex_dbg(stderr);
         regex_dbg.print_raw_bytecode(re);
         regex_dbg.print_header();
         regex_dbg.print_bytecode(re);
@@ -1310,6 +1382,15 @@ TEST_CASE(inversion_state_in_char_class)
 
         auto result = re.match("\n"sv);
         EXPECT_EQ(result.success, false);
+    }
+    {
+        // /[^\S]/ should match whitespace characters
+        Regex<ECMA262> re("[^\\S]", ECMAScriptFlags::Global | (ECMAScriptFlags)regex::AllFlags::SingleMatch);
+
+        auto result = re.match("\t"sv);
+        EXPECT_EQ(result.success, true);
+        EXPECT_EQ(result.matches.size(), 1u);
+        EXPECT_EQ(result.matches.first().view.to_byte_string(), "\t"sv);
     }
 }
 

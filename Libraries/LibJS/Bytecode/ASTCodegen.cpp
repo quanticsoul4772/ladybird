@@ -268,6 +268,11 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> BinaryExpression::gener
         generator.emit<Bytecode::Op::BitwiseAnd>(dst, lhs, rhs);
         break;
     case BinaryOp::BitwiseOr:
+        if (rhs.operand().is_constant() && generator.get_constant(rhs).is_int32() && generator.get_constant(rhs).as_i32() == 0) {
+            // OPTIMIZATION: x | 0 == ToInt32(x)
+            generator.emit<Bytecode::Op::ToInt32>(dst, lhs);
+            break;
+        }
         generator.emit<Bytecode::Op::BitwiseOr>(dst, lhs, rhs);
         break;
     case BinaryOp::BitwiseXor:
@@ -651,11 +656,11 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> AssignmentExpression::g
                         else
                             generator.emit_put_by_value_with_this(*base, *computed_property, *this_value, rval, PutKind::Normal);
                     } else if (expression.property().is_identifier()) {
-                        auto identifier_table_ref = generator.intern_identifier(as<Identifier>(expression.property()).string());
+                        auto property_key_table_index = generator.intern_property_key(as<Identifier>(expression.property()).string());
                         if (!lhs_is_super_expression)
-                            generator.emit_put_by_id(*base, identifier_table_ref, rval, Bytecode::PutKind::Normal, generator.next_property_lookup_cache(), move(base_identifier));
+                            generator.emit_put_by_id(*base, property_key_table_index, rval, Bytecode::PutKind::Normal, generator.next_property_lookup_cache(), move(base_identifier));
                         else
-                            generator.emit<Bytecode::Op::PutNormalByIdWithThis>(*base, *this_value, identifier_table_ref, rval, generator.next_property_lookup_cache());
+                            generator.emit<Bytecode::Op::PutNormalByIdWithThis>(*base, *this_value, property_key_table_index, rval, generator.next_property_lookup_cache());
                     } else if (expression.property().is_private_identifier()) {
                         auto identifier_table_ref = generator.intern_identifier(as<PrivateIdentifier>(expression.property()).string());
                         generator.emit<Bytecode::Op::PutPrivateById>(*base, identifier_table_ref, rval);
@@ -1146,12 +1151,28 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> ObjectExpression::gener
 
     auto object = choose_dst(generator, preferred_dst);
 
-    generator.emit<Bytecode::Op::NewObject>(object);
+    // Determine if this is a simple object literal (all KeyValue with StringLiteral keys)
+    // Simple literals can benefit from shape caching with direct property offset writes.
+    bool is_simple = !m_properties.is_empty();
+    for (auto& property : m_properties) {
+        if (property->type() != ObjectProperty::Type::KeyValue || !is<StringLiteral>(property->key())) {
+            is_simple = false;
+            break;
+        }
+    }
+
+    Optional<u32> shape_cache_index;
+    if (is_simple)
+        shape_cache_index = generator.next_object_shape_cache();
+
+    generator.emit<Bytecode::Op::NewObject>(object, shape_cache_index.value_or(NumericLimits<u32>::max()));
+
     if (m_properties.is_empty())
         return object;
 
     generator.push_home_object(object);
 
+    u32 property_slot = 0;
     for (auto& property : m_properties) {
         Bytecode::PutKind property_kind;
         switch (property->type()) {
@@ -1174,7 +1195,6 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> ObjectExpression::gener
 
         if (is<StringLiteral>(property->key())) {
             auto& string_literal = static_cast<StringLiteral const&>(property->key());
-            Bytecode::IdentifierTableIndex key_name = generator.intern_identifier(string_literal.value());
 
             Optional<ScopedOperand> value;
             if (property_kind == Bytecode::PutKind::Prototype) {
@@ -1187,19 +1207,30 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> ObjectExpression::gener
                     identifier = Utf16String::formatted("set {}", identifier);
 
                 auto name = generator.intern_identifier(identifier);
-                value = TRY(generator.emit_named_evaluation_if_anonymous_function(property->value(), name));
+                value = TRY(generator.emit_named_evaluation_if_anonymous_function(property->value(), name, {}, property->is_method()));
             }
 
-            generator.emit_put_by_id(object, key_name, *value, property_kind, generator.next_property_lookup_cache());
+            auto property_key_table_index = generator.intern_property_key(string_literal.value());
+
+            // For simple object literals, use InitObjectLiteralProperty for direct offset writes
+            if (is_simple) {
+                generator.emit<Bytecode::Op::InitObjectLiteralProperty>(object, property_key_table_index, *value, *shape_cache_index, property_slot++);
+            } else {
+                generator.emit_put_by_id(object, property_key_table_index, *value, property_kind, generator.next_property_lookup_cache());
+            }
         } else {
             auto property_name = TRY(property->key().generate_bytecode(generator)).value();
-            auto value = TRY(property->value().generate_bytecode(generator)).value();
+            auto value = TRY(generator.emit_named_evaluation_if_anonymous_function(property->value(), {}, {}, property->is_method()));
 
             generator.emit_put_by_value(object, property_name, value, property_kind, {});
         }
     }
 
     generator.pop_home_object();
+
+    if (shape_cache_index.has_value())
+        generator.emit<Bytecode::Op::CacheObjectShape>(object, *shape_cache_index);
+
     return object;
 }
 
@@ -1280,7 +1311,7 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> FunctionDeclaration::ge
     return Optional<ScopedOperand> {};
 }
 
-Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> FunctionExpression::generate_bytecode_with_lhs_name(Bytecode::Generator& generator, Optional<Bytecode::IdentifierTableIndex> lhs_name, Optional<ScopedOperand> preferred_dst) const
+Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> FunctionExpression::generate_bytecode_with_lhs_name(Bytecode::Generator& generator, Optional<Bytecode::IdentifierTableIndex> lhs_name, Optional<ScopedOperand> preferred_dst, bool is_method) const
 {
     Bytecode::Generator::SourceLocationScope scope(generator, *this);
     bool has_name = !name().is_empty();
@@ -1294,7 +1325,7 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> FunctionExpression::gen
     }
 
     auto new_function = choose_dst(generator, preferred_dst);
-    generator.emit_new_function(new_function, *this, lhs_name);
+    generator.emit_new_function(new_function, *this, lhs_name, is_method);
 
     if (has_name) {
         generator.emit<Bytecode::Op::InitializeLexicalBinding>(*name_identifier, new_function);
@@ -1349,7 +1380,7 @@ static Bytecode::CodeGenerationErrorOr<void> generate_object_binding_pattern_byt
             if (has_rest) {
                 excluded_property_names.append(generator.add_constant(PrimitiveString::create(generator.vm(), identifier)));
             }
-            generator.emit_get_by_id(value, object, generator.intern_identifier(identifier));
+            generator.emit_get_by_id(value, object, generator.intern_property_key(identifier));
         } else {
             auto expression = name.get<NonnullRefPtr<Expression const>>();
             auto property_name = TRY(expression->generate_bytecode(generator)).value();
@@ -1685,8 +1716,8 @@ static Bytecode::CodeGenerationErrorOr<BaseAndValue> get_base_and_value_from_mem
             generator.emit_get_by_value_with_this(value, super_base, *computed_property, this_value);
         } else {
             // 3. Let propertyKey be StringValue of IdentifierName.
-            auto identifier_table_ref = generator.intern_identifier(as<Identifier>(member_expression.property()).string());
-            generator.emit_get_by_id_with_this(value, super_base, identifier_table_ref, this_value);
+            auto property_key_table_index = generator.intern_property_key(as<Identifier>(member_expression.property()).string());
+            generator.emit_get_by_id_with_this(value, super_base, property_key_table_index, this_value);
         }
 
         return BaseAndValue { this_value, value };
@@ -1704,7 +1735,7 @@ static Bytecode::CodeGenerationErrorOr<BaseAndValue> get_base_and_value_from_mem
             generator.intern_identifier(as<PrivateIdentifier>(member_expression.property()).string()));
     } else {
         auto base_identifier = generator.intern_identifier_for_expression(member_expression.object());
-        generator.emit_get_by_id(value, base, generator.intern_identifier(as<Identifier>(member_expression.property()).string()), move(base_identifier));
+        generator.emit_get_by_id(value, base, generator.intern_property_key(as<Identifier>(member_expression.property()).string()), move(base_identifier));
     }
 
     return BaseAndValue { base, value };
@@ -2027,10 +2058,8 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> YieldExpression::genera
         generator.switch_to_basic_block(type_is_normal_block);
 
         // i. Let innerResult be ? Call(iteratorRecord.[[NextMethod]], iteratorRecord.[[Iterator]], « received.[[Value]] »).
-        auto array = generator.allocate_register();
-        generator.emit_with_extra_operand_slots<Bytecode::Op::NewArray>(1, array, ReadonlySpan<ScopedOperand> { &received_completion_value, 1 });
         auto inner_result = generator.allocate_register();
-        generator.emit<Bytecode::Op::CallWithArgumentArray>(inner_result, next_method, iterator, array, OptionalNone {});
+        generator.emit_with_extra_operand_slots<Bytecode::Op::Call>(1, inner_result, next_method, iterator, OptionalNone {}, ReadonlySpan<ScopedOperand> { &received_completion_value, 1 });
 
         // ii. If generatorKind is async, set innerResult to ? Await(innerResult).
         if (generator.is_in_async_generator_function()) {
@@ -2104,7 +2133,7 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> YieldExpression::genera
 
         // i. Let throw be ? GetMethod(iterator, "throw").
         auto throw_method = generator.allocate_register();
-        generator.emit<Bytecode::Op::GetMethod>(throw_method, iterator, generator.intern_identifier("throw"_utf16_fly_string));
+        generator.emit<Bytecode::Op::GetMethod>(throw_method, iterator, generator.intern_property_key("throw"_utf16_fly_string));
 
         // ii. If throw is not undefined, then
         auto& throw_method_is_defined_block = generator.make_block();
@@ -2117,9 +2146,7 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> YieldExpression::genera
         generator.switch_to_basic_block(throw_method_is_defined_block);
 
         // 1. Let innerResult be ? Call(throw, iterator, « received.[[Value]] »).
-        auto received_value_array = generator.allocate_register();
-        generator.emit_with_extra_operand_slots<Bytecode::Op::NewArray>(1, received_value_array, ReadonlySpan<ScopedOperand> { &received_completion_value, 1 });
-        generator.emit<Bytecode::Op::CallWithArgumentArray>(inner_result, throw_method, iterator, received_value_array, OptionalNone {});
+        generator.emit_with_extra_operand_slots<Bytecode::Op::Call>(1, inner_result, throw_method, iterator, OptionalNone {}, ReadonlySpan<ScopedOperand> { &received_completion_value, 1 });
 
         // 2. If generatorKind is async, set innerResult to ? Await(innerResult).
         if (generator.is_in_async_generator_function()) {
@@ -2189,7 +2216,7 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> YieldExpression::genera
 
         // ii. Let return be ? GetMethod(iterator, "return").
         auto return_method = generator.allocate_register();
-        generator.emit<Bytecode::Op::GetMethod>(return_method, iterator, generator.intern_identifier("return"_utf16_fly_string));
+        generator.emit<Bytecode::Op::GetMethod>(return_method, iterator, generator.intern_property_key("return"_utf16_fly_string));
 
         // iii. If return is undefined, then
         auto& return_is_undefined_block = generator.make_block();
@@ -2213,10 +2240,8 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> YieldExpression::genera
         generator.switch_to_basic_block(return_is_defined_block);
 
         // iv. Let innerReturnResult be ? Call(return, iterator, « received.[[Value]] »).
-        auto call_array = generator.allocate_register();
-        generator.emit_with_extra_operand_slots<Bytecode::Op::NewArray>(1, call_array, ReadonlySpan<ScopedOperand> { &received_completion_value, 1 });
         auto inner_return_result = generator.allocate_register();
-        generator.emit<Bytecode::Op::CallWithArgumentArray>(inner_return_result, return_method, iterator, call_array, OptionalNone {});
+        generator.emit_with_extra_operand_slots<Bytecode::Op::Call>(1, inner_return_result, return_method, iterator, OptionalNone {}, ReadonlySpan<ScopedOperand> { &received_completion_value, 1 });
 
         // v. If generatorKind is async, set innerReturnResult to ? Await(innerReturnResult).
         if (generator.is_in_async_generator_function()) {
@@ -2488,72 +2513,45 @@ Bytecode::CodeGenerationErrorOr<Optional<ScopedOperand>> TaggedTemplateLiteral::
         return TagAndThisValue { .tag = tag, .this_value = generator.add_constant(js_undefined()) };
     }());
 
-    // FIXME: Follow
-    //        13.2.8.3 GetTemplateObject ( templateLiteral ), https://tc39.es/ecma262/#sec-gettemplateobject
-    //        more closely, namely:
-    //        * cache this somehow
-    //        * add a raw object accessor
-    //        * freeze array and raw member
+    // 13.2.8.4 GetTemplateObject ( templateLiteral ), https://tc39.es/ecma262/#sec-gettemplateobject
     Vector<ScopedOperand> string_regs;
     auto& expressions = m_template_literal->expressions();
 
-    for (size_t i = 0; i < expressions.size(); ++i) {
-        if (i % 2 != 0)
-            continue;
+    for (size_t i = 0; i < expressions.size(); i += 2) {
         // NOTE: If the string contains invalid escapes we get a null expression here,
         //       which we then convert to the expected `undefined` TV. See
         //       12.9.6.1 Static Semantics: TV, https://tc39.es/ecma262/#sec-static-semantics-tv
-        auto string_reg = generator.allocate_register();
         if (is<NullLiteral>(expressions[i])) {
-            generator.emit_mov(string_reg, generator.add_constant(js_undefined()));
+            string_regs.append(generator.add_constant(js_undefined()));
         } else {
             auto value = TRY(expressions[i]->generate_bytecode(generator)).value();
-            generator.emit_mov(string_reg, value);
+            string_regs.append(move(value));
         }
-        string_regs.append(move(string_reg));
+    }
+
+    auto& raw_strings = m_template_literal->raw_strings();
+    for (auto const& raw_string : raw_strings) {
+        auto value = TRY(raw_string->generate_bytecode(generator)).value();
+        string_regs.append(move(value));
     }
 
     auto strings_array = generator.allocate_register();
-    if (string_regs.is_empty()) {
-        generator.emit<Bytecode::Op::NewArray>(strings_array, ReadonlySpan<ScopedOperand> {});
-    } else {
-        generator.emit_with_extra_operand_slots<Bytecode::Op::NewArray>(string_regs.size(), strings_array, string_regs);
-    }
+    generator.emit_with_extra_operand_slots<Bytecode::Op::GetTemplateObject>(
+        string_regs.size(),
+        strings_array,
+        generator.next_template_object_cache(),
+        string_regs);
 
     Vector<ScopedOperand> argument_regs;
     argument_regs.append(strings_array);
 
     for (size_t i = 1; i < expressions.size(); i += 2) {
-        auto string_reg = generator.allocate_register();
-        auto string = TRY(expressions[i]->generate_bytecode(generator)).value();
-        generator.emit_mov(string_reg, string);
-        argument_regs.append(move(string_reg));
+        auto argument = TRY(expressions[i]->generate_bytecode(generator)).value();
+        argument_regs.append(move(argument));
     }
-
-    Vector<ScopedOperand> raw_string_regs;
-    raw_string_regs.ensure_capacity(m_template_literal->raw_strings().size());
-    for (auto& raw_string : m_template_literal->raw_strings()) {
-        auto value = TRY(raw_string->generate_bytecode(generator)).value();
-        raw_string_regs.append(generator.copy_if_needed_to_preserve_evaluation_order(value));
-    }
-
-    auto raw_strings_array = generator.allocate_register();
-    if (raw_string_regs.is_empty()) {
-        generator.emit<Bytecode::Op::NewArray>(raw_strings_array, ReadonlySpan<ScopedOperand> {});
-    } else {
-        generator.emit_with_extra_operand_slots<Bytecode::Op::NewArray>(raw_string_regs.size(), raw_strings_array, raw_string_regs);
-    }
-
-    generator.emit_put_by_id(strings_array, generator.intern_identifier("raw"_utf16_fly_string), raw_strings_array, Bytecode::PutKind::Normal, generator.next_property_lookup_cache());
-
-    auto arguments = generator.allocate_register();
-    if (!argument_regs.is_empty())
-        generator.emit_with_extra_operand_slots<Bytecode::Op::NewArray>(argument_regs.size(), arguments, argument_regs);
-    else
-        generator.emit<Bytecode::Op::NewArray>(arguments, ReadonlySpan<ScopedOperand> {});
 
     auto dst = choose_dst(generator, preferred_dst);
-    generator.emit<Bytecode::Op::CallWithArgumentArray>(dst, tag, this_value, arguments, OptionalNone {});
+    generator.emit_with_extra_operand_slots<Bytecode::Op::Call>(argument_regs.size(), dst, tag, this_value, OptionalNone {}, argument_regs);
     return dst;
 }
 
@@ -3531,7 +3529,7 @@ static Bytecode::CodeGenerationErrorOr<void> generate_optional_chain(Bytecode::G
             },
             [&](OptionalChain::MemberReference const& ref) -> Bytecode::CodeGenerationErrorOr<void> {
                 generator.emit_mov(current_base, current_value);
-                generator.emit_get_by_id(current_value, current_value, generator.intern_identifier(ref.identifier->string()));
+                generator.emit_get_by_id(current_value, current_value, generator.intern_property_key(ref.identifier->string()));
                 return {};
             },
             [&](OptionalChain::PrivateMemberReference const& ref) -> Bytecode::CodeGenerationErrorOr<void> {

@@ -701,6 +701,14 @@ void initialize_main_thread_vm(AgentType type)
 
         return default_host_resize_array_buffer(buffer, new_byte_length);
     };
+
+    s_main_thread_vm->host_grow_shared_array_buffer = [default_host_grow_shared_array_buffer = move(s_main_thread_vm->host_grow_shared_array_buffer)](JS::ArrayBuffer& buffer, size_t new_byte_length) -> JS::ThrowCompletionOr<JS::HandledByHost> {
+        auto wasm_handled = TRY(WebAssembly::Detail::host_grow_shared_array_buffer(*s_main_thread_vm, buffer, new_byte_length));
+        if (wasm_handled == JS::HandledByHost::Handled)
+            return JS::HandledByHost::Handled;
+
+        return default_host_grow_shared_array_buffer(buffer, new_byte_length);
+    };
 }
 
 JS::VM& main_thread_vm()
@@ -710,7 +718,7 @@ JS::VM& main_thread_vm()
 }
 
 // https://dom.spec.whatwg.org/#queue-a-mutation-observer-compound-microtask
-void queue_mutation_observer_microtask(DOM::Document const& document)
+void queue_mutation_observer_microtask()
 {
     auto& vm = main_thread_vm();
     auto& surrounding_agent = as<HTML::SimilarOriginWindowAgent>(*vm.agent());
@@ -723,9 +731,7 @@ void queue_mutation_observer_microtask(DOM::Document const& document)
     surrounding_agent.mutation_observer_microtask_queued = true;
 
     // 3. Queue a microtask to notify mutation observers.
-    // NOTE: This uses the implied document concept. In the case of mutation observers, it is always done in a node
-    //       context, so document should be that node's document.
-    HTML::queue_a_microtask(&document, GC::create_function(vm.heap(), [&surrounding_agent, &heap = document.heap()]() {
+    HTML::queue_a_microtask(nullptr, GC::create_function(vm.heap(), [&surrounding_agent]() {
         // https://dom.spec.whatwg.org/#notify-mutation-observers
         // 1. Set the surrounding agent’s mutation observer microtask queued to false.
         surrounding_agent.mutation_observer_microtask_queued = false;
@@ -809,12 +815,14 @@ NonnullOwnPtr<JS::ExecutionContext> create_a_new_javascript_realm(JS::VM& vm, Fu
 }
 
 // https://html.spec.whatwg.org/multipage/custom-elements.html#invoke-custom-element-reactions
-void invoke_custom_element_reactions(Vector<GC::Root<DOM::Element>>& element_queue)
+void invoke_custom_element_reactions(Vector<GC::Weak<DOM::Element>>& element_queue)
 {
     // 1. While queue is not empty:
     while (!element_queue.is_empty()) {
         // 1. Let element be the result of dequeuing from queue.
         auto element = element_queue.take_first();
+        if (!element)
+            continue;
 
         // 2. Let reactions be element's custom element reaction queue.
         auto* reactions = element->custom_element_reaction_queue();

@@ -28,10 +28,10 @@ struct curl_slist;
 
 namespace RequestServer {
 
-class Request : public HTTP::CacheRequest {
+class Request final : public HTTP::CacheRequest {
 public:
     static NonnullOwnPtr<Request> fetch(
-        i32 request_id,
+        u64 request_id,
         Optional<HTTP::DiskCache&> disk_cache,
         ConnectionFromClient& client,
         void* curl_multi,
@@ -45,19 +45,36 @@ public:
         RefPtr<IPC::NetworkIdentity> network_identity = nullptr);
 
     static NonnullOwnPtr<Request> connect(
-        i32 request_id,
+        u64 request_id,
         ConnectionFromClient& client,
         void* curl_multi,
         Resolver& resolver,
         URL::URL url,
         CacheLevel cache_level);
 
+    static NonnullOwnPtr<Request> revalidate(
+        u64 request_id,
+        Optional<HTTP::DiskCache&> disk_cache,
+        ConnectionFromClient& client,
+        void* curl_multi,
+        Resolver& resolver,
+        URL::URL url,
+        ByteString method,
+        NonnullRefPtr<HTTP::HeaderList> request_headers,
+        ByteBuffer request_body,
+        ByteString alt_svc_cache_path,
+        Core::ProxyData proxy_data);
+
     virtual ~Request() override;
 
-    URL::URL const& url() const { return m_url; }
-    ByteString const& method() const { return m_method; }
-    HTTP::HeaderList const& request_headers() const { return m_request_headers; }
-    UnixDateTime request_start_time() const { return m_request_start_time; }
+    enum class Type : u8 {
+        Fetch,
+        Connect,
+        BackgroundRevalidation,
+    };
+
+    u64 request_id() const { return m_request_id; }
+    Type type() const { return m_type; }
 
     virtual void notify_request_unblocked(Badge<HTTP::DiskCache>) override;
     void notify_fetch_complete(Badge<ConnectionFromClient>, int result_code);
@@ -93,11 +110,6 @@ public:
     // IPFS Integration: End
 
 private:
-    enum class Type : u8 {
-        Fetch,
-        Connect,
-    };
-
     enum class State : u8 {
         Init,              // Decide whether to service this request from cache or the network.
         ReadCache,         // Read the cached response from disk.
@@ -112,8 +124,32 @@ private:
         Error,             // Any error occured during the request's lifetime.
     };
 
+    static constexpr StringView state_name(State state)
+    {
+        switch (state) {
+        case State::Init:
+            return "Init"sv;
+        case State::ReadCache:
+            return "ReadCache"sv;
+        case State::WaitForCache:
+            return "WaitForCache"sv;
+        case State::DNSLookup:
+            return "DNSLookup"sv;
+        case State::Connect:
+            return "Connect"sv;
+        case State::Fetch:
+            return "Fetch"sv;
+        case State::Complete:
+            return "Complete"sv;
+        case State::Error:
+            return "Error"sv;
+        }
+        VERIFY_NOT_REACHED();
+    }
+
     Request(
-        i32 request_id,
+        u64 request_id,
+        Type type,
         Optional<HTTP::DiskCache&> disk_cache,
         ConnectionFromClient& client,
         void* curl_multi,
@@ -126,7 +162,7 @@ private:
         Core::ProxyData proxy_data);
 
     Request(
-        i32 request_id,
+        u64 request_id,
         ConnectionFromClient& client,
         void* curl_multi,
         Resolver& resolver,
@@ -150,14 +186,14 @@ private:
     ErrorOr<void> inform_client_request_started();
     void transfer_headers_to_client_if_needed();
     ErrorOr<void> write_queued_bytes_without_blocking();
+
+    virtual bool is_revalidation_request() const override;
     ErrorOr<void> revalidation_failed();
 
     u32 acquire_status_code() const;
     Requests::RequestTimingInfo acquire_timing_info() const;
 
-    ConnectionFromClient& client();
-
-    i32 m_request_id { 0 };
+    u64 m_request_id { 0 };
     Type m_type { Type::Fetch };
     State m_state { State::Init };
 

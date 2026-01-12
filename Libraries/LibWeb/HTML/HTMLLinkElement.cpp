@@ -377,14 +377,14 @@ GC::Ptr<Fetch::Infrastructure::Request> HTMLLinkElement::create_link_request(HTM
 // https://html.spec.whatwg.org/multipage/semantics.html#fetch-and-process-the-linked-resource
 void HTMLLinkElement::fetch_and_process_linked_resource()
 {
-    if (m_relationship & Relationship::DNSPrefetch)
-        fetch_and_process_linked_dns_prefetch_resource();
-    else if (m_relationship & Relationship::Preconnect)
-        fetch_and_process_linked_preconnect_resource();
+    if (m_relationship & ~(Relationship::DNSPrefetch | Relationship::Preconnect | Relationship::Preload))
+        default_fetch_and_process_linked_resource();
     else if (m_relationship & Relationship::Preload)
         fetch_and_process_linked_preload_resource();
-    else
-        default_fetch_and_process_linked_resource();
+    else if (m_relationship & Relationship::Preconnect)
+        fetch_and_process_linked_preconnect_resource();
+    else if (m_relationship & Relationship::DNSPrefetch)
+        fetch_and_process_linked_dns_prefetch_resource();
 }
 
 // https://html.spec.whatwg.org/multipage/semantics.html#default-fetch-and-process-the-linked-resource
@@ -893,11 +893,11 @@ static NonnullRefPtr<Core::Promise<bool>> decode_favicon(ReadonlyBytes favicon_d
         // FIXME: Calculate size based on device pixel ratio
         Gfx::IntSize size { 32, 32 };
         auto immutable_bitmap = result.release_value()->bitmap(0, size);
-        auto bitmap = immutable_bitmap->bitmap();
-        if (!bitmap) {
+        if (!immutable_bitmap) {
             promise->reject(Error::from_string_view("Failed to get bitmap from SVG favicon"sv));
             return promise;
         }
+        auto bitmap = immutable_bitmap->bitmap();
         auto navigable = document->navigable();
         if (navigable && navigable->is_traversable())
             navigable->traversable_navigable()->page().client().page_did_change_favicon(*bitmap);

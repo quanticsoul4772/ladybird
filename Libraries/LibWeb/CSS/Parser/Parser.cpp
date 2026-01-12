@@ -149,13 +149,6 @@ GC::RootVector<GC::Ref<CSSRule>> Parser::convert_rules(Vector<Rule> const& raw_r
 
             m_declared_namespaces.set(as<CSSNamespaceRule>(*rule).prefix());
             break;
-        case CSSRule::Type::Property: {
-            auto& property_rule = as<CSSPropertyRule>(*rule);
-            if (m_document) {
-                const_cast<DOM::Document*>(m_document.ptr())->registered_custom_properties().set(property_rule.name(), property_rule);
-            }
-            [[fallthrough]];
-        }
         default:
             import_rules_valid = false;
             namespace_rules_valid = false;
@@ -1747,7 +1740,7 @@ bool Parser::context_allows_tree_counting_functions() const
 bool Parser::context_allows_random_functions() const
 {
     // For now we only allow random functions within property contexts, see https://drafts.csswg.org/css-values-5/#issue-cd071f29
-    return m_value_context.find_first_index_if([](ValueParsingContext context) { return context.has<PropertyID>(); }).has_value();
+    return m_value_context.contains([](ValueParsingContext context) { return context.has<PropertyID>(); });
 }
 
 FlyString Parser::random_value_sharing_auto_name() const

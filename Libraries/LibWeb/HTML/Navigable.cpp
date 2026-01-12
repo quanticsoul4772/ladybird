@@ -24,10 +24,12 @@
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/Fetch/Infrastructure/URL.h>
+#include <LibWeb/FileAPI/File.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/BrowsingContextGroup.h>
 #include <LibWeb/HTML/DocumentState.h>
 #include <LibWeb/HTML/HTMLIFrameElement.h>
+#include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/HistoryHandlingBehavior.h>
 #include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/Navigation.h>
@@ -217,6 +219,12 @@ void Navigable::NavigateParams::visit_edges(Cell::Visitor& visitor)
     visitor.visit(response);
     visitor.visit(source_document);
     visitor.visit(source_element);
+    if (form_data_entry_list.has_value()) {
+        for (auto& entry : form_data_entry_list.value()) {
+            entry.value.visit([&](GC::Ref<FileAPI::File> const& file) { visitor.visit(file); },
+                [&](auto const&) {});
+        }
+    }
 }
 
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#script-closable
@@ -658,15 +666,15 @@ Vector<GC::Ref<SessionHistoryEntry>>& Navigable::get_session_history_entries() c
         return traversable->session_history_entries();
 
     // 4. Let docStates be an empty ordered set of document states.
-    Vector<GC::Ptr<DocumentState>> doc_states;
+    GC::ConservativeVector<GC::Ptr<DocumentState>> doc_states { heap() };
 
     // 5. For each entry of traversable's session history entries, append entry's document state to docStates.
     for (auto& entry : traversable->session_history_entries())
         doc_states.append(entry->document_state());
 
     // 6. For each docState of docStates:
-    while (!doc_states.is_empty()) {
-        auto doc_state = doc_states.take_first();
+    for (size_t i = 0; i < doc_states.size(); ++i) {
+        auto doc_state = doc_states[i];
 
         // 1. For each nestedHistory of docState's nested histories:
         for (auto& nested_history : doc_state->nested_histories()) {
@@ -1102,6 +1110,7 @@ static void create_navigation_params_by_fetching(GC::Ptr<SessionHistoryEntry> en
     request->set_replaces_client_id(active_document.relevant_settings_object().id);
     request->set_mode(Fetch::Infrastructure::Request::Mode::Navigate);
     request->set_referrer(entry->document_state()->request_referrer());
+    request->set_referrer_policy(entry->document_state()->request_referrer_policy());
     request->set_policy_container(source_snapshot_params.source_policy_container);
 
     // 4. If navigable is a top-level traversable, then set request's top-level navigation initiator origin to entry's
@@ -1608,7 +1617,6 @@ void Navigable::begin_navigation(NavigateParams params)
     auto response = params.response;
     auto history_handling = params.history_handling;
     auto const& navigation_api_state = params.navigation_api_state;
-    auto const& form_data_entry_list = params.form_data_entry_list;
     auto referrer_policy = params.referrer_policy;
     auto user_involvement = params.user_involvement;
     auto source_element = params.source_element;
@@ -1617,7 +1625,7 @@ void Navigable::begin_navigation(NavigateParams params)
     auto& vm = this->vm();
 
     // 1. Let cspNavigationType be "form-submission" if formDataEntryList is non-null; otherwise "other".
-    auto csp_navigation_type = form_data_entry_list.has_value() ? ContentSecurityPolicy::Directives::Directive::NavigationType::FormSubmission : ContentSecurityPolicy::Directives::Directive::NavigationType::Other;
+    auto csp_navigation_type = params.form_data_entry_list.has_value() ? ContentSecurityPolicy::Directives::Directive::NavigationType::FormSubmission : ContentSecurityPolicy::Directives::Directive::NavigationType::Other;
 
     // 2. Let sourceSnapshotParams be the result of snapshotting source snapshot params given sourceDocument.
     auto source_snapshot_params = source_document->snapshot_source_snapshot_params();
@@ -1763,9 +1771,9 @@ void Navigable::begin_navigation(NavigateParams params)
         auto navigation = active_window()->navigation();
 
         // 2. Let entryListForFiring be formDataEntryList if documentResource is a POST resource; otherwise, null.
-        auto entry_list_for_firing = [&]() -> Optional<Vector<XHR::FormDataEntry>> {
+        auto entry_list_for_firing = [&]() -> Optional<GC::ConservativeVector<XHR::FormDataEntry>> {
             if (document_resource.has<POSTResource>())
-                return form_data_entry_list;
+                return GC::ConservativeVector { vm.heap(), params.form_data_entry_list.value() };
             return {};
         }();
 
@@ -2442,20 +2450,23 @@ void perform_url_and_history_update_steps(DOM::Document& document, URL::URL new_
 void Navigable::scroll_offset_did_change()
 {
     // https://w3c.github.io/csswg-drafts/cssom-view-1/#scrolling-events
-    // Whenever a viewport gets scrolled (whether in response to user interaction or by an API), the user agent must run these steps:
+    // Whenever a viewport gets scrolled (whether in response to user interaction or by an API), the user agent must
+    // run these steps:
 
     // 1. Let doc be the viewport’s associated Document.
     auto doc = active_document();
     VERIFY(doc);
 
-    // 2. If doc is already in doc’s pending scroll event targets, abort these steps.
-    for (auto& target : doc->pending_scroll_event_targets()) {
-        if (target.ptr() == doc)
-            return;
-    }
+    // FIXME: 2. If doc is a snap container, run the steps to update scrollsnapchanging targets for doc with doc’s eventual
+    //    snap target in the block axis as newBlockTarget and doc’s eventual snap target in the inline axis as
+    //    newInlineTarget.
 
-    // 3. Append doc to doc’s pending scroll event targets.
-    doc->pending_scroll_event_targets().append(*doc);
+    // 3. If (doc, "scroll") is already in doc’s pending scroll events, abort these steps.
+    if (doc->pending_scroll_events().contains_slow(DOM::Document::PendingScrollEvent { *doc, EventNames::scroll }))
+        return;
+
+    // 4. Append (doc, "scroll") to doc’s pending scroll events.
+    doc->pending_scroll_events().append({ *doc, EventNames::scroll });
 }
 
 CSSPixelRect Navigable::to_top_level_rect(CSSPixelRect const& a_rect)
@@ -2512,8 +2523,11 @@ void Navigable::set_viewport_size(CSSPixelSize size)
     }
 }
 
-void Navigable::perform_scroll_of_viewport(CSSPixelPoint new_position)
+void Navigable::perform_scroll_of_viewport_scrolling_box(CSSPixelPoint new_position)
 {
+    // NB: This method is ad-hoc, but is currently called where "perform a scroll of a scrolling box" would be,
+    //     where the box is the viewport.
+    //     https://drafts.csswg.org/cssom-view/#perform-a-scroll
     if (m_viewport_scroll_offset != new_position) {
         m_viewport_scroll_offset = new_position;
         scroll_offset_did_change();
@@ -2621,7 +2635,16 @@ String Navigable::selected_text() const
     auto document = active_document();
     if (!document)
         return String {};
+
+    auto const* input_element = as_if<HTML::HTMLInputElement>(document->active_element());
+    if (input_element && input_element->type_state() == HTML::HTMLInputElement::TypeAttributeState::Password) {
+        // Apparently nobody wants bullet characters. We leave the clipboard alone here like other browsers.
+        return String {};
+    }
     auto selection = document->get_selection();
+    if (auto form_text = selection->try_form_control_selected_text_for_stringifier(); form_text.has_value())
+        return form_text->to_utf8();
+
     auto range = selection->range();
     if (!range)
         return String {};
@@ -2780,8 +2803,13 @@ RefPtr<Gfx::SkiaBackendContext> Navigable::skia_backend_context() const
     return m_skia_backend_context;
 }
 
+GC::Ref<WebIDL::Promise> Navigable::scroll_viewport_by_delta(CSSPixelPoint delta)
+{
+    return perform_a_scroll_of_the_viewport(m_viewport_scroll_offset + delta);
+}
+
 // https://drafts.csswg.org/cssom-view/#viewport-perform-a-scroll
-void Navigable::scroll_viewport_by_delta(CSSPixelPoint delta)
+GC::Ref<WebIDL::Promise> Navigable::perform_a_scroll_of_the_viewport(CSSPixelPoint position)
 {
     // 1. Let doc be the viewport’s associated Document.
     auto doc = active_document();
@@ -2798,12 +2826,10 @@ void Navigable::scroll_viewport_by_delta(CSSPixelPoint delta)
     auto max_y = viewport_rect.height().to_double() - vv->height();
 
     // 5. Let dx be the horizontal component of position - the value vv’s pageLeft attribute
-    // NOTE: Function accepts delta so we use that directly.
-    auto dx = delta.x().to_double();
+    auto dx = position.x().to_double() - vv->page_left();
 
     // 6. Let dy be the vertical component of position - the value of vv’s pageTop attribute
-    // NOTE: Function accepts delta so we use that directly.
-    auto dy = delta.y().to_double();
+    auto dy = position.y().to_double() - vv->page_top();
 
     // 7. Let visual x be the value of vv’s offsetLeft attribute.
     auto visual_x = vv->offset_left();
@@ -2825,17 +2851,38 @@ void Navigable::scroll_viewport_by_delta(CSSPixelPoint delta)
 
     // 13. Let element be doc’s root element if there is one, null otherwise.
 
-    // 14. Perform a scroll of the viewport’s scrolling box to its current scroll position + (layout dx, layout dy) with element as the associated element, and behavior as the scroll behavior.
+    // 14. Perform a scroll of the viewport’s scrolling box to its current scroll position + (layout dx, layout dy)
+    //     with element as the associated element, and behavior as the scroll behavior. Let scrollPromise1 be the
+    //     Promise returned from this step.
+    TemporaryExecutionContext temporary_execution_context { doc->realm() };
+
+    // AD-HOC: Skip scrolling unscrollable boxes.
+    if (!doc->paintable_box()->could_be_scrolled_by_wheel_event())
+        return WebIDL::create_resolved_promise(doc->realm(), JS::js_undefined());
+
     auto scrolling_area = doc->paintable_box()->scrollable_overflow_rect()->to_type<float>();
     auto new_viewport_scroll_offset = m_viewport_scroll_offset.to_type<double>() + Gfx::Point(layout_dx, layout_dy);
     // NOTE: Clamp to the scrolling area.
     new_viewport_scroll_offset.set_x(max(0.0, min(new_viewport_scroll_offset.x(), scrolling_area.width() - viewport_size().width().to_double())));
     new_viewport_scroll_offset.set_y(max(0.0, min(new_viewport_scroll_offset.y(), scrolling_area.height() - viewport_size().height().to_double())));
-    perform_scroll_of_viewport(new_viewport_scroll_offset.to_type<CSSPixels>());
+    // FIXME: Get a Promise from this.
+    perform_scroll_of_viewport_scrolling_box(new_viewport_scroll_offset.to_type<CSSPixels>());
 
-    // 15. Perform a scroll of vv’s scrolling box to its current scroll position + (visual dx, visual dy) with element as the associated element, and behavior as the scroll behavior.
+    // 15. Perform a scroll of vv’s scrolling box to its current scroll position + (visual dx, visual dy) with element
+    //     as the associated element, and behavior as the scroll behavior. Let scrollPromise2 be the Promise returned
+    //     from this step.
+    // FIXME: Get a Promise from this.
     vv->scroll_by({ visual_dx, visual_dy });
     doc->set_needs_display(InvalidateDisplayList::No);
+
+    // 16. Let scrollPromise be a new Promise.
+    auto scroll_promise = WebIDL::create_promise(doc->realm());
+
+    // 17. Return scrollPromise, and run the remaining steps in parallel.
+    // 18. Resolve scrollPromise when both scrollPromise1 and scrollPromise2 have settled.
+    // FIXME: Actually wait for scroll to occur. For now, all our scrolls are instant.
+    WebIDL::resolve_promise(doc->realm(), scroll_promise);
+    return scroll_promise;
 }
 
 void Navigable::reset_zoom()

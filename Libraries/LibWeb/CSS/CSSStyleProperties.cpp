@@ -541,6 +541,15 @@ Optional<StyleProperty> CSSStyleProperties::get_direct_property(PropertyNameAndI
                     .value = maybe_value.release_nonnull(),
                 };
             }
+            // FIXME: Currently, to get the initial value for a registered custom property we have to look at the document.
+            //        These should be cascaded like other properties.
+            if (auto maybe_value = abstract_element.document().get_registered_custom_property(property_name_and_id.name()); maybe_value.has_value() && maybe_value->initial_value) {
+                return StyleProperty {
+                    .property_id = property_id,
+                    .value = *maybe_value->initial_value,
+                };
+            }
+
             return {};
         }
 
@@ -811,8 +820,8 @@ RefPtr<StyleValue const> CSSStyleProperties::style_value_for_computed_property(L
         // 2. Post-multiply all <transform-function>s in <transform-list> to transform.
         VERIFY(layout_node.first_paintable());
         auto const& paintable_box = as<Painting::PaintableBox const>(*layout_node.first_paintable());
-        for (auto transformation : transformations) {
-            transform = transform * transformation.to_matrix(paintable_box).release_value();
+        for (auto const& transformation : transformations) {
+            transform = transform * transformation->to_matrix(paintable_box).release_value();
         }
 
         // https://drafts.csswg.org/css-transforms-1/#2d-matrix
@@ -902,10 +911,20 @@ RefPtr<StyleValue const> CSSStyleProperties::style_value_for_computed_property(L
 
         return animation_duration_computed_value;
     }
+        // If the border-style corresponding to a given border-width is none or hidden, then the used width is 0.
+        // https://drafts.csswg.org/css-backgrounds/#border-width
+        // NB: We do this adjustment when assigning to ComputedValues, so read from there.
+    case PropertyID::BorderBottomWidth:
+        return style_value_for_size(Size::make_px(layout_node.computed_values().border_bottom().width));
+    case PropertyID::BorderLeftWidth:
+        return style_value_for_size(Size::make_px(layout_node.computed_values().border_left().width));
+    case PropertyID::BorderRightWidth:
+        return style_value_for_size(Size::make_px(layout_node.computed_values().border_right().width));
+    case PropertyID::BorderTopWidth:
+        return style_value_for_size(Size::make_px(layout_node.computed_values().border_top().width));
 
         // -> Any other property
         //    The resolved value is the computed value.
-        //    NOTE: This is handled inside the `default` case.
     case PropertyID::Contain: {
         auto const& contain = layout_node.computed_values().contain();
         if (contain.layout_containment && contain.style_containment && contain.paint_containment) {

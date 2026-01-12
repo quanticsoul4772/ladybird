@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <andreas@ladybird.org>
+ * Copyright (c) 2025, Sam Atkins <sam@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -24,6 +25,8 @@ public:
     // https://www.w3.org/TR/html-aria/#el-h1-h6
     virtual Optional<ARIA::Role> default_role() const override { return ARIA::Role::heading; }
 
+    WebIDL::UnsignedLong heading_level() const;
+
     virtual Optional<String> aria_level() const override
     {
         if (auto const attr = get_attribute(ARIA::AttributeNames::aria_level); attr.has_value())
@@ -36,7 +39,19 @@ public:
 private:
     HTMLHeadingElement(DOM::Document&, DOM::QualifiedName);
 
+    virtual bool is_html_heading_element() const final { return true; }
+
     virtual void initialize(JS::Realm&) override;
+
+    mutable WebIDL::UnsignedLong m_cached_heading_level { 0 };
+    mutable u64 m_dom_tree_version_for_cached_heading_level { 0 };
 };
+
+}
+
+namespace Web::DOM {
+
+template<>
+inline bool Node::fast_is<HTML::HTMLHeadingElement>() const { return is_html_heading_element(); }
 
 }

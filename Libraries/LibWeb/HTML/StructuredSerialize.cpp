@@ -38,6 +38,7 @@
 #include <LibWeb/Bindings/ImageBitmapPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/MessagePortPrototype.h>
+#include <LibWeb/Bindings/QuotaExceededErrorPrototype.h>
 #include <LibWeb/Bindings/ReadableStreamPrototype.h>
 #include <LibWeb/Bindings/Serializable.h>
 #include <LibWeb/Bindings/Transferable.h>
@@ -63,6 +64,7 @@
 #include <LibWeb/Streams/TransformStream.h>
 #include <LibWeb/Streams/WritableStream.h>
 #include <LibWeb/WebIDL/DOMException.h>
+#include <LibWeb/WebIDL/QuotaExceededError.h>
 
 namespace Web::HTML {
 
@@ -108,7 +110,7 @@ enum ErrorType {
 #undef __JS_ENUMERATE
 };
 
-static ErrorType error_name_to_type(String const& name)
+static ErrorType error_name_to_type(StringView name)
 {
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType) \
     if (name == #ClassName##sv)                                                          \
@@ -189,19 +191,14 @@ static WebIDL::ExceptionOr<void> serialize_viewed_array_buffer(JS::VM& vm, Trans
 {
     // 14. Otherwise, if value has a [[ViewedArrayBuffer]] internal slot, then:
 
-    auto view_record = [&]() {
-        if constexpr (IsSame<ViewType, JS::DataView>)
-            return JS::make_data_view_with_buffer_witness_record(view, JS::ArrayBuffer::Order::SeqCst);
-        else
-            return JS::make_typed_array_with_buffer_witness_record(view, JS::ArrayBuffer::Order::SeqCst);
-    }();
-
     // 1. If IsArrayBufferViewOutOfBounds(value) is true, then throw a "DataCloneError" DOMException.
     if constexpr (IsSame<ViewType, JS::DataView>) {
+        auto view_record = JS::make_data_view_with_buffer_witness_record(view, JS::ArrayBuffer::Order::SeqCst);
         if (JS::is_view_out_of_bounds(view_record))
             return WebIDL::DataCloneError::create(*vm.current_realm(), Utf16String::formatted(JS::ErrorType::BufferOutOfBounds.format(), "DataView"sv));
     } else {
-        if (JS::is_typed_array_out_of_bounds(view_record))
+        auto typed_array_record = JS::make_typed_array_with_buffer_witness_record(view, JS::ArrayBuffer::Order::SeqCst);
+        if (JS::is_typed_array_out_of_bounds(typed_array_record))
             return WebIDL::DataCloneError::create(*vm.current_realm(), Utf16String::formatted(JS::ErrorType::BufferOutOfBounds.format(), "TypedArray"sv));
     }
 
@@ -218,13 +215,21 @@ static WebIDL::ExceptionOr<void> serialize_viewed_array_buffer(JS::VM& vm, Trans
     VERIFY(first_is_one_of(tag, ValueTag::ArrayBuffer, ValueTag::ResizeableArrayBuffer, ValueTag::SharedArrayBuffer, ValueTag::GrowableSharedArrayBuffer)
         || (tag == ValueTag::ObjectReference && memory.contains(buffer)));
 
+    auto serialize_byte_length = [&](JS::ByteLength byte_length) {
+        VERIFY(!byte_length.is_detached());
+
+        data_holder.encode(byte_length.is_auto());
+        if (!byte_length.is_auto())
+            data_holder.encode(byte_length.length());
+    };
+
     // 5. If value has a [[DataView]] internal slot, then set serialized to { [[Type]]: "ArrayBufferView", [[Constructor]]: "DataView",
     //    [[ArrayBufferSerialized]]: bufferSerialized, [[ByteLength]]: value.[[ByteLength]], [[ByteOffset]]: value.[[ByteOffset]] }.
     if constexpr (IsSame<ViewType, JS::DataView>) {
         data_holder.encode(ValueTag::ArrayBufferView);
         data_holder.append(move(buffer_serialized)); // [[ArrayBufferSerialized]]
         data_holder.encode("DataView"_utf16);        // [[Constructor]]
-        data_holder.encode(JS::get_view_byte_length(view_record));
+        serialize_byte_length(view.byte_length());
         data_holder.encode(view.byte_offset());
     }
     // 6. Otherwise:
@@ -237,9 +242,9 @@ static WebIDL::ExceptionOr<void> serialize_viewed_array_buffer(JS::VM& vm, Trans
         data_holder.encode(ValueTag::ArrayBufferView);
         data_holder.append(move(buffer_serialized));               // [[ArrayBufferSerialized]]
         data_holder.encode(view.element_name().to_utf16_string()); // [[Constructor]]
-        data_holder.encode(JS::typed_array_byte_length(view_record));
+        serialize_byte_length(view.byte_length());
         data_holder.encode(view.byte_offset());
-        data_holder.encode(JS::typed_array_length(view_record));
+        serialize_byte_length(view.array_length());
     }
 
     return {};
@@ -385,14 +390,12 @@ public:
             // 17. Otherwise, if value has an [[ErrorData]] internal slot and value is not a platform object, then:
             else if (is<JS::Error>(object) && !is<Bindings::PlatformObject>(object)) {
                 // 1. Let name be ? Get(value, "name").
-                auto name_property = TRY(object.get(m_vm.names.name));
-
-                // FIXME: Spec bug - https://github.com/whatwg/html/issues/9923
-                // MISSING STEP: Set name to ? ToString(name).
-                auto name = TRY(name_property.to_string(m_vm));
+                auto name = TRY(object.get(m_vm.names.name));
 
                 // 2. If name is not one of "Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", or "URIError", then set name to "Error".
-                auto type = error_name_to_type(name);
+                auto type = ErrorType::Error;
+                if (name.is_string())
+                    type = error_name_to_type(name.as_string().utf8_string_view());
 
                 // 3. Let valueMessageDesc be ? value.[[GetOwnProperty]]("message").
                 auto value_message_descriptor = TRY(object.internal_get_own_property(m_vm.names.message));
@@ -402,11 +405,21 @@ public:
                 if (value_message_descriptor.has_value() && value_message_descriptor->is_data_descriptor())
                     message = TRY(value_message_descriptor->value->to_utf16_string(m_vm));
 
+                // FIXME: Spec bug - https://github.com/whatwg/html/issues/11321
+                // MISSING STEP: Let valueCauseDesc be ? value.[[GetOwnProperty]]("cause").
+                auto value_cause_descriptor = TRY(object.internal_get_own_property(m_vm.names.cause));
+
+                // MISSING STEP: Let cause be undefined if IsDataDescriptor(valueCauseDesc) is false, and ? ToString(valueCauseDesc.[[Value]]) otherwise.
+                Optional<Utf16String> cause;
+                if (value_cause_descriptor.has_value() && value_cause_descriptor->is_data_descriptor())
+                    cause = TRY(value_cause_descriptor->value->to_utf16_string(m_vm));
+
                 // 5. Set serialized to { [[Type]]: "Error", [[Name]]: name, [[Message]]: message }.
                 // FIXME: 6. User agents should attach a serialized representation of any interesting accompanying data which are not yet specified, notably the stack property, to serialized.
                 serialized.encode(ValueTag::ErrorObject);
                 serialized.encode(type);
                 serialized.encode(message);
+                serialized.encode(cause);
             }
 
             // 18. Otherwise, if value is an Array exotic object, then:
@@ -729,25 +742,35 @@ public:
             auto array_buffer_value = TRY(deserialize());
             auto& array_buffer = as<JS::ArrayBuffer>(array_buffer_value.as_object());
 
+            auto deserialize_byte_length = [&]() -> JS::ByteLength {
+                auto is_auto = m_serialized.decode<bool>();
+                if (is_auto)
+                    return JS::ByteLength::auto_();
+
+                auto length = m_serialized.decode<u32>();
+                return length;
+            };
+
             auto constructor_name = m_serialized.decode<Utf16String>();
-            auto byte_length = m_serialized.decode<u32>();
+            auto byte_length = deserialize_byte_length();
             auto byte_offset = m_serialized.decode<u32>();
 
             if (constructor_name == "DataView"sv) {
                 value = JS::DataView::create(realm, &array_buffer, byte_length, byte_offset);
             } else {
-                auto array_length = m_serialized.decode<u32>();
+                auto array_length = deserialize_byte_length();
 
                 GC::Ptr<JS::TypedArrayBase> typed_array;
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, Type) \
     if (constructor_name == #ClassName##sv)                                         \
-        typed_array = JS::ClassName::create(realm, array_length, array_buffer);
+        typed_array = JS::ClassName::create(realm, 0, array_buffer);
                 JS_ENUMERATE_TYPED_ARRAYS
 #undef __JS_ENUMERATE
 #undef CREATE_TYPED_ARRAY
 
                 VERIFY(typed_array); // FIXME: Handle errors better here? Can a fuzzer put weird stuff in the buffer?
 
+                typed_array->set_array_length(array_length);
                 typed_array->set_byte_length(byte_length);
                 typed_array->set_byte_offset(byte_offset);
                 value = typed_array;
@@ -800,6 +823,7 @@ public:
         case ValueTag::ErrorObject: {
             auto type = m_serialized.decode<ErrorType>();
             auto message = m_serialized.decode<Optional<Utf16String>>();
+            auto cause = m_serialized.decode<Optional<Utf16String>>();
 
             GC::Ptr<JS::Error> error;
 
@@ -819,6 +843,9 @@ public:
 
             if (message.has_value())
                 error->set_message(message.release_value());
+
+            if (cause.has_value())
+                error->create_non_enumerable_data_property_or_throw(m_vm.names.cause, JS::PrimitiveString::create(m_vm, cause.release_value()));
 
             value = error;
             break;
@@ -947,6 +974,8 @@ private:
             return intrinsics.is_interface_exposed<Bindings::ImageDataPrototype>(realm);
         case SerializeType::ImageBitmap:
             return intrinsics.is_interface_exposed<Bindings::ImageBitmapPrototype>(realm);
+        case SerializeType::QuotaExceededError:
+            return intrinsics.is_interface_exposed<Bindings::QuotaExceededErrorPrototype>(realm);
         case SerializeType::Unknown:
             dbgln("Unknown interface type for serialization: {}", to_underlying(name));
             break;
@@ -987,6 +1016,8 @@ private:
             return ImageData::create(realm);
         case SerializeType::ImageBitmap:
             return ImageBitmap::create(realm);
+        case SerializeType::QuotaExceededError:
+            return WebIDL::QuotaExceededError::create(realm);
         case SerializeType::Unknown:
         default:
             VERIFY_NOT_REACHED();

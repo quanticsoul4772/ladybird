@@ -16,6 +16,8 @@
 #include <LibWeb/CSS/CSSFontFaceRule.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/Fetch.h>
+#include <LibWeb/CSS/FontFace.h>
+#include <LibWeb/CSS/FontFaceSet.h>
 #include <LibWeb/CSS/StyleValues/CustomIdentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StringStyleValue.h>
@@ -61,13 +63,28 @@ struct Traits<Web::CSS::OwnFontFaceKey> : public DefaultTraits<Web::CSS::OwnFont
 };
 
 template<>
-struct Traits<Web::CSS::FontMatchingAlgorithmCacheKey> : public DefaultTraits<Web::CSS::FontMatchingAlgorithmCacheKey> {
-    static unsigned hash(Web::CSS::FontMatchingAlgorithmCacheKey const& key)
+struct Traits<Web::CSS::ComputedFontCacheKey> : public DefaultTraits<Web::CSS::ComputedFontCacheKey> {
+    static unsigned hash(Web::CSS::ComputedFontCacheKey const& key)
     {
-        auto hash = key.family_name.hash();
-        hash = pair_int_hash(hash, key.weight);
-        hash = pair_int_hash(hash, key.slope);
-        hash = pair_int_hash(hash, Traits<float>::hash(key.font_size_in_pt));
+        unsigned hash = 0;
+        for (auto const& family_value : key.font_family->as_value_list().values()) {
+            if (family_value->is_keyword())
+                hash = pair_int_hash(hash, to_underlying(family_value->as_keyword().keyword()));
+            else if (family_value->is_string())
+                hash = pair_int_hash(hash, family_value->as_string().string_value().hash());
+            else if (family_value->is_custom_ident())
+                hash = pair_int_hash(hash, family_value->as_custom_ident().custom_ident().hash());
+            else
+                VERIFY_NOT_REACHED();
+        }
+
+        hash = pair_int_hash(hash, Traits<Web::CSSPixels>::hash(key.font_size));
+        hash = pair_int_hash(hash, key.font_slope);
+        hash = pair_int_hash(hash, Traits<double>::hash(key.font_weight));
+        hash = pair_int_hash(hash, Traits<double>::hash(key.font_width.value()));
+        for (auto const& [variation_name, variation_value] : key.font_variation_settings)
+            hash = pair_int_hash(hash, pair_int_hash(variation_name.hash(), Traits<double>::hash(variation_value)));
+
         return hash;
     }
 };
@@ -99,9 +116,9 @@ OwnFontFaceKey::operator FontFaceKey() const
         && slope == other.slope;
 }
 
-FontLoader::FontLoader(FontComputer& font_computer, GC::Ptr<CSSStyleSheet> parent_style_sheet, FlyString family_name, Vector<Gfx::UnicodeRange> unicode_ranges, Vector<URL> urls, Function<void(RefPtr<Gfx::Typeface const>)> on_load)
+FontLoader::FontLoader(FontComputer& font_computer, RuleOrDeclaration rule_or_declaration, FlyString family_name, Vector<Gfx::UnicodeRange> unicode_ranges, Vector<URL> urls, GC::Ptr<GC::Function<void(RefPtr<Gfx::Typeface const>)>> on_load)
     : m_font_computer(font_computer)
-    , m_parent_style_sheet(parent_style_sheet)
+    , m_rule_or_declaration(rule_or_declaration)
     , m_family_name(move(family_name))
     , m_unicode_ranges(move(unicode_ranges))
     , m_urls(move(urls))
@@ -115,8 +132,12 @@ void FontLoader::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_font_computer);
-    visitor.visit(m_parent_style_sheet);
+    if (auto* rule = m_rule_or_declaration.value.get_pointer<RuleOrDeclaration::Rule>())
+        visitor.visit(rule->parent_style_sheet);
+    else if (auto* block = m_rule_or_declaration.value.get_pointer<RuleOrDeclaration::StyleDeclaration>())
+        visitor.visit(block->parent_rule);
     visitor.visit(m_fetch_controller);
+    visitor.visit(m_on_load);
 }
 
 bool FontLoader::is_loading() const
@@ -143,11 +164,10 @@ void FontLoader::start_loading_next_url()
         return;
 
     // https://drafts.csswg.org/css-fonts-4/#fetch-a-font
-    // To fetch a font given a selected <url> url for @font-face rule, fetch url, with stylesheet being rule’s parent
-    // CSS style sheet, destination "font", CORS mode "cors", and processResponse being the following steps given
-    // response res and null, failure or a byte stream stream:
-    auto style_sheet_or_document = m_parent_style_sheet ? StyleSheetOrDocument { *m_parent_style_sheet } : StyleSheetOrDocument { m_font_computer->document() };
-    m_fetch_controller = fetch_a_style_resource(m_urls.take_first(), style_sheet_or_document, Fetch::Infrastructure::Request::Destination::Font, CorsMode::Cors,
+    // To fetch a font given a selected <url> url for @font-face rule, fetch url, with ruleOrDeclaration being rule,
+    // destination "font", CORS mode "cors", and processResponse being the following steps given response res and null,
+    // failure or a byte stream stream:
+    m_fetch_controller = fetch_a_style_resource(m_urls.take_first(), m_rule_or_declaration, Fetch::Infrastructure::Request::Destination::Font, CorsMode::Cors,
         [loader = this](auto response, auto stream) {
             // 1. If stream is null, return.
             // 2. Load a font from stream according to its type.
@@ -182,10 +202,10 @@ void FontLoader::font_did_load_or_fail(RefPtr<Gfx::Typeface const> typeface)
         m_vector_font = typeface.release_nonnull();
         m_font_computer->did_load_font(m_family_name);
         if (m_on_load)
-            m_on_load(m_vector_font);
+            m_on_load->function()(m_vector_font);
     } else {
         if (m_on_load)
-            m_on_load(nullptr);
+            m_on_load->function()(nullptr);
     }
     m_fetch_controller = nullptr;
 }
@@ -271,17 +291,9 @@ RefPtr<Gfx::FontCascadeList const> FontComputer::find_matching_font_weight_desce
     return {};
 }
 
-RefPtr<Gfx::FontCascadeList const> FontComputer::font_matching_algorithm(FlyString const& family_name, int weight, int slope, float font_size_in_pt) const
-{
-    FontMatchingAlgorithmCacheKey key { family_name, weight, slope, font_size_in_pt };
-    return m_font_matching_algorithm_cache.ensure(key, [&] {
-        return font_matching_algorithm_impl(family_name, weight, slope, font_size_in_pt);
-    });
-}
-
 // Partial implementation of the font-matching algorithm: https://www.w3.org/TR/css-fonts-4/#font-matching-algorithm
 // FIXME: This should be replaced by the full CSS font selection algorithm.
-RefPtr<Gfx::FontCascadeList const> FontComputer::font_matching_algorithm_impl(FlyString const& family_name, int weight, int slope, float font_size_in_pt) const
+RefPtr<Gfx::FontCascadeList const> FontComputer::font_matching_algorithm(FlyString const& family_name, int weight, int slope, float font_size_in_pt) const
 {
     // If a font family match occurs, the user agent assembles the set of font faces in that family and then
     // narrows the set to a single face using other font properties in the order given below.
@@ -354,7 +366,23 @@ RefPtr<Gfx::FontCascadeList const> FontComputer::font_matching_algorithm_impl(Fl
     return {};
 }
 
-NonnullRefPtr<Gfx::FontCascadeList const> FontComputer::compute_font_for_style_values(StyleValue const& font_family, CSSPixels const& font_size, int slope, double font_weight, Percentage const& font_width, HashMap<FlyString, double> const& font_variation_settings) const
+NonnullRefPtr<Gfx::FontCascadeList const> FontComputer::compute_font_for_style_values(StyleValue const& font_family, CSSPixels const& font_size, int font_slope, double font_weight, Percentage const& font_width, HashMap<FlyString, double> const& font_variation_settings) const
+{
+    ComputedFontCacheKey cache_key {
+        .font_family = font_family,
+        .font_size = font_size,
+        .font_slope = font_slope,
+        .font_weight = font_weight,
+        .font_width = font_width,
+        .font_variation_settings = font_variation_settings,
+    };
+
+    return m_computed_font_cache.ensure(cache_key, [&]() {
+        return compute_font_for_style_values_impl(font_family, font_size, font_slope, font_weight, font_width, font_variation_settings);
+    });
+}
+
+NonnullRefPtr<Gfx::FontCascadeList const> FontComputer::compute_font_for_style_values_impl(StyleValue const& font_family, CSSPixels const& font_size, int slope, double font_weight, Percentage const& font_width, HashMap<FlyString, double> const& font_variation_settings) const
 {
     // FIXME: We round to int here as that is what is expected by our font infrastructure below
     auto width = round_to<int>(font_width.value());
@@ -489,15 +517,15 @@ Gfx::Font const& FontComputer::initial_font() const
 
 void FontComputer::did_load_font(FlyString const&)
 {
-    m_font_matching_algorithm_cache = {};
+    m_computed_font_cache = {};
     document().invalidate_style(DOM::StyleInvalidationReason::CSSFontLoaded);
 }
 
-GC::Ptr<FontLoader> FontComputer::load_font_face(ParsedFontFace const& font_face, Function<void(RefPtr<Gfx::Typeface const>)> on_load)
+GC::Ptr<FontLoader> FontComputer::load_font_face(ParsedFontFace const& font_face, GC::Ptr<GC::Function<void(RefPtr<Gfx::Typeface const>)>> on_load)
 {
     if (font_face.sources().is_empty()) {
         if (on_load)
-            on_load({});
+            on_load->function()({});
         return {};
     }
 
@@ -517,11 +545,18 @@ GC::Ptr<FontLoader> FontComputer::load_font_face(ParsedFontFace const& font_face
 
     if (urls.is_empty()) {
         if (on_load)
-            on_load({});
+            on_load->function()({});
         return {};
     }
 
-    auto loader = heap().allocate<FontLoader>(*this, font_face.parent_style_sheet(), font_face.font_family(), font_face.unicode_ranges(), move(urls), move(on_load));
+    RuleOrDeclaration rule_or_declaration {
+        .environment_settings_object = document().relevant_settings_object(),
+        .value = RuleOrDeclaration::Rule {
+            .parent_style_sheet = font_face.parent_rule()->parent_style_sheet(),
+        }
+    };
+
+    auto loader = heap().allocate<FontLoader>(*this, rule_or_declaration, font_face.font_family(), font_face.unicode_ranges(), move(urls), move(on_load));
     auto& loader_ref = *loader;
     auto maybe_font_loaders_list = m_loaded_fonts.get(key);
     if (maybe_font_loaders_list.has_value()) {
@@ -538,14 +573,17 @@ GC::Ptr<FontLoader> FontComputer::load_font_face(ParsedFontFace const& font_face
 void FontComputer::load_fonts_from_sheet(CSSStyleSheet& sheet)
 {
     for (auto const& rule : sheet.rules()) {
-        if (!is<CSSFontFaceRule>(*rule))
+        auto* font_face_rule = as_if<CSSFontFaceRule>(*rule);
+        if (!font_face_rule)
             continue;
-        auto const& font_face_rule = static_cast<CSSFontFaceRule const&>(*rule);
-        if (!font_face_rule.is_valid())
+        if (!font_face_rule->is_valid())
             continue;
-        if (auto font_loader = load_font_face(font_face_rule.font_face())) {
+        if (auto font_loader = load_font_face(font_face_rule->font_face())) {
             sheet.add_associated_font_loader(*font_loader);
         }
+
+        auto font_face = FontFace::create_css_connected(document().realm(), *font_face_rule);
+        document().fonts()->add_css_connected_font(font_face);
     }
 }
 
@@ -555,6 +593,13 @@ void FontComputer::unload_fonts_from_sheet(CSSStyleSheet& sheet)
         font_loader_list.remove_all_matching([&](auto& font_loader) {
             return sheet.has_associated_font_loader(*font_loader);
         });
+    }
+
+    // https://drafts.csswg.org/css-font-loading/#font-face-css-connection
+    // If a @font-face rule is removed from the document, its connected FontFace object is no longer CSS-connected.
+    for (auto const& rule : sheet.rules()) {
+        if (auto* font_face_rule = as_if<CSSFontFaceRule>(*rule))
+            font_face_rule->disconnect_font_face();
     }
 }
 

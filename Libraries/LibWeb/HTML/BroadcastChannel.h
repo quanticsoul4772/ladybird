@@ -16,6 +16,8 @@ class BroadcastChannel final : public DOM::EventTarget {
     GC_DECLARE_ALLOCATOR(BroadcastChannel);
 
 public:
+    static constexpr bool OVERRIDES_FINALIZE = true;
+
     [[nodiscard]] static GC::Ref<BroadcastChannel> construct_impl(JS::Realm&, FlyString const& name);
 
     // https://html.spec.whatwg.org/multipage/web-messaging.html#dom-broadcastchannel-name
@@ -38,6 +40,7 @@ private:
     BroadcastChannel(JS::Realm&, FlyString const& name);
 
     virtual void initialize(JS::Realm&) override;
+    virtual void finalize() override;
 
     bool is_eligible_for_messaging() const;
 

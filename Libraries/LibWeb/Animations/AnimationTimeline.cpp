@@ -14,7 +14,7 @@ namespace Web::Animations {
 GC_DEFINE_ALLOCATOR(AnimationTimeline);
 
 // https://drafts.csswg.org/web-animations-1/#dom-animationtimeline-currenttime
-Optional<double> AnimationTimeline::current_time() const
+Optional<TimeValue> AnimationTimeline::current_time() const
 {
     // Returns the current time for this timeline or null if this timeline is inactive.
     if (is_inactive())
@@ -22,7 +22,7 @@ Optional<double> AnimationTimeline::current_time() const
     return m_current_time;
 }
 
-void AnimationTimeline::set_current_time(Optional<double> value)
+void AnimationTimeline::set_current_time(Optional<TimeValue> value)
 {
     if (value == m_current_time)
         return;
@@ -31,13 +31,20 @@ void AnimationTimeline::set_current_time(Optional<double> value)
         dbgln("AnimationTimeline::set_current_time({}): monotonically increasing timeline can only move forward", value);
         return;
     }
-    m_current_time = value;
 
-    // The loop might modify the content of m_associated_animations, so let's iterate over a copy.
-    auto temporary_copy = GC::RootVector<GC::Ref<Animation>>(vm().heap());
-    temporary_copy.extend(m_associated_animations.values());
-    for (auto& animation : temporary_copy)
-        animation->notify_timeline_time_did_change();
+    m_current_time = value;
+}
+
+// https://drafts.csswg.org/web-animations-2/#timeline-duration
+NullableCSSNumberish AnimationTimeline::duration_for_bindings() const
+{
+    // The duration of a timeline gives the maximum value a timeline may generate for its current time. This value is
+    // used to calculate the intrinsic iteration duration for the target effect of an animation that is associated with
+    // the timeline when the effect’s iteration duration is "auto". The value is computed such that the effect fills the
+    // available time. For a monotonic timeline, there is no upper bound on current time, and timeline duration is
+    // unresolved. For a non-monotonic (e.g. scroll) timeline, the duration has a fixed upper bound. In this case, the
+    // timeline is a progress-based timeline, and its timeline duration is 100%.
+    return NullableCSSNumberish::from_optional_css_numberish_time(duration());
 }
 
 void AnimationTimeline::set_associated_document(GC::Ptr<DOM::Document> document)
@@ -77,7 +84,9 @@ void AnimationTimeline::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_associated_document);
-    visitor.visit(m_associated_animations);
+    // We intentionally don't visit m_associated_animations here to avoid keeping Animations alive solely because they
+    // are associated with a timeline. Animations are disassociated from timelines in Animation::finalize() so we don't
+    // need to worry about dangling references.
 }
 
 }

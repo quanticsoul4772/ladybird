@@ -24,7 +24,7 @@ Each property will have some set of these fields on it:
 | `affects-layout`                    | No       | `true`     | Boolean. Whether changing this property will invalidate the element's layout.                               | `bool property_affects_layout(PropertyID)`                                                                                                                                                  |
 | `affects-stacking-context`          | No       | `false`    | Boolean. Whether this property can cause a new stacking context for the element.                            | `bool property_affects_stacking_context(PropertyID)`                                                                                                                                        |
 | `animation-type`                    | Yes      |            | String. How the property should be animated. Defined by the spec. See below.                                | `AnimationType animation_type_from_longhand_property(PropertyID)`                                                                                                                           |
-| `inherited`                         | Yes      |            | Boolean. Whether the property is inherited by its child elements.                                           | `bool is_inherited_property(PropertyID)`                                                                                                                                                    |
+| `inherited`                         | Yes      |            | Boolean. Whether the property is inherited by its child elements. Only applicable to longhand properties.   | `bool is_inherited_property(PropertyID)`                                                                                                                                                    |
 | `initial`                           | Yes      |            | String. The property's initial value if it is not specified.                                                | `NonnullRefPtr<StyleValue const> property_initial_value(PropertyID)`                                                                                                                        |
 | `legacy-alias-for`                  | No       | Nothing    | String. The name of a property this is an alias for. See below.                                             |                                                                                                                                                                                             |
 | `logical-alias-for`                 | No       | Nothing    | An object. See below.                                                                                       | `bool property_is_logical_alias(PropertyID);`<br/>`PropertyID map_logical_alias_to_physical_property(PropertyID, LogicalAliasMappingContext const&)`                                        |
@@ -199,9 +199,12 @@ The generated code provides these for each enum, using "foo" as an example:
 This is a single JSON object, with selector pseudo-class names as keys and the values being objects with fields for the pseudo-class.
 This generates `PseudoClass.h` and `PseudoClass.cpp`.
 
-Each entry has a single required property, `argument`, which is a string containing the grammar for the pseudo-class's
-function parameters - for identifier-style pseudo-classes it is left blank.
-The grammar is taken directly from the spec.
+Each entry has the following properties:
+
+| Field                | Required                               | Default        | Description                                                                                                                                                                     |
+|----------------------|----------------------------------------|----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `argument`           | Unless `legacy-alias-for` is specified | Nothing        | A string containing the grammar for the pseudo-class's function parameters - for identifier-style pseudo-classes it is left blank. The grammar is taken directly from the spec. |
+| `legacy-alias-for`   | No                                     | Nothing        | Use to specify that this should be treated as a [legacy selector alias](https://drafts.csswg.org/selectors/#legacy-selector-alias) for the named pseudo-class.                  |
 
 The generated code provides:
 - A `PseudoClass` enum listing every pseudo-class name

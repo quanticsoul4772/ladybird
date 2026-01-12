@@ -20,6 +20,8 @@ class WEB_API ShadowRoot final : public DocumentFragment {
     GC_DECLARE_ALLOCATOR(ShadowRoot);
 
 public:
+    static constexpr bool OVERRIDES_FINALIZE = true;
+
     Bindings::ShadowRootMode mode() const { return m_mode; }
 
     Bindings::SlotAssignmentMode slot_assignment() const { return m_slot_assignment; }
@@ -73,6 +75,9 @@ public:
     CSS::StyleScope const& style_scope() const { return m_style_scope; }
     CSS::StyleScope& style_scope() { return m_style_scope; }
 
+    using PartElementMap = HashMap<FlyString, OrderedHashTable<AbstractElement>>;
+    PartElementMap const& part_element_map() const;
+
     virtual void finalize() override;
 
 protected:
@@ -85,6 +90,8 @@ private:
     // ^Node
     virtual FlyString node_name() const override { return "#shadow-root"_fly_string; }
     virtual bool is_shadow_root() const final { return true; }
+
+    void calculate_part_element_map();
 
     // NOTE: The specification doesn't seem to specify a default value for mode. Assuming closed for now.
     Bindings::ShadowRootMode m_mode { Bindings::ShadowRootMode::Closed };
@@ -109,6 +116,9 @@ private:
     IntrusiveListNode<ShadowRoot> m_list_node;
 
     CSS::StyleScope m_style_scope;
+
+    mutable PartElementMap m_part_element_map;
+    mutable u64 m_dom_tree_version_when_calculated_part_element_map { 0 };
 
 public:
     using DocumentShadowRootList = IntrusiveList<&ShadowRoot::m_list_node>;

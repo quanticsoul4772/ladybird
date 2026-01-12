@@ -28,11 +28,11 @@ WebIDL::ExceptionOr<XHR::FormDataEntry> create_entry(JS::Realm& realm, String co
 
     auto entry_value = TRY(value.visit(
         // 2. If value is a string, then set value to the result of converting value into a scalar value string.
-        [&](String const& string) -> WebIDL::ExceptionOr<Variant<GC::Root<FileAPI::File>, String>> {
+        [&](String const& string) -> WebIDL::ExceptionOr<Variant<GC::Ref<FileAPI::File>, String>> {
             return TRY_OR_THROW_OOM(vm, Infra::convert_to_scalar_value_string(string));
         },
         // 3. Otherwise:
-        [&](GC::Ref<FileAPI::Blob> blob) -> WebIDL::ExceptionOr<Variant<GC::Root<FileAPI::File>, String>> {
+        [&](GC::Ref<FileAPI::Blob> blob) -> WebIDL::ExceptionOr<Variant<GC::Ref<FileAPI::File>, String>> {
             // 1. If value is not a File object, then set value to a new File object, representing the same bytes, whose
             //    name attribute value is "blob".
             if (!is<FileAPI::File>(*blob)) {
@@ -52,7 +52,7 @@ WebIDL::ExceptionOr<XHR::FormDataEntry> create_entry(JS::Realm& realm, String co
                 blob = TRY(FileAPI::File::create(realm, { GC::make_root(*blob) }, *filename, move(options)));
             }
 
-            return GC::make_root(as<FileAPI::File>(*blob));
+            return GC::Ref { as<FileAPI::File>(*blob) };
         }));
 
     // 4. Return an entry whose name is name and whose value is value.
@@ -63,11 +63,11 @@ WebIDL::ExceptionOr<XHR::FormDataEntry> create_entry(JS::Realm& realm, String co
 }
 
 // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#constructing-the-form-data-set
-WebIDL::ExceptionOr<Optional<Vector<XHR::FormDataEntry>>> construct_entry_list(JS::Realm& realm, HTMLFormElement& form, GC::Ptr<HTMLElement> submitter, Optional<String> encoding)
+WebIDL::ExceptionOr<Optional<GC::ConservativeVector<XHR::FormDataEntry>>> construct_entry_list(JS::Realm& realm, HTMLFormElement& form, GC::Ptr<HTMLElement> submitter, Optional<String> encoding)
 {
     // 1. If form's constructing entry list is true, then return null.
     if (form.constructing_entry_list())
-        return Optional<Vector<XHR::FormDataEntry>> {};
+        return OptionalNone {};
 
     // 2. Set form's constructing entry list to true.
     form.set_constructing_entry_list(true);
@@ -76,7 +76,7 @@ WebIDL::ExceptionOr<Optional<Vector<XHR::FormDataEntry>>> construct_entry_list(J
     auto controls = form.get_submittable_elements();
 
     // 4. Let entry list be a new empty entry list.
-    Vector<XHR::FormDataEntry> entry_list;
+    GC::ConservativeVector<XHR::FormDataEntry> entry_list { realm.heap() };
 
     // 5. For each element field in controls, in tree order:
     for (auto const& control : controls) {
@@ -236,7 +236,7 @@ ErrorOr<String> normalize_line_breaks(StringView value)
 }
 
 // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#multipart/form-data-encoding-algorithm
-ErrorOr<SerializedFormData> serialize_to_multipart_form_data(Vector<XHR::FormDataEntry> const& entry_list)
+ErrorOr<SerializedFormData> serialize_to_multipart_form_data(GC::ConservativeVector<XHR::FormDataEntry> const& entry_list)
 {
     auto escape_line_feed_carriage_return_double_quote = [](StringView value) -> ErrorOr<String> {
         StringBuilder builder;

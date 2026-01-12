@@ -4,7 +4,6 @@ import("//Meta/gn/build/libs/pulse/enable.gni")
 shared_library("LibMedia") {
   include_dirs = [ "//Userland/Libraries" ]
   sources = [
-    "Audio/Loader.cpp",
     "Audio/PlaybackStream.cpp",
     "Audio/SampleFormats.cpp",
     "Color/ColorConverter.cpp",
@@ -29,8 +28,9 @@ shared_library("LibMedia") {
   }
   if (enable_ffmpeg) {
     sources += [
-      "Audio/FFmpegLoader.cpp",
+      "FFmpeg/FFmpegAudioConverter.cpp",
       "FFmpeg/FFmpegAudioDecoder.cpp",
+      "FFmpeg/FFmpegHelpers.cpp",
       "FFmpeg/FFmpegVideoDecoder.cpp",
     ]
   } else {
@@ -38,7 +38,10 @@ shared_library("LibMedia") {
   }
   if (current_os == "mac") {
     sources += [ "Audio/PlaybackStreamAudioUnit.cpp" ]
-    frameworks = [ "AudioUnit.framework" ]
+    frameworks = [
+      "AudioToolbox.framework",
+      "AudioUnit.framework",
+    ]
   }
   deps = [
     "//AK",

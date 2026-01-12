@@ -52,6 +52,11 @@ op BitwiseOr < Instruction
     m_rhs: Operand
 endop
 
+op ToInt32 < Instruction
+    m_dst: Operand
+    m_value: Operand
+endop
+
 op BitwiseXor < Instruction
     m_dst: Operand
     m_lhs: Operand
@@ -215,14 +220,14 @@ endop
 op DeleteById < Instruction
     m_dst: Operand
     m_base: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
 endop
 
 op DeleteByIdWithThis < Instruction
     m_dst: Operand
     m_base: Operand
     m_this_value: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
 endop
 
 op DeleteByValue < Instruction
@@ -274,7 +279,7 @@ endop
 op GetById < Instruction
     m_dst: Operand
     m_base: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
     m_base_identifier: Optional<IdentifierTableIndex>
     m_cache_index: u32
 endop
@@ -282,7 +287,7 @@ endop
 op GetByIdWithThis < Instruction
     m_dst: Operand
     m_base: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
     m_this_value: Operand
     m_cache_index: u32
 endop
@@ -351,7 +356,7 @@ endop
 op GetMethod < Instruction
     m_dst: Operand
     m_object: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
 endop
 
 op GetNewTarget < Instruction
@@ -370,6 +375,15 @@ op GetPrivateById < Instruction
     m_dst: Operand
     m_base: Operand
     m_property: IdentifierTableIndex
+endop
+
+op GetTemplateObject < Instruction
+    @nothrow
+    m_length: u32
+    m_dst: Operand
+    m_strings_count: u32
+    m_cache_index: u32
+    m_strings: Operand[]
 endop
 
 op GetBinding < Instruction
@@ -692,6 +706,7 @@ endop
 op NewObject < Instruction
     @nothrow
     m_dst: Operand
+    m_cache_index: u32
 endop
 
 op NewObjectWithNoPrototype < Instruction
@@ -745,7 +760,7 @@ endop
 
 op PutNormalById < Instruction
     m_base: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
     m_src: Operand
     m_cache_index: u32
     m_base_identifier: Optional<IdentifierTableIndex>
@@ -753,7 +768,7 @@ endop
 
 op PutOwnById < Instruction
     m_base: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
     m_src: Operand
     m_cache_index: u32
     m_base_identifier: Optional<IdentifierTableIndex>
@@ -761,7 +776,7 @@ endop
 
 op PutGetterById < Instruction
     m_base: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
     m_src: Operand
     m_cache_index: u32
     m_base_identifier: Optional<IdentifierTableIndex>
@@ -769,7 +784,7 @@ endop
 
 op PutSetterById < Instruction
     m_base: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
     m_src: Operand
     m_cache_index: u32
     m_base_identifier: Optional<IdentifierTableIndex>
@@ -777,47 +792,7 @@ endop
 
 op PutPrototypeById < Instruction
     m_base: Operand
-    m_property: IdentifierTableIndex
-    m_src: Operand
-    m_cache_index: u32
-    m_base_identifier: Optional<IdentifierTableIndex>
-endop
-
-op PutNormalByNumericId < Instruction
-    m_base: Operand
-    m_property: u32
-    m_src: Operand
-    m_cache_index: u32
-    m_base_identifier: Optional<IdentifierTableIndex>
-endop
-
-op PutOwnByNumericId < Instruction
-    m_base: Operand
-    m_property: u32
-    m_src: Operand
-    m_cache_index: u32
-    m_base_identifier: Optional<IdentifierTableIndex>
-endop
-
-op PutGetterByNumericId < Instruction
-    m_base: Operand
-    m_property: u32
-    m_src: Operand
-    m_cache_index: u32
-    m_base_identifier: Optional<IdentifierTableIndex>
-endop
-
-op PutSetterByNumericId < Instruction
-    m_base: Operand
-    m_property: u32
-    m_src: Operand
-    m_cache_index: u32
-    m_base_identifier: Optional<IdentifierTableIndex>
-endop
-
-op PutPrototypeByNumericId < Instruction
-    m_base: Operand
-    m_property: u32
+    m_property: PropertyKeyTableIndex
     m_src: Operand
     m_cache_index: u32
     m_base_identifier: Optional<IdentifierTableIndex>
@@ -826,7 +801,7 @@ endop
 op PutNormalByIdWithThis < Instruction
     m_base: Operand
     m_this_value: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
     m_src: Operand
     m_cache_index: u32
 endop
@@ -834,7 +809,7 @@ endop
 op PutOwnByIdWithThis < Instruction
     m_base: Operand
     m_this_value: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
     m_src: Operand
     m_cache_index: u32
 endop
@@ -842,7 +817,7 @@ endop
 op PutGetterByIdWithThis < Instruction
     m_base: Operand
     m_this_value: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
     m_src: Operand
     m_cache_index: u32
 endop
@@ -850,7 +825,7 @@ endop
 op PutSetterByIdWithThis < Instruction
     m_base: Operand
     m_this_value: Operand
-    m_property: IdentifierTableIndex
+    m_property: PropertyKeyTableIndex
     m_src: Operand
     m_cache_index: u32
 endop
@@ -858,47 +833,7 @@ endop
 op PutPrototypeByIdWithThis < Instruction
     m_base: Operand
     m_this_value: Operand
-    m_property: IdentifierTableIndex
-    m_src: Operand
-    m_cache_index: u32
-endop
-
-op PutNormalByNumericIdWithThis < Instruction
-    m_base: Operand
-    m_this_value: Operand
-    m_property: u32
-    m_src: Operand
-    m_cache_index: u32
-endop
-
-op PutOwnByNumericIdWithThis < Instruction
-    m_base: Operand
-    m_this_value: Operand
-    m_property: u32
-    m_src: Operand
-    m_cache_index: u32
-endop
-
-op PutGetterByNumericIdWithThis < Instruction
-    m_base: Operand
-    m_this_value: Operand
-    m_property: u32
-    m_src: Operand
-    m_cache_index: u32
-endop
-
-op PutSetterByNumericIdWithThis < Instruction
-    m_base: Operand
-    m_this_value: Operand
-    m_property: u32
-    m_src: Operand
-    m_cache_index: u32
-endop
-
-op PutPrototypeByNumericIdWithThis < Instruction
-    m_base: Operand
-    m_this_value: Operand
-    m_property: u32
+    m_property: PropertyKeyTableIndex
     m_src: Operand
     m_cache_index: u32
 endop
@@ -1127,5 +1062,20 @@ op Yield < Instruction
     @nothrow
     m_continuation_label: Optional<Label>
     m_value: Operand
+endop
+
+op CacheObjectShape < Instruction
+    @nothrow
+    m_object: Operand
+    m_cache_index: u32
+endop
+
+op InitObjectLiteralProperty < Instruction
+    @nothrow
+    m_object: Operand
+    m_property: PropertyKeyTableIndex
+    m_src: Operand
+    m_shape_cache_index: u32
+    m_property_slot: u32
 endop
 

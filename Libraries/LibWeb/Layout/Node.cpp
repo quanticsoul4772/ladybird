@@ -75,32 +75,57 @@ bool Node::is_out_of_flow(FormattingContext const& formatting_context) const
     return false;
 }
 
-bool Node::can_contain_boxes_with_position_absolute() const
+// https://drafts.csswg.org/css-position-3/#absolute-positioning-containing-block
+bool Node::establishes_an_absolute_positioning_containing_block() const
 {
     if (!is<Box>(*this))
         return false;
 
-    if (computed_values().position() != CSS::Positioning::Static)
+    auto const& computed_values = this->computed_values();
+
+    if (computed_values.position() != CSS::Positioning::Static)
         return true;
 
     if (is<Viewport>(*this))
         return true;
 
-    // https://w3c.github.io/csswg-drafts/css-transforms-1/#propdef-transform
+    // https://drafts.csswg.org/css-will-change/#will-change
+    // If any non-initial value of a property would cause the element to generate a containing block for absolutely
+    // positioned elements, specifying that property in will-change must cause the element to generate a containing
+    // block for absolutely positioned elements.
+    auto will_change_property = [&](CSS::PropertyID property_id) {
+        return computed_values.will_change().has_property(property_id);
+    };
+
+    // https://drafts.csswg.org/css-transforms-1/#propdef-transform
     // Any computed value other than none for the transform affects containing block and stacking context
-    if (!computed_values().transformations().is_empty())
+    if (!computed_values.transformations().is_empty() || will_change_property(CSS::PropertyID::Transform))
         return true;
-    if (computed_values().translate().has_value())
+    if (computed_values.translate() || will_change_property(CSS::PropertyID::Translate))
         return true;
-    if (computed_values().rotate().has_value())
+    if (computed_values.rotate() || will_change_property(CSS::PropertyID::Rotate))
         return true;
-    if (computed_values().scale().has_value())
+    if (computed_values.scale() || will_change_property(CSS::PropertyID::Scale))
         return true;
 
     // https://drafts.csswg.org/css-transforms-2/#propdef-perspective
     // The use of this property with any value other than 'none' establishes a stacking context. It also establishes
     // a containing block for all descendants, just like the 'transform' property does.
-    if (computed_values().perspective().has_value())
+    if (computed_values.perspective().has_value() || will_change_property(CSS::PropertyID::Perspective))
+        return true;
+
+    // https://drafts.csswg.org/filter-effects-1/#FilterProperty
+    // A value other than none for the filter property results in the creation of a containing block for absolute and
+    // fixed positioned descendants, unless the element it applies to is a document root element in the current
+    // browsing context.
+    if ((computed_values.filter().has_filters() || will_change_property(CSS::PropertyID::Filter)) && !is_root_element())
+        return true;
+
+    // https://drafts.csswg.org/filter-effects-2/#BackdropFilterProperty
+    // A computed value of other than none results in the creation of both a stacking context and a containing block
+    // for absolute and fixed position descendants, unless the element it applies to is a document root element in the
+    // current browsing context.
+    if ((computed_values.backdrop_filter().has_filters() || will_change_property(CSS::PropertyID::BackdropFilter)) && !is_root_element())
         return true;
 
     // https://drafts.csswg.org/css-contain-2/#containment-types
@@ -108,8 +133,88 @@ bool Node::can_contain_boxes_with_position_absolute() const
     //    containing block.
     // 4. The paint containment box establishes an absolute positioning containing block and a fixed positioning
     //    containing block.
-    if (has_layout_containment() || has_paint_containment())
+    if (has_layout_containment() || has_paint_containment() || will_change_property(CSS::PropertyID::Contain))
         return true;
+
+    // https://drafts.csswg.org/css-transforms-2/#transform-style-property
+    // A computed value of 'preserve-3d' for 'transform-style' on a transformable element establishes both a
+    // stacking context and a containing block for all descendants.
+    // FIXME: Check that the element is a transformable element.
+    if (computed_values.transform_style() == CSS::TransformStyle::Preserve3d || will_change_property(CSS::PropertyID::TransformStyle))
+        return true;
+
+    // https://drafts.csswg.org/css-view-transitions-1/#snapshot-containing-block-concept
+    // FIXME: The snapshot containing block is considered to be an absolute positioning containing block and a fixed
+    //        positioning containing block for ::view-transition and its descendants.
+
+    return false;
+}
+
+// https://drafts.csswg.org/css-position-3/#fixed-positioning-containing-block
+bool Node::establishes_a_fixed_positioning_containing_block() const
+{
+    if (!is<Box>(*this))
+        return false;
+
+    auto const& computed_values = this->computed_values();
+
+    // https://drafts.csswg.org/css-will-change/#will-change
+    // If any non-initial value of a property would cause the element to generate a containing block for fixed
+    // positioned elements, specifying that property in will-change must cause the element to generate a containing
+    // block for fixed positioned elements.
+    auto will_change_property = [&](CSS::PropertyID property_id) {
+        return computed_values.will_change().has_property(property_id);
+    };
+
+    // https://drafts.csswg.org/css-transforms-1/#propdef-transform
+    // Any computed value other than none for the transform affects containing block and stacking context
+    if (!computed_values.transformations().is_empty() || will_change_property(CSS::PropertyID::Transform))
+        return true;
+    if (computed_values.translate() || will_change_property(CSS::PropertyID::Translate))
+        return true;
+    if (computed_values.rotate() || will_change_property(CSS::PropertyID::Rotate))
+        return true;
+    if (computed_values.scale() || will_change_property(CSS::PropertyID::Scale))
+        return true;
+
+    // https://drafts.csswg.org/css-transforms-2/#propdef-perspective
+    // The use of this property with any value other than 'none' establishes a stacking context. It also establishes
+    // a containing block for all descendants, just like the 'transform' property does.
+    if (computed_values.perspective().has_value() || will_change_property(CSS::PropertyID::Perspective))
+        return true;
+
+    // https://drafts.csswg.org/filter-effects-1/#FilterProperty
+    // A value other than none for the filter property results in the creation of a containing block for absolute and
+    // fixed positioned descendants, unless the element it applies to is a document root element in the current
+    // browsing context.
+    if ((computed_values.filter().has_filters() || will_change_property(CSS::PropertyID::Filter)) && !is_root_element())
+        return true;
+
+    // https://drafts.csswg.org/filter-effects-2/#BackdropFilterProperty
+    // A computed value of other than none results in the creation of both a stacking context and a containing block
+    // for absolute and fixed position descendants, unless the element it applies to is a document root element in the
+    // current browsing context.
+    if ((computed_values.backdrop_filter().has_filters() || will_change_property(CSS::PropertyID::BackdropFilter)) && !is_root_element())
+        return true;
+
+    // https://drafts.csswg.org/css-contain-2/#containment-types
+    // 4. The layout containment box establishes an absolute positioning containing block and a fixed positioning
+    //    containing block.
+    // 4. The paint containment box establishes an absolute positioning containing block and a fixed positioning
+    //    containing block.
+    if (has_layout_containment() || has_paint_containment() || will_change_property(CSS::PropertyID::Contain))
+        return true;
+
+    // https://drafts.csswg.org/css-transforms-2/#transform-style-property
+    // A computed value of 'preserve-3d' for 'transform-style' on a transformable element establishes both a
+    // stacking context and a containing block for all descendants.
+    // FIXME: Check that the element is a transformable element.
+    if (computed_values.transform_style() == CSS::TransformStyle::Preserve3d || will_change_property(CSS::PropertyID::TransformStyle))
+        return true;
+
+    // https://drafts.csswg.org/css-view-transitions-1/#snapshot-containing-block-concept
+    // FIXME: The snapshot containing block is considered to be an absolute positioning containing block and a fixed
+    //        positioning containing block for ::view-transition and its descendants.
 
     return false;
 }
@@ -139,14 +244,31 @@ void Node::recompute_containing_block(Badge<DOM::Document>)
     // https://drafts.csswg.org/css-position-3/#absolute-cb
     if (position == CSS::Positioning::Absolute) {
         auto* ancestor = parent();
-        while (ancestor && !ancestor->can_contain_boxes_with_position_absolute())
+        while (ancestor && !ancestor->establishes_an_absolute_positioning_containing_block())
             ancestor = ancestor->parent();
         m_containing_block = static_cast<Box*>(ancestor);
         return;
     }
 
+    // https://drafts.csswg.org/css-position-3/#fixed-cb
     if (position == CSS::Positioning::Fixed) {
-        m_containing_block = &root();
+        // The containing block is established by the nearest ancestor box that establishes an fixed positioning
+        // containing block, with the bounds of the containing block determined identically to the absolute positioning
+        // containing block.
+        auto* ancestor = parent();
+        while (ancestor && !ancestor->establishes_a_fixed_positioning_containing_block())
+            ancestor = ancestor->parent();
+        // If no ancestor establishes one, the box’s fixed positioning containing block is the initial fixed containing
+        // block:
+        if (!ancestor) {
+            //  - in continuous media, the layout viewport (whose size matches the dynamic viewport size); as a result,
+            //    fixed boxes do not move when the document is scrolled.
+            ancestor = &root();
+            // FIXME: - in paged media, the page area of each page; fixed positioned boxes are thus replicated on every
+            //   page. (They are fixed with respect to the page box only, and are not affected by being seen through a
+            //   viewport; as in the case of print preview, for example.)
+        }
+        m_containing_block = static_cast<Box*>(ancestor);
         return;
     }
 
@@ -220,13 +342,13 @@ bool Node::establishes_stacking_context() const
     if (!computed_values.transformations().is_empty() || will_change_property(CSS::PropertyID::Transform))
         return true;
 
-    if (computed_values.translate().has_value() || will_change_property(CSS::PropertyID::Translate))
+    if (computed_values.translate() || will_change_property(CSS::PropertyID::Translate))
         return true;
 
-    if (computed_values.rotate().has_value() || will_change_property(CSS::PropertyID::Rotate))
+    if (computed_values.rotate() || will_change_property(CSS::PropertyID::Rotate))
         return true;
 
-    if (computed_values.scale().has_value() || will_change_property(CSS::PropertyID::Scale))
+    if (computed_values.scale() || will_change_property(CSS::PropertyID::Scale))
         return true;
 
     // Element that is a child of a flex container, with z-index value other than auto.
@@ -378,12 +500,13 @@ NodeWithStyle::NodeWithStyle(DOM::Document& document, DOM::Node* node, NonnullOw
 void NodeWithStyle::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    for (auto& layer : computed_values().background_layers()) {
-        if (layer.background_image && layer.background_image->is_image())
-            layer.background_image->as_image().visit_edges(visitor);
-    }
+    for (auto const& layer : computed_values().background_layers())
+        layer.background_image->visit_edges(visitor);
+
     if (m_list_style_image && m_list_style_image->is_image())
         m_list_style_image->as_image().visit_edges(visitor);
+
+    m_computed_values->visit_edges(visitor);
 }
 
 void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
@@ -413,14 +536,13 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
 
     auto background_layers = computed_style.background_layers();
 
-    for (auto const& layer : background_layers) {
-        if (layer.background_image)
-            const_cast<CSS::AbstractImageStyleValue&>(*layer.background_image).load_any_resources(document());
-    }
+    for (auto const& layer : background_layers)
+        const_cast<CSS::AbstractImageStyleValue&>(*layer.background_image).load_any_resources(document());
 
     computed_values.set_background_layers(move(background_layers));
 
     computed_values.set_background_color(computed_style.color_or_fallback(CSS::PropertyID::BackgroundColor, color_resolution_context, CSS::InitialValues::background_color()));
+    computed_values.set_background_color_clip(computed_style.background_color_clip());
 
     computed_values.set_box_sizing(computed_style.box_sizing());
 
@@ -562,14 +684,14 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
 
     computed_values.set_box_shadow(computed_style.box_shadow(*this));
 
-    if (auto rotate_value = computed_style.rotate(); rotate_value.has_value())
-        computed_values.set_rotate(rotate_value.release_value());
+    if (auto rotate_value = computed_style.rotate())
+        computed_values.set_rotate(rotate_value.release_nonnull());
 
-    if (auto translate_value = computed_style.translate(); translate_value.has_value())
-        computed_values.set_translate(translate_value.release_value());
+    if (auto translate_value = computed_style.translate())
+        computed_values.set_translate(translate_value.release_nonnull());
 
-    if (auto scale_value = computed_style.scale(); scale_value.has_value())
-        computed_values.set_scale(scale_value.release_value());
+    if (auto scale_value = computed_style.scale())
+        computed_values.set_scale(scale_value.release_nonnull());
 
     computed_values.set_transformations(computed_style.transformations());
     computed_values.set_transform_box(computed_style.transform_box());
@@ -594,8 +716,14 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
         border.color = computed_style.color_or_fallback(color_property, color_resolution_context, computed_values.color());
         border.line_style = computed_style.line_style(style_property);
 
-        // FIXME: Interpolation can cause negative values - we clamp here but should instead clamp as part of interpolation
-        border.width = max(CSSPixels { 0 }, computed_style.length(width_property).absolute_length_to_px());
+        // If the border-style corresponding to a given border-width is none or hidden, then the used width is 0.
+        // https://drafts.csswg.org/css-backgrounds/#border-width
+        if (border.line_style == CSS::LineStyle::None || border.line_style == CSS::LineStyle::Hidden) {
+            border.width = 0;
+        } else {
+            // FIXME: Interpolation can cause negative values - we clamp here but should instead clamp as part of interpolation
+            border.width = max(CSSPixels { 0 }, computed_style.length(width_property).absolute_length_to_px());
+        }
     };
 
     do_border_style(computed_values.border_left(), CSS::PropertyID::BorderLeftWidth, CSS::PropertyID::BorderLeftColor, CSS::PropertyID::BorderLeftStyle);
@@ -799,6 +927,7 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
 
     computed_values.set_caret_color(computed_style.caret_color(*this));
     computed_values.set_color_interpolation(computed_style.color_interpolation());
+    computed_values.set_resize(computed_style.resize());
 
     propagate_style_to_anonymous_wrappers();
 
@@ -1291,11 +1420,15 @@ void Node::set_needs_layout_update(DOM::SetNeedsLayoutReason reason)
 
     m_needs_layout_update = true;
 
+    if (auto* box = as_if<Box>(this))
+        box->reset_cached_intrinsic_sizes();
+
     // Mark any anonymous children generated by this node for layout update.
     // NOTE: if this node generated an anonymous parent, all ancestors are indiscriminately marked below.
     for_each_child_of_type<Box>([&](Box& child) {
         if (child.is_anonymous() && !is<TableWrapper>(child)) {
             child.m_needs_layout_update = true;
+            child.reset_cached_intrinsic_sizes();
         }
         return IterationDecision::Continue;
     });
@@ -1304,6 +1437,18 @@ void Node::set_needs_layout_update(DOM::SetNeedsLayoutReason reason)
         if (ancestor->m_needs_layout_update)
             break;
         ancestor->m_needs_layout_update = true;
+    }
+
+    // Reset intrinsic size caches for ancestors up to abspos boundary.
+    // Absolutely positioned elements don't contribute to ancestor intrinsic sizes,
+    // so changes inside an abspos box don't require resetting ancestor caches.
+    for (auto* ancestor = parent(); ancestor; ancestor = ancestor->parent()) {
+        auto* box = as_if<Box>(ancestor);
+        if (!box)
+            continue;
+        box->reset_cached_intrinsic_sizes();
+        if (box->is_absolutely_positioned())
+            break;
     }
 }
 

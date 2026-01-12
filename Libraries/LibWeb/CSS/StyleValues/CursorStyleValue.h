@@ -28,7 +28,7 @@ public:
 
     Optional<Gfx::ImageCursor> make_image_cursor(Layout::NodeWithStyle const&) const;
 
-    virtual String to_string(SerializationMode) const override;
+    virtual void serialize(StringBuilder&, SerializationMode) const override;
 
     virtual ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const&) const override;
 
@@ -45,8 +45,8 @@ private:
 
     struct Properties {
         ValueComparingNonnullRefPtr<AbstractImageStyleValue const> image;
-        RefPtr<StyleValue const> x;
-        RefPtr<StyleValue const> y;
+        ValueComparingRefPtr<StyleValue const> x;
+        ValueComparingRefPtr<StyleValue const> y;
         bool operator==(Properties const&) const = default;
     } m_properties;
 

@@ -286,6 +286,13 @@ public:
         return false;
     }
 
+    template<typename TUnaryPredicate>
+    bool contains(TUnaryPredicate&& predicate) const
+    requires(IsCallableWithArguments<TUnaryPredicate, bool, VisibleType const&>)
+    {
+        return !find_if(forward<TUnaryPredicate>(predicate)).is_end();
+    }
+
     bool contains_in_range(VisibleType const& value, size_t const start, size_t const end) const
     {
         VERIFY(start <= end);
@@ -481,8 +488,10 @@ public:
 
     void clear_with_capacity()
     {
-        for (size_t i = 0; i < m_size; ++i)
-            data()[i].~StorageType();
+        if constexpr (!IsTriviallyDestructible<StorageType>) {
+            for (size_t i = 0; i < m_size; ++i)
+                data()[i].~StorageType();
+        }
         m_size = 0;
         if (m_capacity != 0)
             update_metadata();
@@ -914,8 +923,10 @@ public:
             return;
         }
 
-        for (size_t i = new_size; i < size(); ++i)
-            at(i).~StorageType();
+        if constexpr (!IsTriviallyDestructible<StorageType>) {
+            for (size_t i = new_size; i < size(); ++i)
+                at(i).~StorageType();
+        }
         m_size = new_size;
         update_metadata(); // We have *some* space, as new_size can't be zero here.
     }

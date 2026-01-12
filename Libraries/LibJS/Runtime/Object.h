@@ -37,6 +37,11 @@ struct PrivateElement {
     PrivateName key;
     Kind kind { Kind::Field };
     Value value;
+
+    void visit_edges(Cell::Visitor& visitor)
+    {
+        visitor.visit(value);
+    }
 };
 
 // Non-standard: This is information optionally returned by object property access functions.
@@ -122,6 +127,7 @@ public:
     ThrowCompletionOr<Value> get(PropertyKey const&) const;
     ThrowCompletionOr<Value> get(PropertyKey const&, Bytecode::PropertyLookupCache&) const;
     ThrowCompletionOr<void> set(PropertyKey const&, Value, ShouldThrowExceptions);
+    ThrowCompletionOr<void> set(PropertyKey const&, Value, Bytecode::PropertyLookupCache&);
     ThrowCompletionOr<bool> create_data_property(PropertyKey const&, Value, Optional<u32>* new_property_offset = nullptr);
     void create_method_property(PropertyKey const&, Value);
     ThrowCompletionOr<bool> create_data_property_or_throw(PropertyKey const&, Value);
@@ -207,13 +213,17 @@ public:
     void define_native_javascript_backed_function(PropertyKey const&, GC::Ref<NativeJavaScriptBackedFunction> function, i32 length, PropertyAttributes attributes);
 
     virtual bool is_dom_node() const { return false; }
+    virtual bool is_dom_document() const { return false; }
     virtual bool is_dom_element() const { return false; }
+    virtual bool is_dom_event_target() const { return false; }
     virtual bool is_dom_event() const { return false; }
     virtual bool is_html_window() const { return false; }
     virtual bool is_html_window_proxy() const { return false; }
     virtual bool is_html_location() const { return false; }
+    virtual bool is_canvas_rendering_context_2d() const { return false; }
 
     virtual bool is_function() const { return false; }
+    virtual bool is_bound_function() const { return false; }
     virtual bool is_promise() const { return false; }
     virtual bool is_error_object() const { return false; }
     virtual bool is_date() const { return false; }
@@ -222,6 +232,7 @@ public:
     virtual bool is_regexp_object() const { return false; }
     virtual bool is_bigint_object() const { return false; }
     virtual bool is_string_object() const { return false; }
+    virtual bool is_array_buffer() const { return false; }
     virtual bool is_array_exotic_object() const { return false; }
     virtual bool is_global_object() const { return false; }
     virtual bool is_proxy_object() const { return false; }
@@ -231,6 +242,13 @@ public:
     virtual bool is_raw_json_object() const { return false; }
     virtual bool is_set_object() const { return false; }
     virtual bool is_map_object() const { return false; }
+    virtual bool is_weak_map() const { return false; }
+
+    virtual bool is_typed_array_base() const { return false; }
+#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, Type) \
+    virtual bool is_##snake_name() const { return false; }
+    JS_ENUMERATE_TYPED_ARRAYS
+#undef __JS_ENUMERATE
 
     virtual bool eligible_for_own_property_enumeration_fast_path() const { return true; }
 
@@ -286,29 +304,33 @@ protected:
     explicit Object(Shape&, MayInterfereWithIndexedPropertyAccess = MayInterfereWithIndexedPropertyAccess::No);
 
     // [[Extensible]]
-    bool m_is_extensible { true };
+    bool m_is_extensible : 1 { true };
 
     // [[ParameterMap]]
-    bool m_has_parameter_map { false };
+    bool m_has_parameter_map : 1 { false };
 
-    bool m_has_magical_length_property { false };
+    bool m_has_magical_length_property : 1 { false };
 
-    bool m_is_typed_array { false };
+    bool m_is_typed_array : 1 { false };
 
 private:
     void set_shape(Shape& shape) { m_shape = &shape; }
 
     Object* prototype() { return shape().prototype(); }
 
-    bool m_may_interfere_with_indexed_property_access { false };
+    bool m_may_interfere_with_indexed_property_access : 1 { false };
 
     // True if this object has lazily allocated intrinsic properties.
-    bool m_has_intrinsic_accessors { false };
+    bool m_has_intrinsic_accessors : 1 { false };
 
     GC::Ptr<Shape> m_shape;
     Vector<Value> m_storage;
     IndexedProperties m_indexed_properties;
     OwnPtr<Vector<PrivateElement>> m_private_elements; // [[PrivateElements]]
 };
+
+#if !defined(AK_OS_WINDOWS)
+static_assert(sizeof(Object) <= 64, "Keep the size of JS::Object down!");
+#endif
 
 }

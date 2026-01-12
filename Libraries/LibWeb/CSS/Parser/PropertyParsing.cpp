@@ -22,6 +22,7 @@
 #include <LibWeb/CSS/StyleValues/AngleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BackgroundSizeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BorderImageSliceStyleValue.h>
+#include <LibWeb/CSS/StyleValues/BorderRadiusRectStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BorderRadiusStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorSchemeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
@@ -1405,17 +1406,6 @@ RefPtr<StyleValue const> Parser::parse_background_value(TokenStream<ComponentVal
         StyleValueList::create(move(background_clips), StyleValueList::Separator::Comma));
 }
 
-static Optional<LengthPercentage> style_value_to_length_percentage(auto value)
-{
-    if (value->is_percentage())
-        return LengthPercentage { value->as_percentage().percentage() };
-    if (value->is_length())
-        return LengthPercentage { value->as_length().length() };
-    if (value->is_calculated())
-        return LengthPercentage { value->as_calculated() };
-    return {};
-}
-
 RefPtr<StyleValue const> Parser::parse_single_background_position_x_or_y_value(TokenStream<ComponentValue>& tokens, PropertyID property)
 {
     Optional<PositionEdge> relative_edge {};
@@ -1439,38 +1429,16 @@ RefPtr<StyleValue const> Parser::parse_single_background_position_x_or_y_value(T
         } else {
             return nullptr;
         }
-        if (tokens.has_next_token()) {
-            value = parse_css_value_for_property(property, tokens);
-            if (!value) {
-                transaction.commit();
-                return EdgeStyleValue::create(relative_edge, {});
-            }
-            if (value->is_keyword())
-                return {};
+
+        value = parse_length_percentage_value(tokens);
+        if (!value) {
+            transaction.commit();
+            return EdgeStyleValue::create(relative_edge, {});
         }
     }
 
-    auto offset = style_value_to_length_percentage(value);
-    if (offset.has_value()) {
-        transaction.commit();
-        return EdgeStyleValue::create(relative_edge, *offset);
-    }
-
-    if (!relative_edge.has_value()) {
-        if (property == PropertyID::BackgroundPositionX) {
-            // [ center | [ [ left | right | x-start | x-end ]? <length-percentage>? ]! ]#
-            relative_edge = PositionEdge::Left;
-        } else if (property == PropertyID::BackgroundPositionY) {
-            // [ center | [ [ top | bottom | y-start | y-end ]? <length-percentage>? ]! ]#
-            relative_edge = PositionEdge::Top;
-        } else {
-            VERIFY_NOT_REACHED();
-        }
-    }
-
-    // If no offset is provided create this element but with an offset of default value of zero
     transaction.commit();
-    return EdgeStyleValue::create(relative_edge, {});
+    return EdgeStyleValue::create(relative_edge, value);
 }
 
 RefPtr<StyleValue const> Parser::parse_single_background_size_value(PropertyID property, TokenStream<ComponentValue>& tokens)
@@ -1789,12 +1757,24 @@ RefPtr<StyleValue const> Parser::parse_border_image_slice_value(TokenStream<Comp
         fill);
 }
 
+// https://drafts.csswg.org/css-borders-4/#typedef-border-radius
 RefPtr<StyleValue const> Parser::parse_border_radius_value(TokenStream<ComponentValue>& tokens)
 {
+    // <border-radius> = <slash-separated-border-radius-syntax> | <legacy-border-radius-syntax>
+    // <slash-separated-border-radius-syntax> = <length-percentage [0,∞]> [ / <length-percentage [0,∞]> ]?
+    // <legacy-border-radius-syntax> = <length-percentage [0,∞]>{1,2}
+    // NB: So, 1 or 2 `<length-percentage>`s, optionally separated with a `/`.
+
     auto transaction = tokens.begin_transaction();
     tokens.discard_whitespace();
     auto horizontal = parse_length_percentage_value(tokens);
     tokens.discard_whitespace();
+
+    if (tokens.next_token().is_delim('/')) {
+        tokens.discard_a_token(); // '/'
+        tokens.discard_whitespace();
+    }
+
     auto vertical = parse_length_percentage_value(tokens);
     if (horizontal && vertical) {
         transaction.commit();
@@ -1809,95 +1789,17 @@ RefPtr<StyleValue const> Parser::parse_border_radius_value(TokenStream<Component
 
 RefPtr<StyleValue const> Parser::parse_border_radius_shorthand_value(TokenStream<ComponentValue>& tokens)
 {
-    auto top_left = [&](StyleValueVector& radii) { return radii[0]; };
-    auto top_right = [&](StyleValueVector& radii) {
-        switch (radii.size()) {
-        case 4:
-        case 3:
-        case 2:
-            return radii[1];
-        case 1:
-            return radii[0];
-        default:
-            VERIFY_NOT_REACHED();
-        }
-    };
-    auto bottom_right = [&](StyleValueVector& radii) {
-        switch (radii.size()) {
-        case 4:
-        case 3:
-            return radii[2];
-        case 2:
-        case 1:
-            return radii[0];
-        default:
-            VERIFY_NOT_REACHED();
-        }
-    };
-    auto bottom_left = [&](StyleValueVector& radii) {
-        switch (radii.size()) {
-        case 4:
-            return radii[3];
-        case 3:
-        case 2:
-            return radii[1];
-        case 1:
-            return radii[0];
-        default:
-            VERIFY_NOT_REACHED();
-        }
-    };
-
-    StyleValueVector horizontal_radii;
-    StyleValueVector vertical_radii;
-    bool reading_vertical = false;
     auto transaction = tokens.begin_transaction();
-    tokens.discard_whitespace();
 
-    while (tokens.has_next_token()) {
-        if (tokens.next_token().is_delim('/')) {
-            if (reading_vertical || horizontal_radii.is_empty())
-                return nullptr;
+    auto const& border_radius_rect = parse_border_radius_rect_value(tokens);
 
-            reading_vertical = true;
-            tokens.discard_a_token(); // `/`
-            tokens.discard_whitespace();
-            continue;
-        }
-
-        auto maybe_dimension = parse_length_percentage_value(tokens);
-        if (!maybe_dimension)
-            return nullptr;
-        if (maybe_dimension->is_length() && !property_accepts_length(PropertyID::BorderRadius, maybe_dimension->as_length().length()))
-            return nullptr;
-        if (maybe_dimension->is_percentage() && !property_accepts_percentage(PropertyID::BorderRadius, maybe_dimension->as_percentage().percentage()))
-            return nullptr;
-        if (reading_vertical) {
-            vertical_radii.append(maybe_dimension.release_nonnull());
-        } else {
-            horizontal_radii.append(maybe_dimension.release_nonnull());
-        }
-        tokens.discard_whitespace();
-    }
-
-    if (horizontal_radii.size() > 4 || vertical_radii.size() > 4
-        || horizontal_radii.is_empty()
-        || (reading_vertical && vertical_radii.is_empty()))
+    if (!border_radius_rect)
         return nullptr;
-
-    auto top_left_radius = BorderRadiusStyleValue::create(top_left(horizontal_radii),
-        vertical_radii.is_empty() ? top_left(horizontal_radii) : top_left(vertical_radii));
-    auto top_right_radius = BorderRadiusStyleValue::create(top_right(horizontal_radii),
-        vertical_radii.is_empty() ? top_right(horizontal_radii) : top_right(vertical_radii));
-    auto bottom_right_radius = BorderRadiusStyleValue::create(bottom_right(horizontal_radii),
-        vertical_radii.is_empty() ? bottom_right(horizontal_radii) : bottom_right(vertical_radii));
-    auto bottom_left_radius = BorderRadiusStyleValue::create(bottom_left(horizontal_radii),
-        vertical_radii.is_empty() ? bottom_left(horizontal_radii) : bottom_left(vertical_radii));
 
     transaction.commit();
     return ShorthandStyleValue::create(PropertyID::BorderRadius,
         { PropertyID::BorderTopLeftRadius, PropertyID::BorderTopRightRadius, PropertyID::BorderBottomRightRadius, PropertyID::BorderBottomLeftRadius },
-        { move(top_left_radius), move(top_right_radius), move(bottom_right_radius), move(bottom_left_radius) });
+        { border_radius_rect->top_left(), border_radius_rect->top_right(), border_radius_rect->bottom_right(), border_radius_rect->bottom_left() });
 }
 
 RefPtr<StyleValue const> Parser::parse_columns_value(TokenStream<ComponentValue>& tokens)
@@ -4957,7 +4859,7 @@ RefPtr<StyleValue const> Parser::parse_transition_value(TokenStream<ComponentVal
     // <single-transition-property>, then the declaration is invalid.
     auto const& transition_properties = parsed_value->as_shorthand().longhand(PropertyID::TransitionProperty)->as_value_list().values();
 
-    if (transition_properties.size() > 1 && transition_properties.find_first_index_if([](auto const& transition_property) { return transition_property->to_keyword() == Keyword::None; }).has_value())
+    if (transition_properties.size() > 1 && transition_properties.contains([](auto const& transition_property) { return transition_property->to_keyword() == Keyword::None; }))
         return nullptr;
 
     return parsed_value;
@@ -5865,12 +5767,8 @@ RefPtr<StyleValue const> Parser::parse_filter_value_list_value(TokenStream<Compo
                     return {};
                 }
             }
-            Optional<Color> color = {};
-            if (maybe_color)
-                // FIXME: We should support colors which require compute-time information (i.e. `em` and `vw` to `px` ratios).
-                color = maybe_color->to_color({});
 
-            return if_no_more_tokens_return(FilterOperation::DropShadow { x_offset.value(), y_offset.value(), maybe_radius, color });
+            return if_no_more_tokens_return(FilterOperation::DropShadow { x_offset.value(), y_offset.value(), maybe_radius, maybe_color });
         } else if (filter_token == FilterToken::HueRotate) {
             // hue-rotate( [ <angle> | <zero> ]? )
             if (!tokens.has_next_token())

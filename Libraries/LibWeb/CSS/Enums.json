@@ -307,10 +307,6 @@
     "nonzero",
     "evenodd"
   ],
-  "fit-side": [
-    "closest-side",
-    "farthest-side"
-  ],
   "flex-direction": [
     "row",
     "row-reverse",
@@ -689,6 +685,12 @@
     "static",
     "sticky"
   ],
+  "radial-extent": [
+    "closest-corner",
+    "closest-side",
+    "farthest-corner",
+    "farthest-side"
+  ],
   "referrer-policy-modifier-value": [
     "no-referrer",
     "no-referrer-when-downgrade",
@@ -708,6 +710,14 @@
     "repeat",
     "round",
     "space"
+  ],
+  "resize": [
+    "none",
+    "both",
+    "horizontal",
+    "vertical",
+    "inline",
+    "block"
   ],
   "rounding-strategy": [
     "down",

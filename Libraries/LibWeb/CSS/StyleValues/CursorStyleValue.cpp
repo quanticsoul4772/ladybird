@@ -17,18 +17,17 @@
 
 namespace Web::CSS {
 
-String CursorStyleValue::to_string(SerializationMode mode) const
+void CursorStyleValue::serialize(StringBuilder& builder, SerializationMode mode) const
 {
-    StringBuilder builder;
-
-    builder.append(m_properties.image->to_string(mode));
+    m_properties.image->serialize(builder, mode);
 
     if (m_properties.x) {
         VERIFY(m_properties.y);
-        builder.appendff(" {} {}", m_properties.x->to_string(mode), m_properties.y->to_string(mode));
+        builder.append(' ');
+        m_properties.x->serialize(builder, mode);
+        builder.append(' ');
+        m_properties.y->serialize(builder, mode);
     }
-
-    return builder.to_string_without_validation();
 }
 
 ValueComparingNonnullRefPtr<StyleValue const> CursorStyleValue::absolutized(ComputationContext const& computation_context) const
@@ -101,7 +100,7 @@ Optional<Gfx::ImageCursor> CursorStyleValue::make_image_cursor(Layout::NodeWithS
         // Paint the cursor into a bitmap.
         auto display_list = Painting::DisplayList::create(document.page().client().device_pixels_per_css_pixel());
         Painting::DisplayListRecorder display_list_recorder(display_list);
-        DisplayListRecordingContext paint_context { display_list_recorder, document.page().palette(), document.page().client().device_pixels_per_css_pixel() };
+        DisplayListRecordingContext paint_context { display_list_recorder, document.page().palette(), document.page().client().device_pixels_per_css_pixel(), document.page().chrome_metrics() };
 
         image.resolve_for_size(layout_node, CSSPixelSize { bitmap.size() });
         image.paint(paint_context, DevicePixelRect { bitmap.rect() }, ImageRendering::Auto);

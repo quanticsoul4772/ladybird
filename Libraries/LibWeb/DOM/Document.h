@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2025, Andreas Kling <andreas@ladybird.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021-2026, Sam Atkins <sam@ladybird.org>
  * Copyright (c) 2023-2024, Shannon Booth <shannon@serenityos.org>
  * Copyright (c) 2025, Jelle Raaijmakers <jelle@ladybird.org>
  *
@@ -23,6 +24,7 @@
 #include <LibUnicode/Forward.h>
 #include <LibWeb/CSS/CSSPropertyRule.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
+#include <LibWeb/CSS/CustomPropertyRegistration.h>
 #include <LibWeb/CSS/EnvironmentVariable.h>
 #include <LibWeb/CSS/StyleScope.h>
 #include <LibWeb/CSS/StyleSheetList.h>
@@ -117,6 +119,8 @@ enum class InvalidateLayoutTreeReason {
     X(HTMLEventLoopRenderingUpdate)           \
     X(HTMLImageElementHeight)                 \
     X(HTMLImageElementWidth)                  \
+    X(HTMLImageElementX)                      \
+    X(HTMLImageElementY)                      \
     X(HTMLInputElementHeight)                 \
     X(HTMLInputElementWidth)                  \
     X(InternalsHitTest)                       \
@@ -181,6 +185,8 @@ class WEB_API Document
     GC_DECLARE_ALLOCATOR(Document);
 
 public:
+    static constexpr bool OVERRIDES_FINALIZE = true;
+
     enum class Type {
         XML,
         HTML
@@ -633,8 +639,12 @@ public:
     String domain() const;
     WebIDL::ExceptionOr<void> set_domain(String const&);
 
-    auto& pending_scroll_event_targets() { return m_pending_scroll_event_targets; }
-    auto& pending_scrollend_event_targets() { return m_pending_scrollend_event_targets; }
+    struct PendingScrollEvent {
+        GC::Ref<EventTarget> event_target;
+        FlyString event_type;
+        bool operator==(PendingScrollEvent const&) const = default;
+    };
+    Vector<PendingScrollEvent>& pending_scroll_events() { return m_pending_scroll_events; }
 
     // https://html.spec.whatwg.org/multipage/document-lifecycle.html#completely-loaded
     bool is_completely_loaded() const;
@@ -660,6 +670,8 @@ public:
     Vector<GC::Root<HTML::Navigable>> document_tree_child_navigables();
 
     [[nodiscard]] bool has_been_destroyed() const { return m_has_been_destroyed; }
+
+    [[nodiscard]] bool has_been_browsing_context_associated() const { return m_has_been_browsing_context_associated; }
 
     // https://html.spec.whatwg.org/multipage/document-lifecycle.html#destroy-a-document
     void destroy();
@@ -760,7 +772,7 @@ public:
         Optional<double> scheduled_event_time;
     };
     void append_pending_animation_event(PendingAnimationEvent const&);
-    void update_animations_and_send_events(Optional<double> const& timestamp);
+    void update_animations_and_send_events(double timestamp);
     void remove_replaced_animations();
 
     WebIDL::ExceptionOr<Vector<GC::Ref<Animations::Animation>>> get_animations();
@@ -847,7 +859,7 @@ public:
     void set_console_client(GC::Ptr<JS::ConsoleClient> console_client) { m_console_client = console_client; }
     GC::Ptr<JS::ConsoleClient> console_client() const { return m_console_client; }
 
-    InputEventsTarget* active_input_events_target();
+    InputEventsTarget* active_input_events_target(DOM::Node const* for_node = nullptr);
     GC::Ptr<DOM::Position> cursor_position() const;
 
     bool cursor_blink_state() const { return m_cursor_blink_state; }
@@ -951,8 +963,8 @@ public:
     Optional<Vector<CSS::Parser::ComponentValue>> environment_variable_value(CSS::EnvironmentVariable, Span<i64> indices = {}) const;
 
     // https://www.w3.org/TR/css-properties-values-api-1/#dom-window-registeredpropertyset-slot
-    HashMap<FlyString, GC::Ref<Web::CSS::CSSPropertyRule>>& registered_custom_properties();
-
+    HashMap<FlyString, CSS::CustomPropertyRegistration>& registered_property_set();
+    Optional<CSS::CustomPropertyRegistration const&> get_registered_custom_property(FlyString const& name) const;
     NonnullRefPtr<CSS::StyleValue const> custom_property_initial_value(FlyString const& name) const;
 
     CSS::StyleScope const& style_scope() const { return m_style_scope; }
@@ -967,6 +979,9 @@ protected:
     Document(JS::Realm&, URL::URL const&, TemporaryDocumentForFragmentParsing = TemporaryDocumentForFragmentParsing::No);
 
 private:
+    // ^JS::Object
+    virtual bool is_dom_document() const final { return true; }
+
     // ^HTML::GlobalEventHandlers
     virtual GC::Ptr<EventTarget> global_event_handlers_to_event_target(FlyString const&) final { return *this; }
 
@@ -1013,6 +1028,8 @@ private:
 
     void run_csp_initialization() const;
 
+    void build_registered_properties_cache();
+
     GC::Ref<Page> m_page;
     GC::Ptr<CSS::StyleComputer> m_style_computer;
     GC::Ptr<CSS::FontComputer> m_font_computer;
@@ -1041,6 +1058,8 @@ private:
     bool m_active_parser_was_aborted { false };
 
     bool m_has_been_destroyed { false };
+
+    bool m_has_been_browsing_context_associated { false };
 
     String m_source;
 
@@ -1129,11 +1148,9 @@ private:
 
     HashTable<ViewportClient*> m_viewport_clients;
 
-    // https://w3c.github.io/csswg-drafts/cssom-view-1/#document-pending-scroll-event-targets
-    Vector<GC::Ref<EventTarget>> m_pending_scroll_event_targets;
-
-    // https://w3c.github.io/csswg-drafts/cssom-view-1/#document-pending-scrollend-event-targets
-    Vector<GC::Ref<EventTarget>> m_pending_scrollend_event_targets;
+    // https://drafts.csswg.org/cssom-view-1/#document-pending-scroll-events
+    // Each Document has an associated list of pending scroll events, which stores pairs of (EventTarget, DOMString), initially empty.
+    Vector<PendingScrollEvent> m_pending_scroll_events;
 
     // Used by evaluate_media_queries_and_report_changes().
     bool m_needs_media_query_evaluation { false };
@@ -1356,7 +1373,8 @@ private:
     GC::Ref<StyleInvalidator> m_style_invalidator;
 
     // https://www.w3.org/TR/css-properties-values-api-1/#dom-window-registeredpropertyset-slot
-    HashMap<FlyString, GC::Ref<Web::CSS::CSSPropertyRule>> m_registered_custom_properties;
+    HashMap<FlyString, CSS::CustomPropertyRegistration> m_registered_property_set;
+    HashMap<FlyString, CSS::CustomPropertyRegistration> m_cached_registered_properties_from_css_property_rules;
 
     CSS::StyleScope m_style_scope;
 
@@ -1368,5 +1386,12 @@ template<>
 inline bool Node::fast_is<Document>() const { return is_document(); }
 
 bool is_a_registrable_domain_suffix_of_or_is_equal_to(StringView host_suffix_string, URL::Host const& original_host);
+
+}
+
+namespace JS {
+
+template<>
+inline bool JS::Object::fast_is<Web::DOM::Document>() const { return is_dom_document(); }
 
 }

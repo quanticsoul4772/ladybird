@@ -17,7 +17,7 @@ namespace Web::CSS {
 
 struct Inset {
     Gfx::Path to_path(CSSPixelRect reference_box, Layout::Node const&) const;
-    String to_string(SerializationMode) const;
+    void serialize(StringBuilder&, SerializationMode) const;
 
     bool operator==(Inset const&) const = default;
 
@@ -25,10 +25,12 @@ struct Inset {
     ValueComparingNonnullRefPtr<StyleValue const> right;
     ValueComparingNonnullRefPtr<StyleValue const> bottom;
     ValueComparingNonnullRefPtr<StyleValue const> left;
+
+    ValueComparingNonnullRefPtr<StyleValue const> border_radius;
 };
 
 struct Xywh {
-    String to_string(SerializationMode) const;
+    void serialize(StringBuilder&, SerializationMode) const;
 
     bool operator==(Xywh const&) const = default;
 
@@ -36,10 +38,12 @@ struct Xywh {
     ValueComparingNonnullRefPtr<StyleValue const> y;
     ValueComparingNonnullRefPtr<StyleValue const> width;
     ValueComparingNonnullRefPtr<StyleValue const> height;
+
+    ValueComparingNonnullRefPtr<StyleValue const> border_radius;
 };
 
 struct Rect {
-    String to_string(SerializationMode) const;
+    void serialize(StringBuilder&, SerializationMode) const;
 
     bool operator==(Rect const&) const = default;
 
@@ -47,27 +51,28 @@ struct Rect {
     ValueComparingNonnullRefPtr<StyleValue const> right;
     ValueComparingNonnullRefPtr<StyleValue const> bottom;
     ValueComparingNonnullRefPtr<StyleValue const> left;
+
+    ValueComparingNonnullRefPtr<StyleValue const> border_radius;
 };
 
 struct Circle {
     Gfx::Path to_path(CSSPixelRect reference_box, Layout::Node const&) const;
-    String to_string(SerializationMode) const;
+    void serialize(StringBuilder&, SerializationMode) const;
 
     bool operator==(Circle const&) const = default;
 
     ValueComparingNonnullRefPtr<StyleValue const> radius;
-    ValueComparingNonnullRefPtr<PositionStyleValue const> position;
+    ValueComparingRefPtr<StyleValue const> position;
 };
 
 struct Ellipse {
     Gfx::Path to_path(CSSPixelRect reference_box, Layout::Node const&) const;
-    String to_string(SerializationMode) const;
+    void serialize(StringBuilder&, SerializationMode) const;
 
     bool operator==(Ellipse const&) const = default;
 
-    ValueComparingNonnullRefPtr<StyleValue const> radius_x;
-    ValueComparingNonnullRefPtr<StyleValue const> radius_y;
-    ValueComparingNonnullRefPtr<PositionStyleValue const> position;
+    ValueComparingNonnullRefPtr<StyleValue const> radius;
+    ValueComparingRefPtr<StyleValue const> position;
 };
 
 struct Polygon {
@@ -78,7 +83,7 @@ struct Polygon {
     };
 
     Gfx::Path to_path(CSSPixelRect reference_box, Layout::Node const&) const;
-    String to_string(SerializationMode) const;
+    void serialize(StringBuilder&, SerializationMode) const;
 
     bool operator==(Polygon const&) const = default;
 
@@ -89,7 +94,7 @@ struct Polygon {
 // https://drafts.csswg.org/css-shapes/#funcdef-basic-shape-path
 struct Path {
     Gfx::Path to_path(CSSPixelRect reference_box, Layout::Node const&) const;
-    String to_string(SerializationMode) const;
+    void serialize(StringBuilder&, SerializationMode) const;
 
     bool operator==(Path const&) const = default;
 
@@ -110,7 +115,7 @@ public:
 
     BasicShape const& basic_shape() const { return m_basic_shape; }
 
-    virtual String to_string(SerializationMode) const override;
+    virtual void serialize(StringBuilder&, SerializationMode) const override;
     virtual ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const&) const override;
 
     bool properties_equal(BasicShapeStyleValue const& other) const { return m_basic_shape == other.m_basic_shape; }

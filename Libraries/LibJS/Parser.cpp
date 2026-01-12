@@ -239,7 +239,7 @@ public:
 
     [[nodiscard]] bool has_declaration(Utf16FlyString const& name) const
     {
-        return m_lexical_names.contains(name) || m_var_names.contains(name) || !m_functions_to_hoist.find_if([&name](auto& function) { return function->name() == name; }).is_end();
+        return m_lexical_names.contains(name) || m_var_names.contains(name) || m_functions_to_hoist.contains([&name](auto& function) { return function->name() == name; });
     }
 
     bool contains_direct_call_to_eval() const { return m_contains_direct_call_to_eval; }
@@ -315,11 +315,9 @@ public:
                 local_variable_declaration_kind = LocalVariable::DeclarationKind::CatchClauseParameter;
             }
 
-            bool hoistable_function_declaration = false;
-            for (auto const& function_declaration : m_functions_to_hoist) {
-                if (function_declaration->name() == identifier_group_name)
-                    hoistable_function_declaration = true;
-            }
+            bool hoistable_function_declaration = m_functions_to_hoist.contains([&](auto const& function_declaration) {
+                return function_declaration->name() == identifier_group_name;
+            });
 
             if (m_type == ScopeType::ClassDeclaration && m_bound_names.contains(identifier_group_name)) {
                 // NOTE: Currently, the parser cannot recognize that assigning a named function expression creates a scope with a binding for the function name.
@@ -353,10 +351,14 @@ public:
             }
 
             if (m_type == ScopeType::Program) {
-                auto can_use_global_for_identifier = !(identifier_group.used_inside_with_statement || identifier_group.might_be_variable_in_lexical_scope_in_named_function_assignment || identifier_group.used_inside_scope_with_eval || m_parser.m_state.initiated_by_eval);
+                auto can_use_global_for_identifier = !(identifier_group.used_inside_with_statement || identifier_group.might_be_variable_in_lexical_scope_in_named_function_assignment || m_parser.m_state.initiated_by_eval);
                 if (can_use_global_for_identifier) {
-                    for (auto& identifier : identifier_group.identifiers)
-                        identifier->set_is_global();
+                    for (auto& identifier : identifier_group.identifiers) {
+                        // Only mark identifiers as global if they are not inside a function scope
+                        // that contains eval() or has eval in its scope chain.
+                        if (!identifier->is_inside_scope_with_eval())
+                            identifier->set_is_global();
+                    }
                 }
             } else if (local_variable_declaration_kind.has_value() || is_function_parameter) {
                 if (hoistable_function_declaration)
@@ -399,8 +401,12 @@ public:
                 if (m_type == ScopeType::With)
                     identifier_group.used_inside_with_statement = true;
 
-                if (m_contains_direct_call_to_eval)
-                    identifier_group.used_inside_scope_with_eval = true;
+                // Mark each identifier individually if it's inside a scope with eval.
+                // This allows per-identifier optimization decisions at Program scope.
+                if (m_contains_direct_call_to_eval || m_screwed_by_eval_in_scope_chain) {
+                    for (auto& identifier : identifier_group.identifiers)
+                        identifier->set_is_inside_scope_with_eval();
+                }
 
                 if (m_parent_scope) {
                     if (auto maybe_parent_scope_identifier_group = m_parent_scope->m_identifier_groups.get(identifier_group_name); maybe_parent_scope_identifier_group.has_value()) {
@@ -411,8 +417,6 @@ public:
                             maybe_parent_scope_identifier_group.value().used_inside_with_statement = true;
                         if (identifier_group.might_be_variable_in_lexical_scope_in_named_function_assignment)
                             maybe_parent_scope_identifier_group.value().might_be_variable_in_lexical_scope_in_named_function_assignment = true;
-                        if (identifier_group.used_inside_scope_with_eval)
-                            maybe_parent_scope_identifier_group.value().used_inside_scope_with_eval = true;
                     } else {
                         m_parent_scope->m_identifier_groups.set(identifier_group_name, identifier_group);
                     }
@@ -529,7 +533,6 @@ private:
     struct IdentifierGroup {
         bool captured_by_nested_function { false };
         bool used_inside_with_statement { false };
-        bool used_inside_scope_with_eval { false };
         bool might_be_variable_in_lexical_scope_in_named_function_assignment { false };
         Vector<NonnullRefPtr<Identifier>> identifiers;
         Optional<DeclarationKind> declaration_kind;
@@ -860,12 +863,8 @@ void Parser::parse_module(Program& program)
                 if (identifier.string() == exported_name)
                     found = true;
             }));
-            for (auto& import : program.imports()) {
-                if (import->has_bound_name(exported_name.value())) {
-                    found = true;
-                    break;
-                }
-            }
+            if (program.imports().contains([&](auto& import) { return import->has_bound_name(exported_name.value()); }))
+                found = true;
 
             if (!found)
                 syntax_error(MUST(String::formatted("'{}' in export is not declared", exported_name)), export_statement->source_range().start);
@@ -1170,7 +1169,7 @@ RefPtr<FunctionExpression const> Parser::try_parse_arrow_function_expression(boo
     auto source_text = m_state.lexer.source().substring_view(function_start_offset, function_end_offset - function_start_offset);
 
     return create_ast_node<FunctionExpression>(
-        { m_source_code, rule_start.position(), position() }, nullptr, MUST(source_text.to_byte_string()),
+        { m_source_code, rule_start.position(), position() }, nullptr, source_text,
         move(body), move(parameters), function_length, function_kind, body->in_strict_mode(),
         parsing_insights, move(local_variables_names), /* is_arrow_function */ true);
 }
@@ -1671,7 +1670,7 @@ NonnullRefPtr<ClassExpression const> Parser::parse_class_expression(bool expect_
             parsing_insights.uses_this_from_environment = true;
             parsing_insights.uses_this = true;
             constructor = create_ast_node<FunctionExpression>(
-                { m_source_code, rule_start.position(), position() }, class_name, "",
+                { m_source_code, rule_start.position(), position() }, class_name, Utf16View {},
                 move(constructor_body), FunctionParameters::create(Vector { FunctionParameter { move(argument_name), nullptr, true } }), 0, FunctionKind::Normal,
                 /* is_strict_mode */ true, parsing_insights, /* local_variables_names */ Vector<LocalVariable> {});
         } else {
@@ -1679,7 +1678,7 @@ NonnullRefPtr<ClassExpression const> Parser::parse_class_expression(bool expect_
             parsing_insights.uses_this_from_environment = true;
             parsing_insights.uses_this = true;
             constructor = create_ast_node<FunctionExpression>(
-                { m_source_code, rule_start.position(), position() }, class_name, "",
+                { m_source_code, rule_start.position(), position() }, class_name, Utf16View {},
                 move(constructor_body), FunctionParameters::empty(), 0, FunctionKind::Normal,
                 /* is_strict_mode */ true, parsing_insights, /* local_variables_names */ Vector<LocalVariable> {});
         }
@@ -1701,7 +1700,7 @@ NonnullRefPtr<ClassExpression const> Parser::parse_class_expression(bool expect_
 
     auto source_text = m_state.lexer.source().substring_view(function_start_offset, function_end_offset - function_start_offset);
 
-    return create_ast_node<ClassExpression>({ m_source_code, rule_start.position(), position() }, move(class_name), MUST(source_text.to_byte_string()), move(constructor), move(super_class), move(elements));
+    return create_ast_node<ClassExpression>({ m_source_code, rule_start.position(), position() }, move(class_name), source_text, move(constructor), move(super_class), move(elements));
 }
 
 Parser::PrimaryExpressionParseResult Parser::parse_primary_expression()
@@ -2144,8 +2143,7 @@ NonnullRefPtr<ObjectExpression const> Parser::parse_object_expression()
                 property_type = ObjectProperty::Type::ProtoSetter;
 
             auto rhs_expression = parse_expression(2);
-            bool is_method = is<FunctionExpression>(*rhs_expression);
-            properties.append(create_ast_node<ObjectProperty>({ m_source_code, rule_start.position(), position() }, *property_key, move(rhs_expression), property_type, is_method));
+            properties.append(create_ast_node<ObjectProperty>({ m_source_code, rule_start.position(), position() }, *property_key, move(rhs_expression), property_type, false));
         } else if (property_key && property_value) {
             if (m_state.strict_mode && is<StringLiteral>(*property_key)) {
                 auto& string_literal = static_cast<StringLiteral const&>(*property_key);
@@ -2250,7 +2248,7 @@ NonnullRefPtr<TemplateLiteral const> Parser::parse_template_literal(bool is_tagg
     consume(TokenType::TemplateLiteralStart);
 
     Vector<NonnullRefPtr<Expression const>> expressions;
-    Vector<NonnullRefPtr<Expression const>> raw_strings;
+    Vector<NonnullRefPtr<StringLiteral const>> raw_strings;
 
     auto append_empty_string = [this, &rule_start, &expressions, &raw_strings, is_tagged]() {
         auto string_literal = create_ast_node<StringLiteral>({ m_source_code, rule_start.position(), position() }, Utf16String {});
@@ -3040,7 +3038,7 @@ NonnullRefPtr<FunctionNodeType> Parser::parse_function_node(u16 parse_options, O
     }
     return create_ast_node<FunctionNodeType>(
         { m_source_code, rule_start.position(), position() },
-        name, MUST(source_text.to_byte_string()), move(body), parameters.release_nonnull(), function_length,
+        name, source_text, move(body), parameters.release_nonnull(), function_length,
         function_kind, has_strict_directive, parsing_insights,
         move(local_variables_names));
 }

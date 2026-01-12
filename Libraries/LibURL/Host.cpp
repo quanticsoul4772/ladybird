@@ -30,7 +30,7 @@ static String serialize_ipv4_address(IPv4Address address)
     Array<u8, 4> output;
 
     // 2. Let n be the value of address.
-    u32 n = address;
+    u32 n = address.to_u32();
 
     // 3. For each i in the range 1 to 4, inclusive:
     for (size_t i = 0; i <= 3; ++i) {
@@ -64,7 +64,7 @@ static Optional<size_t> find_the_ipv6_address_compressed_piece_index(IPv6Address
     size_t found_size = 0;
 
     // 5. For each pieceIndex of address’s pieces’s indices:
-    for (size_t piece_index = 0; piece_index < address.size(); ++piece_index) {
+    for (size_t piece_index = 0; piece_index < 8; ++piece_index) {
         // 1. If address’s pieces[pieceIndex] is not 0:
         if (address[piece_index] != 0) {
             // 1. If foundSize is greater than longestSize, then set longestIndex to foundIndex and longestSize to foundSize.
@@ -110,7 +110,7 @@ static void serialize_ipv6_address(IPv6Address const& address, StringBuilder& ou
     auto ignore0 = false;
 
     // 4. For each pieceIndex of address’s pieces’s indices:
-    for (size_t piece_index = 0; piece_index < address.size(); ++piece_index) {
+    for (size_t piece_index = 0; piece_index < 8; ++piece_index) {
         // 1. If ignore0 is true and address[pieceIndex] is 0, then continue.
         if (ignore0 && address[piece_index] == 0)
             continue;
@@ -225,15 +225,30 @@ Optional<String> Host::registrable_domain() const
     auto trailing_dot = host_string.ends_with('.') ? "."sv : ""sv;
 
     // 3. Let registrableDomain be the registrable domain determined by running the Public Suffix List algorithm with host as domain. [PSL]
-    // FIXME: This is not correct, we should be doing the same as public_suffix() above.
-    auto registrable_domain = get_registrable_domain(host_string).value_or("*"_string);
+    //
+    // NOTE: If we do not find a registrable domain via the PSL, use everything after the second to last dot.
+    auto registrable_domain = get_registrable_domain(host_string);
+    if (!registrable_domain.has_value()) {
+        auto view = host_string.bytes_as_string_view();
+
+        auto last_dot = view.find_last('.');
+        if (last_dot.has_value()) {
+            view = view.substring_view(0, *last_dot);
+            auto second_last_dot = view.find_last('.');
+            if (second_last_dot.has_value())
+                registrable_domain = MUST(host_string.substring_from_byte_offset(second_last_dot.value() + 1));
+        }
+    }
+
+    if (!registrable_domain.has_value())
+        registrable_domain = host_string;
 
     // 4. Assert: registrableDomain is an ASCII string that does not end with ".".
-    VERIFY(registrable_domain.is_ascii());
-    VERIFY(!registrable_domain.ends_with('.'));
+    VERIFY(registrable_domain->is_ascii());
+    VERIFY(!registrable_domain->ends_with('.'));
 
     // 5. Return registrableDomain and trailingDot concatenated.
-    return MUST(String::formatted("{}{}", registrable_domain, trailing_dot));
+    return MUST(String::formatted("{}{}", registrable_domain.value(), trailing_dot));
 }
 
 }

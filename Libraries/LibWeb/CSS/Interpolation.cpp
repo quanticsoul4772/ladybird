@@ -3,7 +3,7 @@
  * Copyright (c) 2021, the SerenityOS developers.
  * Copyright (c) 2021-2025, Sam Atkins <sam@ladybird.org>
  * Copyright (c) 2024, Matthew Olsson <mattco@serenityos.org>
- * Copyright (c) 2025, Tim Ledbetter <tim.ledbetter@ladybird.org>
+ * Copyright (c) 2025-2026, Tim Ledbetter <tim.ledbetter@ladybird.org>
  * Copyright (c) 2025, Jelle Raaijmakers <jelle@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -17,6 +17,7 @@
 #include <LibWeb/CSS/StyleValues/AngleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BackgroundSizeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BorderImageSliceStyleValue.h>
+#include <LibWeb/CSS/StyleValues/BorderRadiusRectStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BorderRadiusStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
@@ -28,14 +29,15 @@
 #include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
 #include <LibWeb/CSS/StyleValues/OpenTypeTaggedStyleValue.h>
 #include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
+#include <LibWeb/CSS/StyleValues/RadialSizeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RatioStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RectStyleValue.h>
+#include <LibWeb/CSS/StyleValues/ShadowStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/CSS/StyleValues/SuperellipseStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TextIndentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TransformationStyleValue.h>
-#include <LibWeb/CSS/Transformation.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Painting/PaintableBox.h>
@@ -146,7 +148,9 @@ static Optional<FilterValue> interpolate_filter_function(DOM::Element& element, 
         [&](FilterOperation::Blur const& from_value) -> Optional<FilterValue> {
             auto const& to_value = to.get<FilterOperation::Blur>();
 
-            if (auto interpolated_style_value = interpolate_value(element, calculation_context, from_value.radius.as_style_value(), to_value.radius.as_style_value(), delta, allow_discrete)) {
+            CalculationContext blur_calculation_context = calculation_context;
+            blur_calculation_context.accepted_type_ranges.set(ValueType::Length, { 0, NumericLimits<float>::max() });
+            if (auto interpolated_style_value = interpolate_value(element, blur_calculation_context, from_value.radius.as_style_value(), to_value.radius.as_style_value(), delta, allow_discrete)) {
                 LengthOrCalculated interpolated_radius = interpolated_style_value->is_length() ? LengthOrCalculated { interpolated_style_value->as_length().length() } : LengthOrCalculated { interpolated_style_value->as_calculated() };
                 return FilterOperation::Blur {
                     .radius = interpolated_radius
@@ -179,13 +183,31 @@ static Optional<FilterValue> interpolate_filter_function(DOM::Element& element, 
             auto const& to_value = to.get<FilterOperation::Color>();
             auto from_style_value = resolve_number_percentage(from_value.amount);
             auto to_style_value = resolve_number_percentage(to_value.amount);
-            if (auto interpolated_style_value = interpolate_value(element, calculation_context, from_style_value, to_style_value, delta, allow_discrete)) {
+            auto operation = delta >= 0.5f ? to_value.operation : from_value.operation;
+
+            CalculationContext filter_function_calculation_context = calculation_context;
+            switch (operation) {
+            case Gfx::ColorFilterType::Grayscale:
+            case Gfx::ColorFilterType::Invert:
+            case Gfx::ColorFilterType::Opacity:
+            case Gfx::ColorFilterType::Sepia:
+                filter_function_calculation_context.accepted_type_ranges.set(ValueType::Number, { 0, 1 });
+                break;
+            case Gfx::ColorFilterType::Brightness:
+            case Gfx::ColorFilterType::Contrast:
+            case Gfx::ColorFilterType::Saturate:
+                filter_function_calculation_context.accepted_type_ranges.set(ValueType::Number, { 0, NumericLimits<float>::max() });
+                break;
+            }
+
+            if (auto interpolated_style_value = interpolate_value(element, filter_function_calculation_context, from_style_value, to_style_value, delta, allow_discrete)) {
                 auto to_number_percentage = [&](StyleValue const& style_value) -> NumberPercentage {
-                    if (style_value.is_number())
+                    if (style_value.is_number()) {
                         return Number {
                             Number::Type::Number,
                             style_value.as_number().number(),
                         };
+                    }
                     if (style_value.is_percentage())
                         return Percentage { style_value.as_percentage().percentage() };
                     if (style_value.is_calculated())
@@ -193,14 +215,57 @@ static Optional<FilterValue> interpolate_filter_function(DOM::Element& element, 
                     VERIFY_NOT_REACHED();
                 };
                 return FilterOperation::Color {
-                    .operation = delta >= 0.5f ? to_value.operation : from_value.operation,
+                    .operation = operation,
                     .amount = to_number_percentage(*interpolated_style_value)
                 };
             }
             return {};
         },
-        [](auto const&) -> Optional<FilterValue> {
-            // FIXME: Handle interpolating shadow list values
+        [&](FilterOperation::DropShadow const& from_value) -> Optional<FilterValue> {
+            auto const& to_value = to.get<FilterOperation::DropShadow>();
+
+            auto drop_shadow_to_shadow_style_value = [](FilterOperation::DropShadow const& drop_shadow) {
+                return ShadowStyleValue::create(
+                    ShadowStyleValue::ShadowType::Normal,
+                    drop_shadow.color,
+                    drop_shadow.offset_x.as_style_value(),
+                    drop_shadow.offset_y.as_style_value(),
+                    drop_shadow.radius.has_value() ? drop_shadow.radius->as_style_value() : LengthStyleValue::create(Length::make_px(0)),
+                    LengthStyleValue::create(Length::make_px(0)),
+                    ShadowPlacement::Outer);
+            };
+
+            StyleValueVector from_shadows { drop_shadow_to_shadow_style_value(from_value) };
+            StyleValueVector to_shadows { drop_shadow_to_shadow_style_value(to_value) };
+            auto from_list = StyleValueList::create(move(from_shadows), StyleValueList::Separator::Comma);
+            auto to_list = StyleValueList::create(move(to_shadows), StyleValueList::Separator::Comma);
+
+            auto result = interpolate_box_shadow(element, calculation_context, *from_list, *to_list, delta, allow_discrete);
+            if (!result)
+                return {};
+
+            auto const& result_shadow = result->as_value_list().value_at(0, false)->as_shadow();
+
+            auto to_length_or_calculated = [](StyleValue const& style_value) -> LengthOrCalculated {
+                if (style_value.is_length())
+                    return LengthOrCalculated { style_value.as_length().length() };
+                return LengthOrCalculated { style_value.as_calculated() };
+            };
+
+            Optional<LengthOrCalculated> result_radius;
+            auto radius_has_value = delta >= 0.5f ? to_value.radius.has_value() : from_value.radius.has_value();
+            if (radius_has_value)
+                result_radius = to_length_or_calculated(result_shadow.blur_radius());
+
+            return FilterOperation::DropShadow {
+                .offset_x = to_length_or_calculated(result_shadow.offset_x()),
+                .offset_y = to_length_or_calculated(result_shadow.offset_y()),
+                .radius = result_radius,
+                .color = result_shadow.color()
+            };
+        },
+        [](URL const&) -> Optional<FilterValue> {
+            // URL filters cannot be interpolated
             return {};
         });
 
@@ -224,7 +289,7 @@ static RefPtr<StyleValue const> interpolate_filter_value_list(DOM::Element& elem
                     .offset_x = Length::make_px(0),
                     .offset_y = Length::make_px(0),
                     .radius = Length::make_px(0),
-                    .color = Color::Transparent
+                    .color = ColorStyleValue::create_from_color(Color::Transparent, ColorSyntax::Legacy)
                 };
             },
             [&](FilterOperation::HueRotate const&) -> FilterValue {
@@ -1164,7 +1229,12 @@ RefPtr<StyleValue const> interpolate_transform(DOM::Element& element, Calculatio
             break;
         default:
             generic_function = TransformFunction::Matrix3d;
-            parameters = matrix_to_style_value_vector(MUST(transform->to_transformation().to_matrix({})));
+            auto paintable_box = [&] -> Optional<Painting::PaintableBox const&> {
+                if (auto* box = element.paintable_box())
+                    return *box;
+                return {};
+            }();
+            parameters = matrix_to_style_value_vector(MUST(transform->to_matrix(paintable_box)));
         }
         return TransformationStyleValue::create(PropertyID::Transform, generic_function, move(parameters));
     };
@@ -1268,8 +1338,7 @@ RefPtr<StyleValue const> interpolate_transform(DOM::Element& element, Calculatio
     auto post_multiply_remaining_transformations = [&paintable_box](size_t start_index, Vector<NonnullRefPtr<TransformationStyleValue const>> const& transformations) {
         FloatMatrix4x4 result = FloatMatrix4x4::identity();
         for (auto index = start_index; index < transformations.size(); ++index) {
-            auto transformation = transformations[index]->to_transformation();
-            auto transformation_matrix = transformation.to_matrix(paintable_box);
+            auto transformation_matrix = transformations[index]->to_matrix(paintable_box);
             if (transformation_matrix.is_error()) {
                 dbgln("Unable to interpret a transformation's matrix; bailing out of interpolation.");
                 break;
@@ -1603,6 +1672,23 @@ static RefPtr<StyleValue const> interpolate_value_impl(DOM::Element& element, Ca
             .percentages_resolve_as = ValueType::Length
         };
 
+        auto const interpolate_optional_position = [&](RefPtr<StyleValue const> from_position, RefPtr<StyleValue const> to_position) -> Optional<RefPtr<StyleValue const>> {
+            if (!from_position && !to_position)
+                return nullptr;
+
+            auto const& from_position_with_default = from_position ? from_position.release_nonnull() : PositionStyleValue::create_computed_center();
+            auto const& to_position_with_default = to_position ? to_position.release_nonnull() : PositionStyleValue::create_computed_center();
+
+            auto interpolated_position = interpolate_value(element, basic_shape_calculation_context, from_position_with_default, to_position_with_default, delta, allow_discrete);
+
+            // NB: Use OptionalNone to indicate failure to interpolate since nullptr is a valid result for interpolating
+            //     between two null positions.
+            if (!interpolated_position)
+                return OptionalNone {};
+
+            return interpolated_position;
+        };
+
         auto interpolated_shape = from_shape.visit(
             [&](Inset const& from_inset) -> Optional<BasicShape> {
                 // If both shapes are of type inset(), interpolate between each value in the shape functions.
@@ -1611,34 +1697,33 @@ static RefPtr<StyleValue const> interpolate_value_impl(DOM::Element& element, Ca
                 auto interpolated_right = interpolate_value(element, basic_shape_calculation_context, from_inset.right, to_inset.right, delta, allow_discrete);
                 auto interpolated_bottom = interpolate_value(element, basic_shape_calculation_context, from_inset.bottom, to_inset.bottom, delta, allow_discrete);
                 auto interpolated_left = interpolate_value(element, basic_shape_calculation_context, from_inset.left, to_inset.left, delta, allow_discrete);
-                if (!interpolated_top || !interpolated_right || !interpolated_bottom || !interpolated_left)
+
+                auto interpolated_border_radius = interpolate_value(element, basic_shape_calculation_context, from_inset.border_radius, to_inset.border_radius, delta, allow_discrete);
+
+                if (!interpolated_top || !interpolated_right || !interpolated_bottom || !interpolated_left || !interpolated_border_radius)
                     return {};
-                return Inset { interpolated_top.release_nonnull(), interpolated_right.release_nonnull(), interpolated_bottom.release_nonnull(), interpolated_left.release_nonnull() };
+
+                return Inset { interpolated_top.release_nonnull(), interpolated_right.release_nonnull(), interpolated_bottom.release_nonnull(), interpolated_left.release_nonnull(), interpolated_border_radius.release_nonnull() };
             },
             [&](Circle const& from_circle) -> Optional<BasicShape> {
                 // If both shapes are the same type, that type is ellipse() or circle(), and the radiuses are specified
                 // as <length-percentage> (rather than keywords), interpolate between each value in the shape functions.
                 auto const& to_circle = to_shape.get<Circle>();
-                if (from_circle.radius->is_keyword() || to_circle.radius->is_keyword())
+                auto interpolated_radius = interpolate_value_impl(element, basic_shape_calculation_context, from_circle.radius, to_circle.radius, delta, AllowDiscrete::No);
+                auto interpolated_position = interpolate_optional_position(from_circle.position, to_circle.position);
+                if (!interpolated_radius || !interpolated_position.has_value())
                     return {};
-                auto interpolated_radius = interpolate_value(element, basic_shape_calculation_context, from_circle.radius, to_circle.radius, delta, allow_discrete);
-                auto interpolated_position = interpolate_value(element, basic_shape_calculation_context, from_circle.position, to_circle.position, delta, allow_discrete);
-                if (!interpolated_radius || !interpolated_position)
-                    return {};
-                return Circle { interpolated_radius.release_nonnull(), interpolated_position->as_position() };
+
+                return Circle { interpolated_radius.release_nonnull(), interpolated_position.value() };
             },
             [&](Ellipse const& from_ellipse) -> Optional<BasicShape> {
                 auto const& to_ellipse = to_shape.get<Ellipse>();
-                if (from_ellipse.radius_x->is_keyword() || to_ellipse.radius_x->is_keyword())
+                auto interpolated_radius = interpolate_value_impl(element, basic_shape_calculation_context, from_ellipse.radius, to_ellipse.radius, delta, AllowDiscrete::No);
+                auto interpolated_position = interpolate_optional_position(from_ellipse.position, to_ellipse.position);
+                if (!interpolated_radius || !interpolated_position.has_value())
                     return {};
-                if (from_ellipse.radius_y->is_keyword() || to_ellipse.radius_y->is_keyword())
-                    return {};
-                auto interpolated_radius_x = interpolate_value(element, basic_shape_calculation_context, from_ellipse.radius_x, to_ellipse.radius_x, delta, allow_discrete);
-                auto interpolated_radius_y = interpolate_value(element, basic_shape_calculation_context, from_ellipse.radius_y, to_ellipse.radius_y, delta, allow_discrete);
-                auto interpolated_position = interpolate_value(element, basic_shape_calculation_context, from_ellipse.position, to_ellipse.position, delta, allow_discrete);
-                if (!interpolated_radius_x || !interpolated_radius_y || !interpolated_position)
-                    return {};
-                return Ellipse { interpolated_radius_x.release_nonnull(), interpolated_radius_y.release_nonnull(), interpolated_position->as_position() };
+
+                return Ellipse { interpolated_radius.release_nonnull(), interpolated_position.value() };
             },
             [&](Polygon const& from_polygon) -> Optional<BasicShape> {
                 // If both shapes are of type polygon(), both polygons have the same number of vertices, and use the
@@ -1682,6 +1767,34 @@ static RefPtr<StyleValue const> interpolate_value_impl(DOM::Element& element, Ca
             return {};
         return BorderRadiusStyleValue::create(interpolated_horizontal_radius.release_nonnull(), interpolated_vertical_radius.release_nonnull());
     }
+    case StyleValue::Type::BorderRadiusRect: {
+        CalculationContext border_radius_rect_computation_context = {
+            .percentages_resolve_as = ValueType::Length,
+            .accepted_type_ranges = { { ValueType::Length, { 0, AK::NumericLimits<float>::max() } }, { ValueType::Percentage, { 0, AK::NumericLimits<float>::max() } } },
+        };
+
+        auto const& from_top_left = from.as_border_radius_rect().top_left();
+        auto const& to_top_left = to.as_border_radius_rect().top_left();
+
+        auto const& from_top_right = from.as_border_radius_rect().top_right();
+        auto const& to_top_right = to.as_border_radius_rect().top_right();
+
+        auto const& from_bottom_right = from.as_border_radius_rect().bottom_right();
+        auto const& to_bottom_right = to.as_border_radius_rect().bottom_right();
+
+        auto const& from_bottom_left = from.as_border_radius_rect().bottom_left();
+        auto const& to_bottom_left = to.as_border_radius_rect().bottom_left();
+
+        auto interpolated_top_left = interpolate_value_impl(element, border_radius_rect_computation_context, from_top_left, to_top_left, delta, allow_discrete);
+        auto interpolated_top_right = interpolate_value_impl(element, border_radius_rect_computation_context, from_top_right, to_top_right, delta, allow_discrete);
+        auto interpolated_bottom_right = interpolate_value_impl(element, border_radius_rect_computation_context, from_bottom_right, to_bottom_right, delta, allow_discrete);
+        auto interpolated_bottom_left = interpolate_value_impl(element, border_radius_rect_computation_context, from_bottom_left, to_bottom_left, delta, allow_discrete);
+
+        if (!interpolated_top_left || !interpolated_top_right || !interpolated_bottom_right || !interpolated_bottom_left)
+            return {};
+
+        return BorderRadiusRectStyleValue::create(interpolated_top_left.release_nonnull(), interpolated_top_right.release_nonnull(), interpolated_bottom_right.release_nonnull(), interpolated_bottom_left.release_nonnull());
+    }
     case StyleValue::Type::Color: {
         ColorResolutionContext color_resolution_context {};
         if (auto node = element.layout_node()) {
@@ -1707,13 +1820,11 @@ static RefPtr<StyleValue const> interpolate_value_impl(DOM::Element& element, Ca
         return ColorStyleValue::create_from_color(interpolated_color, ColorSyntax::Modern);
     }
     case StyleValue::Type::Edge: {
-        auto resolved_from = from.as_edge().resolved_value(calculation_context);
-        auto resolved_to = to.as_edge().resolved_value(calculation_context);
-        auto const& edge = delta >= 0.5f ? resolved_to->edge() : resolved_from->edge();
-        auto const& from_offset = resolved_from->offset();
-        auto const& to_offset = resolved_to->offset();
-        if (auto interpolated_value = interpolate_length_percentage(calculation_context, from_offset, to_offset, delta); interpolated_value.has_value())
-            return EdgeStyleValue::create(edge, *interpolated_value);
+        auto const& from_offset = from.as_edge().offset();
+        auto const& to_offset = to.as_edge().offset();
+
+        if (auto interpolated_value = interpolate_value_impl(element, calculation_context, from_offset, to_offset, delta, allow_discrete))
+            return EdgeStyleValue::create({}, interpolated_value);
 
         return {};
     }
@@ -1773,6 +1884,45 @@ static RefPtr<StyleValue const> interpolate_value_impl(DOM::Element& element, Ca
         if (!interpolated_edge_x || !interpolated_edge_y)
             return {};
         return PositionStyleValue::create(interpolated_edge_x->as_edge(), interpolated_edge_y->as_edge());
+    }
+    case StyleValue::Type::RadialSize: {
+        auto const& from_components = from.as_radial_size().components();
+        auto const& to_components = to.as_radial_size().components();
+
+        auto const is_radial_extent = [](auto const& component) { return component.template has<RadialExtent>(); };
+
+        // https://drafts.csswg.org/css-images-4/#interpolating-gradients
+        // https://drafts.csswg.org/css-shapes-1/#basic-shape-interpolation
+        // FIXME: Radial extents should disallow interpolation for basic-shape values but should be converted into their
+        //        equivalent length-percentage values for radial gradients
+        if (any_of(from_components, is_radial_extent) || any_of(to_components, is_radial_extent))
+            return {};
+
+        if (from_components.size() == 1 && to_components.size() == 1) {
+            auto const& from_component = from_components[0].get<NonnullRefPtr<StyleValue const>>();
+            auto const& to_component = to_components[0].get<NonnullRefPtr<StyleValue const>>();
+
+            auto interpolated_value = interpolate_value(element, calculation_context, from_component, to_component, delta, allow_discrete);
+
+            if (!interpolated_value)
+                return {};
+
+            return RadialSizeStyleValue::create({ interpolated_value.release_nonnull() });
+        }
+
+        auto const& from_horizontal_component = from_components[0].get<NonnullRefPtr<StyleValue const>>();
+        auto const& from_vertical_component = from_components.size() > 1 ? from_components[1].get<NonnullRefPtr<StyleValue const>>() : from_horizontal_component;
+
+        auto const& to_horizontal_component = to_components[0].get<NonnullRefPtr<StyleValue const>>();
+        auto const& to_vertical_component = to_components.size() > 1 ? to_components[1].get<NonnullRefPtr<StyleValue const>>() : to_horizontal_component;
+
+        auto interpolated_horizontal = interpolate_value(element, calculation_context, from_horizontal_component, to_horizontal_component, delta, allow_discrete);
+        auto interpolated_vertical = interpolate_value(element, calculation_context, from_vertical_component, to_vertical_component, delta, allow_discrete);
+
+        if (!interpolated_horizontal || !interpolated_vertical)
+            return {};
+
+        return RadialSizeStyleValue::create({ interpolated_horizontal.release_nonnull(), interpolated_vertical.release_nonnull() });
     }
     case StyleValue::Type::Ratio: {
         auto from_ratio = from.as_ratio().ratio();

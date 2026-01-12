@@ -18,6 +18,7 @@ set(SOURCES
     Animations/AnimationEffect.cpp
     Animations/AnimationPlaybackEvent.cpp
     Animations/AnimationTimeline.cpp
+    Animations/TimeValue.cpp
     Animations/DocumentTimeline.cpp
     Animations/KeyframeEffect.cpp
     Animations/PseudoElementParsing.cpp
@@ -89,7 +90,9 @@ set(SOURCES
     CredentialManagement/Credential.cpp
     CredentialManagement/CredentialsContainer.cpp
     CredentialManagement/FederatedCredential.cpp
+    CredentialManagement/FederatedCredentialOperations.cpp
     CredentialManagement/PasswordCredential.cpp
+    CredentialManagement/PasswordCredentialOperations.cpp
     Crypto/Crypto.cpp
     Crypto/CryptoAlgorithms.cpp
     Crypto/CryptoBindings.cpp
@@ -167,6 +170,7 @@ set(SOURCES
     CSS/FontComputer.cpp
     CSS/FontFace.cpp
     CSS/FontFaceSet.cpp
+    CSS/FontFaceSetLoadEvent.cpp
     CSS/Frequency.cpp
     CSS/GridTrackPlacement.cpp
     CSS/GridTrackSize.cpp
@@ -230,6 +234,7 @@ set(SOURCES
     CSS/StyleValues/BasicShapeStyleValue.cpp
     CSS/StyleValues/BorderImageSliceStyleValue.cpp
     CSS/StyleValues/BorderRadiusStyleValue.cpp
+    CSS/StyleValues/BorderRadiusRectStyleValue.cpp
     CSS/StyleValues/CalculatedStyleValue.cpp
     CSS/StyleValues/ColorFunctionStyleValue.cpp
     CSS/StyleValues/ColorMixStyleValue.cpp
@@ -268,6 +273,7 @@ set(SOURCES
     CSS/StyleValues/PositionStyleValue.cpp
     CSS/StyleValues/RGBColorStyleValue.cpp
     CSS/StyleValues/RadialGradientStyleValue.cpp
+    CSS/StyleValues/RadialSizeStyleValue.cpp
     CSS/StyleValues/RandomValueSharingStyleValue.cpp
     CSS/StyleValues/RectStyleValue.cpp
     CSS/StyleValues/RepeatStyleStyleValue.cpp
@@ -289,7 +295,6 @@ set(SOURCES
     CSS/SyntaxHighlighter/SyntaxHighlighter.cpp
     CSS/SystemColor.cpp
     CSS/Time.cpp
-    CSS/Transformation.cpp
     CSS/TransitionEvent.cpp
     CSS/URL.cpp
     CSS/ValueType.cpp
@@ -351,6 +356,7 @@ set(SOURCES
     DOM/Utils.cpp
     DOM/XMLDocument.cpp
     DOMURL/DOMURL.cpp
+    DOMURL/Origin.cpp
     DOMURL/URLSearchParams.cpp
     DOMURL/URLSearchParamsIterator.cpp
     Dump.cpp
@@ -551,6 +557,7 @@ set(SOURCES
     HTML/HTMLProgressElement.cpp
     HTML/HTMLQuoteElement.cpp
     HTML/HTMLScriptElement.cpp
+    HTML/HTMLSelectedContentElement.cpp
     HTML/HTMLSelectElement.cpp
     HTML/HTMLSlotElement.cpp
     HTML/HTMLSourceElement.cpp
@@ -793,6 +800,7 @@ set(SOURCES
     NavigationTiming/PerformanceTiming.cpp
     NotificationsAPI/Notification.cpp
     Page/DragAndDropEventHandler.cpp
+    Page/ElementResizeAction.cpp
     Page/EventHandler.cpp
     Page/InputEvent.cpp
     Page/Page.cpp
@@ -822,6 +830,7 @@ set(SOURCES
     Painting/Paintable.cpp
     Painting/PaintableBox.cpp
     Painting/PaintableFragment.cpp
+    Painting/PaintableWithLines.cpp
     Painting/RadioButtonPaintable.cpp
     Painting/ScrollFrame.cpp
     Painting/ScrollState.cpp
@@ -929,6 +938,7 @@ set(SOURCES
     SVG/SVGFEColorMatrixElement.cpp
     SVG/SVGFEComponentTransferElement.cpp
     SVG/SVGFECompositeElement.cpp
+    SVG/SVGFEDropShadowElement.cpp
     SVG/SVGFEFloodElement.cpp
     SVG/SVGFEFuncAElement.cpp
     SVG/SVGFEFuncBElement.cpp
@@ -1095,10 +1105,12 @@ set(SOURCES
     WebIDL/ObservableArray.cpp
     WebIDL/OverloadResolution.cpp
     WebIDL/Promise.cpp
+    WebIDL/QuotaExceededError.cpp
     WebIDL/Tracing.cpp
     WebSockets/WebSocket.cpp
     WebVTT/VTTCue.cpp
     WebVTT/VTTRegion.cpp
+    WebXR/XRSystem.cpp
     Worker/WebWorkerClient.cpp
     XHR/EventNames.cpp
     XHR/FormData.cpp

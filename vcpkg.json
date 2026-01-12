@@ -1,5 +1,5 @@
 {
-  "builtin-baseline": "4c4abc2e8727221ede31021349386dac674309b0",
+  "builtin-baseline": "4f95fba7a7d1101bb8acdeb51e4609686449701e",
   "dependencies": [
     {
       "name": "angle",
@@ -44,6 +44,7 @@
       "features": [
         "avcodec",
         "avformat",
+        "swresample",
         "dav1d",
         "openh264",
         "opus",
@@ -166,6 +167,7 @@
     {
       "name": "skia",
       "platform": "osx",
+      "default-features": false,
       "features": [
         "metal",
         "fontconfig",
@@ -176,6 +178,7 @@
     {
       "name": "skia",
       "platform": "windows",
+      "default-features": false,
       "features": [
         "freetype",
         "harfbuzz",
@@ -186,6 +189,7 @@
     {
       "name": "skia",
       "platform": "linux | freebsd | openbsd",
+      "default-features": false,
       "features": [
         "freetype",
         "fontconfig",
@@ -197,6 +201,7 @@
     {
       "name": "skia",
       "platform": "android",
+      "default-features": false,
       "features": [
         "vulkan"
       ]
@@ -217,6 +222,10 @@
     {
       "name": "angle",
       "version": "chromium_7258#0"
+    },
+    {
+      "name": "cpptrace",
+      "version": "1.0.2"
     },
     {
       "name": "curl",
@@ -304,7 +313,7 @@
     },
     {
       "name": "skia",
-      "version": "129#0"
+      "version": "144#0"
     },
     {
       "name": "sqlite3",

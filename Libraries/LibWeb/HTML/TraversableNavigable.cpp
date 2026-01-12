@@ -989,7 +989,8 @@ TraversableNavigable::CheckIfUnloadingIsCanceledResult TraversableNavigable::che
 
     // 7. For each document of documentsToFireBeforeunload, queue a global task on the navigation and traversal task source given document's relevant global object to run the steps:
     for (auto& document : documents_to_fire_beforeunload) {
-        queue_global_task(Task::Source::NavigationAndTraversal, relevant_global_object(*document), GC::create_function(heap(), [document, &final_status, &completed_tasks, &unload_prompt_shown] {
+        // NOTE: We don't capture `document` by value here because it is a GC::Root and we want to avoid reference cycles.
+        queue_global_task(Task::Source::NavigationAndTraversal, relevant_global_object(*document), GC::create_function(heap(), [document = document.ptr(), &final_status, &completed_tasks, &unload_prompt_shown] {
             // 1. Let (unloadPromptShownForThisDocument, unloadPromptCanceledByThisDocument) be the result of running the steps to fire beforeunload given document and unloadPromptShown.
             auto [unload_prompt_shown_for_this_document, unload_prompt_canceled_by_this_document] = document->steps_to_fire_beforeunload(unload_prompt_shown);
 
@@ -1017,7 +1018,7 @@ TraversableNavigable::CheckIfUnloadingIsCanceledResult TraversableNavigable::che
 
 TraversableNavigable::CheckIfUnloadingIsCanceledResult TraversableNavigable::check_if_unloading_is_canceled(Vector<GC::Root<Navigable>> navigables_that_need_before_unload)
 {
-    return check_if_unloading_is_canceled(navigables_that_need_before_unload, {}, {}, {});
+    return check_if_unloading_is_canceled(move(navigables_that_need_before_unload), {}, {}, {});
 }
 
 Vector<GC::Ref<SessionHistoryEntry>> TraversableNavigable::get_session_history_entries_for_the_navigation_api(GC::Ref<Navigable> navigable, int target_step)
@@ -1446,7 +1447,12 @@ void TraversableNavigable::process_screenshot_requests()
                 continue;
             }
             auto rect = page().enclosing_device_rect(dom_node->paintable_box()->absolute_border_box_rect());
-            auto bitmap = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, rect.size().to_type<int>()).release_value_but_fixme_should_propagate_errors();
+            auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, rect.size().to_type<int>());
+            if (bitmap_or_error.is_error()) {
+                client.page_did_take_screenshot({});
+                continue;
+            }
+            auto bitmap = bitmap_or_error.release_value();
             auto painting_surface = Gfx::PaintingSurface::wrap_bitmap(*bitmap);
             PaintConfig paint_config { .canvas_fill_rect = rect.to_type<int>() };
             start_display_list_rendering(painting_surface, paint_config, [bitmap, &client] {
@@ -1455,7 +1461,12 @@ void TraversableNavigable::process_screenshot_requests()
         } else {
             auto scrollable_overflow_rect = active_document()->layout_node()->paintable_box()->scrollable_overflow_rect();
             auto rect = page().enclosing_device_rect(scrollable_overflow_rect.value());
-            auto bitmap = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, rect.size().to_type<int>()).release_value_but_fixme_should_propagate_errors();
+            auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, rect.size().to_type<int>());
+            if (bitmap_or_error.is_error()) {
+                client.page_did_take_screenshot({});
+                continue;
+            }
+            auto bitmap = bitmap_or_error.release_value();
             auto painting_surface = Gfx::PaintingSurface::wrap_bitmap(*bitmap);
             PaintConfig paint_config { .paint_overlay = true, .canvas_fill_rect = rect.to_type<int>() };
             start_display_list_rendering(painting_surface, paint_config, [bitmap, &client] {

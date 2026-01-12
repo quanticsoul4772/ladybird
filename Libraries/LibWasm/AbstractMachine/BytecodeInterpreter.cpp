@@ -73,12 +73,12 @@ struct ConvertToRaw<double> {
         }                                                                                      \
     } while (false)
 
-#define TRAP_IN_LOOP_IF_NOT(x, ...)                                                            \
-    do {                                                                                       \
-        if (interpreter.trap_if_not(x, #x##sv __VA_OPT__(, ) __VA_ARGS__)) {                   \
-            dbgln_if(WASM_TRACE_DEBUG, "Trapped because {} failed, at line {}", #x, __LINE__); \
-            return Outcome::Return;                                                            \
-        }                                                                                      \
+#define TRAP_IN_LOOP_IF_NOT(x, ...)                                                                    \
+    do {                                                                                               \
+        if (interpreter.trap_if_not(x, #x##sv __VA_OPT__(, ) __VA_ARGS__)) {                           \
+            dbgln_if(WASM_TRACE_DEBUG, "Trapped in loop because {} failed, at line {}", #x, __LINE__); \
+            return Outcome::Return;                                                                    \
+        }                                                                                              \
     } while (false)
 
 void BytecodeInterpreter::interpret(Configuration& configuration)
@@ -1077,7 +1077,7 @@ HANDLE_INSTRUCTION(synthetic_call_00)
     auto regs_copy = configuration.regs;
     auto index = instruction->arguments().get<FunctionIndex>();
     auto address = configuration.frame().module().functions()[index.value()];
-    dbgln_if(WASM_TRACE_DEBUG, "[{}] call(#{} -> {})", current_ip_value, index.value(), address.value());
+    dbgln_if(WASM_TRACE_DEBUG, "[{}] call_00(#{} -> {})", current_ip_value, index.value(), address.value());
     if (interpreter.call_address(configuration, address) == Outcome::Return)
         return Outcome::Return;
     configuration.regs = regs_copy;
@@ -1089,7 +1089,7 @@ HANDLE_INSTRUCTION(synthetic_call_01)
     auto regs_copy = configuration.regs;
     auto index = instruction->arguments().get<FunctionIndex>();
     auto address = configuration.frame().module().functions()[index.value()];
-    dbgln_if(WASM_TRACE_DEBUG, "[{}] call(#{} -> {})", current_ip_value, index.value(), address.value());
+    dbgln_if(WASM_TRACE_DEBUG, "[{}] call_01(#{} -> {})", current_ip_value, index.value(), address.value());
     if (interpreter.call_address(configuration, address) == Outcome::Return)
         return Outcome::Return;
     configuration.regs = regs_copy;
@@ -1101,7 +1101,7 @@ HANDLE_INSTRUCTION(synthetic_call_10)
     auto regs_copy = configuration.regs;
     auto index = instruction->arguments().get<FunctionIndex>();
     auto address = configuration.frame().module().functions()[index.value()];
-    dbgln_if(WASM_TRACE_DEBUG, "[{}] call(#{} -> {})", current_ip_value, index.value(), address.value());
+    dbgln_if(WASM_TRACE_DEBUG, "[{}] call_10(#{} -> {})", current_ip_value, index.value(), address.value());
     if (interpreter.call_address(configuration, address) == Outcome::Return)
         return Outcome::Return;
     configuration.regs = regs_copy;
@@ -1113,7 +1113,7 @@ HANDLE_INSTRUCTION(synthetic_call_11)
     auto regs_copy = configuration.regs;
     auto index = instruction->arguments().get<FunctionIndex>();
     auto address = configuration.frame().module().functions()[index.value()];
-    dbgln_if(WASM_TRACE_DEBUG, "[{}] call(#{} -> {})", current_ip_value, index.value(), address.value());
+    dbgln_if(WASM_TRACE_DEBUG, "[{}] call_11(#{} -> {})", current_ip_value, index.value(), address.value());
     if (interpreter.call_address(configuration, address) == Outcome::Return)
         return Outcome::Return;
     configuration.regs = regs_copy;
@@ -1125,7 +1125,7 @@ HANDLE_INSTRUCTION(synthetic_call_20)
     auto regs_copy = configuration.regs;
     auto index = instruction->arguments().get<FunctionIndex>();
     auto address = configuration.frame().module().functions()[index.value()];
-    dbgln_if(WASM_TRACE_DEBUG, "[{}] call(#{} -> {})", current_ip_value, index.value(), address.value());
+    dbgln_if(WASM_TRACE_DEBUG, "[{}] call_20(#{} -> {})", current_ip_value, index.value(), address.value());
     if (interpreter.call_address(configuration, address) == Outcome::Return)
         return Outcome::Return;
     configuration.regs = regs_copy;
@@ -1137,7 +1137,7 @@ HANDLE_INSTRUCTION(synthetic_call_21)
     auto regs_copy = configuration.regs;
     auto index = instruction->arguments().get<FunctionIndex>();
     auto address = configuration.frame().module().functions()[index.value()];
-    dbgln_if(WASM_TRACE_DEBUG, "[{}] call(#{} -> {})", current_ip_value, index.value(), address.value());
+    dbgln_if(WASM_TRACE_DEBUG, "[{}] call_21(#{} -> {})", current_ip_value, index.value(), address.value());
     if (interpreter.call_address(configuration, address) == Outcome::Return)
         return Outcome::Return;
     configuration.regs = regs_copy;
@@ -1149,7 +1149,7 @@ HANDLE_INSTRUCTION(synthetic_call_30)
     auto regs_copy = configuration.regs;
     auto index = instruction->arguments().get<FunctionIndex>();
     auto address = configuration.frame().module().functions()[index.value()];
-    dbgln_if(WASM_TRACE_DEBUG, "[{}] call(#{} -> {})", current_ip_value, index.value(), address.value());
+    dbgln_if(WASM_TRACE_DEBUG, "[{}] call_30(#{} -> {})", current_ip_value, index.value(), address.value());
     if (interpreter.call_address(configuration, address) == Outcome::Return)
         return Outcome::Return;
     configuration.regs = regs_copy;
@@ -1161,7 +1161,7 @@ HANDLE_INSTRUCTION(synthetic_call_31)
     auto regs_copy = configuration.regs;
     auto index = instruction->arguments().get<FunctionIndex>();
     auto address = configuration.frame().module().functions()[index.value()];
-    dbgln_if(WASM_TRACE_DEBUG, "[{}] call(#{} -> {})", current_ip_value, index.value(), address.value());
+    dbgln_if(WASM_TRACE_DEBUG, "[{}] call_31(#{} -> {})", current_ip_value, index.value(), address.value());
     if (interpreter.call_address(configuration, address) == Outcome::Return)
         return Outcome::Return;
     configuration.regs = regs_copy;
@@ -1928,7 +1928,7 @@ HANDLE_INSTRUCTION(select_typed)
 {
     // Note: The type seems to only be used for validation.
     auto value = configuration.take_source(0, addresses.sources).to<i32>(); // bounds checked by verifier.
-    dbgln_if(WASM_TRACE_DEBUG, "select({})", value);
+    dbgln_if(WASM_TRACE_DEBUG, "select_typed({})", value);
     auto rhs = configuration.take_source(1, addresses.sources);
     auto& lhs = configuration.source_value(2, addresses.sources); // bounds checked by verifier.
     lhs = value != 0 ? lhs : rhs;
@@ -3689,41 +3689,41 @@ ALIAS_INSTRUCTION(i32x4_relaxed_trunc_f64x2_u_zero, i32x4_trunc_sat_f64x2_u_zero
 
 HANDLE_INSTRUCTION(f32x4_relaxed_madd)
 {
-    auto a = configuration.take_source(0, addresses.sources).to<u128>();
-    auto b = configuration.take_source(1, addresses.sources).to<u128>();
-    auto& c_slot = configuration.source_value(2, addresses.sources);
-    auto c = c_slot.to<u128>();
-    c_slot = Value { Operators::VectorMultiplyAdd<4> {}(a, b, c) };
+    auto c = configuration.take_source(0, addresses.sources).template to<u128>();
+    auto a = configuration.take_source(1, addresses.sources).template to<u128>();
+    auto& b_slot = configuration.source_value(2, addresses.sources);
+    auto b = b_slot.template to<u128>();
+    b_slot = Value { Operators::VectorMultiplyAdd<4> {}(a, b, c) };
     TAILCALL return continue_(HANDLER_PARAMS(DECOMPOSE_PARAMS_NAME_ONLY));
 }
 
 HANDLE_INSTRUCTION(f32x4_relaxed_nmadd)
 {
-    auto a = configuration.take_source(0, addresses.sources).to<u128>();
-    auto b = configuration.take_source(1, addresses.sources).to<u128>();
-    auto& c_slot = configuration.source_value(2, addresses.sources);
-    auto c = c_slot.to<u128>();
-    c_slot = Value { Operators::VectorMultiplySub<4> {}(a, b, c) };
+    auto c = configuration.take_source(0, addresses.sources).template to<u128>();
+    auto a = configuration.take_source(1, addresses.sources).template to<u128>();
+    auto& b_slot = configuration.source_value(2, addresses.sources);
+    auto b = b_slot.template to<u128>();
+    b_slot = Value { Operators::VectorMultiplySub<4> {}(a, b, c) };
     TAILCALL return continue_(HANDLER_PARAMS(DECOMPOSE_PARAMS_NAME_ONLY));
 }
 
 HANDLE_INSTRUCTION(f64x2_relaxed_madd)
 {
-    auto a = configuration.take_source(0, addresses.sources).to<u128>();
-    auto b = configuration.take_source(1, addresses.sources).to<u128>();
-    auto& c_slot = configuration.source_value(2, addresses.sources);
-    auto c = c_slot.to<u128>();
-    c_slot = Value { Operators::VectorMultiplyAdd<2> {}(a, b, c) };
+    auto c = configuration.take_source(0, addresses.sources).template to<u128>();
+    auto a = configuration.take_source(1, addresses.sources).template to<u128>();
+    auto& b_slot = configuration.source_value(2, addresses.sources);
+    auto b = b_slot.template to<u128>();
+    b_slot = Value { Operators::VectorMultiplyAdd<2> {}(a, b, c) };
     TAILCALL return continue_(HANDLER_PARAMS(DECOMPOSE_PARAMS_NAME_ONLY));
 }
 
 HANDLE_INSTRUCTION(f64x2_relaxed_nmadd)
 {
-    auto a = configuration.take_source(0, addresses.sources).to<u128>();
-    auto b = configuration.take_source(1, addresses.sources).to<u128>();
-    auto& c_slot = configuration.source_value(2, addresses.sources);
-    auto c = c_slot.to<u128>();
-    c_slot = Value { Operators::VectorMultiplySub<2> {}(a, b, c) };
+    auto c = configuration.take_source(0, addresses.sources).template to<u128>();
+    auto a = configuration.take_source(1, addresses.sources).template to<u128>();
+    auto& b_slot = configuration.source_value(2, addresses.sources);
+    auto b = b_slot.template to<u128>();
+    b_slot = Value { Operators::VectorMultiplySub<2> {}(a, b, c) };
     TAILCALL return continue_(HANDLER_PARAMS(DECOMPOSE_PARAMS_NAME_ONLY));
 }
 
@@ -3746,12 +3746,10 @@ HANDLE_INSTRUCTION(i16x8_relaxed_dot_i8x16_i7x16_s)
 
 HANDLE_INSTRUCTION(i32x4_relaxed_dot_i8x16_i7x16_add_s)
 {
-    // do i16x8 dot first, then fold back down to i32, then do the final component add.
-    auto rhs = configuration.take_source(0, addresses.sources).to<u128>();
-    auto lhs = configuration.take_source(1, addresses.sources).to<u128>(); // bounds checked by verifier.
-    auto result = Operators::VectorDotProduct<4, Operators::VectorIntegerExtOpPairwise<4, Operators::Add>> {}(lhs, rhs);
-    auto& c_slot = configuration.source_value(2, addresses.sources);
-    c_slot = Value { Operators::VectorIntegerBinaryOp<4, Operators::Add, MakeSigned> {}(result, c_slot.to<u128>()) };
+    auto acc = configuration.take_source(0, addresses.sources).template to<u128>();
+    auto rhs = configuration.take_source(1, addresses.sources).template to<u128>(); // bounds checked by verifier.
+    auto& lhs_slot = configuration.source_value(2, addresses.sources);
+    lhs_slot = Value { Operators::VectorRelaxedDotI8I7AddS {}(lhs_slot.template to<u128>(), rhs, acc) };
     TAILCALL return continue_(HANDLER_PARAMS(DECOMPOSE_PARAMS_NAME_ONLY));
 }
 
@@ -3883,7 +3881,7 @@ bool BytecodeInterpreter::load_and_push(Configuration& configuration, Instructio
     u64 instance_address = static_cast<u64>(bit_cast<u32>(base)) + arg.offset;
     if (instance_address + sizeof(ReadType) > memory->size()) {
         m_trap = Trap::from_string("Memory access out of bounds");
-        dbgln_if(WASM_TRACE_DEBUG, "LibWasm: Memory access out of bounds (expected {} to be less than or equal to {})", instance_address + sizeof(ReadType), memory->size());
+        dbgln("LibWasm: load_and_push - Memory access out of bounds (expected {} to be less than or equal to {})", instance_address + sizeof(ReadType), memory->size());
         return true;
     }
     dbgln_if(WASM_TRACE_DEBUG, "load({} : {}) -> stack", instance_address, sizeof(ReadType));
@@ -3909,7 +3907,7 @@ bool BytecodeInterpreter::load_and_push_mxn(Configuration& configuration, Instru
     u64 instance_address = static_cast<u64>(bit_cast<u32>(base)) + arg.offset;
     if (instance_address + M * N / 8 > memory->size()) {
         m_trap = Trap::from_string("Memory access out of bounds");
-        dbgln_if(WASM_TRACE_DEBUG, "LibWasm: Memory access out of bounds (expected {} to be less than or equal to {})", instance_address + M * N / 8, memory->size());
+        dbgln("LibWasm: load_and_push_mxn - Memory access out of bounds (expected {} to be less than or equal to {})", instance_address + M * N / 8, memory->size());
         return true;
     }
     dbgln_if(WASM_TRACE_DEBUG, "vec-load({} : {}) -> stack", instance_address, M * N / 8);
@@ -3939,6 +3937,7 @@ bool BytecodeInterpreter::load_and_push_lane_n(Configuration& configuration, Ins
     u64 instance_address = static_cast<u64>(bit_cast<u32>(base)) + memarg_and_lane.memory.offset;
     if (instance_address + N / 8 > memory->size()) {
         m_trap = Trap::from_string("Memory access out of bounds");
+        dbgln("LibWasm: load_and_push_lane_n - Memory access out of bounds (expected {} to be less than or equal to {})", instance_address + N / 8, memory->size());
         return true;
     }
     auto slice = memory->data().bytes().slice(instance_address, N / 8);
@@ -3959,6 +3958,7 @@ bool BytecodeInterpreter::load_and_push_zero_n(Configuration& configuration, Ins
     u64 instance_address = static_cast<u64>(bit_cast<u32>(base)) + memarg_and_lane.offset;
     if (instance_address + N / 8 > memory->size()) {
         m_trap = Trap::from_string("Memory access out of bounds");
+        dbgln("LibWasm: load_and_push_zero_n - Memory access out of bounds (expected {} to be less than or equal to {})", instance_address + N / 8, memory->size());
         return true;
     }
     auto slice = memory->data().bytes().slice(instance_address, N / 8);
@@ -3979,7 +3979,7 @@ bool BytecodeInterpreter::load_and_push_m_splat(Configuration& configuration, In
     u64 instance_address = static_cast<u64>(bit_cast<u32>(base)) + arg.offset;
     if (instance_address + M / 8 > memory->size()) {
         m_trap = Trap::from_string("Memory access out of bounds");
-        dbgln_if(WASM_TRACE_DEBUG, "LibWasm: Memory access out of bounds (expected {} to be less than or equal to {})", instance_address + M / 8, memory->size());
+        dbgln("LibWasm: load_and_push_m_splat - Memory access out of bounds (expected {} to be less than or equal to {})", instance_address + M / 8, memory->size());
         return true;
     }
     dbgln_if(WASM_TRACE_DEBUG, "vec-splat({} : {}) -> stack", instance_address, M / 8);
@@ -4184,7 +4184,7 @@ bool BytecodeInterpreter::store_to_memory(MemoryInstance& memory, u64 address, T
     addition += data_size;
     if (addition.has_overflow() || addition.value() > memory.size()) [[unlikely]] {
         m_trap = Trap::from_string("Memory access out of bounds");
-        dbgln_if(WASM_TRACE_DEBUG, "LibWasm: Memory access out of bounds (expected 0 <= {} and {} <= {})", address, address + data_size, memory.size());
+        dbgln("LibWasm: store_to_memory - Memory access out of bounds (expected 0 <= {} and {} <= {})", address, address + data_size, memory.size());
         return true;
     }
 

@@ -8,7 +8,6 @@
 #include <AK/Math.h>
 #include <AK/MemoryStream.h>
 #include <AK/Stream.h>
-#include <AK/StringBuilder.h>
 #include <AK/Time.h>
 #include <LibMedia/FFmpeg/FFmpegDemuxer.h>
 #include <LibMedia/FFmpeg/FFmpegHelpers.h>
@@ -19,10 +18,8 @@ extern "C" {
 
 namespace Media::FFmpeg {
 
-FFmpegDemuxer::FFmpegDemuxer(ReadonlyBytes data, NonnullOwnPtr<SeekableStream>&& stream, NonnullOwnPtr<Media::FFmpeg::FFmpegIOContext>&& io_context)
-    : m_data(data)
-    , m_stream(move(stream))
-    , m_io_context(move(io_context))
+FFmpegDemuxer::FFmpegDemuxer(NonnullOwnPtr<Media::FFmpeg::FFmpegIOContext>&& io_context)
+    : m_io_context(move(io_context))
 {
 }
 
@@ -34,81 +31,50 @@ FFmpegDemuxer::~FFmpegDemuxer()
 
 static DecoderErrorOr<void> initialize_format_context(AVFormatContext*& format_context, AVIOContext& io_context)
 {
-    dbgln("initialize_format_context: Starting format context initialization");
-
     format_context = avformat_alloc_context();
     if (format_context == nullptr)
         return DecoderError::with_description(DecoderErrorCategory::Memory, "Failed to allocate format context"sv);
-
     format_context->pb = &io_context;
-    dbgln("initialize_format_context: AVIOContext buffer size: {}, seekable: {}",
-          io_context.buffer_size, (io_context.seekable != 0));
-
-    dbgln("initialize_format_context: Calling avformat_open_input");
-    auto open_result = avformat_open_input(&format_context, nullptr, nullptr, nullptr);
-    if (open_result < 0) {
-        char error_buf[256];
-        av_strerror(open_result, error_buf, sizeof(error_buf));
-        dbgln("initialize_format_context: avformat_open_input FAILED with code {}: {}", open_result, error_buf);
+    if (avformat_open_input(&format_context, nullptr, nullptr, nullptr) < 0)
         return DecoderError::with_description(DecoderErrorCategory::Corrupted, "Failed to open input for format parsing"sv);
-    }
-    dbgln("initialize_format_context: avformat_open_input succeeded");
 
     // Read stream info; doing this is required for headerless formats like MPEG
-    dbgln("initialize_format_context: Calling avformat_find_stream_info");
-    auto stream_info_result = avformat_find_stream_info(format_context, nullptr);
-    if (stream_info_result < 0) {
-        char error_buf[256];
-        av_strerror(stream_info_result, error_buf, sizeof(error_buf));
-        dbgln("initialize_format_context: avformat_find_stream_info FAILED with code {}: {}", stream_info_result, error_buf);
+    if (avformat_find_stream_info(format_context, nullptr) < 0)
         return DecoderError::with_description(DecoderErrorCategory::Corrupted, "Failed to find stream info"sv);
-    }
-    dbgln("initialize_format_context: avformat_find_stream_info succeeded, found {} streams", format_context->nb_streams);
 
     return {};
 }
 
-DecoderErrorOr<NonnullRefPtr<FFmpegDemuxer>> FFmpegDemuxer::from_data(ReadonlyBytes data)
+DecoderErrorOr<NonnullRefPtr<FFmpegDemuxer>> FFmpegDemuxer::from_stream(NonnullRefPtr<IncrementallyPopulatedStream::Cursor> const& stream_consumer)
 {
-    dbgln("FFmpegDemuxer::from_data() called with {} bytes", data.size());
+    auto io_context = DECODER_TRY_ALLOC(Media::FFmpeg::FFmpegIOContext::create(stream_consumer));
+    auto demuxer = DECODER_TRY_ALLOC(adopt_nonnull_ref_or_enomem(new (nothrow) FFmpegDemuxer(move(io_context))));
 
-    // Debug: Print first few bytes to verify data integrity
-    if (data.size() >= 4) {
-        dbgln("FFmpegDemuxer: First 4 bytes: {:02x} {:02x} {:02x} {:02x}",
-              data[0], data[1], data[2], data[3]);
-    }
-
-    auto stream = DECODER_TRY_ALLOC(try_make<FixedMemoryStream>(data));
-    dbgln("FFmpegDemuxer: FixedMemoryStream created, size: {}", stream->size().value_or(0));
-
-    auto io_context = DECODER_TRY_ALLOC(Media::FFmpeg::FFmpegIOContext::create(*stream));
-    dbgln("FFmpegDemuxer: FFmpegIOContext created");
-
-    auto demuxer = DECODER_TRY_ALLOC(adopt_nonnull_ref_or_enomem(new (nothrow) FFmpegDemuxer(data, move(stream), move(io_context))));
-    dbgln("FFmpegDemuxer: FFmpegDemuxer instance created");
-
-    dbgln("FFmpegDemuxer: About to call initialize_format_context");
     TRY(initialize_format_context(demuxer->m_format_context, *demuxer->m_io_context->avio_context()));
-    dbgln("FFmpegDemuxer: initialize_format_context succeeded");
 
     return demuxer;
 }
 
+DecoderErrorOr<void> FFmpegDemuxer::create_context_for_track(Track const& track, NonnullRefPtr<IncrementallyPopulatedStream::Cursor> const& stream_cursor)
+{
+    auto io_context = MUST(Media::FFmpeg::FFmpegIOContext::create(stream_cursor));
+
+    auto track_context = make<TrackContext>(move(io_context));
+
+    // We've already initialized a format context, so the only way this can fail is OOM.
+    MUST(initialize_format_context(track_context->format_context, *track_context->io_context->avio_context()));
+
+    track_context->packet = av_packet_alloc();
+    VERIFY(track_context->packet != nullptr);
+
+    VERIFY(m_track_contexts.set(track, move(track_context)) == HashSetResult::InsertedNewEntry);
+
+    return {};
+}
+
 FFmpegDemuxer::TrackContext& FFmpegDemuxer::get_track_context(Track const& track)
 {
-    return *m_track_contexts.ensure(track, [&] {
-        auto stream = MUST(try_make<FixedMemoryStream>(m_data));
-        auto io_context = MUST(Media::FFmpeg::FFmpegIOContext::create(*stream));
-
-        auto track_context = make<TrackContext>(move(stream), move(io_context));
-
-        // We've already initialized a format context, so the only way this can fail is OOM.
-        MUST(initialize_format_context(track_context->format_context, *track_context->io_context->avio_context()));
-
-        track_context->packet = av_packet_alloc();
-        VERIFY(track_context->packet != nullptr);
-        return track_context;
-    });
+    return *m_track_contexts.get(track).release_value();
 }
 
 static inline AK::Duration time_units_to_duration(i64 time_units, AVRational const& time_base)
@@ -182,6 +148,22 @@ DecoderErrorOr<Track> FFmpegDemuxer::get_track_for_stream_index(u32 stream_index
             .pixel_width = static_cast<u64>(stream.codecpar->width),
             .pixel_height = static_cast<u64>(stream.codecpar->height),
             .cicp = CodingIndependentCodePoints(color_primaries, transfer_characteristics, matrix_coefficients, color_range),
+        });
+    } else if (type == TrackType::Audio) {
+        auto channel_map = Audio::ChannelMap::invalid();
+
+        auto& channel_layout = stream.codecpar->ch_layout;
+        if (channel_layout.nb_channels != 0) {
+            auto channel_map_result = av_channel_layout_to_channel_map(channel_layout);
+            if (channel_map_result.is_error())
+                return DecoderError::with_description(DecoderErrorCategory::Invalid, channel_map_result.error().string_literal());
+            channel_map = channel_map_result.release_value();
+        }
+
+        auto sample_specification = Audio::SampleSpecification(stream.codecpar->sample_rate, channel_map);
+
+        track.set_audio_data({
+            .sample_specification = sample_specification,
         });
     }
 
@@ -289,6 +271,7 @@ DecoderErrorOr<CodedFrame> FFmpegDemuxer::get_next_sample_for_track(Track const&
         auto flags = (packet.flags & AV_PKT_FLAG_KEY) != 0 ? FrameFlags::Keyframe : FrameFlags::None;
         auto sample = CodedFrame(
             time_units_to_duration(packet.pts, stream.time_base),
+            time_units_to_duration(packet.duration, stream.time_base),
             flags,
             move(packet_data),
             auxiliary_data);

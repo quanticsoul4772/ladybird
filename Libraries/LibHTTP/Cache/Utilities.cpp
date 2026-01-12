@@ -77,12 +77,16 @@ LexicalPath path_for_cache_key(LexicalPath const& cache_directory, u64 cache_key
 }
 
 // https://httpwg.org/specs/rfc9111.html#response.cacheability
-bool is_cacheable(StringView method)
+bool is_cacheable(StringView method, HTTP::HeaderList const& request_headers)
 {
     // A cache MUST NOT store a response to a request unless:
 
     // * the request method is understood by the cache;
-    return method.is_one_of("GET"sv, "HEAD"sv);
+    if (!method.is_one_of("GET"sv, "HEAD"sv))
+        return false;
+
+    // FIXME: Neither the disk cache nor the memory cache handle partial responses yet. So we don't cache them for now.
+    return !request_headers.contains("Range"sv);
 }
 
 // https://datatracker.ietf.org/doc/html/rfc9110#name-overview-of-status-codes
@@ -117,6 +121,10 @@ bool is_cacheable(u32 status_code, HeaderList const& headers)
 
     // * the response status code is final (see Section 15 of [HTTP]);
     if (status_code < 200)
+        return false;
+
+    // FIXME: Neither the disk cache nor the memory cache handle partial responses yet. So we don't cache them for now.
+    if (status_code == 206)
         return false;
 
     auto cache_control = headers.get("Cache-Control"sv);
@@ -328,12 +336,27 @@ AK::Duration calculate_age(HeaderList const& headers, UnixDateTime request_time,
     return current_age;
 }
 
+// https://httpwg.org/specs/rfc5861.html#n-the-stale-while-revalidate-cache-control-extension
+AK::Duration calculate_stale_while_revalidate_lifetime(HeaderList const& headers, AK::Duration freshness_lifetime)
+{
+    auto cache_control = headers.get("Cache-Control"sv);
+    if (!cache_control.has_value())
+        return {};
+
+    if (auto swr = extract_cache_control_directive(*cache_control, "stale-while-revalidate"sv); swr.has_value()) {
+        if (auto seconds = swr->to_number<i64>(); seconds.has_value())
+            return freshness_lifetime + AK::Duration::from_seconds(*seconds);
+    }
+
+    return {};
+}
+
 CacheLifetimeStatus cache_lifetime_status(HeaderList const& headers, AK::Duration freshness_lifetime, AK::Duration current_age)
 {
-    auto revalidation_status = [&]() {
+    auto revalidation_status = [&](auto revalidation_type) {
         // In order to revalidate a cache entry, we must have one of these headers to attach to the revalidation request.
         if (headers.contains("Last-Modified"sv) || headers.contains("ETag"sv))
-            return CacheLifetimeStatus::MustRevalidate;
+            return revalidation_type;
         return CacheLifetimeStatus::Expired;
     };
 
@@ -345,20 +368,24 @@ CacheLifetimeStatus cache_lifetime_status(HeaderList const& headers, AK::Duratio
     //
     // FIXME: Handle the qualified form of the no-cache directive, which may allow us to re-use the response.
     if (cache_control.has_value() && cache_control->contains("no-cache"sv, CaseSensitivity::CaseInsensitive))
-        return revalidation_status();
+        return revalidation_status(CacheLifetimeStatus::MustRevalidate);
 
     // https://httpwg.org/specs/rfc9111.html#expiration.model
     if (freshness_lifetime > current_age)
         return CacheLifetimeStatus::Fresh;
 
     if (cache_control.has_value()) {
+        // https://httpwg.org/specs/rfc5861.html#n-the-stale-while-revalidate-cache-control-extension
+        // When present in an HTTP response, the stale-while-revalidate Cache-Control extension indicates that caches
+        // MAY serve the response it appears in after it becomes stale, up to the indicated number of seconds.
+        if (calculate_stale_while_revalidate_lifetime(headers, freshness_lifetime) > current_age)
+            return revalidation_status(CacheLifetimeStatus::StaleWhileRevalidate);
+
         // https://httpwg.org/specs/rfc9111.html#cache-response-directive.must-revalidate
         // The must-revalidate response directive indicates that once the response has become stale, a cache MUST NOT
         // reuse that response to satisfy another request until it has been successfully validated by the origin
         if (cache_control->contains("must-revalidate"sv, CaseSensitivity::CaseInsensitive))
-            return revalidation_status();
-
-        // FIXME: Implement stale-while-revalidate.
+            return revalidation_status(CacheLifetimeStatus::MustRevalidate);
     }
 
     return CacheLifetimeStatus::Expired;

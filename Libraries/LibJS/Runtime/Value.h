@@ -154,6 +154,24 @@ public:
         return !is_nan() && !is_infinity();
     }
 
+    template<typename T>
+    ALWAYS_INLINE T* as_if()
+    {
+        static_assert(IsBaseOf<Object, T>);
+        if (!is_object())
+            return nullptr;
+        return ::as_if<T>(as_object());
+    }
+
+    template<typename T>
+    ALWAYS_INLINE T const* as_if() const
+    {
+        static_assert(IsBaseOf<Object, T>);
+        if (!is_object())
+            return nullptr;
+        return ::as_if<T>(as_object());
+    }
+
     constexpr Value()
         : Value(UNDEFINED_TAG << GC::TAG_SHIFT, (u64)0)
     {
@@ -401,6 +419,7 @@ public:
     // exactly only those bits set.
     bool is_double() const { return (m_value.encoded & GC::CANON_NAN_BITS) != GC::CANON_NAN_BITS || (m_value.encoded == GC::CANON_NAN_BITS); }
     bool is_int32() const { return m_value.tag == INT32_TAG; }
+    [[nodiscard]] bool is_non_negative_int32() const { return (m_value.encoded & (GC::TAG_EXTRACTION | 0x80000000u)) == SHIFTED_INT32_TAG; }
 
     i32 as_i32() const
     {

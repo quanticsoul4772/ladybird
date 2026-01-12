@@ -18,6 +18,7 @@ class CSSMathSum final : public CSSMathValue {
 public:
     [[nodiscard]] static GC::Ref<CSSMathSum> create(JS::Realm&, NumericType, GC::Ref<CSSNumericArray>);
     static WebIDL::ExceptionOr<GC::Ref<CSSMathSum>> construct_impl(JS::Realm&, Vector<CSSNumberish>);
+    static WebIDL::ExceptionOr<GC::Ref<CSSMathSum>> add_all_types_into_math_sum(JS::Realm&, GC::RootVector<GC::Ref<CSSNumericValue>> const&);
 
     virtual ~CSSMathSum() override;
 
@@ -26,7 +27,7 @@ public:
 
     GC::Ref<CSSNumericArray> values() const;
 
-    virtual String serialize_math_value(Nested, Parens) const override;
+    virtual void serialize_math_value(StringBuilder&, Nested, Parens) const override;
     virtual bool is_equal_numeric_value(GC::Ref<CSSNumericValue> other) const override;
     virtual Optional<SumValue> create_a_sum_value() const override;
 
