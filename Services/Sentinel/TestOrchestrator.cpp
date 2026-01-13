@@ -40,7 +40,6 @@ TEST_CASE(test_orchestrator_creation)
     }
 
     auto orchestrator = orchestrator_result.release_value();
-    EXPECT(orchestrator != nullptr);
 
     // Verify default config
     auto const& config = orchestrator->config();
@@ -59,7 +58,6 @@ TEST_CASE(test_orchestrator_creation_with_custom_config)
     config.enable_tier2_native = true;
 
     auto orchestrator = MUST(Orchestrator::create(config));
-    EXPECT(orchestrator != nullptr);
 
     auto const& stored_config = orchestrator->config();
     EXPECT(stored_config.timeout == Duration::from_seconds(10));

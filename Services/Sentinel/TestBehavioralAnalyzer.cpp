@@ -27,7 +27,7 @@ TEST_CASE(behavioral_analyzer_creation)
     }
 
     auto analyzer = analyzer_result.release_value();
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // Silence unused variable warning
 }
 
 TEST_CASE(behavioral_analyzer_creation_with_custom_config)
@@ -40,7 +40,7 @@ TEST_CASE(behavioral_analyzer_creation_with_custom_config)
     config.allow_network = false;
 
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // Silence unused variable warning
 }
 
 TEST_CASE(temp_directory_creation)
@@ -54,8 +54,8 @@ TEST_CASE(temp_directory_creation)
     config.use_mock_for_testing = true;  // Explicit mock mode for tests
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
-    // Analyzer creation should succeed
-    EXPECT(analyzer != nullptr);
+    // Analyzer creation should succeed (NonnullOwnPtr is always non-null)
+    (void)analyzer;
 
     // Note: We can't directly access m_sandbox_dir (private), but we can
     // verify that the analyzer was created successfully, which means
@@ -118,7 +118,7 @@ TEST_CASE(nsjail_command_building)
 
     // Note: build_nsjail_command is private, but we can test indirectly
     // by verifying analyzer creation succeeds (which uses the infrastructure)
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 
     // The command builder should work when nsjail integration is complete
     // For now, we verify the infrastructure is in place
@@ -133,7 +133,7 @@ TEST_CASE(nsjail_config_file_search)
 
     // Analyzer creation should succeed even if config file isn't found
     // (will fall back to mock mode)
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 }
 
 // ============================================================================
@@ -183,7 +183,7 @@ TEST_CASE(parse_syscall_event_basic)
 
     // Note: parse_syscall_event is private, but we can test via public analyze() method
     // For now, verify analyzer creation succeeds
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 
     // Example input for future direct testing: "[SYSCALL] getpid"
 }
@@ -196,7 +196,7 @@ TEST_CASE(parse_syscall_event_with_args)
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
     // Infrastructure is in place for parsing
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 
     // Example input for future direct testing: "[SYSCALL] open(\"/tmp/file.txt\", O_RDONLY, 0644)"
 }
@@ -208,7 +208,8 @@ TEST_CASE(parse_syscall_event_complex_args)
     config.use_mock_for_testing = true;  // Explicit mock mode for tests
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
-    EXPECT(analyzer != nullptr);
+    // NonnullOwnPtr is always non-null, so no need to check
+    (void)analyzer;
 
     // Example input for future direct testing: "[SYSCALL] socket(AF_INET, SOCK_STREAM, 0)"
 }
@@ -221,7 +222,7 @@ TEST_CASE(parse_syscall_event_non_syscall_line)
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
     // Parser should skip non-syscall lines efficiently
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 
     // Example input for future direct testing: "Some random log output"
 }
@@ -234,7 +235,7 @@ TEST_CASE(parse_syscall_event_malformed)
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
     // Parser should handle malformed input without crashing
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 
     // Example input for future direct testing: "[SYSCALL] incomplete("
 }
@@ -247,7 +248,7 @@ TEST_CASE(metrics_file_operations)
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
     // Verify infrastructure for file operation tracking exists
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 }
 
 TEST_CASE(metrics_network_operations)
@@ -258,7 +259,7 @@ TEST_CASE(metrics_network_operations)
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
     // Verify infrastructure for network tracking exists
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 }
 
 TEST_CASE(metrics_process_operations)
@@ -269,7 +270,7 @@ TEST_CASE(metrics_process_operations)
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
     // Verify infrastructure for process tracking exists
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 }
 
 TEST_CASE(metrics_memory_operations)
@@ -280,7 +281,7 @@ TEST_CASE(metrics_memory_operations)
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
     // Verify infrastructure for memory tracking exists
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 }
 
 TEST_CASE(metrics_privilege_escalation)
@@ -291,7 +292,7 @@ TEST_CASE(metrics_privilege_escalation)
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
     // Verify infrastructure for privilege escalation detection exists
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 }
 
 TEST_CASE(metrics_code_injection)
@@ -302,7 +303,7 @@ TEST_CASE(metrics_code_injection)
     auto analyzer = MUST(BehavioralAnalyzer::create(config));
 
     // Verify infrastructure for code injection detection exists
-    EXPECT(analyzer != nullptr);
+    (void)analyzer; // NonnullOwnPtr is always valid
 }
 
 TEST_CASE(analyze_nsjail_integration)

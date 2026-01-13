@@ -306,7 +306,8 @@ ErrorOr<void> OTXFeedClient::generate_yara_rules(String const& output_directory)
     // Write to file
     auto output_path = TRY(String::formatted("{}/otx_hashes.yara", output_directory));
     auto file = TRY(Core::File::open(output_path, Core::File::OpenMode::Write));
-    TRY(file->write_until_depleted(TRY(yara_content.to_string()).bytes()));
+    auto yara_content_string = TRY(yara_content.to_string());
+    TRY(file->write_until_depleted(yara_content_string.bytes()));
 
     m_stats.yara_rules_generated = rules_generated;
     dbgln("OTXFeedClient: Generated {} YARA rules in {}", rules_generated, output_path);

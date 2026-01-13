@@ -126,9 +126,10 @@ String QuarantineManager::generate_quarantine_filename(String const& original_fi
     auto hash_prefix = sha256_hash.bytes_as_string_view().substring_view(0, 8);
 
     // Sanitize original filename (remove path separators)
-    auto sanitized_name = LexicalPath(original_filename.to_byte_string()).basename();
+    auto lexical_path = LexicalPath(original_filename.to_byte_string());
+    auto sanitized_name = lexical_path.basename();
 
-    return MUST(String::formatted("{}_{}_{}. quar"sv, timestamp, hash_prefix, sanitized_name));
+    return MUST(String::formatted("{}_{}_{}.quar"sv, timestamp, hash_prefix, sanitized_name));
 }
 
 ErrorOr<QuarantineRecord> QuarantineManager::quarantine_file(

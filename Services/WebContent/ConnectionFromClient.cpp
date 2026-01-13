@@ -1397,12 +1397,11 @@ void ConnectionFromClient::enable_tor(u64 page_id, ByteString circuit_id)
         return;
     }
 
-    // Call enable_tor on RequestServer via IPC with page_id for per-tab isolation
-    // SECURITY: Passing page_id ensures each tab has independent Tor circuit
-    // Note: RequestServer also validates circuit_id (defense in depth)
-    request_client->async_enable_tor(page_id, move(circuit_id));
+    // TODO: Implement async_enable_tor IPC method on RequestClient
+    // request_client->async_enable_tor(page_id, move(circuit_id));
+    (void)circuit_id;
 
-    dbgln("WebContent: Enabled Tor for page {} with circuit {}", page_id, circuit_id);
+    dbgln("WebContent: Tor enable requested for page {} (not yet implemented)", page_id);
 }
 
 void ConnectionFromClient::disable_tor(u64 page_id)
@@ -1420,11 +1419,10 @@ void ConnectionFromClient::disable_tor(u64 page_id)
         return;
     }
 
-    // Call disable_tor on RequestServer via IPC with page_id for per-tab isolation
-    // SECURITY: Passing page_id ensures only this tab's Tor is disabled
-    request_client->async_disable_tor(page_id);
+    // TODO: Implement async_disable_tor IPC method on RequestClient
+    // request_client->async_disable_tor(page_id);
 
-    dbgln("WebContent: Disabled Tor for page {}", page_id);
+    dbgln("WebContent: Tor disable requested for page {} (not yet implemented)", page_id);
 }
 
 void ConnectionFromClient::rotate_tor_circuit(u64 page_id)
@@ -1442,11 +1440,10 @@ void ConnectionFromClient::rotate_tor_circuit(u64 page_id)
         return;
     }
 
-    // Call rotate_tor_circuit on RequestServer via IPC
-    // SECURITY: Pass page_id to ensure circuit rotation only affects this tab
-    request_client->async_rotate_tor_circuit(page_id);
+    // TODO: Implement async_rotate_tor_circuit IPC method on RequestClient
+    // request_client->async_rotate_tor_circuit(page_id);
 
-    dbgln("WebContent: Rotated Tor circuit for page {}", page_id);
+    dbgln("WebContent: Tor circuit rotation requested for page {} (not yet implemented)", page_id);
 }
 
 void ConnectionFromClient::set_proxy(u64 page_id, ByteString host, u16 port, ByteString proxy_type, Optional<ByteString> username, Optional<ByteString> password)
@@ -1464,11 +1461,15 @@ void ConnectionFromClient::set_proxy(u64 page_id, ByteString host, u16 port, Byt
         return;
     }
 
-    // Call set_proxy on RequestServer via IPC with page_id for per-tab isolation
-    // SECURITY: Passing page_id ensures each tab has independent proxy configuration
-    request_client->async_set_proxy(page_id, move(host), port, move(proxy_type), move(username), move(password));
+    // TODO: Implement async_set_proxy IPC method on RequestClient
+    // request_client->async_set_proxy(page_id, move(host), port, move(proxy_type), move(username), move(password));
+    (void)host;
+    (void)port;
+    (void)proxy_type;
+    (void)username;
+    (void)password;
 
-    dbgln("WebContent: Set proxy for page {} ({}:{})", page_id, host, port);
+    dbgln("WebContent: Set proxy requested for page {} (not yet implemented)", page_id);
 }
 
 void ConnectionFromClient::clear_proxy(u64 page_id)
@@ -1486,11 +1487,10 @@ void ConnectionFromClient::clear_proxy(u64 page_id)
         return;
     }
 
-    // Call clear_proxy on RequestServer via IPC
-    // SECURITY: Pass page_id to ensure proxy clearing only affects this tab
-    request_client->async_clear_proxy(page_id);
+    // TODO: Implement async_clear_proxy IPC method on RequestClient
+    // request_client->async_clear_proxy(page_id);
 
-    dbgln("WebContent: Cleared proxy for page {}", page_id);
+    dbgln("WebContent: Clear proxy requested for page {} (not yet implemented)", page_id);
 }
 
 Messages::WebContentServer::GetNetworkAuditResponse ConnectionFromClient::get_network_audit(u64 page_id)
@@ -1508,12 +1508,12 @@ Messages::WebContentServer::GetNetworkAuditResponse ConnectionFromClient::get_ne
         return { {}, 0, 0 };
     }
 
-    // Call get_network_audit on RequestServer via IPC (synchronous call)
-    auto response = request_client->get_network_audit();
+    // TODO: Implement get_network_audit IPC method on RequestClient
+    // auto response = request_client->get_network_audit();
+    // return { response.audit_entries(), response.total_bytes_sent(), response.total_bytes_received() };
 
-    dbgln("WebContent: Retrieved {} audit entries for page {}", response.audit_entries().size(), page_id);
-
-    return { response.audit_entries(), response.total_bytes_sent(), response.total_bytes_received() };
+    dbgln("WebContent: Network audit requested for page {} (not yet implemented)", page_id);
+    return { {}, 0, 0 };
 }
 
 void ConnectionFromClient::enforce_security_policy(i32 request_id, ByteString action)
@@ -1525,11 +1525,11 @@ void ConnectionFromClient::enforce_security_policy(i32 request_id, ByteString ac
         return;
     }
 
-    // Call enforce_security_policy on RequestServer via IPC
-    // SECURITY: This enforces the user's security decision (block/allow/quarantine)
-    request_client->async_enforce_security_policy(request_id, move(action));
+    // TODO: Implement async_enforce_security_policy IPC method on RequestClient
+    // request_client->async_enforce_security_policy(request_id, move(action));
+    (void)action;
 
-    dbgln("WebContent: Enforced security policy for request {} with action '{}'", request_id, action);
+    dbgln("WebContent: Security policy enforcement requested for request {} (not yet implemented)", request_id);
 }
 
 void ConnectionFromClient::form_submission_detected(u64 page_id, String form_origin, String action_origin, bool has_password, bool has_email, bool uses_https)

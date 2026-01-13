@@ -281,7 +281,8 @@ ErrorOr<void> ThreatFeed::export_threat_list(String const& file_path) const
     }
 
     auto file = TRY(Core::File::open(file_path, Core::File::OpenMode::Write));
-    TRY(file->write_until_depleted(threats.serialized().bytes()));
+    auto serialized = threats.serialized();
+    TRY(file->write_until_depleted(serialized.bytes()));
 
     dbgln("ThreatFeed: Exported {} threats to {}", threats.size(), file_path);
     return {};
@@ -341,7 +342,8 @@ ErrorOr<void> ThreatFeed::save_to_disk(String const& path) const
 
     auto meta_path = String::formatted("{}.meta", path).release_value_but_fixme_should_propagate_errors();
     auto meta_file = TRY(Core::File::open(meta_path, Core::File::OpenMode::Write));
-    TRY(meta_file->write_until_depleted(metadata.serialized().bytes()));
+    auto meta_serialized = metadata.serialized();
+    TRY(meta_file->write_until_depleted(meta_serialized.bytes()));
 
     // Save threat cache
     auto cache_path = String::formatted("{}.cache", path).release_value_but_fixme_should_propagate_errors();

@@ -139,6 +139,12 @@ private:
             return "Connect"sv;
         case State::Fetch:
             return "Fetch"sv;
+        case State::WaitingForPolicy:
+            return "WaitingForPolicy"sv;
+        case State::PolicyBlocked:
+            return "PolicyBlocked"sv;
+        case State::PolicyQuarantined:
+            return "PolicyQuarantined"sv;
         case State::Complete:
             return "Complete"sv;
         case State::Error:

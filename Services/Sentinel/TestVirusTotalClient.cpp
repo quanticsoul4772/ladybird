@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibCore/System.h>
 #include <LibTest/TestCase.h>
 #include <AK/Time.h>
 #include "ThreatIntelligence/RateLimiter.h"
@@ -42,7 +43,7 @@ TEST_CASE(rate_limiter_token_refill)
 
     // Wait for token refill (1 second)
     timespec sleep_time { .tv_sec = 1, .tv_nsec = 100'000'000 };  // 1.1 seconds
-    MUST(Core::System::nanosleep(&sleep_time, nullptr));
+    nanosleep(&sleep_time, nullptr);
 
     // Should be able to acquire tokens again
     EXPECT(rate_limiter->try_acquire());
@@ -60,7 +61,6 @@ TEST_CASE(virustotal_client_creation_with_valid_key)
 {
     // Valid API key should succeed
     auto client = MUST(VirusTotalClient::create("test_api_key_12345"_string));
-    EXPECT(client.ptr() != nullptr);
 
     // Check default configuration
     EXPECT_EQ(client->timeout().to_seconds(), 30);

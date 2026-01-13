@@ -9,6 +9,8 @@
 #include "NFTablesBackend.h"
 #include "ProcessMonitor.h"
 #include <AK/Debug.h>
+#include <AK/OwnPtr.h>
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <unistd.h>
 
@@ -59,10 +61,10 @@ ErrorOr<void> NetworkIsolationManager::initialize()
     // Initialize appropriate backend
     if (m_backend == FirewallBackend::NFTables) {
         m_nftables_backend = TRY(NFTablesBackend::create(m_dry_run));
-        dbgln_if(SENTINEL_DEBUG, "NetworkIsolationManager: Using nftables backend");
+        dbgln_if(false, "NetworkIsolationManager: Using nftables backend");
     } else if (m_backend == FirewallBackend::IPTables) {
         m_iptables_backend = TRY(IPTablesBackend::create(m_dry_run));
-        dbgln_if(SENTINEL_DEBUG, "NetworkIsolationManager: Using iptables backend");
+        dbgln_if(false, "NetworkIsolationManager: Using iptables backend");
     } else {
         return Error::from_string_literal("No supported firewall backend available");
     }
@@ -72,7 +74,7 @@ ErrorOr<void> NetworkIsolationManager::initialize()
         on_process_exit(pid);
     }));
 
-    dbgln_if(SENTINEL_DEBUG, "NetworkIsolationManager: Initialized successfully");
+    dbgln_if(false, "NetworkIsolationManager: Initialized successfully");
     return {};
 }
 
@@ -82,7 +84,7 @@ ErrorOr<void> NetworkIsolationManager::detect_firewall_backend()
     auto nft_available = TRY(NFTablesBackend::is_available());
     if (nft_available) {
         m_backend = FirewallBackend::NFTables;
-        dbgln_if(SENTINEL_DEBUG, "NetworkIsolationManager: Detected nftables");
+        dbgln_if(false, "NetworkIsolationManager: Detected nftables");
         return {};
     }
 
@@ -90,7 +92,7 @@ ErrorOr<void> NetworkIsolationManager::detect_firewall_backend()
     auto iptables_available = TRY(IPTablesBackend::is_available());
     if (iptables_available) {
         m_backend = FirewallBackend::IPTables;
-        dbgln_if(SENTINEL_DEBUG, "NetworkIsolationManager: Detected iptables");
+        dbgln_if(false, "NetworkIsolationManager: Detected iptables");
         return {};
     }
 
@@ -106,7 +108,7 @@ ErrorOr<bool> NetworkIsolationManager::is_critical_process(pid_t pid)
     }
 
     // Check process name
-    auto comm_path = String::formatted("/proc/{}/comm", pid);
+    auto comm_path = MUST(String::formatted("/proc/{}/comm", pid));
     auto comm_file = TRY(Core::File::open(comm_path, Core::File::OpenMode::Read));
     auto comm_bytes = TRY(comm_file->read_until_eof());
     auto comm = TRY(String::from_utf8(comm_bytes));
@@ -114,7 +116,7 @@ ErrorOr<bool> NetworkIsolationManager::is_critical_process(pid_t pid)
 
     for (auto critical_name : CRITICAL_PROCESS_NAMES) {
         if (comm == critical_name) {
-            dbgln_if(SENTINEL_DEBUG, "NetworkIsolationManager: Refusing to isolate critical process: {} (PID {})",
+            dbgln_if(false, "NetworkIsolationManager: Refusing to isolate critical process: {} (PID {})",
                 comm, pid);
             return true;
         }
@@ -128,7 +130,7 @@ ErrorOr<Vector<pid_t>> NetworkIsolationManager::get_process_children(pid_t pid)
     Vector<pid_t> children;
 
     // Read /proc/<pid>/task/<tid>/children
-    auto children_path = String::formatted("/proc/{}/task/{}/children", pid, pid);
+    auto children_path = MUST(String::formatted("/proc/{}/task/{}/children", pid, pid));
     auto children_file_or_error = Core::File::open(children_path, Core::File::OpenMode::Read);
 
     if (children_file_or_error.is_error()) {
@@ -170,7 +172,8 @@ ErrorOr<void> NetworkIsolationManager::apply_firewall_rules(pid_t pid)
 
     // Store rules for later cleanup
     if (m_isolated_processes.contains(pid)) {
-        m_isolated_processes.get(pid)->value.firewall_rules = move(rules);
+        auto& process = m_isolated_processes.get(pid).value();
+        process.firewall_rules = move(rules);
     }
 
     m_statistics.total_rules_applied += rules.size();
@@ -204,7 +207,7 @@ ErrorOr<void> NetworkIsolationManager::isolate_process(pid_t pid, String const& 
 
     // Check if already isolated
     if (m_isolated_processes.contains(pid)) {
-        dbgln_if(SENTINEL_DEBUG, "NetworkIsolationManager: Process {} already isolated", pid);
+        dbgln_if(false, "NetworkIsolationManager: Process {} already isolated", pid);
         return {};
     }
 
@@ -347,7 +350,7 @@ bool NetworkIsolationManager::is_process_isolated(pid_t pid) const
 
 void NetworkIsolationManager::on_process_exit(pid_t pid)
 {
-    dbgln_if(SENTINEL_DEBUG, "NetworkIsolationManager: Process {} exited, cleaning up", pid);
+    dbgln_if(false, "NetworkIsolationManager: Process {} exited, cleaning up", pid);
 
     auto result = restore_process(pid);
     if (result.is_error()) {

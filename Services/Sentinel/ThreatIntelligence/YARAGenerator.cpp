@@ -136,7 +136,8 @@ ErrorOr<void> YARAGenerator::generate_rules_file(Vector<PolicyGraph::IOC> const&
 
     // Write to file
     auto file = TRY(Core::File::open(output_path, Core::File::OpenMode::Write));
-    TRY(file->write_until_depleted(TRY(content.to_string()).bytes()));
+    auto content_string = TRY(content.to_string());
+    TRY(file->write_until_depleted(content_string.bytes()));
 
     dbgln("YARAGenerator: Generated rules file {}", output_path);
     return {};

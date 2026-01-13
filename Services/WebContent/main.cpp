@@ -267,17 +267,9 @@ ErrorOr<void> initialize_resource_loader(GC::Heap& heap, int request_server_sock
     request_client->transport().set_peer_pid(response->peer_pid());
 #endif
 
-    // Set up traffic alert callback to route to WebContent PageClient
-    if (webcontent_client) {
-        request_client->on_traffic_alert = [wc_ptr = webcontent_client](u64 page_id, ByteString alert_json) {
-            // Find the page and dispatch the alert
-            if (auto page = wc_ptr->page_host().page(page_id); page.has_value()) {
-                page->page().client().page_did_detect_traffic_alert(alert_json);
-            } else {
-                dbgln("Traffic alert received for non-existent page {}", page_id);
-            }
-        };
-    }
+    // TODO: Traffic alert callback for Sentinel integration would go here
+    // once RequestClient supports on_traffic_alert callback
+    (void)webcontent_client;
 
     Web::ResourceLoader::initialize(heap, move(request_client));
     return {};
@@ -291,17 +283,9 @@ ErrorOr<void> reinitialize_resource_loader(IPC::File const& request_server_socke
 
     auto request_client = TRY(try_make_ref_counted<Requests::RequestClient>(make<IPC::Transport>(move(socket))));
 
-    // Set up traffic alert callback to route to WebContent PageClient
-    if (webcontent_client) {
-        request_client->on_traffic_alert = [wc_ptr = webcontent_client](u64 page_id, ByteString alert_json) {
-            // Find the page and dispatch the alert
-            if (auto page = wc_ptr->page_host().page(page_id); page.has_value()) {
-                page->page().client().page_did_detect_traffic_alert(alert_json);
-            } else {
-                dbgln("Traffic alert received for non-existent page {}", page_id);
-            }
-        };
-    }
+    // TODO: Traffic alert callback for Sentinel integration would go here
+    // once RequestClient supports on_traffic_alert callback
+    (void)webcontent_client;
 
     Web::ResourceLoader::the().set_client(move(request_client));
 

@@ -4,8 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibFileSystem/FileSystem.h>
+#include <LibMain/Main.h>
 #include <Services/Sentinel/ThreatIntelligence/OTXFeedClient.h>
 #include <Services/Sentinel/ThreatIntelligence/YARAGenerator.h>
 #include <Services/Sentinel/ThreatIntelligence/UpdateScheduler.h>
@@ -24,7 +26,7 @@ static ErrorOr<void> test_otx_feed_client_creation()
 
     // Test with valid API key
     auto client = TRY(OTXFeedClient::create("test_api_key_12345"_string, db_dir));
-    VERIFY(client);
+    (void)client; // NonnullOwnPtr is always non-null
 
     // Test with empty API key (should fail)
     auto empty_result = OTXFeedClient::create(""_string, db_dir);

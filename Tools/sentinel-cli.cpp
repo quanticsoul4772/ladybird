@@ -24,7 +24,6 @@
 #include <Services/Sentinel/PolicyGraph.h>
 #include <sys/stat.h>
 
-using namespace RequestServer;
 using namespace Sentinel;
 
 // Forward declaration
@@ -91,12 +90,12 @@ static ErrorOr<void> command_status()
     outln();
 
     // Check quarantine
-    auto quarantine_dir = TRY(Quarantine::get_quarantine_directory());
+    auto quarantine_dir = TRY(RequestServer::Quarantine::get_quarantine_directory());
     if (FileSystem::exists(quarantine_dir)) {
         outln("Quarantine Directory: \033[32mEXISTS\033[0m");
         outln("  Path: {}", quarantine_dir);
 
-        auto entries_result = Quarantine::list_all_entries();
+        auto entries_result = RequestServer::Quarantine::list_all_entries();
         if (!entries_result.is_error()) {
             outln("  Files: {}", entries_result.value().size());
         }
@@ -240,7 +239,7 @@ static ErrorOr<void> command_show_policy(i64 policy_id)
 
 static ErrorOr<void> command_list_quarantine()
 {
-    auto entries = TRY(Quarantine::list_all_entries());
+    auto entries = TRY(RequestServer::Quarantine::list_all_entries());
 
     if (entries.is_empty()) {
         outln("No quarantined files found.");
@@ -272,7 +271,7 @@ static ErrorOr<void> command_restore(String const& quarantine_id, String const& 
         return Error::from_string_literal("Destination directory does not exist");
     }
 
-    TRY(Quarantine::restore_file(quarantine_id, destination_dir));
+    TRY(RequestServer::Quarantine::restore_file(quarantine_id, destination_dir));
 
     outln("\033[32mSuccessfully restored file.\033[0m");
     return {};

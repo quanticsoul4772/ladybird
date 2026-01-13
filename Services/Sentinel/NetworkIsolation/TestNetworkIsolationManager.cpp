@@ -4,8 +4,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/OwnPtr.h>
+#include <AK/StringView.h>
 #include <LibTest/TestCase.h>
+#include <Services/Sentinel/NetworkIsolation/IPTablesBackend.h>
+#include <Services/Sentinel/NetworkIsolation/NFTablesBackend.h>
 #include <Services/Sentinel/NetworkIsolation/NetworkIsolationManager.h>
+#include <Services/Sentinel/NetworkIsolation/ProcessMonitor.h>
 #include <unistd.h>
 #include <sys/wait.h>
 
@@ -19,7 +24,7 @@ TEST_CASE(firewall_backend_detection)
 
     if (manager_result.is_error()) {
         // It's okay if no firewall backend is available in test environment
-        EXPECT(manager_result.error().string_literal().contains("No supported firewall"));
+        EXPECT(manager_result.error().string_literal().contains("No supported firewall"sv));
         return;
     }
 
@@ -34,7 +39,7 @@ TEST_CASE(firewall_backend_detection)
 TEST_CASE(iptables_rule_generation)
 {
     // Test iptables backend in dry-run mode
-    auto backend_result = NetworkIsolation::IPTablesBackend::create(true);
+    auto backend_result = IPTablesBackend::create(true);
 
     if (backend_result.is_error()) {
         // Skip if iptables not available
@@ -55,11 +60,11 @@ TEST_CASE(iptables_rule_generation)
     bool has_drop = false;
 
     for (auto const& rule : rule_list) {
-        if (rule.contains("127.0.0.1"))
+        if (rule.contains("127.0.0.1"sv))
             has_loopback = true;
-        if (rule.contains("LOG"))
+        if (rule.contains("LOG"sv))
             has_log = true;
-        if (rule.contains("DROP"))
+        if (rule.contains("DROP"sv))
             has_drop = true;
     }
 
@@ -71,7 +76,7 @@ TEST_CASE(iptables_rule_generation)
 TEST_CASE(nftables_rule_generation)
 {
     // Test nftables backend in dry-run mode
-    auto backend_result = NetworkIsolation::NFTablesBackend::create(true);
+    auto backend_result = NFTablesBackend::create(true);
 
     if (backend_result.is_error()) {
         // Skip if nftables not available
@@ -95,11 +100,11 @@ TEST_CASE(nftables_rule_generation)
     bool has_drop = false;
 
     for (auto const& rule : rule_list) {
-        if (rule.contains("127.0.0"))
+        if (rule.contains("127.0.0"sv))
             has_loopback = true;
-        if (rule.contains("log"))
+        if (rule.contains("log"sv))
             has_log = true;
-        if (rule.contains("drop"))
+        if (rule.contains("drop"sv))
             has_drop = true;
     }
 
@@ -123,7 +128,7 @@ TEST_CASE(process_monitoring)
     bool callback_invoked = false;
     pid_t exited_pid = 0;
 
-    auto monitor = MUST(NetworkIsolation::ProcessMonitor::create([&](pid_t pid) {
+    auto monitor = MUST(ProcessMonitor::create([&](pid_t pid) {
         callback_invoked = true;
         exited_pid = pid;
     }));
@@ -156,7 +161,7 @@ TEST_CASE(critical_process_blocking_prevention)
     auto result = manager->isolate_process(1, "Test"_string);
 
     EXPECT(result.is_error());
-    EXPECT(result.error().string_literal().contains("critical"));
+    EXPECT(result.error().string_literal().contains("critical"sv));
 }
 
 TEST_CASE(process_isolation_and_restoration)

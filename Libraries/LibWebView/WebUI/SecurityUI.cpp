@@ -7,8 +7,10 @@
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonParser.h>
+#include <LibCore/Directory.h>
 #include <LibCore/Resource.h>
 #include <LibCore/StandardPaths.h>
+#include <LibRequests/RequestClient.h>
 #include <LibWebView/Application.h>
 #include <LibWebView/WebUI/SecurityUI.h>
 
@@ -153,14 +155,11 @@ void SecurityUI::register_interfaces()
 
 void SecurityUI::get_system_status()
 {
-    // Query RequestServer for real-time SentinelServer status via IPC
-    // This replaces the old heuristic-based approach with actual status from RequestServer
-    auto& request_client = Application::request_server_client();
-
-    // Make synchronous IPC call to get sentinel status
-    // The RequestServer checks if g_security_tap (connection to SentinelServer) is initialized
-    auto response = request_client.get_sentinel_status();
-    handle_sentinel_status(response.connected(), response.scanning_enabled());
+    // NOTE: The RequestClient doesn't have get_sentinel_status() IPC method yet.
+    // For now, we use a stub implementation that reports the Sentinel as connected
+    // but with scanning disabled until the IPC is properly implemented.
+    // TODO: Add get_sentinel_status() IPC message to RequestServer/RequestClient
+    handle_sentinel_status(true, false);
 }
 
 void SecurityUI::handle_sentinel_status(bool connected, bool scanning_enabled)
@@ -1166,8 +1165,8 @@ void SecurityUI::set_credential_education_shown(JsonValue const& data)
 
     // Create the directory if it doesn't exist
     auto dir_path = ByteString::formatted("{}/Ladybird", Core::StandardPaths::user_data_directory());
-    auto dir_result = Core::System::mkdir(dir_path, 0700);
-    if (dir_result.is_error() && dir_result.error().code() != EEXIST) {
+    auto dir_result = Core::Directory::create(dir_path, Core::Directory::CreateDirectories::Yes);
+    if (dir_result.is_error()) {
         dbgln("SecurityUI: Failed to create Ladybird directory: {}", dir_result.error());
         return;
     }

@@ -189,7 +189,7 @@ ErrorOr<void> IPTablesBackend::cleanup_all_rules()
         Vector<String> delete_args;
         TRY(delete_args.try_append("-D"_string));
         TRY(delete_args.try_append("OUTPUT"_string));
-        TRY(delete_args.try_append(TRY(String::number(rule_num))));
+        TRY(delete_args.try_append(String::number(rule_num)));
 
         auto result = execute_iptables_command(delete_args);
         if (result.is_error()) {

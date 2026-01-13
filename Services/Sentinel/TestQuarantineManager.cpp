@@ -25,7 +25,7 @@ static ErrorOr<String> create_test_file(String const& filename, ByteString const
 
     // Create test directory if it doesn't exist
     if (!FileSystem::exists(test_dir)) {
-        TRY(Core::Directory::create(test_dir, Core::Directory::CreateDirectories::Yes));
+        TRY(Core::Directory::create(test_dir.to_byte_string(), Core::Directory::CreateDirectories::Yes));
     }
 
     auto file_path = MUST(String::formatted("{}/{}", test_dir, filename));
@@ -204,7 +204,7 @@ TEST_CASE(test_delete_quarantined_file)
     auto manager = MUST(QuarantineManager::create(quarantine_dir, db_path));
 
     // Create and quarantine test file
-    auto malware_file = MUST(create_test_file("malware.exe"_string, "malicious binary data"_byte_string));
+    auto malware_file = MUST(create_test_file("malware.exe"_string, ByteString("malicious binary data")));
     auto threat_analysis = create_test_threat_analysis(SandboxResult::ThreatLevel::Critical);
     auto record = MUST(manager->quarantine_file(malware_file, threat_analysis));
 
@@ -237,7 +237,7 @@ TEST_CASE(test_cleanup_expired_files)
     // Create and quarantine multiple files
     for (int i = 0; i < 3; i++) {
         auto filename = MUST(String::formatted("malware{}.bin", i));
-        auto file = MUST(create_test_file(filename, "malware data"_byte_string));
+        auto file = MUST(create_test_file(filename, ByteString("malware data")));
         auto threat_analysis = create_test_threat_analysis(SandboxResult::ThreatLevel::Malicious);
         MUST(manager->quarantine_file(file, threat_analysis));
     }
@@ -247,7 +247,7 @@ TEST_CASE(test_cleanup_expired_files)
     EXPECT_EQ(all_files.size(), 3u);
 
     // Try to cleanup with 30-day retention (no files should be deleted - they're fresh)
-    auto cleaned_count = MUST(manager->cleanup_expired(AK::Duration::from_days(30)));
+    auto cleaned_count = MUST(manager->cleanup_expired(AK::Duration::from_seconds(30 * 86400)));
     EXPECT_EQ(cleaned_count, 0u);
 
     // Cleanup with 0-second retention (all files should be deleted)
@@ -271,15 +271,15 @@ TEST_CASE(test_list_quarantined_files_with_filter)
     auto manager = MUST(QuarantineManager::create(quarantine_dir, db_path));
 
     // Quarantine files with different threat levels
-    auto suspicious_file = MUST(create_test_file("suspicious.txt"_string, "suspicious"_byte_string));
+    auto suspicious_file = MUST(create_test_file("suspicious.txt"_string, ByteString("suspicious")));
     auto suspicious_analysis = create_test_threat_analysis(SandboxResult::ThreatLevel::Suspicious);
     MUST(manager->quarantine_file(suspicious_file, suspicious_analysis));
 
-    auto malicious_file = MUST(create_test_file("malicious.txt"_string, "malicious"_byte_string));
+    auto malicious_file = MUST(create_test_file("malicious.txt"_string, ByteString("malicious")));
     auto malicious_analysis = create_test_threat_analysis(SandboxResult::ThreatLevel::Malicious);
     MUST(manager->quarantine_file(malicious_file, malicious_analysis));
 
-    auto critical_file = MUST(create_test_file("critical.txt"_string, "critical"_byte_string));
+    auto critical_file = MUST(create_test_file("critical.txt"_string, ByteString("critical")));
     auto critical_analysis = create_test_threat_analysis(SandboxResult::ThreatLevel::Critical);
     MUST(manager->quarantine_file(critical_file, critical_analysis));
 
@@ -315,7 +315,7 @@ TEST_CASE(test_duplicate_quarantine_prevention)
     auto manager = MUST(QuarantineManager::create(quarantine_dir, db_path));
 
     // Create test file
-    auto content = "Duplicate test content"_byte_string;
+    auto content = ByteString("Duplicate test content");
     auto file1 = MUST(create_test_file("duplicate1.txt"_string, content));
 
     // Quarantine first file

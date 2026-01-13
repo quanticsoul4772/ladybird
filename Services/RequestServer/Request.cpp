@@ -30,9 +30,11 @@ NonnullOwnPtr<Request> Request::fetch(
     NonnullRefPtr<HTTP::HeaderList> request_headers,
     ByteBuffer request_body,
     ByteString alt_svc_cache_path,
-    Core::ProxyData proxy_data)
+    Core::ProxyData proxy_data,
+    RefPtr<IPC::NetworkIdentity> network_identity)
 {
     auto request = adopt_own(*new Request { request_id, Type::Fetch, disk_cache, client, curl_multi, resolver, move(url), move(method), move(request_headers), move(request_body), move(alt_svc_cache_path), proxy_data });
+    request->m_network_identity = move(network_identity);
     request->process();
 
     return request;
@@ -203,6 +205,13 @@ void Request::process()
     case State::Fetch:
         handle_fetch_state();
         break;
+    case State::WaitingForPolicy:
+        handle_waiting_for_policy_state();
+        break;
+    case State::PolicyBlocked:
+    case State::PolicyQuarantined:
+        // These are terminal states handled by security callbacks
+        break;
     case State::Complete:
         handle_complete_state();
         break;
@@ -340,6 +349,14 @@ void Request::handle_connect_state()
 
     auto result = curl_multi_add_handle(m_curl_multi_handle, m_curl_easy_handle);
     VERIFY(result == CURLM_OK);
+}
+
+void Request::handle_waiting_for_policy_state()
+{
+    // This state is entered when we're waiting for a security policy decision.
+    // The request is paused until resume_download(), block_download(), or
+    // quarantine_download() is called by the security system.
+    dbgln_if(REQUESTSERVER_DEBUG, "Request::handle_waiting_for_policy_state: Waiting for security decision");
 }
 
 void Request::handle_fetch_state()

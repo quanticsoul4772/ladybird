@@ -146,7 +146,7 @@ add_executable(TestDNSAnalyzer TestDNSAnalyzer.cpp)
 add_executable(TestSandbox TestSandbox.cpp)
 add_executable(TestThreatReporter TestThreatReporter.cpp)
 add_executable(TestOTXFeedClient TestOTXFeedClient.cpp)
-add_executable(TestVirusTotalClient TestVirusTotalClient.cpp)
+# TestVirusTotalClient moved to ladybird_test() below
 add_executable(BenchmarkC2Detector BenchmarkC2Detector.cpp)
 add_executable(BenchmarkThreatScoring BenchmarkThreatScoring.cpp)
 # add_executable(BenchmarkBehavioralAnalyzer BenchmarkBehavioralAnalyzer.cpp) # Disabled - missing dependencies
@@ -184,10 +184,10 @@ target_link_libraries(TestPhishingURLAnalyzer PRIVATE sentinelservice LibCore Li
 target_link_libraries(TestFingerprintingDetector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestC2Detector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestDNSAnalyzer PRIVATE sentinelservice LibCore LibMain)
-target_link_libraries(TestSandbox PRIVATE sentinelservice LibCore LibMain)
+target_link_libraries(TestSandbox PRIVATE sentinelservice LibCore LibMain LibThreading)
 target_link_libraries(TestThreatReporter PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(TestOTXFeedClient PRIVATE sentinelservice LibCore LibMain LibFileSystem)
-target_link_libraries(TestVirusTotalClient PRIVATE sentinelservice LibCore LibMain)
+# TestVirusTotalClient linkage handled by ladybird_test()
 target_link_libraries(BenchmarkC2Detector PRIVATE sentinelservice LibCore LibMain)
 target_link_libraries(BenchmarkThreatScoring PRIVATE sentinelservice LibCore LibMain)
 # target_link_libraries(BenchmarkBehavioralAnalyzer PRIVATE sentinelservice LibCore LibMain LibFileSystem) # Disabled
@@ -197,10 +197,11 @@ target_link_libraries(sentinel-cli PRIVATE sentinelservice LibCore LibMain LibFi
 ladybird_test(TestBloomFilter.cpp Sentinel LIBS sentinelservice LibDatabase LibFileSystem)
 ladybird_test(TestBehavioralAnalyzer.cpp Sentinel LIBS sentinelservice LibCore LibFileSystem)
 ladybird_test(TestVerdictEngine.cpp Sentinel LIBS sentinelservice LibCore)
-ladybird_test(TestOrchestrator.cpp Sentinel LIBS sentinelservice LibCore LibCrypto LibFileSystem LibDatabase)
-ladybird_test(TestE2EIntegration.cpp Sentinel LIBS sentinelservice LibCore LibCrypto LibFileSystem LibDatabase)
+ladybird_test(TestOrchestrator.cpp Sentinel LIBS sentinelservice LibCore LibCrypto LibFileSystem LibDatabase LibThreading)
+ladybird_test(TestE2EIntegration.cpp Sentinel LIBS sentinelservice LibCore LibCrypto LibFileSystem LibDatabase LibThreading)
 ladybird_test(NetworkIsolation/TestNetworkIsolationManager.cpp Sentinel LIBS sentinelservice LibCore LibThreading)
 ladybird_test(TestQuarantineManager.cpp Sentinel LIBS sentinelservice LibCore LibCrypto LibFileSystem LibDatabase)
+ladybird_test(TestVirusTotalClient.cpp Sentinel LIBS sentinelservice LibCore)
 
 # Install targets
 install(TARGETS Sentinel sentinel-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

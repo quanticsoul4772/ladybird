@@ -52,7 +52,9 @@ static constexpr StringView sql_error(int error_code)
     __ENUMERATE_TYPE(u32)                \
     __ENUMERATE_TYPE(unsigned long)      \
     __ENUMERATE_TYPE(unsigned long long) \
-    __ENUMERATE_TYPE(bool)
+    __ENUMERATE_TYPE(bool)               \
+    __ENUMERATE_TYPE(float)              \
+    __ENUMERATE_TYPE(double)
 
 ErrorOr<NonnullRefPtr<Database>> Database::create(ByteString const& directory, StringView name)
 {
@@ -131,6 +133,8 @@ void Database::apply_placeholder(StatementID statement_id, int index, ValueType 
             SQL_MUST(sqlite3_bind_int(statement, index, static_cast<int>(value)));
         else
             SQL_MUST(sqlite3_bind_int64(statement, index, static_cast<sqlite3_int64>(value)));
+    } else if constexpr (IsFloatingPoint<ValueType>) {
+        SQL_MUST(sqlite3_bind_double(statement, index, static_cast<double>(value)));
     } else {
         static_assert(DependentFalse<ValueType>);
     }
@@ -161,6 +165,8 @@ ValueType Database::result_column(StatementID statement_id, int column)
             return static_cast<ValueType>(sqlite3_column_int(statement, column));
         else
             return static_cast<ValueType>(sqlite3_column_int64(statement, column));
+    } else if constexpr (IsFloatingPoint<ValueType>) {
+        return static_cast<ValueType>(sqlite3_column_double(statement, column));
     } else {
         static_assert(DependentFalse<ValueType>);
     }

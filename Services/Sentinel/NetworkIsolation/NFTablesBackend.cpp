@@ -6,6 +6,7 @@
 
 #include "NFTablesBackend.h"
 #include <AK/Debug.h>
+#include <LibCore/File.h>
 #include <LibCore/System.h>
 
 namespace Sentinel::NetworkIsolation {
@@ -174,16 +175,12 @@ ErrorOr<void> NFTablesBackend::remove_rule(String const& rule)
     // This is complex, so we'll use a simpler approach: flush rules matching our pattern
 
     // Extract PID from rule comment
-    auto comment_start = rule.find("PID "sv);
+    auto comment_start = rule.find_byte_offset("PID "sv);
     if (!comment_start.has_value())
         return {};
 
-    auto after_pid = rule.substring_from_byte_offset(comment_start.value() + 4);
-    auto pid_end = after_pid.find_byte_offset(')');
-    if (!pid_end.has_value())
-        return {};
-
-    auto pid_str = after_pid.substring_view(0, pid_end.value());
+    // We'll reconstruct the command to delete this specific rule
+    // This is a simplified approach - in production, we'd track rule handles
 
     // We'll reconstruct the command to delete this specific rule
     // This is a simplified approach - in production, we'd track rule handles
@@ -209,7 +206,7 @@ ErrorOr<Vector<String>> NFTablesBackend::apply_isolation(pid_t pid)
     return rules;
 }
 
-ErrorOr<void> NFTablesBackend::remove_isolation(pid_t pid, Vector<String> const& rules)
+ErrorOr<void> NFTablesBackend::remove_isolation(pid_t pid, Vector<String> const& /* rules */)
 {
     dbgln_if(false, "NFTablesBackend: Removing isolation rules for PID {}", pid);
 
