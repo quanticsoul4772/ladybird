@@ -8,11 +8,14 @@
 #include <Interface/LadybirdWebViewBridge.h>
 #include <LibURL/URL.h>
 #include <LibWeb/HTML/SelectedFile.h>
+#include <LibWebView/Application.h>
 
 #import <Application/ApplicationDelegate.h>
 #import <Interface/Event.h>
 #import <Interface/LadybirdWebView.h>
 #import <Interface/Menu.h>
+#import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <Utilities/Conversions.h>
 
@@ -35,11 +38,24 @@ struct HideCursor {
     }
 };
 
+@interface LadybirdWebViewContentLayer : CALayer
+@end
+
+@implementation LadybirdWebViewContentLayer
+- (void)display
+{
+    [self.delegate displayLayer:self];
+}
+@end
+
 @interface LadybirdWebView () <NSDraggingDestination>
 {
     OwnPtr<Ladybird::WebViewBridge> m_web_view_bridge;
 
     Optional<HideCursor> m_hidden_cursor;
+
+    id<MTLDevice> m_metal_device;
+    id<MTLCommandQueue> m_metal_queue;
 
     // We have to send key events for modifer keys, but AppKit does not generate key down/up events when only a modifier
     // key is pressed. Instead, we only receive an event that the modifier flags have changed, and we must determine for
@@ -95,6 +111,11 @@ struct HideCursor {
 {
     if (self = [super init]) {
         self.observer = observer;
+
+        if (WebView::Application::web_content_options().force_cpu_painting != WebView::ForceCPUPainting::Yes) {
+            m_metal_device = MTLCreateSystemDefaultDevice();
+            m_metal_queue = [m_metal_device newCommandQueue];
+        }
 
         auto* screens = [NSScreen screens];
 
@@ -184,6 +205,11 @@ struct HideCursor {
     m_web_view_bridge->set_maximum_frames_per_second([[[self window] screen] maximumFramesPerSecond]);
 }
 
+- (void)handleExitFullScreen
+{
+    m_web_view_bridge->exit_fullscreen();
+}
+
 - (void)handleVisibility:(BOOL)is_visible
 {
     m_web_view_bridge->set_system_visibility_state(is_visible
@@ -205,6 +231,11 @@ struct HideCursor {
 - (void)findInPagePreviousMatch
 {
     m_web_view_bridge->find_in_page_previous_match();
+}
+
+- (void)requestClose
+{
+    m_web_view_bridge->request_close();
 }
 
 #pragma mark - Private methods
@@ -238,10 +269,12 @@ struct HideCursor {
 
     m_web_view_bridge->on_ready_to_paint = [weak_self]() {
         LadybirdWebView* self = weak_self;
-        if (self == nil) {
+        if (self == nil)
             return;
-        }
-        [self setNeedsDisplay:YES];
+        if (m_metal_device)
+            [self presentMetalFrame];
+        else
+            [self.layer setNeedsDisplay];
     };
 
     m_web_view_bridge->on_new_web_view = [weak_self](auto activate_tab, auto, auto page_index) {
@@ -827,6 +860,19 @@ struct HideCursor {
         m_web_view_bridge->did_update_window_rect();
     };
 
+    m_web_view_bridge->on_exit_fullscreen_window = [weak_self]() {
+        LadybirdWebView* self = weak_self;
+        if (self == nil) {
+            return;
+        }
+
+        if (([[self window] styleMask] & NSWindowStyleMaskFullScreen) != 0) {
+            [[self window] toggleFullScreen:nil];
+        }
+
+        m_web_view_bridge->did_update_window_rect();
+    };
+
     m_web_view_bridge->on_theme_color_change = [weak_self](auto color) {
         LadybirdWebView* self = weak_self;
         if (self == nil) {
@@ -904,32 +950,98 @@ struct HideCursor {
 
 #pragma mark - NSView
 
-- (void)drawRect:(NSRect)rect
+- (CALayer*)makeBackingLayer
 {
+    if (!m_metal_device) {
+        CALayer* layer = [LadybirdWebViewContentLayer layer];
+        layer.contentsGravity = kCAGravityTopLeft;
+        return layer;
+    }
+
+    CAMetalLayer* layer = [CAMetalLayer layer];
+    layer.device = m_metal_device;
+    layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    layer.framebufferOnly = YES;
+    layer.displaySyncEnabled = YES;
+    layer.contentsGravity = kCAGravityTopLeft;
+    return layer;
+}
+
+- (void)presentMetalFrame
+{
+    VERIFY(m_metal_device);
+
+    auto paintable = m_web_view_bridge->paintable();
+    if (!paintable.has_value())
+        return;
+    auto [bitmap, bitmap_size, iosurface_ref] = *paintable;
+    VERIFY(iosurface_ref);
+
+    CAMetalLayer* metal_layer = (CAMetalLayer*)self.layer;
+    metal_layer.drawableSize = CGSizeMake(bitmap_size.width(), bitmap_size.height());
+    metal_layer.contentsScale = m_web_view_bridge->device_pixel_ratio();
+
+    id<CAMetalDrawable> drawable = [metal_layer nextDrawable];
+    if (!drawable)
+        return;
+
+    MTLTextureDescriptor* desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                                                    width:bitmap.width()
+                                                                                   height:bitmap.height()
+                                                                                mipmapped:NO];
+    desc.storageMode = MTLStorageModeShared;
+    desc.usage = MTLTextureUsageShaderRead;
+    id<MTLTexture> src_texture = [m_metal_device newTextureWithDescriptor:desc
+                                                                iosurface:(IOSurfaceRef)iosurface_ref
+                                                                    plane:0];
+
+    id<MTLCommandBuffer> cmd_buf = [m_metal_queue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [cmd_buf blitCommandEncoder];
+    [blit copyFromTexture:src_texture
+              sourceSlice:0
+              sourceLevel:0
+             sourceOrigin:MTLOriginMake(0, 0, 0)
+               sourceSize:MTLSizeMake(bitmap_size.width(), bitmap_size.height(), 1)
+                toTexture:drawable.texture
+         destinationSlice:0
+         destinationLevel:0
+        destinationOrigin:MTLOriginMake(0, 0, 0)];
+    [blit endEncoding];
+    [cmd_buf presentDrawable:drawable];
+    [cmd_buf commit];
+}
+
+- (void)viewWillStartLiveResize
+{
+    [super viewWillStartLiveResize];
+    self.layerContentsPlacement = NSViewLayerContentsPlacementTopLeft;
+}
+
+- (void)viewDidEndLiveResize
+{
+    [super viewDidEndLiveResize];
+    self.layerContentsPlacement = NSViewLayerContentsPlacementScaleAxesIndependently;
+}
+
+- (void)displayLayer:(CALayer*)layer
+{
+    VERIFY(!m_metal_device);
+
     auto paintable = m_web_view_bridge->paintable();
     if (!paintable.has_value()) {
-        [super drawRect:rect];
+        layer.contents = nil;
         return;
     }
 
-    auto [bitmap, bitmap_size] = *paintable;
+    auto [bitmap, bitmap_size, iosurface_ref] = *paintable;
+
     VERIFY(bitmap.format() == Gfx::BitmapFormat::BGRA8888);
 
     static constexpr size_t BITS_PER_COMPONENT = 8;
     static constexpr size_t BITS_PER_PIXEL = 32;
-
-    auto* context = [[NSGraphicsContext currentContext] CGContext];
-    CGContextSaveGState(context);
-
-    auto device_pixel_ratio = m_web_view_bridge->device_pixel_ratio();
-    auto inverse_device_pixel_ratio = m_web_view_bridge->inverse_device_pixel_ratio();
-
-    CGContextScaleCTM(context, inverse_device_pixel_ratio, inverse_device_pixel_ratio);
+    static auto* color_space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
 
     auto* provider = CGDataProviderCreateWithData(nil, bitmap.scanline_u8(0), bitmap.size_in_bytes(), nil);
-    auto image_rect = CGRectMake(rect.origin.x * device_pixel_ratio, rect.origin.y * device_pixel_ratio, bitmap_size.width(), bitmap_size.height());
-
-    static auto color_space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
 
     // Ideally, this would be NSBitmapImageRep, but the equivalent factory initWithBitmapDataPlanes: does
     // not seem to actually respect endianness. We need NSBitmapFormatThirtyTwoBitLittleEndian, but the
@@ -947,14 +1059,11 @@ struct HideCursor {
         NO,
         kCGRenderingIntentDefault);
 
-    auto* image = [[NSImage alloc] initWithCGImage:bitmap_image size:NSZeroSize];
-    [image drawInRect:image_rect];
+    layer.contentsScale = m_web_view_bridge->device_pixel_ratio();
+    layer.contents = (__bridge id)bitmap_image;
 
-    CGContextRestoreGState(context);
     CGDataProviderRelease(provider);
     CGImageRelease(bitmap_image);
-
-    [super drawRect:rect];
 }
 
 - (void)viewDidMoveToWindow

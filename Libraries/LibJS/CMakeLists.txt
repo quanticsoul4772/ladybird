@@ -2,10 +2,10 @@ include(libjs_generators)
 
 set(SOURCES
     AST.cpp
+    ASTDump.cpp
     Bytecode/ASTCodegen.cpp
     Bytecode/BasicBlock.cpp
     Bytecode/Builtins.cpp
-    Bytecode/CodeGenerationError.cpp
     Bytecode/Executable.cpp
     Bytecode/Generator.cpp
     Bytecode/IdentifierTable.cpp
@@ -27,7 +27,9 @@ set(SOURCES
     Module.cpp
     Parser.cpp
     ParserError.cpp
+    PipelineComparison.cpp
     Print.cpp
+    RustIntegration.cpp
     Runtime/AbstractOperations.cpp
     Runtime/Accessor.cpp
     Runtime/Agent.cpp
@@ -65,6 +67,7 @@ set(SOURCES
     Runtime/BooleanObject.cpp
     Runtime/BooleanPrototype.cpp
     Runtime/BoundFunction.cpp
+    Runtime/ClassConstruction.cpp
     Runtime/ClassFieldDefinition.cpp
     Runtime/Completion.cpp
     Runtime/CompletionCell.cpp
@@ -263,6 +266,7 @@ set(SOURCES
     Runtime/WeakSetPrototype.cpp
     Runtime/WrapForValidIteratorPrototype.cpp
     Runtime/WrappedFunction.cpp
+    ScopeCollector.cpp
     Script.cpp
     SourceCode.cpp
     SourceTextModule.cpp
@@ -276,6 +280,10 @@ generate_bytecode_def_derived()
 set(GENERATED_SOURCES Bytecode/Op.cpp)
 
 ladybird_lib(LibJS js EXPLICIT_SYMBOL_EXPORT)
+
+find_package(simdjson CONFIG REQUIRED)
+target_link_libraries(LibJS PRIVATE simdjson::simdjson)
+
 target_link_libraries(LibJS PRIVATE LibCore LibCrypto LibFileSystem LibRegex LibSyntax LibGC)
 
 # Link LibUnicode publicly to ensure ICU data (which is in libicudata.a) is available in any process using LibJS.
@@ -288,7 +296,7 @@ endif()
 
 if (WIN32)
     # FIXME: Windows on ARM
-    target_link_libraries(LibJS PRIVATE clang_rt.builtins-x86_64.lib)
+    target_link_libraries(LibJS PRIVATE clang_rt.builtins-x86_64.lib kernel32 ntdll Ws2_32 userenv)
 else()
     # This flag has no effect on Windows
     target_compile_options(LibJS PRIVATE -fno-omit-frame-pointer)
@@ -296,7 +304,30 @@ endif()
 
 target_link_libraries(LibJS PUBLIC JSClangPlugin)
 
-if (ENABLE_WINDOWS_CI)
+if (ENABLE_RUST)
+    corrosion_import_crate(MANIFEST_PATH Rust/Cargo.toml)
+    target_link_libraries(LibJS PRIVATE libjs_rust)
+    target_compile_definitions(LibJS PRIVATE ENABLE_RUST)
+    install(TARGETS libjs_rust EXPORT LagomTargets
+        ARCHIVE COMPONENT Lagom_Development
+    )
+    # The Rust library and LibJS have a circular dependency (C++ calls Rust
+    # entry points, Rust calls C++ callbacks). For static builds, merge the
+    # Rust archive into the LibJS archive so all symbols are in one place.
+    if(NOT BUILD_SHARED_LIBS)
+        add_custom_command(TARGET LibJS POST_BUILD
+            COMMAND ${CMAKE_AR} -x $<TARGET_FILE:libjs_rust-static>
+            COMMAND ${CMAKE_AR} -qS $<TARGET_FILE:LibJS> *.o
+            COMMAND ${CMAKE_RANLIB} $<TARGET_FILE:LibJS>
+            COMMAND ${CMAKE_COMMAND} -E remove -f *.o
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rust_merge_tmp
+            COMMENT "Merging Rust archive into LibJS"
+        )
+        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rust_merge_tmp)
+    endif()
+endif()
+
+if (WIN32 AND ENABLE_ADDRESS_SANITIZER)
     # FIXME: Fix address sanitizer stack-overflow error when running test-js.
     # Even tripling the stack size for this target to 24MB didn't fix it, so it is most likely some ASAN related bug/quirk given test-js passes using the 8MB stack without ASAN
     # ==9948==ERROR: AddressSanitizer: stack-overflow on address 0x7ffd983a6f47 (pc 0x7ffd983a6f47 bp 0x004e514053e0 sp 0x004e51405348 T0)

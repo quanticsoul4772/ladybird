@@ -18,7 +18,9 @@
 #include <AK/QuickSort.h>
 #include <AK/StringConversions.h>
 #include <AK/TemporaryChange.h>
+#include <LibWeb/CSS/Enums.h>
 #include <LibWeb/CSS/FontFace.h>
+#include <LibWeb/CSS/FontFeatureData.h>
 #include <LibWeb/CSS/MathFunctions.h>
 #include <LibWeb/CSS/Parser/ArbitrarySubstitutionFunctions.h>
 #include <LibWeb/CSS/Parser/ErrorReporter.h>
@@ -36,6 +38,7 @@
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ConicGradientStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CounterDefinitionsStyleValue.h>
+#include <LibWeb/CSS/StyleValues/CounterStyleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CounterStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CustomIdentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/EasingStyleValue.h>
@@ -43,6 +46,8 @@
 #include <LibWeb/CSS/StyleValues/FitContentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/FlexStyleValue.h>
 #include <LibWeb/CSS/StyleValues/FontSourceStyleValue.h>
+#include <LibWeb/CSS/StyleValues/FontStyleStyleValue.h>
+#include <LibWeb/CSS/StyleValues/FontVariantAlternatesFunctionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/FrequencyStyleValue.h>
 #include <LibWeb/CSS/StyleValues/GridTrackPlacementStyleValue.h>
 #include <LibWeb/CSS/StyleValues/GridTrackSizeListStyleValue.h>
@@ -74,6 +79,7 @@
 #include <LibWeb/CSS/StyleValues/SuperellipseStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TransformationStyleValue.h>
+#include <LibWeb/CSS/StyleValues/TupleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/URLStyleValue.h>
 #include <LibWeb/CSS/StyleValues/UnicodeRangeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/UnresolvedStyleValue.h>
@@ -2231,7 +2237,7 @@ RefPtr<StyleValue const> Parser::parse_color_mix_function(TokenStream<ComponentV
             }
         } else {
             auto color_space_token = function_tokens.consume_a_token();
-            if (color_space_token.token().type() != Token::Type::Ident)
+            if (!color_space_token.is(Token::Type::Ident))
                 return {};
             color_space = color_space_token.token().ident().to_string();
         }
@@ -2591,16 +2597,11 @@ RefPtr<StyleValue const> Parser::parse_counter_value(TokenStream<ComponentValue>
     };
 
     auto parse_counter_style = [this](TokenStream<ComponentValue>& tokens) -> RefPtr<StyleValue const> {
-        // https://drafts.csswg.org/css-counter-styles-3/#typedef-counter-style
-        // <counter-style> = <counter-style-name> | <symbols()>
-        // For now we just support <counter-style-name>, found here:
-        // https://drafts.csswg.org/css-counter-styles-3/#typedef-counter-style-name
-        // <counter-style-name> is a <custom-ident> that is not an ASCII case-insensitive match for none.
         auto transaction = tokens.begin_transaction();
         tokens.discard_whitespace();
 
-        auto counter_style_name = parse_custom_ident_value(tokens, { { "none"sv } });
-        if (!counter_style_name)
+        auto counter_style = parse_counter_style_value(tokens);
+        if (!counter_style)
             return {};
 
         tokens.discard_whitespace();
@@ -2608,7 +2609,7 @@ RefPtr<StyleValue const> Parser::parse_counter_value(TokenStream<ComponentValue>
             return {};
 
         transaction.commit();
-        return counter_style_name.release_nonnull();
+        return counter_style.release_nonnull();
     };
 
     auto transaction = tokens.begin_transaction();
@@ -2636,7 +2637,7 @@ RefPtr<StyleValue const> Parser::parse_counter_value(TokenStream<ComponentValue>
                 return nullptr;
         } else {
             // In both cases, if the <counter-style> argument is omitted it defaults to `decimal`.
-            counter_style = CustomIdentStyleValue::create("decimal"_fly_string);
+            counter_style = CounterStyleStyleValue::create("decimal"_fly_string);
         }
 
         transaction.commit();
@@ -2673,7 +2674,7 @@ RefPtr<StyleValue const> Parser::parse_counter_value(TokenStream<ComponentValue>
                 return nullptr;
         } else {
             // In both cases, if the <counter-style> argument is omitted it defaults to `decimal`.
-            counter_style = CustomIdentStyleValue::create("decimal"_fly_string);
+            counter_style = CounterStyleStyleValue::create("decimal"_fly_string);
         }
 
         transaction.commit();
@@ -2681,6 +2682,158 @@ RefPtr<StyleValue const> Parser::parse_counter_value(TokenStream<ComponentValue>
     }
 
     return nullptr;
+}
+
+// https://drafts.csswg.org/css-counter-styles-3/#typedef-counter-style-name
+Optional<FlyString> Parser::parse_counter_style_name(TokenStream<ComponentValue>& tokens)
+{
+    // <counter-style-name> is a <custom-ident> that is not an ASCII case-insensitive match for none.
+    auto transaction = tokens.begin_transaction();
+    tokens.discard_whitespace();
+
+    auto custom_ident = parse_custom_ident(tokens, { { "none"sv } });
+    if (!custom_ident.has_value())
+        return {};
+
+    // https://drafts.csswg.org/css-counter-styles-3/#the-counter-style-rule
+    // Counter style names are case-sensitive. However, the names defined in this specification are ASCII lowercased
+    // on parse wherever they are used as counter styles, e.g. in the list-style set of properties, in the
+    // @counter-style rule, and in the counter() functions.
+
+    // NB: The "names defined in this specification" are defined in the `CounterStyleNameKeyword` enum
+    auto const& keyword = keyword_from_string(custom_ident.value());
+    if (keyword.has_value() && keyword_to_counter_style_name_keyword(keyword.value()).has_value())
+        custom_ident = custom_ident->to_ascii_lowercase();
+
+    transaction.commit();
+    return custom_ident;
+}
+
+// https://drafts.csswg.org/css-counter-styles-3/#typedef-counter-style
+RefPtr<StyleValue const> Parser::parse_counter_style_value(TokenStream<ComponentValue>& tokens)
+{
+    // <counter-style> = <counter-style-name> | <symbols()>
+    // <symbols()> = symbols( <symbols-type>? [ <string> | <image> ]+ )
+    // <symbols-type> = cyclic | numeric | alphabetic | symbolic | fixed
+    auto transaction = tokens.begin_transaction();
+    tokens.discard_whitespace();
+
+    // <counter-style-name>
+    if (auto const& counter_style_name = parse_counter_style_name(tokens); counter_style_name.has_value()) {
+        transaction.commit();
+        return CounterStyleStyleValue::create(counter_style_name.value());
+    }
+
+    // <symbols()>
+    auto const& maybe_function_token = tokens.consume_a_token();
+
+    if (maybe_function_token.is_function("symbols"sv)) {
+        TokenStream argument_tokens { maybe_function_token.function().value };
+
+        // <symbols-type>?
+        // NB: <symbols-type> defaults to symbolic if not provided.
+        SymbolsType symbols_type = SymbolsType::Symbolic;
+        if (auto keyword = parse_keyword_value(argument_tokens); keyword) {
+            auto maybe_symbols_type = keyword_to_symbols_type(keyword->to_keyword());
+
+            if (!maybe_symbols_type.has_value())
+                return nullptr;
+
+            symbols_type = maybe_symbols_type.value();
+        }
+
+        // [ <string> | <image> ]+
+        // FIXME: In line with <symbol> we don't support <image> here - we may need to revisit this if other browsers
+        //        implement it.
+        Vector<FlyString> symbols;
+        while (argument_tokens.has_next_token()) {
+            auto maybe_string = parse_string_value(argument_tokens);
+
+            if (!maybe_string)
+                break;
+
+            symbols.append(maybe_string->string_value());
+        }
+
+        argument_tokens.discard_whitespace();
+
+        if (argument_tokens.has_next_token())
+            return nullptr;
+
+        // https://drafts.csswg.org/css-counter-styles-3/#symbols-function
+        // If the system is alphabetic or numeric, there must be at least two <string>s or <image>s, or else the function is invalid.
+        if (symbols.is_empty() || (first_is_one_of(symbols_type, SymbolsType::Alphabetic, SymbolsType::Numeric) && symbols.size() < 2))
+            return nullptr;
+
+        transaction.commit();
+        return CounterStyleStyleValue::create(CounterStyleStyleValue::SymbolsFunction { symbols_type, move(symbols) });
+    }
+
+    return nullptr;
+}
+
+// https://drafts.csswg.org/css-counter-styles-3/#typedef-symbol
+RefPtr<StyleValue const> Parser::parse_symbol_value(TokenStream<ComponentValue>& tokens)
+{
+    // <symbol> = <string> | <image> | <custom-ident>
+    // Note: The <image> syntax in <symbol> is currently at-risk. No implementations have plans to implement it
+    //       currently, and it complicates some usages of counter() in ways that haven’t been fully handled.
+    // NB: Given the above we don't currently support <image> here - we may need to revisit this if other browsers implement it.
+    auto transaction = tokens.begin_transaction();
+    tokens.discard_whitespace();
+
+    if (auto string_value = parse_string_value(tokens)) {
+        transaction.commit();
+        return string_value;
+    }
+
+    if (auto custom_ident_value = parse_custom_ident_value(tokens, {})) {
+        transaction.commit();
+        return custom_ident_value;
+    }
+
+    return nullptr;
+}
+
+RefPtr<StyleValue const> Parser::parse_nonnegative_integer_symbol_pair_value(TokenStream<ComponentValue>& tokens)
+{
+    auto transaction = tokens.begin_transaction();
+    tokens.discard_whitespace();
+
+    RefPtr<StyleValue const> integer;
+    RefPtr<StyleValue const> symbol;
+
+    while (tokens.has_next_token()) {
+        if (auto integer_value = parse_integer_value(tokens)) {
+            if (integer)
+                return nullptr;
+
+            if (integer_value->is_integer() && integer_value->as_integer().integer() < 0)
+                return nullptr;
+
+            integer = integer_value;
+            tokens.discard_whitespace();
+            continue;
+        }
+
+        if (auto symbol_value = parse_symbol_value(tokens)) {
+            if (symbol)
+                return nullptr;
+
+            symbol = symbol_value;
+            tokens.discard_whitespace();
+            continue;
+        }
+
+        break;
+    }
+
+    if (!integer || !symbol)
+        return nullptr;
+
+    transaction.commit();
+
+    return StyleValueList::create({ integer.release_nonnull(), symbol.release_nonnull() }, StyleValueList::Separator::Space);
 }
 
 RefPtr<StyleValue const> Parser::parse_ratio_value(TokenStream<ComponentValue>& tokens)
@@ -2766,8 +2919,9 @@ RefPtr<StyleValue const> Parser::parse_paint_value(TokenStream<ComponentValue>& 
         tokens.discard_whitespace();
         if (auto color_or_none = parse_color_or_none(); color_or_none == nullptr) {
             // Fail to parse if the fallback is invalid, but otherwise ignore it.
-            // FIXME: Use fallback color
             return nullptr;
+        } else if (color_or_none.has_value() && *color_or_none && (*color_or_none)->has_color()) {
+            return URLStyleValue::create(url->as_url().url(), color_or_none->release_nonnull());
         }
         return url;
     }
@@ -3572,6 +3726,354 @@ RefPtr<FitContentStyleValue const> Parser::parse_fit_content_value(TokenStream<C
 
     transaction.commit();
     return FitContentStyleValue::create(maybe_length.release_value());
+}
+
+RefPtr<StyleValue const> Parser::parse_font_style_value(TokenStream<ComponentValue>& tokens)
+{
+    // https://drafts.csswg.org/css-fonts/#font-style-prop
+    // normal | italic | left | right | oblique <angle [-90deg,90deg]>?
+    auto transaction = tokens.begin_transaction();
+    auto keyword_value = parse_keyword_value(tokens);
+
+    if (!keyword_value || !keyword_to_font_style_keyword(keyword_value->to_keyword()).has_value())
+        return nullptr;
+
+    auto font_style = keyword_to_font_style_keyword(keyword_value->to_keyword());
+
+    if (!font_style.has_value())
+        return nullptr;
+
+    if (tokens.has_next_token() && keyword_value->to_keyword() == Keyword::Oblique) {
+        auto context_guard = push_temporary_value_parsing_context(SpecialContext::FontStyleAngle);
+        if (auto angle_value = parse_angle_value(tokens)) {
+            if (angle_value->is_angle()) {
+                auto angle = angle_value->as_angle().angle();
+                auto angle_degrees = angle.to_degrees();
+                if (angle_degrees < -90 || angle_degrees > 90)
+                    return nullptr;
+            }
+
+            transaction.commit();
+            return FontStyleStyleValue::create(font_style.release_value(), angle_value);
+        }
+    }
+
+    transaction.commit();
+    return FontStyleStyleValue::create(font_style.release_value());
+}
+
+RefPtr<StyleValue const> Parser::parse_font_variant_alternates_value(TokenStream<ComponentValue>& tokens)
+{
+    // 6.8 https://drafts.csswg.org/css-fonts/#font-variant-alternates-prop
+    // [ stylistic(<feature-value-name>) || historical-forms || styleset(<feature-value-name>#) || character-variant(<feature-value-name>#) || swash(<feature-value-name>) || ornaments(<feature-value-name>) || annotation(<feature-value-name>) ]
+    // <feature-value-name> = <ident>
+    RefPtr<StyleValue const> stylistic;
+    RefPtr<StyleValue const> historical_forms;
+    RefPtr<StyleValue const> styleset;
+    RefPtr<StyleValue const> character_variant;
+    RefPtr<StyleValue const> swash;
+    RefPtr<StyleValue const> ornaments;
+    RefPtr<StyleValue const> annotation;
+
+    while (tokens.has_next_token()) {
+        auto transaction = tokens.begin_transaction();
+
+        // historical-forms
+        if (auto keyword_value = parse_keyword_value(tokens); keyword_value && keyword_value->to_keyword() == Keyword::HistoricalForms) {
+            if (historical_forms)
+                return nullptr;
+
+            transaction.commit();
+            historical_forms = keyword_value;
+            continue;
+        }
+
+        if (!tokens.next_token().is_function())
+            break;
+
+        auto function = tokens.consume_a_token().function();
+
+        auto argument_token_stream = TokenStream<ComponentValue> { function.value };
+        auto const& arguments = parse_a_comma_separated_list_of_component_values(argument_token_stream);
+
+        if (arguments.size() == 0)
+            break;
+
+        StyleValueVector feature_value_names;
+        feature_value_names.ensure_capacity(arguments.size());
+
+        for (auto const& argument_values : arguments) {
+            TokenStream<ComponentValue> argument_tokens { argument_values };
+
+            auto ident = parse_custom_ident_value(argument_tokens, {});
+
+            argument_tokens.discard_whitespace();
+
+            if (!ident || argument_tokens.has_next_token())
+                return nullptr;
+
+            feature_value_names.append(ident.release_nonnull());
+        }
+
+        // stylistic(<feature-value-name>)
+        if (function.name.equals_ignoring_ascii_case("stylistic"sv)) {
+            if (feature_value_names.size() != 1 || stylistic)
+                return nullptr;
+
+            transaction.commit();
+            stylistic = FontVariantAlternatesFunctionStyleValue::create(FontFeatureValueType::Stylistic, move(feature_value_names));
+            continue;
+        }
+
+        // styleset(<feature-value-name>#)
+        if (function.name.equals_ignoring_ascii_case("styleset"sv)) {
+            if (styleset)
+                return nullptr;
+
+            transaction.commit();
+            styleset = FontVariantAlternatesFunctionStyleValue::create(FontFeatureValueType::Styleset, move(feature_value_names));
+            continue;
+        }
+
+        // character-variant(<feature-value-name>#)
+        if (function.name.equals_ignoring_ascii_case("character-variant"sv)) {
+            if (character_variant)
+                return nullptr;
+
+            transaction.commit();
+            character_variant = FontVariantAlternatesFunctionStyleValue::create(FontFeatureValueType::CharacterVariant, move(feature_value_names));
+            continue;
+        }
+
+        // swash(<feature-value-name>)
+        if (function.name.equals_ignoring_ascii_case("swash"sv)) {
+            if (feature_value_names.size() != 1 || swash)
+                return nullptr;
+
+            transaction.commit();
+            swash = FontVariantAlternatesFunctionStyleValue::create(FontFeatureValueType::Swash, move(feature_value_names));
+            continue;
+        }
+
+        // ornaments(<feature-value-name>)
+        if (function.name.equals_ignoring_ascii_case("ornaments"sv)) {
+            if (feature_value_names.size() != 1 || ornaments)
+                return nullptr;
+
+            transaction.commit();
+            ornaments = FontVariantAlternatesFunctionStyleValue::create(FontFeatureValueType::Ornaments, move(feature_value_names));
+            continue;
+        }
+
+        // annotation(<feature-value-name>)
+        if (function.name.equals_ignoring_ascii_case("annotation"sv)) {
+            if (feature_value_names.size() != 1 || annotation)
+                return nullptr;
+
+            transaction.commit();
+            annotation = FontVariantAlternatesFunctionStyleValue::create(FontFeatureValueType::Annotation, move(feature_value_names));
+            continue;
+        }
+
+        break;
+    }
+
+    StyleValueVector values;
+    if (stylistic)
+        values.append(stylistic.release_nonnull());
+    if (historical_forms)
+        values.append(historical_forms.release_nonnull());
+    if (styleset)
+        values.append(styleset.release_nonnull());
+    if (character_variant)
+        values.append(character_variant.release_nonnull());
+    if (swash)
+        values.append(swash.release_nonnull());
+    if (ornaments)
+        values.append(ornaments.release_nonnull());
+    if (annotation)
+        values.append(annotation.release_nonnull());
+
+    if (values.is_empty())
+        return nullptr;
+
+    return StyleValueList::create(move(values), StyleValueList::Separator::Space);
+}
+
+RefPtr<StyleValue const> Parser::parse_font_variant_east_asian_value(TokenStream<ComponentValue>& tokens)
+{
+    // 6.10 https://drafts.csswg.org/css-fonts/#propdef-font-variant-east-asian
+    // [ <east-asian-variant-values> || <east-asian-width-values> || ruby ]
+    // <east-asian-variant-values> = [ jis78 | jis83 | jis90 | jis04 | simplified | traditional ]
+    // <east-asian-width-values>   = [ full-width | proportional-width ]
+    StyleValueTuple tuple;
+    tuple.resize_with_default_value(3, nullptr);
+
+    while (tokens.has_next_token()) {
+        auto keyword_transaction = tokens.begin_transaction();
+        auto maybe_value = parse_keyword_value(tokens);
+        if (!maybe_value)
+            break;
+
+        if (maybe_value->to_keyword() == Keyword::Ruby) {
+            if (tuple[TupleStyleValue::Indices::FontVariantEastAsian::Ruby])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantEastAsian::Ruby] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        if (keyword_to_east_asian_width(maybe_value->to_keyword()).has_value()) {
+            if (tuple[TupleStyleValue::Indices::FontVariantEastAsian::Width])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantEastAsian::Width] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        if (keyword_to_east_asian_variant(maybe_value->to_keyword()).has_value()) {
+            if (tuple[TupleStyleValue::Indices::FontVariantEastAsian::Variant])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantEastAsian::Variant] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        break;
+    }
+
+    if (!any_of(tuple, [](auto& value) { return value != nullptr; }))
+        return nullptr;
+
+    return TupleStyleValue::create(tuple);
+}
+
+RefPtr<StyleValue const> Parser::parse_font_variant_numeric_value(TokenStream<ComponentValue>& tokens)
+{
+    // 6.7 https://drafts.csswg.org/css-fonts/#propdef-font-variant-numeric
+    // [ <numeric-figure-values> || <numeric-spacing-values> || <numeric-fraction-values> || ordinal || slashed-zero]
+    // <numeric-figure-values>       = [ lining-nums | oldstyle-nums ]
+    // <numeric-spacing-values>      = [ proportional-nums | tabular-nums ]
+    // <numeric-fraction-values>     = [ diagonal-fractions | stacked-fractions ]
+    StyleValueTuple tuple;
+    tuple.resize_with_default_value(5, nullptr);
+
+    while (tokens.has_next_token()) {
+        auto keyword_transaction = tokens.begin_transaction();
+        auto maybe_value = parse_keyword_value(tokens);
+        if (!maybe_value)
+            break;
+
+        auto keyword = maybe_value->to_keyword();
+
+        if (keyword_to_numeric_figure_value(keyword).has_value()) {
+            if (tuple[TupleStyleValue::Indices::FontVariantNumeric::Figure])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantNumeric::Figure] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        if (keyword_to_numeric_spacing_value(keyword).has_value()) {
+            if (tuple[TupleStyleValue::Indices::FontVariantNumeric::Spacing])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantNumeric::Spacing] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        if (keyword_to_numeric_fraction_value(keyword).has_value()) {
+            if (tuple[TupleStyleValue::Indices::FontVariantNumeric::Fraction])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantNumeric::Fraction] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        if (keyword == Keyword::Ordinal) {
+            if (tuple[TupleStyleValue::Indices::FontVariantNumeric::Ordinal])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantNumeric::Ordinal] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        if (keyword == Keyword::SlashedZero) {
+            if (tuple[TupleStyleValue::Indices::FontVariantNumeric::SlashedZero])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantNumeric::SlashedZero] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        break;
+    }
+
+    if (!any_of(tuple, [](auto& value) { return value != nullptr; }))
+        return nullptr;
+
+    return TupleStyleValue::create(tuple);
+}
+
+RefPtr<StyleValue const> Parser::parse_font_variant_ligatures_value(TokenStream<ComponentValue>& tokens)
+{
+    // 6.4 https://drafts.csswg.org/css-fonts/#propdef-font-variant-ligatures
+    // [ <common-lig-values> || <discretionary-lig-values> || <historical-lig-values> || <contextual-alt-values> ]
+    // <common-lig-values>       = [ common-ligatures | no-common-ligatures ]
+    // <discretionary-lig-values> = [ discretionary-ligatures | no-discretionary-ligatures ]
+    // <historical-lig-values>   = [ historical-ligatures | no-historical-ligatures ]
+    // <contextual-alt-values>   = [ contextual | no-contextual ]
+    StyleValueTuple tuple;
+    tuple.resize_with_default_value(4, nullptr);
+
+    while (tokens.has_next_token()) {
+        auto keyword_transaction = tokens.begin_transaction();
+
+        auto maybe_value = parse_keyword_value(tokens);
+        if (!maybe_value)
+            break;
+
+        auto const& keyword = maybe_value->to_keyword();
+
+        if (keyword_to_common_lig_value(keyword).has_value()) {
+            if (tuple[TupleStyleValue::Indices::FontVariantLigatures::Common])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantLigatures::Common] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        if (keyword_to_discretionary_lig_value(keyword).has_value()) {
+            if (tuple[TupleStyleValue::Indices::FontVariantLigatures::Discretionary])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantLigatures::Discretionary] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        if (keyword_to_historical_lig_value(keyword).has_value()) {
+            if (tuple[TupleStyleValue::Indices::FontVariantLigatures::Historical])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantLigatures::Historical] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        if (keyword_to_contextual_alt_value(keyword).has_value()) {
+            if (tuple[TupleStyleValue::Indices::FontVariantLigatures::Contextual])
+                return nullptr;
+            keyword_transaction.commit();
+            tuple[TupleStyleValue::Indices::FontVariantLigatures::Contextual] = maybe_value.release_nonnull();
+            continue;
+        }
+
+        break;
+    }
+
+    if (!any_of(tuple, [](auto& value) { return value != nullptr; }))
+        return nullptr;
+
+    return TupleStyleValue::create(tuple);
 }
 
 RefPtr<StyleValue const> Parser::parse_basic_shape_value(TokenStream<ComponentValue>& tokens)
@@ -4632,12 +5134,27 @@ RefPtr<CalculatedStyleValue const> Parser::parse_calculated_value(ComponentValue
                 if (function.name.equals_ignoring_ascii_case("view"sv)) {
                     return CalculationContext { .percentages_resolve_as = ValueType::Length };
                 }
+                if (function.name.is_one_of_ignoring_ascii_case("grayscale"sv, "invert"sv, "opacity"sv, "sepia"sv)) {
+                    return CalculationContext { .accepted_type_ranges = { { ValueType::Number, { 0, 1 } }, { ValueType::Percentage, { 0, 100 } } } };
+                }
+                if (function.name.is_one_of_ignoring_ascii_case("brightness"sv, "contrast"sv, "saturate"sv)) {
+                    return CalculationContext { .accepted_type_ranges = { { ValueType::Number, { 0, NumericLimits<float>::max() } }, { ValueType::Percentage, { 0, NumericLimits<float>::max() } } } };
+                }
+                if (function.name.equals_ignoring_ascii_case("blur"sv)) {
+                    return CalculationContext { .accepted_type_ranges = { { ValueType::Length, { 0, NumericLimits<float>::max() } } } };
+                }
                 // FIXME: Add other functions that provide a context for resolving values
                 return {};
             },
-            [](DescriptorContext const&) -> Optional<CalculationContext> {
-                // FIXME: If any descriptors have `<*-percentage>` or `<integer>` types, add them here.
-                return CalculationContext {};
+            [](DescriptorContext const& descriptor_context) -> Optional<CalculationContext> {
+                switch (descriptor_context.descriptor) {
+                case DescriptorID::AdditiveSymbols:
+                case DescriptorID::Pad:
+                    return CalculationContext { .resolve_numbers_as_integers = true, .accepted_type_ranges = { { ValueType::Integer, { 0, NumericLimits<float>::max() } } } };
+                default:
+                    return CalculationContext {};
+                }
+                // FIXME: Add other descriptors which require special calculation contexts
             },
             [](SpecialContext special_context) -> Optional<CalculationContext> {
                 switch (special_context) {
@@ -4653,6 +5170,8 @@ RefPtr<CalculatedStyleValue const> Parser::parse_calculated_value(ComponentValue
                 case SpecialContext::CubicBezierFunctionXCoordinate:
                     // Coordinates on the X axis must be between 0 and 1
                     return CalculationContext { .accepted_type_ranges = { { ValueType::Number, { 0, 1 } } } };
+                case SpecialContext::FontStyleAngle:
+                    return CalculationContext { .accepted_type_ranges = { { ValueType::Angle, { -90, 90 } } } };
                 case SpecialContext::RadialSizeLengthPercentage:
                     // Radial size length-percentages are nonnegative
                     return CalculationContext { .percentages_resolve_as = ValueType::Length, .accepted_type_ranges = { { ValueType::Length, { 0, NumericLimits<float>::max() } } } };
@@ -5425,6 +5944,8 @@ RefPtr<StyleValue const> Parser::parse_value(ValueType value_type, TokenStream<C
         return parse_corner_shape_value(tokens);
     case ValueType::Counter:
         return parse_counter_value(tokens);
+    case ValueType::CounterStyle:
+        return parse_counter_style_value(tokens);
     case ValueType::CustomIdent:
         // FIXME: Figure out how to pass the blacklist here
         return parse_custom_ident_value(tokens, {});
@@ -5438,6 +5959,16 @@ RefPtr<StyleValue const> Parser::parse_value(ValueType value_type, TokenStream<C
         return parse_fit_content_value(tokens);
     case ValueType::Flex:
         return parse_flex_value(tokens);
+    case ValueType::FontStyle:
+        return parse_font_style_value(tokens);
+    case ValueType::FontVariantAlternates:
+        return parse_font_variant_alternates_value(tokens);
+    case ValueType::FontVariantEastAsian:
+        return parse_font_variant_east_asian_value(tokens);
+    case ValueType::FontVariantLigatures:
+        return parse_font_variant_ligatures_value(tokens);
+    case ValueType::FontVariantNumeric:
+        return parse_font_variant_numeric_value(tokens);
     case ValueType::Frequency:
         return parse_frequency_value(tokens);
     case ValueType::FrequencyPercentage:

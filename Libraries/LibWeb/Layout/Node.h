@@ -11,7 +11,6 @@
 #include <AK/Vector.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibWeb/CSS/StyleValues/ImageStyleValue.h>
-#include <LibWeb/DOM/Document.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Painting/DisplayListRecordingContext.h>
@@ -19,6 +18,8 @@
 #include <LibWeb/TreeNode.h>
 
 namespace Web::Layout {
+
+class InlineNode;
 
 enum class LayoutMode {
     // Normal layout. No min-content or max-content constraints applied.
@@ -111,11 +112,13 @@ public:
     virtual bool is_svg_geometry_box() const { return false; }
     virtual bool is_svg_clip_box() const { return false; }
     virtual bool is_svg_mask_box() const { return false; }
+    virtual bool is_svg_pattern_box() const { return false; }
     virtual bool is_svg_svg_box() const { return false; }
     virtual bool is_svg_graphics_box() const { return false; }
     virtual bool is_svg_foreign_object_box() const { return false; }
     virtual bool is_label() const { return false; }
     virtual bool is_replaced_box() const { return false; }
+    virtual bool is_textarea_box() const { return false; }
     virtual bool is_list_item_box() const { return false; }
     virtual bool is_list_item_marker_box() const { return false; }
     virtual bool is_fieldset_box() const { return false; }
@@ -123,6 +126,8 @@ public:
     virtual bool is_table_wrapper() const { return false; }
     virtual bool is_node_with_style() const { return false; }
     virtual bool is_node_with_style_and_box_model_metrics() const { return false; }
+
+    bool is_replaced_box_with_children() const { return is_replaced_box() && can_have_children(); }
 
     template<typename T>
     bool fast_is() const = delete;
@@ -142,6 +147,13 @@ public:
     [[nodiscard]] GC::Ptr<Box const> containing_block() const { return m_containing_block; }
     [[nodiscard]] GC::Ptr<Box> containing_block() { return m_containing_block; }
 
+    // Returns the inline node that actually establishes the containing block for this absolutely
+    // positioned element, if applicable. This is needed because m_containing_block can only hold
+    // a Box*, but CSS allows inline elements (like a <span> with position:relative) to establish
+    // containing blocks for their absolutely positioned descendants.
+    // See the large FIXME comment in FormattingContext.cpp for full context.
+    [[nodiscard]] GC::Ptr<InlineNode const> inline_containing_block_if_applicable() const { return m_inline_containing_block_if_applicable; }
+
     void recompute_containing_block(Badge<DOM::Document>);
 
     [[nodiscard]] Box const* static_position_containing_block() const;
@@ -155,6 +167,7 @@ public:
 
     bool establishes_stacking_context() const;
 
+    bool computed_values_establish_absolute_positioning_containing_block() const;
     bool establishes_an_absolute_positioning_containing_block() const;
     bool establishes_a_fixed_positioning_containing_block() const;
 
@@ -220,6 +233,13 @@ private:
 
     GC::Ptr<Box> m_containing_block;
 
+    // For absolutely positioned elements, if there's an inline element (like a <span> with
+    // position:relative) that should be the containing block but can't be stored in m_containing_block
+    // (because it's not a Box), we store it here. This happens when a block element is inside an
+    // inline element - the layout tree restructures so the block becomes a sibling of the inline,
+    // but the CSS containing block relationship is based on the DOM structure.
+    GC::Ptr<InlineNode> m_inline_containing_block_if_applicable;
+
     GC::Ptr<DOM::Element> m_pseudo_element_generator;
 
     bool m_anonymous { false };
@@ -230,6 +250,7 @@ private:
     bool m_is_grid_item { false };
 
     bool m_has_been_wrapped_in_table_wrapper { false };
+    bool m_is_body { false };
 
     bool m_needs_layout_update { false };
 
@@ -257,12 +278,15 @@ public:
 
     void transfer_table_box_computed_values_to_wrapper_computed_values(CSS::ComputedValues& wrapper_computed_values);
 
-    bool is_body() const;
+    bool is_body() const { return m_is_body; }
     bool is_scroll_container() const;
 
     virtual void visit_edges(Cell::Visitor& visitor) override;
 
     void set_computed_values(NonnullOwnPtr<CSS::ComputedValues>);
+
+    u32 layout_index() const { return m_layout_index; }
+    void set_layout_index(u32 index) { m_layout_index = index; }
 
 protected:
     NodeWithStyle(DOM::Document&, DOM::Node*, GC::Ref<CSS::ComputedProperties>);
@@ -277,6 +301,7 @@ private:
 
     NonnullOwnPtr<CSS::ComputedValues> m_computed_values;
     RefPtr<CSS::AbstractImageStyleValue const> m_list_style_image;
+    u32 m_layout_index { 0 };
 };
 
 template<>
@@ -364,5 +389,7 @@ inline Gfx::Font const& NodeWithStyle::first_available_font() const
     // First font for which the character U+0020 (space) is not excluded by a unicode-range
     return computed_values().font_list().font_for_code_point(' ');
 }
+
+bool overflow_value_makes_box_a_scroll_container(CSS::Overflow overflow);
 
 }

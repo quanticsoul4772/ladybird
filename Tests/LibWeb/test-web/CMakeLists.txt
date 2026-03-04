@@ -1,5 +1,6 @@
 set(SOURCES
     Application.cpp
+    Debug.cpp
     Fixture.cpp
     Fuzzy.cpp
     TestWebView.cpp
@@ -19,8 +20,8 @@ elseif (WIN32)
     lagom_windows_bin(test-web CONSOLE)
 endif()
 
-# FIXME: Increase support for building targets on Windows
-if (WIN32 AND ENABLE_WINDOWS_CI)
+# FIXME: Add support for running test-web on Windows
+if (WIN32)
     return()
 endif()
 
@@ -29,7 +30,7 @@ if (BUILD_TESTING)
 
     add_test(
         NAME LibWeb
-        COMMAND $<TARGET_FILE:test-web> --python-executable ${Python3_EXECUTABLE} --dump-failed-ref-tests --per-test-timeout 210 --test-concurrency 4 --verbose
+        COMMAND $<TARGET_FILE:test-web> --python-executable ${Python3_EXECUTABLE} --dump-failed-ref-tests --per-test-timeout 120 -v -v
     )
 
     set_tests_properties(LibWeb PROPERTIES

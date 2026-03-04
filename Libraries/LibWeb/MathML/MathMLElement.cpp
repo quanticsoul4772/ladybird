@@ -6,11 +6,12 @@
 
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Bindings/MathMLElementPrototype.h>
+#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
+#include <LibWeb/CSS/StyleValues/AddFunctionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/IntegerStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
-#include <LibWeb/CSS/StyleValues/MathDepthStyleValue.h>
 #include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/MathML/AttributeNames.h>
@@ -75,6 +76,7 @@ bool MathMLElement::is_presentational_hint(FlyString const& name) const
 
 void MathMLElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
 {
+    Base::apply_presentational_hints(cascaded_properties);
     for_each_attribute([&](auto& name, auto& value) {
         if (name == AttributeNames::dir) {
             // https://w3c.github.io/mathml-core/#attributes-common-to-html-and-mathml-elements
@@ -122,8 +124,12 @@ void MathMLElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> 
             if (Optional<StringView> parsed_value = HTML::parse_integer_digits(value); parsed_value.has_value()) {
                 auto string_value = parsed_value.value();
                 if (auto integer_value = parsed_value->to_number<i32>(TrimWhitespace::No); integer_value.has_value()) {
-                    auto style_value = string_value[0] == '+' || string_value[0] == '-' ? CSS::MathDepthStyleValue::create_add(CSS::IntegerStyleValue::create(integer_value.release_value()))
-                                                                                        : CSS::MathDepthStyleValue::create_integer(CSS::IntegerStyleValue::create(integer_value.release_value()));
+                    auto style_value = [&]() -> NonnullRefPtr<CSS::StyleValue const> {
+                        if (string_value[0] == '+' || string_value[0] == '-')
+                            return CSS::AddFunctionStyleValue::create(CSS::IntegerStyleValue::create(integer_value.release_value()));
+
+                        return CSS::IntegerStyleValue::create(integer_value.release_value());
+                    }();
                     cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::MathDepth, style_value);
                 }
             }

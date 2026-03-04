@@ -72,12 +72,6 @@ private:
     // Each WebGLRenderingContext has a webgl context lost flag, which is initially unset.
     bool m_context_lost { false };
 
-    // WebGL presents its drawing buffer to the HTML page compositor immediately before a compositing operation, but only if at least one of the following has occurred since the previous compositing operation:
-    // - Context creation
-    // - Canvas resize
-    // - clear, drawArrays, or drawElements has been called while the drawing buffer is the currently bound framebuffer
-    bool m_should_present { true };
-
     Vector<WebIDL::UnsignedLong> m_enabled_compressed_texture_formats;
 
     // Extensions
@@ -85,6 +79,7 @@ private:
     GC::Ptr<Extensions::ANGLEInstancedArrays> m_angle_instanced_arrays_extension;
     GC::Ptr<Extensions::EXTBlendMinMax> m_ext_blend_min_max_extension;
     GC::Ptr<Extensions::EXTTextureFilterAnisotropic> m_ext_texture_filter_anisotropic;
+    GC::Ptr<Extensions::OESElementIndexUint> m_oes_element_index_uint_object_extension;
     GC::Ptr<Extensions::OESStandardDerivatives> m_oes_standard_derivatives_object_extension;
     GC::Ptr<Extensions::OESVertexArrayObject> m_oes_vertex_array_object_extension;
     GC::Ptr<Extensions::WebGLCompressedTextureS3tc> m_webgl_compressed_texture_s3tc_extension;

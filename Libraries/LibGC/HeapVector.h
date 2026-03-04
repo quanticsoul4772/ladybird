@@ -4,15 +4,17 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibGC/Cell.h>
-
 #pragma once
+
+#include <LibGC/Cell.h>
+#include <LibGC/CellAllocator.h>
 
 namespace GC {
 
 template<typename T>
 class HeapVector : public Cell {
     GC_CELL(HeapVector, Cell);
+    GC_DECLARE_ALLOCATOR(HeapVector);
 
 public:
     HeapVector() = default;
@@ -30,5 +32,8 @@ public:
 private:
     Vector<T> m_elements;
 };
+
+template<typename T>
+GC_DEFINE_ALLOCATOR(HeapVector<T>);
 
 }

@@ -6,7 +6,6 @@
  */
 
 #include <AK/StringBuilder.h>
-#include <LibJS/AST.h>
 #include <LibJS/Runtime/Completion.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/ExecutionContext.h>
@@ -24,15 +23,7 @@ SourceRange const& TracebackFrame::source_range() const
 {
     if (!cached_source_range)
         return dummy_source_range;
-    if (auto* unrealized = cached_source_range->source_range.get_pointer<UnrealizedSourceRange>()) {
-        auto source_range = [&] {
-            if (!unrealized->source_code)
-                return dummy_source_range;
-            return unrealized->realize();
-        }();
-        cached_source_range->source_range = move(source_range);
-    }
-    return cached_source_range->source_range.get<SourceRange>();
+    return cached_source_range->realize_source_range();
 }
 
 GC::Ref<Error> Error::create(Realm& realm)
@@ -61,6 +52,7 @@ Error::Error(Object& prototype)
 void Error::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
+    visitor.visit(m_cached_string);
     for (auto& frame : m_traceback)
         visitor.visit(frame.cached_source_range);
 }
@@ -106,17 +98,17 @@ void Error::populate_stack()
     }
 }
 
-String Error::stack_string(CompactTraceback compact) const
+Utf16String Error::stack_string(CompactTraceback compact) const
 {
     if (m_traceback.is_empty())
         return {};
 
-    StringBuilder stack_string_builder;
+    StringBuilder stack_string_builder(StringBuilder::Mode::UTF16);
 
     // Note: We roughly follow V8's formatting
     auto append_frame = [&](TracebackFrame const& frame) {
-        auto function_name = frame.function_name;
-        auto source_range = frame.source_range();
+        auto const& function_name = frame.function_name;
+        auto const& source_range = frame.source_range();
         // Note: Since we don't know whether we have a valid SourceRange here we just check for some default values.
         if (!source_range.filename().is_empty() || source_range.start.offset != 0 || source_range.end.offset != 0) {
 
@@ -131,8 +123,8 @@ String Error::stack_string(CompactTraceback compact) const
 
     auto is_same_frame = [](TracebackFrame const& a, TracebackFrame const& b) {
         if (a.function_name.is_empty() && b.function_name.is_empty()) {
-            auto source_range_a = a.source_range();
-            auto source_range_b = b.source_range();
+            auto const& source_range_a = a.source_range();
+            auto const& source_range_b = b.source_range();
             return source_range_a.filename() == source_range_b.filename() && source_range_a.start.line == source_range_b.start.line;
         }
         return a.function_name == b.function_name;
@@ -167,7 +159,7 @@ String Error::stack_string(CompactTraceback compact) const
     for (size_t j = 0; j < repetitions; j++)
         append_frame(m_traceback[used_frames - 1]);
 
-    return MUST(stack_string_builder.to_string());
+    return stack_string_builder.to_utf16_string();
 }
 
 #define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, ArrayType) \

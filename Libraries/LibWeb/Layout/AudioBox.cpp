@@ -6,17 +6,15 @@
 
 #include <LibWeb/HTML/HTMLAudioElement.h>
 #include <LibWeb/Layout/AudioBox.h>
-#include <LibWeb/Painting/AudioPaintable.h>
+#include <LibWeb/Painting/PaintableBox.h>
 
 namespace Web::Layout {
 
 GC_DEFINE_ALLOCATOR(AudioBox);
 
 AudioBox::AudioBox(DOM::Document& document, DOM::Element& element, GC::Ref<CSS::ComputedProperties> style)
-    : ReplacedBox(document, element, move(style))
+    : ReplacedBox(document, element, style)
 {
-    set_natural_width(300);
-    set_natural_height(40);
 }
 
 HTML::HTMLAudioElement& AudioBox::dom_node()
@@ -29,20 +27,15 @@ HTML::HTMLAudioElement const& AudioBox::dom_node() const
     return static_cast<HTML::HTMLAudioElement const&>(*ReplacedBox::dom_node());
 }
 
-GC::Ptr<Painting::Paintable> AudioBox::create_paintable() const
+bool AudioBox::can_have_children() const
 {
-    return Painting::AudioPaintable::create(*this);
+    // If we allow children when controls are disabled, innerText may be non-empty.
+    return dom_node().shadow_root() != nullptr;
 }
 
-void AudioBox::prepare_for_replaced_layout()
+GC::Ptr<Painting::Paintable> AudioBox::create_paintable() const
 {
-    if (dom_node().should_paint()) {
-        set_natural_width(300);
-        set_natural_height(40);
-    } else {
-        set_natural_width(0);
-        set_natural_height(0);
-    }
+    return Painting::PaintableBox::create(*this);
 }
 
 }

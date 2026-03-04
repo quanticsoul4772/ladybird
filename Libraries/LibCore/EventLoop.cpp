@@ -7,7 +7,7 @@
  */
 
 #include <AK/Badge.h>
-#include <LibCore/Event.h>
+#include <AK/Vector.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/EventLoopImplementation.h>
 #include <LibCore/EventReceiver.h>
@@ -73,7 +73,6 @@ NonnullRefPtr<WeakEventLoopReference> EventLoop::current_weak()
 
 void EventLoop::quit(int code)
 {
-    ThreadEventQueue::current().cancel_all_pending_jobs();
     m_impl->quit(code);
 }
 
@@ -110,11 +109,6 @@ void EventLoop::spin_until(Function<bool()> goal_condition)
 size_t EventLoop::pump(WaitMode mode)
 {
     return m_impl->pump(mode == WaitMode::WaitForEvents ? EventLoopImplementation::PumpMode::WaitForEvents : EventLoopImplementation::PumpMode::DontWaitForEvents);
-}
-
-void EventLoop::add_job(NonnullRefPtr<Promise<NonnullRefPtr<EventReceiver>>> job_promise)
-{
-    ThreadEventQueue::current().add_job(move(job_promise));
 }
 
 int EventLoop::register_signal(int signal_number, Function<void(int)> handler)
@@ -169,7 +163,7 @@ WeakEventLoopReference::WeakEventLoopReference(EventLoop& event_loop)
 
 void WeakEventLoopReference::revoke()
 {
-    Threading::RWLockLocker<Threading::LockMode::Read> locker { m_lock };
+    Threading::RWLockLocker<Threading::LockMode::Write> locker { m_lock };
     m_event_loop = nullptr;
 }
 

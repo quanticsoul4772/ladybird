@@ -3,13 +3,11 @@ include(audio)
 include(ffmpeg)
 
 set(SOURCES
-    Color/ColorConverter.cpp
-    Color/ColorPrimaries.cpp
-    Color/TransferCharacteristics.cpp
     Containers/Matroska/MatroskaDemuxer.cpp
     Containers/Matroska/Reader.cpp
     IncrementallyPopulatedStream.cpp
     PlaybackManager.cpp
+    PlaybackStates/PausedStateHandler.cpp
     PlaybackStates/PlaybackStateHandler.cpp
     PlaybackStates/ResumingStateHandler.cpp
     Providers/AudioDataProvider.cpp
@@ -17,6 +15,7 @@ set(SOURCES
     Providers/VideoDataProvider.cpp
     Sinks/AudioMixingSink.cpp
     Sinks/DisplayingVideoSink.cpp
+    TimedImage.cpp
     VideoFrame.cpp
 )
 

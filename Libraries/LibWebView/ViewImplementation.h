@@ -16,8 +16,12 @@
 #include <AK/Utf16String.h>
 #include <LibCore/Forward.h>
 #include <LibCore/Promise.h>
+#include <LibCore/SharedVersion.h>
 #include <LibGfx/Cursor.h>
 #include <LibGfx/Forward.h>
+#include <LibHTTP/Header.h>
+#include <LibRequests/Forward.h>
+#include <LibRequests/NetworkError.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/ActivateTab.h>
 #include <LibWeb/HTML/AudioPlayState.h>
@@ -35,6 +39,8 @@
 namespace WebView {
 
 class WEBVIEW_API ViewImplementation : public SettingsObserver {
+    friend class WebContentClient;
+
 public:
     virtual ~ViewImplementation();
 
@@ -81,6 +87,10 @@ public:
     void set_preferred_contrast(Web::CSS::PreferredContrast);
     void set_preferred_motion(Web::CSS::PreferredMotion);
 
+    void notify_cookies_changed(HashTable<String> const& changed_domains, ReadonlySpan<HTTP::Cookie::Cookie>);
+    ErrorOr<Core::SharedVersionIndex> ensure_document_cookie_version_index(Badge<WebContentClient>, String const&);
+    Optional<Core::SharedVersion> document_cookie_version(URL::URL const&) const;
+
     ByteString selected_text();
     Optional<String> selected_text_with_whitespace_collapsed();
     void select_all();
@@ -101,6 +111,8 @@ public:
     void clear_highlighted_dom_node();
 
     void set_listen_for_dom_mutations(bool);
+    void did_connect_devtools_client();
+    void did_disconnect_devtools_client();
     void get_dom_node_inner_html(Web::UniqueNodeID node_id);
     void get_dom_node_outer_html(Web::UniqueNodeID node_id);
     void set_dom_node_outer_html(Web::UniqueNodeID node_id, String const& html);
@@ -121,7 +133,7 @@ public:
 
     void run_javascript(String const&);
     void js_console_input(String const&);
-    void js_console_request_messages(i32 start_index);
+    void exit_fullscreen();
 
     void alert_closed();
     void confirm_closed(bool accepted);
@@ -155,7 +167,7 @@ public:
     virtual void did_receive_screenshot(Badge<WebContentClient>, Gfx::ShareableBitmap const&);
 
     NonnullRefPtr<Core::Promise<String>> request_internal_page_info(PageInfoType);
-    void did_receive_internal_page_info(Badge<WebContentClient>, PageInfoType, String const&);
+    void did_receive_internal_page_info(Badge<WebContentClient>, PageInfoType, Optional<Core::AnonymousBuffer> const&);
 
     ErrorOr<LexicalPath> dump_gc_graph();
 
@@ -163,6 +175,8 @@ public:
     // Load Native.css as the User style sheet, which attempts to make WebView content look as close to
     // native GUI widgets as possible.
     void use_native_user_style_sheet();
+
+    void request_close();
 
     Function<void()> on_ready_to_paint;
     Function<String(Web::HTML::ActivateTab, Web::HTML::WebViewHints, Optional<u64>)> on_new_web_view;
@@ -174,6 +188,14 @@ public:
     Function<void(URL::URL const&)> on_url_change;
     Function<void(URL::URL const&, bool)> on_load_start;
     Function<void(URL::URL const&)> on_load_finish;
+
+    struct NavigationListener {
+        Function<void(URL::URL const&, bool)> on_load_start;
+        Function<void(URL::URL const&)> on_load_finish;
+    };
+    u64 add_navigation_listener(NavigationListener);
+    void remove_navigation_listener(u64 listener_id);
+
     Function<void(ByteString const& path, i32)> on_request_file;
     Function<void(Gfx::Bitmap const&)> on_favicon_change;
     Function<void(Gfx::Cursor const&)> on_cursor_change;
@@ -200,8 +222,11 @@ public:
     Function<void(Vector<Web::CSS::StyleSheetIdentifier>)> on_received_style_sheet_list;
     Function<void(Web::CSS::StyleSheetIdentifier const&, URL::URL const&, String const&)> on_received_style_sheet_source;
     Function<void(JsonValue)> on_received_js_console_result;
-    Function<void(i32 message_id)> on_console_message_available;
-    Function<void(i32 start_index, Vector<ConsoleOutput>)> on_received_console_messages;
+    Function<void(ConsoleOutput)> on_console_message;
+    Function<void(u64 request_id, URL::URL const&, ByteString const&, Vector<HTTP::Header> const&, ByteBuffer, Optional<String>)> on_network_request_started;
+    Function<void(u64 request_id, u32 status_code, Optional<String> const&, Vector<HTTP::Header> const&)> on_network_response_headers_received;
+    Function<void(u64 request_id, ByteBuffer)> on_network_response_body_received;
+    Function<void(u64 request_id, u64 body_size, Requests::RequestTimingInfo const&, Optional<Requests::NetworkError> const&)> on_network_request_finished;
     Function<void(i32 count_waiting)> on_resource_status_change;
     Function<void()> on_restore_window;
     Function<void(Gfx::IntPoint)> on_reposition_window;
@@ -209,6 +234,7 @@ public:
     Function<void()> on_maximize_window;
     Function<void()> on_minimize_window;
     Function<void()> on_fullscreen_window;
+    Function<void()> on_exit_fullscreen_window;
     Function<void(Color current_color)> on_request_color_picker;
     Function<void(Web::HTML::FileFilter const& accepted_file_types, Web::HTML::AllowMultipleFiles)> on_request_file_picker;
     Function<void(Gfx::IntPoint content_position, i32 minimum_width, Vector<Web::HTML::SelectItem> items)> on_request_select_dropdown;
@@ -217,10 +243,12 @@ public:
     Function<void(String const&)> on_test_finish;
     Function<void(double milliseconds)> on_set_test_timeout;
     Function<void(JsonValue)> on_reference_test_metadata;
+    Function<void(JsonValue)> on_test_variant_metadata;
     Function<void(size_t current_match_index, Optional<size_t> const& total_match_count)> on_find_in_page;
     Function<void(Gfx::Color)> on_theme_color_change;
     Function<void(Web::HTML::AudioPlayState)> on_audio_play_state_changed;
     Function<void()> on_web_content_crashed;
+    Function<void()> on_web_content_process_change_for_cross_site_navigation;
 
     Menu& page_context_menu() { return *m_page_context_menu; }
     Menu& link_context_menu() { return *m_link_context_menu; }
@@ -278,6 +306,9 @@ protected:
         i32 id { -1 };
         Web::DevicePixelSize last_painted_size;
         RefPtr<Gfx::Bitmap const> bitmap;
+#ifdef AK_OS_MACOS
+        void* iosurface_ref { nullptr };
+#endif
     };
 
     struct ClientState {
@@ -317,6 +348,7 @@ protected:
     URL::URL m_context_menu_url;
 
     RefPtr<Action> m_open_image_action;
+    RefPtr<Action> m_save_image_action;
     RefPtr<Action> m_copy_image_action;
     Optional<Gfx::ShareableBitmap> m_image_context_menu_bitmap;
 
@@ -329,6 +361,8 @@ protected:
     RefPtr<Action> m_media_show_controls_action;
     RefPtr<Action> m_media_hide_controls_action;
     RefPtr<Action> m_media_loop_action;
+    RefPtr<Action> m_media_enter_fullscreen_action;
+    RefPtr<Action> m_media_exit_fullscreen_action;
 
     Queue<Web::InputEvent> m_pending_input_events;
 
@@ -350,9 +384,17 @@ protected:
 
     Web::HTML::MuteState m_mute_state { Web::HTML::MuteState::Unmuted };
 
+    Core::AnonymousBuffer m_document_cookie_version_buffer;
+    HashMap<String, Core::SharedVersionIndex> m_document_cookie_version_indices;
+
     // FIXME: Reconcile this ID with `page_id`. The latter is only unique per WebContent connection, whereas the view ID
     //        is required to be globally unique for Firefox DevTools.
     u64 m_view_id { 0 };
+
+    HashMap<u64, NavigationListener> m_navigation_listeners;
+    u64 m_next_navigation_listener_id { 1 };
+
+    bool m_devtools_connected { false };
 };
 
 }

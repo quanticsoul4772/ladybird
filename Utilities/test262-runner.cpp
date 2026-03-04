@@ -13,6 +13,7 @@
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
+#include <LibCore/System.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Contrib/Test262/GlobalObject.h>
 #include <LibJS/Parser.h>
@@ -23,11 +24,6 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
-
-#if !defined(AK_OS_MACOS) && !defined(AK_OS_GNU_HURD)
-// Only used to disable core dumps
-#    include <sys/prctl.h>
-#endif
 
 static ByteString s_current_test = "";
 static bool s_parse_only = false;
@@ -84,22 +80,20 @@ static ErrorOr<void, TestError> run_program(InterpreterT& interpreter, ScriptOrM
         auto error_value = result.throw_completion().value();
         TestError error;
         error.phase = NegativePhase::Runtime;
-        if (error_value.is_object()) {
-            auto& object = error_value.as_object();
-
-            auto name = object.get_without_side_effects("name"_utf16_fly_string);
+        if (auto object = error_value.template as_if<JS::Object>()) {
+            auto name = object->get_without_side_effects("name"_utf16_fly_string);
             if (!name.is_undefined() && !name.is_accessor()) {
                 error.type = name.to_string_without_side_effects();
             } else {
-                auto constructor = object.get_without_side_effects("constructor"_utf16_fly_string);
-                if (constructor.is_object()) {
-                    name = constructor.as_object().get_without_side_effects("name"_utf16_fly_string);
+                auto constructor_value = object->get_without_side_effects("constructor"_utf16_fly_string);
+                if (auto constructor = constructor_value.template as_if<JS::Object>()) {
+                    name = constructor->get_without_side_effects("name"_utf16_fly_string);
                     if (!name.is_undefined())
                         error.type = name.to_string_without_side_effects();
                 }
             }
 
-            auto message = object.get_without_side_effects("message"_utf16_fly_string);
+            auto message = object->get_without_side_effects("message"_utf16_fly_string);
             if (!message.is_undefined() && !message.is_accessor())
                 error.details = message.to_string_without_side_effects();
         }
@@ -550,6 +544,8 @@ static bool g_in_assert = false;
 
 #ifdef AK_OS_MACOS
 extern "C" __attribute__((__noreturn__)) void __assert_rtn(char const* function, char const* file, int line, char const* assertion)
+#elifdef AK_OS_FREEBSD
+extern "C" __attribute__((__noreturn__)) void __assert(char const* function, char const* file, int line, char const* assertion)
 #elifdef ASSERT_FAIL_HAS_INT /* Set by CMake */
 extern "C" __attribute__((__noreturn__)) void __assert_fail(char const* assertion, char const* file, int line, char const* function)
 #else
@@ -590,9 +586,12 @@ int main(int argc, char** argv)
     if (disable_core_dumping)
         setenv("CRASHSERVER", "/servers/crash-kill", true);
 #elif !defined(AK_OS_MACOS)
-    if (disable_core_dumping && prctl(PR_SET_DUMPABLE, 0, 0, 0) < 0) {
-        perror("prctl(PR_SET_DUMPABLE)");
-        return exit_wrong_arguments;
+    if (disable_core_dumping) {
+        auto maybe_error = Core::System::set_resource_limits(RLIMIT_CORE, 0);
+        if (maybe_error.is_error()) {
+            warnln("Failed to disable core dumps: {}", maybe_error.release_error());
+            return exit_wrong_arguments;
+        }
     }
 #endif
 

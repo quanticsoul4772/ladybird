@@ -304,6 +304,8 @@ void EventLoop::process_input_events() const
                         return page.handle_mousewheel(mouse_event.position, mouse_event.screen_position, mouse_event.button, mouse_event.buttons, mouse_event.modifiers, mouse_event.wheel_delta_x, mouse_event.wheel_delta_y);
                     case MouseEvent::Type::DoubleClick:
                         return page.handle_doubleclick(mouse_event.position, mouse_event.screen_position, mouse_event.button, mouse_event.buttons, mouse_event.modifiers);
+                    case MouseEvent::Type::TripleClick:
+                        return page.handle_tripleclick(mouse_event.position, mouse_event.screen_position, mouse_event.button, mouse_event.buttons, mouse_event.modifiers);
                     }
                     VERIFY_NOT_REACHED();
                 },
@@ -390,6 +392,10 @@ void EventLoop::update_the_rendering()
     for (auto& document : docs)
         document->page().update_all_media_element_video_sinks();
 
+    // AD-HOC: Present all canvas element surfaces in documents' pages.
+    for (auto& document : docs)
+        document->page().present_all_canvas_element_surfaces();
+
     // FIXME: 4. Unnecessary rendering: Remove from docs any Document object doc for which all of the following are true:
 
     // FIXME: 5. Remove from docs all Document objects for which the user agent believes that it's preferable to skip updating the rendering for other reasons.
@@ -404,9 +410,8 @@ void EventLoop::update_the_rendering()
     }
 
     // 9. For each doc of docs, run the scroll steps for doc. [CSSOMVIEW]
-    for (auto& document : docs) {
+    for (auto& document : docs)
         document->run_the_scroll_steps();
-    }
 
     // 10. For each doc of docs, evaluate media queries and report changes for doc. [CSSOMVIEW]
     for (auto& document : docs) {
@@ -418,7 +423,10 @@ void EventLoop::update_the_rendering()
         document->update_animations_and_send_events(HighResolutionTime::relative_high_resolution_time(frame_timestamp, relevant_global_object(*document)));
     };
 
-    // FIXME: 12. For each doc of docs, run the fullscreen steps for doc. [FULLSCREEN]
+    // 12. For each doc of docs, run the fullscreen steps for doc. [FULLSCREEN]
+    for (auto& document : docs) {
+        document->run_fullscreen_steps();
+    }
 
     // FIXME: 13. For each doc of docs, if the user agent detects that the backing storage associated with a CanvasRenderingContext2D or an OffscreenCanvasRenderingContext2D, context, has been lost, then it must run the context lost steps for each such context:
 
@@ -440,6 +448,11 @@ void EventLoop::update_the_rendering()
             // 1. Recalculate styles and update layout for doc.
             // NOTE: Recalculation of styles is handled by update_layout()
             document->update_layout(DOM::UpdateLayoutReason::HTMLEventLoopRenderingUpdate);
+
+            // Clamp viewport scroll offset to valid range after layout, in case the
+            // scrollable overflow area has shrunk (e.g. after a viewport size change).
+            if (auto navigable = document->navigable())
+                navigable->clamp_viewport_scroll_offset();
 
             // 2. Let hadInitialVisibleContentVisibilityDetermination be false.
             bool had_initial_visible_content_visibility_determination = false;
@@ -498,6 +511,10 @@ void EventLoop::update_the_rendering()
 
     // 19. For each doc of docs, run the update intersection observations steps for doc, passing in the relative high resolution time given now and doc's relevant global object as the timestamp. [INTERSECTIONOBSERVER]
     for (auto& document : docs) {
+        // NB: Layout may have been invalidated by previous steps (e.g. view transitions at step 18).
+        //     Re-run layout here since intersection observations need up-to-date geometry.
+        document->update_layout(DOM::UpdateLayoutReason::HTMLEventLoopRenderingUpdate);
+
         auto now = HighResolutionTime::relative_high_resolution_time(frame_timestamp, relevant_global_object(*document));
         document->run_the_update_intersection_observations_steps(now);
     }
@@ -524,10 +541,13 @@ void EventLoop::update_the_rendering()
     }
 
     for (auto& document : docs) {
-        if (document->readiness() == HTML::DocumentReadyState::Complete && document->font_computer().number_of_css_font_faces_with_loading_in_progress() == 0) {
-            HTML::TemporaryExecutionContext context(document->realm(), HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
-            document->fonts()->resolve_ready_promise();
-        }
+        // https://drafts.csswg.org/css-font-loading/#fontfaceset-pending-on-the-environment
+        // A FontFaceSet is pending on the environment if any of the following are true:
+        // - the document is still loading
+        // - the document has pending stylesheet requests
+        // FIXME: - the document has pending layout operations which might cause the user agent to request a font, or which depend on recently-loaded fonts
+        TemporaryExecutionContext context(document->realm(), TemporaryExecutionContext::CallbacksEnabled::Yes);
+        document->fonts()->set_is_pending_on_the_environment(document->readiness() == DocumentReadyState::Loading);
     }
 }
 
@@ -609,13 +629,13 @@ void EventLoop::perform_a_microtask_checkpoint()
     if (execution_paused())
         return;
 
-    // NOTE: This assertion is per requirement 9.5 of the ECMA-262 spec, see: https://tc39.es/ecma262/#sec-jobs
-    // > At some future point in time, when there is no running context in the agent for which the job is scheduled and that agent's execution context stack is empty...
-    VERIFY(vm().execution_context_stack().is_empty());
-
     // 1. If the event loop's performing a microtask checkpoint is true, then return.
     if (m_performing_a_microtask_checkpoint)
         return;
+
+    // NOTE: This assertion is per requirement 9.5 of the ECMA-262 spec, see: https://tc39.es/ecma262/#sec-jobs
+    // > At some future point in time, when there is no running context in the agent for which the job is scheduled and that agent's execution context stack is empty...
+    VERIFY(vm().execution_context_stack().is_empty());
 
     // 2. Set the event loop's performing a microtask checkpoint to true.
     m_performing_a_microtask_checkpoint = true;

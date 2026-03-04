@@ -6,34 +6,24 @@
 
 #pragma once
 
+#include <LibGfx/Point.h>
 #include <LibWeb/Painting/ScrollFrame.h>
 
 namespace Web::Painting {
 
 class ScrollStateSnapshot {
 public:
-    static ScrollStateSnapshot create(Vector<NonnullRefPtr<ScrollFrame>> const& scroll_frames);
+    static ScrollStateSnapshot create(Vector<NonnullRefPtr<ScrollFrame>> const& scroll_frames, double device_pixels_per_css_pixel);
 
-    CSSPixelPoint cumulative_offset_for_frame_with_id(size_t id) const
+    Gfx::FloatPoint device_offset_for_frame_with_id(size_t id) const
     {
-        if (id >= entries.size())
+        if (id >= m_device_offsets.size())
             return {};
-        return entries[id].cumulative_offset;
-    }
-
-    CSSPixelPoint own_offset_for_frame_with_id(size_t id) const
-    {
-        if (id >= entries.size())
-            return {};
-        return entries[id].own_offset;
+        return m_device_offsets[id];
     }
 
 private:
-    struct Entry {
-        CSSPixelPoint cumulative_offset;
-        CSSPixelPoint own_offset;
-    };
-    Vector<Entry> entries;
+    Vector<Gfx::FloatPoint> m_device_offsets;
 };
 
 class ScrollState {
@@ -50,16 +40,6 @@ public:
         auto scroll_frame = adopt_ref(*new ScrollFrame(paintable_box, m_scroll_frames.size(), true, move(parent)));
         m_scroll_frames.append(scroll_frame);
         return scroll_frame;
-    }
-
-    CSSPixelPoint cumulative_offset_for_frame_with_id(size_t id) const
-    {
-        return m_scroll_frames[id]->cumulative_offset();
-    }
-
-    CSSPixelPoint own_offset_for_frame_with_id(size_t id) const
-    {
-        return m_scroll_frames[id]->own_offset();
     }
 
     template<typename Callback>
@@ -82,12 +62,19 @@ public:
         }
     }
 
-    ScrollStateSnapshot snapshot() const
+    void clear()
     {
-        return ScrollStateSnapshot::create(m_scroll_frames);
+        m_scroll_frames.clear();
     }
 
 private:
+    friend class ViewportPaintable;
+
+    ScrollStateSnapshot snapshot(double device_pixels_per_css_pixel) const
+    {
+        return ScrollStateSnapshot::create(m_scroll_frames, device_pixels_per_css_pixel);
+    }
+
     Vector<NonnullRefPtr<ScrollFrame>> m_scroll_frames;
 };
 

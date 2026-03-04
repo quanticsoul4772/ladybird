@@ -37,15 +37,17 @@ public:
     using BlockEndTimeHandler = Function<void(AK::Duration)>;
     using SeekCompletionHandler = Function<void()>;
 
-    static DecoderErrorOr<NonnullRefPtr<AudioDataProvider>> try_create(NonnullRefPtr<Core::WeakEventLoopReference> const& main_thread_event_loop, NonnullRefPtr<Demuxer> const& demuxer, NonnullRefPtr<IncrementallyPopulatedStream> const&, Track const& track);
+    static DecoderErrorOr<NonnullRefPtr<AudioDataProvider>> try_create(NonnullRefPtr<Core::WeakEventLoopReference> const& main_thread_event_loop, NonnullRefPtr<Demuxer> const& demuxer, Track const& track);
     AudioDataProvider(NonnullRefPtr<ThreadData> const&);
     ~AudioDataProvider();
 
     void set_error_handler(ErrorHandler&&);
-    void set_block_end_time_handler(BlockEndTimeHandler&&);
+    void set_duration_change_handler(BlockEndTimeHandler&&);
     void set_output_sample_specification(Audio::SampleSpecification);
 
     void start();
+    void suspend();
+    void resume();
 
     AudioBlock retrieve_block();
 
@@ -54,24 +56,30 @@ public:
 private:
     class ThreadData final : public AtomicRefCounted<ThreadData> {
     public:
-        ThreadData(NonnullRefPtr<Core::WeakEventLoopReference> const& main_thread_event_loop, NonnullRefPtr<Demuxer> const&, NonnullRefPtr<IncrementallyPopulatedStream::Cursor> const&, Track const&, NonnullOwnPtr<AudioDecoder>&&, NonnullOwnPtr<Audio::AudioConverter>&&);
+        ThreadData(NonnullRefPtr<Core::WeakEventLoopReference> const& main_thread_event_loop, NonnullRefPtr<Demuxer> const&, Track const&, AK::Duration, NonnullOwnPtr<Audio::AudioConverter>&&);
         ~ThreadData();
 
         void set_error_handler(ErrorHandler&&);
-        void set_block_end_time_handler(BlockEndTimeHandler&&);
+        void set_duration_change_handler(BlockEndTimeHandler&&);
         void set_output_sample_specification(Audio::SampleSpecification);
 
         void start();
+        DecoderErrorOr<void> create_decoder();
+        void suspend();
+        void resume();
         void exit();
 
         void wait_for_start();
+        bool should_thread_exit_while_locked() const;
         bool should_thread_exit() const;
+        bool handle_suspension();
         template<typename Invokee>
         void invoke_on_main_thread_while_locked(Invokee);
         template<typename Invokee>
         void invoke_on_main_thread(Invokee);
         void dispatch_block_end_time(AudioBlock const&);
         void queue_block(AudioBlock&&);
+        void dispatch_error(DecoderError&&);
         void flush_decoder();
         DecoderErrorOr<void> retrieve_next_block(AudioBlock&);
         bool handle_seek();
@@ -92,6 +100,7 @@ private:
         enum class RequestedState : u8 {
             None,
             Running,
+            Suspended,
             Exit,
         };
 
@@ -102,15 +111,16 @@ private:
         RequestedState m_requested_state { RequestedState::None };
 
         NonnullRefPtr<Demuxer> m_demuxer;
-        NonnullRefPtr<IncrementallyPopulatedStream::Cursor> m_stream_cursor;
         Track m_track;
-        NonnullOwnPtr<AudioDecoder> m_decoder;
+        AK::Duration m_duration;
+        OwnPtr<AudioDecoder> m_decoder;
+        bool m_decoder_needs_keyframe_next_seek { false };
         NonnullOwnPtr<Audio::AudioConverter> m_converter;
         i64 m_last_sample { NumericLimits<i64>::min() };
 
         size_t m_queue_max_size { 8 };
         AudioQueue m_queue;
-        BlockEndTimeHandler m_frame_end_time_handler;
+        BlockEndTimeHandler m_duration_change_handler;
         ErrorHandler m_error_handler;
         bool m_is_in_error_state { false };
 

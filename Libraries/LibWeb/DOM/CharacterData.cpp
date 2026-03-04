@@ -128,7 +128,8 @@ WebIDL::ExceptionOr<void> CharacterData::replace_data(size_t offset, size_t coun
     if (m_data == old_data)
         return {};
 
-    if (auto* text_node = as_if<Layout::TextNode>(layout_node())) {
+    // NB: Called during DOM text mutation, layout is stale.
+    if (auto* text_node = as_if<Layout::TextNode>(unsafe_layout_node())) {
         // NOTE: Since the text node's data has changed, we need to invalidate the text for rendering.
         //       This ensures that the new text is reflected in layout, even if we don't end up
         //       doing a full layout tree rebuild.
@@ -142,6 +143,8 @@ WebIDL::ExceptionOr<void> CharacterData::replace_data(size_t offset, size_t coun
 
     if (m_grapheme_segmenter)
         m_grapheme_segmenter->set_segmented_text(m_data);
+    if (m_line_segmenter)
+        m_line_segmenter->set_segmented_text(m_data);
     if (m_word_segmenter)
         m_word_segmenter->set_segmented_text(m_data);
 
@@ -177,6 +180,16 @@ Unicode::Segmenter& CharacterData::grapheme_segmenter() const
     }
 
     return *m_grapheme_segmenter;
+}
+
+Unicode::Segmenter& CharacterData::line_segmenter() const
+{
+    if (!m_line_segmenter) {
+        m_line_segmenter = document().line_segmenter().clone();
+        m_line_segmenter->set_segmented_text(m_data);
+    }
+
+    return *m_line_segmenter;
 }
 
 Unicode::Segmenter& CharacterData::word_segmenter() const

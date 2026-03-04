@@ -15,8 +15,7 @@ jobs:
       actions: write  # required for cache management (see https://github.com/actions/stale/issues/1133)
       pull-requests: write
     steps:
-      # replace `uses:` below with upstream actions/stale when https://github.com/actions/stale/issues/1136 is fixed
-      - uses: itchyny/actions-stale@0980a21d84c23bd4d8c62b0958f47f25822286f2
+      - uses: actions/stale@b5d41d4e1d5dceea10e7104786b73624c18a190f  # v10.2.0
         with:
           operations-per-run: 500
 

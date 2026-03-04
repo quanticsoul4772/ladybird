@@ -7,6 +7,7 @@
 #pragma once
 
 #include <LibGC/Ptr.h>
+#include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/Layout/ImageProvider.h>
 #include <LibWeb/SVG/SVGAnimatedLength.h>
 #include <LibWeb/SVG/SVGGraphicsElement.h>
@@ -18,6 +19,7 @@ class SVGImageElement final
     , public SVGURIReferenceMixin<SupportsXLinkHref::Yes>
     , public Layout::ImageProvider {
     WEB_PLATFORM_OBJECT(SVGImageElement, SVGGraphicsElement);
+    GC_DECLARE_ALLOCATOR(SVGImageElement);
 
 public:
     ~SVGImageElement();

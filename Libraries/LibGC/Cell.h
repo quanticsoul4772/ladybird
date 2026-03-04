@@ -6,14 +6,12 @@
 
 #pragma once
 
-#include <AK/Badge.h>
 #include <AK/Format.h>
 #include <AK/Forward.h>
 #include <AK/HashMap.h>
 #include <AK/Noncopyable.h>
+#include <AK/Platform.h>
 #include <AK/StringView.h>
-#include <AK/Swift.h>
-#include <AK/Weakable.h>
 #include <LibGC/Forward.h>
 #include <LibGC/Internals.h>
 #include <LibGC/NanBoxedValue.h>
@@ -25,8 +23,10 @@ namespace GC {
 // It should only be used when the lifetime of the GC-allocated member is always longer than the object
 #if defined(AK_COMPILER_CLANG)
 #    define IGNORE_GC [[clang::annotate("serenity::ignore_gc")]]
+#    define GC_ALLOW_CELL_DESTRUCTOR [[clang::annotate("ladybird::allow_cell_destructor")]]
 #else
 #    define IGNORE_GC
+#    define GC_ALLOW_CELL_DESTRUCTOR
 #endif
 
 #define GC_CELL(class_, base_class)                \
@@ -69,17 +69,17 @@ public:
                 visit_impl(*cell);
         }
 
-        void visit(Cell& cell) SWIFT_NAME(visitRef(_:))
+        void visit(Cell& cell)
         {
             visit_impl(cell);
         }
 
-        void visit(Cell const* cell) SWIFT_NAME(visitConst(_:))
+        void visit(Cell const* cell)
         {
             visit(const_cast<Cell*>(cell));
         }
 
-        void visit(Cell const& cell) SWIFT_NAME(visitConstRef(_:))
+        void visit(Cell const& cell)
         {
             visit(const_cast<Cell&>(cell));
         }
@@ -182,7 +182,7 @@ public:
                 visit(optional.value());
         }
 
-        void visit(NanBoxedValue const& value) SWIFT_NAME(visitValue(_:));
+        void visit(NanBoxedValue const& value);
 
         // Allow explicitly ignoring a GC-allocated member in a visit_edges implementation instead
         // of just not using it.
@@ -197,12 +197,12 @@ public:
         virtual void visit_impl(Cell&) = 0;
         virtual void visit_impl(ReadonlySpan<NanBoxedValue>) = 0;
         virtual ~Visitor() = default;
-    } SWIFT_UNSAFE_REFERENCE;
+    };
 
-    virtual void visit_edges(Visitor&) { }
+    MUST_UPCALL virtual void visit_edges(Visitor&) { }
 
     // This will be called on unmarked objects by the garbage collector in a separate pass before destruction.
-    virtual void finalize() { }
+    MUST_UPCALL virtual void finalize() { }
 
     // This allows cells to survive GC by choice, even if nothing points to them.
     // It's used to implement special rules in the web platform.
@@ -217,7 +217,7 @@ protected:
 private:
     bool m_mark { false };
     State m_state { State::Live };
-} SWIFT_UNSAFE_REFERENCE;
+};
 
 }
 

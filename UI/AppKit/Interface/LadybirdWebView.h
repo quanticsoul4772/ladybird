@@ -56,11 +56,14 @@
 - (void)handleResize;
 - (void)handleDevicePixelRatioChange;
 - (void)handleDisplayRefreshRateChange;
+- (void)handleExitFullScreen;
 - (void)handleVisibility:(BOOL)is_visible;
 
 - (void)findInPage:(NSString*)query
     caseSensitivity:(CaseSensitivity)case_sensitivity;
 - (void)findInPageNextMatch;
 - (void)findInPagePreviousMatch;
+
+- (void)requestClose;
 
 @end

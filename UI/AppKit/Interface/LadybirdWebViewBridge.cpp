@@ -37,7 +37,6 @@ WebViewBridge::~WebViewBridge() = default;
 void WebViewBridge::set_device_pixel_ratio(double device_pixel_ratio)
 {
     m_device_pixel_ratio = device_pixel_ratio;
-    client().async_set_device_pixel_ratio(m_client_state.page_index, m_device_pixel_ratio);
 }
 
 void WebViewBridge::set_zoom_level(double zoom_level)
@@ -58,6 +57,11 @@ void WebViewBridge::set_maximum_frames_per_second(u64 maximum_frames_per_second)
 {
     m_maximum_frames_per_second = static_cast<double>(maximum_frames_per_second);
     client().async_set_maximum_frames_per_second(m_client_state.page_index, maximum_frames_per_second);
+}
+
+void WebViewBridge::exit_fullscreen()
+{
+    client().async_exit_fullscreen(m_client_state.page_index);
 }
 
 void WebViewBridge::update_palette()
@@ -94,10 +98,12 @@ Optional<WebViewBridge::Paintable> WebViewBridge::paintable()
 {
     Gfx::Bitmap const* bitmap = nullptr;
     Gfx::IntSize bitmap_size;
+    void* iosurface_ref = nullptr;
 
     if (m_client_state.has_usable_bitmap) {
         bitmap = m_client_state.front_bitmap.bitmap.ptr();
         bitmap_size = m_client_state.front_bitmap.last_painted_size.to_type<int>();
+        iosurface_ref = m_client_state.front_bitmap.iosurface_ref;
     } else {
         bitmap = m_backup_bitmap.ptr();
         bitmap_size = m_backup_bitmap_size.to_type<int>();
@@ -105,7 +111,7 @@ Optional<WebViewBridge::Paintable> WebViewBridge::paintable()
 
     if (!bitmap)
         return {};
-    return Paintable { *bitmap, bitmap_size };
+    return Paintable { *bitmap, bitmap_size, iosurface_ref };
 }
 
 void WebViewBridge::update_zoom()

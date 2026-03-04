@@ -7,10 +7,9 @@
 #include <AK/Assertions.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/Platform.h>
-#include <LibGC/Heap.h>
+#include <LibGC/CellAllocator.h>
+#include <LibGC/Forward.h>
 #include <LibGC/HeapBlock.h>
-#include <stdio.h>
-#include <sys/mman.h>
 
 #ifdef HAS_ADDRESS_SANITIZER
 #    include <sanitizer/asan_interface.h>
@@ -18,7 +17,7 @@
 
 namespace GC {
 
-NonnullOwnPtr<HeapBlock> HeapBlock::create_with_cell_size(Heap& heap, CellAllocator& cell_allocator, size_t cell_size, [[maybe_unused]] StringView class_name, bool overrides_must_survive_garbage_collection, bool overrides_finalize)
+NonnullOwnPtr<HeapBlock> HeapBlock::create_with_cell_size(Heap& heap, CellAllocator& cell_allocator, size_t cell_size, bool overrides_must_survive_garbage_collection, bool overrides_finalize)
 {
     char const* name = nullptr;
     auto* block = static_cast<HeapBlock*>(cell_allocator.block_allocator().allocate_block(name));

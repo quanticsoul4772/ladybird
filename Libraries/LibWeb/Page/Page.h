@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <AK/JsonValue.h>
 #include <LibGC/Root.h>
 #include <LibGC/Weak.h>
 #include <LibGfx/Cursor.h>
@@ -18,20 +19,23 @@
 #include <LibGfx/Rect.h>
 #include <LibGfx/ShareableBitmap.h>
 #include <LibGfx/Size.h>
+#include <LibHTTP/Cookie/Cookie.h>
+#include <LibHTTP/Forward.h>
+#include <LibHTTP/Header.h>
 #include <LibIPC/Forward.h>
+#include <LibRequests/NetworkError.h>
+#include <LibRequests/RequestTimingInfo.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Bindings/AgentType.h>
 #include <LibWeb/CSS/PreferredColorScheme.h>
 #include <LibWeb/CSS/PreferredContrast.h>
 #include <LibWeb/CSS/PreferredMotion.h>
-#include <LibWeb/Cookie/Cookie.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/ActivateTab.h>
 #include <LibWeb/HTML/AudioPlayState.h>
 #include <LibWeb/HTML/ColorPickerUpdateState.h>
 #include <LibWeb/HTML/FileFilter.h>
-#include <LibWeb/HTML/HTMLMediaElement.h>
 #include <LibWeb/HTML/SelectItem.h>
 #include <LibWeb/HTML/TokenizedFeatures.h>
 #include <LibWeb/HTML/WebViewHints.h>
@@ -42,7 +46,7 @@
 #include <LibWeb/PixelUnits.h>
 #include <LibWeb/StorageAPI/StorageEndpoint.h>
 #include <LibWeb/UIEvents/KeyCode.h>
-#include <LibWebView/StorageOperationError.h>
+#include <LibWebView/StorageSetResult.h>
 
 namespace Web {
 
@@ -99,6 +103,7 @@ public:
     EventResult handle_mouseleave();
     EventResult handle_mousewheel(DevicePixelPoint, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, DevicePixels wheel_delta_x, DevicePixels wheel_delta_y);
     EventResult handle_doubleclick(DevicePixelPoint, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers);
+    EventResult handle_tripleclick(DevicePixelPoint, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers);
 
     EventResult handle_drag_and_drop_event(DragEvent::Type, DevicePixelPoint, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, Vector<HTML::SelectedFile> files);
     EventResult handle_pinch_event(DevicePixelPoint point, double scale);
@@ -188,6 +193,11 @@ public:
 
     void update_all_media_element_video_sinks();
 
+    void register_canvas_element(Badge<HTML::HTMLCanvasElement>, UniqueNodeID canvas_id);
+    void unregister_canvas_element(Badge<HTML::HTMLCanvasElement>, UniqueNodeID canvas_id);
+
+    void present_all_canvas_element_surfaces();
+
     struct MediaContextMenu {
         URL::URL media_url;
         bool is_video { false };
@@ -195,11 +205,13 @@ public:
         bool is_muted { false };
         bool has_user_agent_controls { false };
         bool is_looping { false };
+        bool is_fullscreen { false };
     };
     void did_request_media_context_menu(UniqueNodeID media_id, CSSPixelPoint, ByteString const& target, unsigned modifiers, MediaContextMenu const&);
     void toggle_media_play_state();
     void toggle_media_mute_state();
     void toggle_media_loop_state();
+    void toggle_media_fullscreen_state();
     void toggle_media_controls_state();
 
     HTML::MuteState page_mute_state() const { return m_mute_state; }
@@ -245,13 +257,10 @@ private:
     GC::Ptr<HTML::HTMLMediaElement> media_context_menu_element();
 
     template<typename Callback>
-    void for_each_media_element(Callback&& callback)
-    {
-        for (auto media_id : m_media_elements) {
-            if (auto* node = DOM::Node::from_unique_id(media_id))
-                callback(as<HTML::HTMLMediaElement>(*node));
-        }
-    }
+    void for_each_media_element(Callback&& callback);
+
+    template<typename Callback>
+    void for_each_canvas_element(Callback&& callback);
 
     Vector<GC::Root<DOM::Document>> documents_in_active_window() const;
 
@@ -301,6 +310,7 @@ private:
     u64 m_next_clipboard_request_id { 0 };
 
     Vector<UniqueNodeID> m_media_elements;
+    Vector<UniqueNodeID> m_canvas_elements;
     Optional<UniqueNodeID> m_media_context_menu_element_id;
 
     Web::HTML::MuteState m_mute_state { Web::HTML::MuteState::Unmuted };
@@ -347,6 +357,7 @@ public:
     virtual CSS::PreferredColorScheme preferred_color_scheme() const = 0;
     virtual CSS::PreferredContrast preferred_contrast() const = 0;
     virtual CSS::PreferredMotion preferred_motion() const = 0;
+    virtual size_t screen_count() const = 0;
     virtual Queue<QueuedInputEvent>& input_event_queue() = 0;
     virtual void report_finished_handling_input_event(u64 page_id, EventResult event_was_handled) = 0;
     virtual void page_did_change_title(Utf16String const&) { }
@@ -358,6 +369,7 @@ public:
     virtual void page_did_request_maximize_window() { }
     virtual void page_did_request_minimize_window() { }
     virtual void page_did_request_fullscreen_window() { }
+    virtual void page_did_request_exit_fullscreen() { }
     virtual void page_did_start_loading(URL::URL const&, bool is_redirect) { (void)is_redirect; }
     virtual void page_did_create_new_document(Web::DOM::Document&) { }
     virtual void page_did_change_active_document_in_top_level_browsing_context(Web::DOM::Document&) { }
@@ -387,15 +399,19 @@ public:
     virtual void page_did_call_fingerprinting_api([[maybe_unused]] StringView technique, [[maybe_unused]] StringView api_name) const { }
     virtual void page_did_submit_form([[maybe_unused]] HTML::HTMLFormElement& form, [[maybe_unused]] String const& method, [[maybe_unused]] URL::URL const& action) { }
     virtual bool should_block_autofill([[maybe_unused]] URL::URL const& form_url, [[maybe_unused]] URL::URL const& action_url) const { return false; }
-    virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_webdriver(URL::URL const&) { return {}; }
-    virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_cookiestore(URL::URL const&) { return {}; }
-    virtual Optional<Web::Cookie::Cookie> page_did_request_named_cookie(URL::URL const&, String const&) { return {}; }
-    virtual String page_did_request_cookie(URL::URL const&, Cookie::Source) { return {}; }
-    virtual void page_did_set_cookie(URL::URL const&, Cookie::ParsedCookie const&, Cookie::Source) { }
-    virtual void page_did_update_cookie(Web::Cookie::Cookie const&) { }
+    virtual Optional<Core::SharedVersion> page_did_request_document_cookie_version([[maybe_unused]] Core::SharedVersionIndex document_index) { return {}; }
+    virtual void page_did_receive_document_cookie_version_buffer([[maybe_unused]] Core::AnonymousBuffer document_cookie_version_buffer) { }
+    virtual void page_did_request_document_cookie_version_index([[maybe_unused]] UniqueNodeID document_id, [[maybe_unused]] String const& domain) { }
+    virtual void page_did_receive_document_cookie_version_index([[maybe_unused]] UniqueNodeID document_id, [[maybe_unused]] Core::SharedVersionIndex document_index) { }
+    virtual Vector<HTTP::Cookie::Cookie> page_did_request_all_cookies_webdriver(URL::URL const&) { return {}; }
+    virtual Vector<HTTP::Cookie::Cookie> page_did_request_all_cookies_cookiestore(URL::URL const&) { return {}; }
+    virtual Optional<HTTP::Cookie::Cookie> page_did_request_named_cookie(URL::URL const&, String const&) { return {}; }
+    virtual HTTP::Cookie::VersionedCookie page_did_request_cookie(URL::URL const&, HTTP::Cookie::Source) { return {}; }
+    virtual void page_did_set_cookie(URL::URL const&, HTTP::Cookie::ParsedCookie const&, HTTP::Cookie::Source) { }
+    virtual void page_did_update_cookie(HTTP::Cookie::Cookie const&) { }
     virtual void page_did_expire_cookies_with_time_offset(AK::Duration) { }
     virtual Optional<String> page_did_request_storage_item([[maybe_unused]] Web::StorageAPI::StorageEndpointType storage_endpoint, [[maybe_unused]] String const& storage_key, [[maybe_unused]] String const& bottle_key) { return {}; }
-    virtual WebView::StorageOperationError page_did_set_storage_item([[maybe_unused]] Web::StorageAPI::StorageEndpointType storage_endpoint, [[maybe_unused]] String const& storage_key, [[maybe_unused]] String const& bottle_key, [[maybe_unused]] String const& value) { return WebView::StorageOperationError::None; }
+    virtual WebView::StorageSetResult page_did_set_storage_item([[maybe_unused]] Web::StorageAPI::StorageEndpointType storage_endpoint, [[maybe_unused]] String const& storage_key, [[maybe_unused]] String const& bottle_key, [[maybe_unused]] String const& value) { return WebView::StorageOperationError::QuotaExceededError; }
     virtual void page_did_remove_storage_item([[maybe_unused]] Web::StorageAPI::StorageEndpointType storage_endpoint, [[maybe_unused]] String const& storage_key, [[maybe_unused]] String const& bottle_key) { }
     virtual Vector<String> page_did_request_storage_keys([[maybe_unused]] Web::StorageAPI::StorageEndpointType storage_endpoint, [[maybe_unused]] String const& storage_key) { return {}; }
     virtual void page_did_clear_storage([[maybe_unused]] Web::StorageAPI::StorageEndpointType storage_endpoint, [[maybe_unused]] String const& storage_key) { }
@@ -420,8 +436,10 @@ public:
     virtual void page_did_finish_test([[maybe_unused]] String const& text) { }
     virtual void page_did_set_test_timeout([[maybe_unused]] double milliseconds) { }
     virtual void page_did_receive_reference_test_metadata(JsonValue) { }
+    virtual void page_did_receive_test_variant_metadata(JsonValue) { }
 
     virtual void page_did_set_browser_zoom([[maybe_unused]] double factor) { }
+    virtual void page_did_set_device_pixel_ratio_for_testing([[maybe_unused]] double ratio) { }
 
     virtual void page_did_change_theme_color(Gfx::Color) { }
 
@@ -429,6 +447,11 @@ public:
     virtual void page_did_request_clipboard_entries([[maybe_unused]] u64 request_id) { }
 
     virtual void page_did_change_audio_play_state(HTML::AudioPlayState) { }
+
+    virtual void page_did_start_network_request([[maybe_unused]] u64 request_id, [[maybe_unused]] URL::URL const& url, [[maybe_unused]] ByteString const& method, [[maybe_unused]] Vector<HTTP::Header> const& request_headers, [[maybe_unused]] ReadonlyBytes request_body, [[maybe_unused]] Optional<String> initiator_type) { }
+    virtual void page_did_receive_network_response_headers([[maybe_unused]] u64 request_id, [[maybe_unused]] u32 status_code, [[maybe_unused]] Optional<String> reason_phrase, [[maybe_unused]] Vector<HTTP::Header> const& response_headers) { }
+    virtual void page_did_receive_network_response_body([[maybe_unused]] u64 request_id, [[maybe_unused]] ReadonlyBytes data) { }
+    virtual void page_did_finish_network_request([[maybe_unused]] u64 request_id, [[maybe_unused]] u64 body_size, [[maybe_unused]] Requests::RequestTimingInfo const& timing_info, [[maybe_unused]] Optional<Requests::NetworkError> const& network_error) { }
 
     virtual IPC::File request_worker_agent([[maybe_unused]] Web::Bindings::AgentType worker_type) { return IPC::File {}; }
 

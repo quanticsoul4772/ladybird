@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2025-2026, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -53,19 +53,20 @@ struct CacheFooter {
 // received the response headers for a request. The body is streamed into the entry as it is received. The cache format
 // on disk is:
 //
-//     [CacheHeader][URL][ReasonPhrase][HttpHeaders][Data][CacheFooter]
+//     [CacheHeader][URL][ReasonPhrase][Data][CacheFooter]
 class CacheEntry {
 public:
     virtual ~CacheEntry() = default;
 
     u64 cache_key() const { return m_cache_key; }
+    u64 vary_key() const { return m_vary_key; }
 
     void remove();
 
     void mark_for_deletion(Badge<DiskCache>) { m_marked_for_deletion = true; }
 
 protected:
-    CacheEntry(DiskCache&, CacheIndex&, u64 cache_key, String url, LexicalPath, CacheHeader);
+    CacheEntry(DiskCache&, CacheIndex&, u64 cache_key, u64 vary_key, String url, Optional<LexicalPath>, CacheHeader);
 
     void close_and_destroy_cache_entry();
 
@@ -73,9 +74,10 @@ protected:
     CacheIndex& m_index;
 
     u64 m_cache_key { 0 };
+    u64 m_vary_key { 0 };
 
     String m_url;
-    LexicalPath m_path;
+    Optional<LexicalPath> m_path;
 
     CacheHeader m_cache_header;
     CacheFooter m_cache_footer;
@@ -88,15 +90,15 @@ public:
     static ErrorOr<NonnullOwnPtr<CacheEntryWriter>> create(DiskCache&, CacheIndex&, u64 cache_key, String url, UnixDateTime request_time, AK::Duration current_time_offset_for_testing);
     virtual ~CacheEntryWriter() override = default;
 
-    ErrorOr<void> write_status_and_reason(u32 status_code, Optional<String> reason_phrase, HeaderList const&);
+    ErrorOr<void> write_status_and_reason(u32 status_code, Optional<String> reason_phrase, HeaderList const& request_headers, HeaderList const& response_headers);
     ErrorOr<void> write_data(ReadonlyBytes);
-    ErrorOr<void> flush(NonnullRefPtr<HeaderList>);
-    void on_network_error();
+    ErrorOr<void> flush(NonnullRefPtr<HeaderList> request_headers, NonnullRefPtr<HeaderList> response_headers);
+    void remove_incomplete_entry();
 
 private:
-    CacheEntryWriter(DiskCache&, CacheIndex&, u64 cache_key, String url, LexicalPath, NonnullOwnPtr<Core::OutputBufferedFile>, CacheHeader, UnixDateTime request_time, AK::Duration current_time_offset_for_testing);
+    CacheEntryWriter(DiskCache&, CacheIndex&, u64 cache_key, String url, CacheHeader, UnixDateTime request_time, AK::Duration current_time_offset_for_testing);
 
-    NonnullOwnPtr<Core::OutputBufferedFile> m_file;
+    OwnPtr<Core::OutputBufferedFile> m_file;
 
     UnixDateTime m_request_time;
     UnixDateTime m_response_time;
@@ -106,7 +108,7 @@ private:
 
 class CacheEntryReader final : public CacheEntry {
 public:
-    static ErrorOr<NonnullOwnPtr<CacheEntryReader>> create(DiskCache&, CacheIndex&, u64 cache_key, NonnullRefPtr<HeaderList>, u64 data_size);
+    static ErrorOr<NonnullOwnPtr<CacheEntryReader>> create(DiskCache&, CacheIndex&, u64 cache_key, u64 vary_key, NonnullRefPtr<HeaderList>, u64 data_size);
     virtual ~CacheEntryReader() override = default;
 
     enum class RevalidationType {
@@ -120,7 +122,7 @@ public:
     void revalidation_succeeded(HeaderList const&);
     void revalidation_failed();
 
-    void pipe_to(int pipe_fd, Function<void(u64 bytes_piped)> on_complete, Function<void(u64 bytes_piped)> on_error);
+    void send_to(int socket_fd, Function<void(u64 bytes_sent)> on_complete, Function<void(u64 bytes_sent)> on_error);
 
     u32 status_code() const { return m_cache_header.status_code; }
     Optional<String> const& reason_phrase() const { return m_reason_phrase; }
@@ -128,23 +130,23 @@ public:
     HeaderList const& response_headers() const { return m_response_headers; }
 
 private:
-    CacheEntryReader(DiskCache&, CacheIndex&, u64 cache_key, String url, LexicalPath, NonnullOwnPtr<Core::File>, int fd, CacheHeader, Optional<String> reason_phrase, NonnullRefPtr<HeaderList>, u64 data_offset, u64 data_size);
+    CacheEntryReader(DiskCache&, CacheIndex&, u64 cache_key, u64 vary_key, String url, LexicalPath, NonnullOwnPtr<Core::File>, int fd, CacheHeader, Optional<String> reason_phrase, NonnullRefPtr<HeaderList>, u64 data_offset, u64 data_size);
 
-    void pipe_without_blocking();
-    void pipe_complete();
-    void pipe_error(Error);
+    void send_without_blocking();
+    void send_complete();
+    void send_error(Error);
 
     ErrorOr<void> read_and_validate_footer();
 
     NonnullOwnPtr<Core::File> m_file;
     int m_fd { -1 };
 
-    RefPtr<Core::Notifier> m_pipe_write_notifier;
-    int m_pipe_fd { -1 };
+    RefPtr<Core::Notifier> m_socket_write_notifier;
+    int m_socket_fd { -1 };
 
-    Function<void(u64)> m_on_pipe_complete;
-    Function<void(u64)> m_on_pipe_error;
-    u64 m_bytes_piped { 0 };
+    Function<void(u64)> m_on_send_complete;
+    Function<void(u64)> m_on_send_error;
+    u64 m_bytes_sent { 0 };
 
     Optional<String> m_reason_phrase;
     NonnullRefPtr<HeaderList> m_response_headers;

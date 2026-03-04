@@ -13,7 +13,7 @@ on:
 env:
   LADYBIRD_SOURCE_DIR: ${{ github.workspace }}
   CCACHE_DIR: ${{ github.workspace }}/.ccache
-  VCPKG_ROOT:  ${{ github.workspace }}/Build/vcpkg
+  VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg
 
 jobs:
   build-and-package:
@@ -44,8 +44,8 @@ jobs:
             runner_labels: '["blacksmith-8vcpu-ubuntu-2404-arm"]'
 
     steps:
-      - name: Checkout quanticsoul4772/ladybird
-        uses: actions/checkout@v6.0.1
+      - name: Checkout LadybirdBrowser/ladybird
+        uses: actions/checkout@v6.0.2
         with:
           ref: ${{ inputs.reference_to_build }}
 
@@ -64,6 +64,7 @@ jobs:
 
       - name: "Set up environment"
         uses: ./.github/actions/setup
+        id: 'setup'
         with:
           os: ${{ matrix.os_name }}
           arch: ${{ matrix.arch }}
@@ -77,14 +78,13 @@ jobs:
           arch: ${{ matrix.arch }}
           cache_key_extra: 'LibJS and LibWasm Artifacts'
           ccache_path: ${{ env.CCACHE_DIR }}
-          download_cache_path: ${{ github.workspace }}/Build/caches
           vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
 
       - name: Create build directory Ubuntu
         run: |
           cmake --preset Distribution \
-            -DCMAKE_C_COMPILER=clang-20 \
-            -DCMAKE_CXX_COMPILER=clang++-20 \
+            -DCMAKE_C_COMPILER=clang-${{ steps.setup.outputs.llvm_version }} \
+            -DCMAKE_CXX_COMPILER=clang++-${{ steps.setup.outputs.llvm_version }} \
             -DENABLE_CI_BASELINE_CPU=ON \
             -DENABLE_GUI_TARGETS=OFF
         if: ${{ matrix.os_name == 'Linux' }}
@@ -163,14 +163,14 @@ jobs:
           fi
 
       - name: Upload js package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ladybird-js-${{ matrix.package_type }}
           path: Build/distribution/ladybird-js-*.tar.gz
           retention-days: 7
 
       - name: Upload wasm package
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: ladybird-wasm-${{ matrix.package_type }}
           path: Build/distribution/ladybird-wasm-*.tar.gz

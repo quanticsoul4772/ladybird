@@ -7,6 +7,7 @@
 #pragma once
 
 #include <LibGfx/Rect.h>
+#include <LibHTTP/Forward.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/PixelUnits.h>
 #include <WebWorker/Forward.h>
@@ -34,8 +35,10 @@ public:
     virtual Web::CSS::PreferredColorScheme preferred_color_scheme() const override;
     virtual Web::CSS::PreferredContrast preferred_contrast() const override;
     virtual Web::CSS::PreferredMotion preferred_motion() const override;
-    virtual String page_did_request_cookie(URL::URL const&, Web::Cookie::Source) override;
+    virtual size_t screen_count() const override { return 1; }
+    virtual HTTP::Cookie::VersionedCookie page_did_request_cookie(URL::URL const&, HTTP::Cookie::Source) override;
     virtual void request_file(Web::FileRequest) override;
+    virtual IPC::File request_worker_agent(Web::Bindings::AgentType) override;
     virtual Web::DisplayListPlayerType display_list_player_type() const override { VERIFY_NOT_REACHED(); }
     virtual bool is_headless() const override { VERIFY_NOT_REACHED(); }
     virtual Queue<Web::QueuedInputEvent>& input_event_queue() override { VERIFY_NOT_REACHED(); }

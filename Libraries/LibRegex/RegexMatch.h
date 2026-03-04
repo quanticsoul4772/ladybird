@@ -16,12 +16,14 @@
 #include <AK/MemMem.h>
 #include <AK/StringBuilder.h>
 #include <AK/StringView.h>
+#include <AK/UnicodeUtils.h>
 #include <AK/Utf16String.h>
 #include <AK/Utf16View.h>
 #include <AK/Utf32View.h>
 #include <AK/Utf8View.h>
 #include <AK/Variant.h>
 #include <AK/Vector.h>
+#include <LibUnicode/CharacterTypes.h>
 
 namespace regex {
 
@@ -264,23 +266,37 @@ public:
         return other.m_view.visit([this](auto const& view) { return operator==(view); });
     }
 
-    bool equals_ignoring_case(RegexStringView other) const
+    bool equals_ignoring_case(RegexStringView other, bool unicode_mode) const
     {
-        // FIXME: Implement equals_ignoring_case() for unicode.
         return m_view.visit(
             [&](StringView view) {
                 return other.m_view.visit(
-                    [&](StringView other_view) { return view.equals_ignoring_ascii_case(other_view); },
-                    [&](Utf16View other_view) -> bool {
-                        auto result = other_view.to_utf8();
-                        if (result.is_error())
-                            return false;
-                        return view.equals_ignoring_ascii_case(result.value().bytes_as_string_view());
-                    });
+                    [&](StringView other_view) {
+                        if (!unicode_mode)
+                            return view.equals_ignoring_ascii_case(other_view);
+
+                        Utf8View view_utf8(view);
+                        Utf8View other_utf8(other_view);
+                        return Unicode::ranges_equal_ignoring_case(view_utf8, other_utf8, unicode_mode);
+                    },
+                    [&](Utf16View other_view) {
+                        Utf8View view_utf8(view);
+                        return Unicode::ranges_equal_ignoring_case(view_utf8, other_view, unicode_mode);
+                    },
+                    [](auto&) -> bool { TODO(); });
             },
             [&](Utf16View view) {
                 return other.m_view.visit(
-                    [&](Utf16View other_view) { return view.equals_ignoring_case(other_view); },
+                    [&](StringView other_view) {
+                        Utf8View other_utf8(other_view);
+                        return Unicode::ranges_equal_ignoring_case(view, other_utf8, unicode_mode);
+                    },
+                    [&](Utf16View other_view) {
+                        if (!unicode_mode)
+                            return view.equals_ignoring_ascii_case(other_view);
+
+                        return Unicode::ranges_equal_ignoring_case(view, other_view, unicode_mode);
+                    },
                     [](auto&) -> bool { TODO(); });
             },
             [](auto&) -> bool { TODO(); });
@@ -303,7 +319,7 @@ public:
     {
         return m_view.visit(
             [&](Utf16View const& view) -> Optional<FoundIndex> {
-                auto result = view.find_last_code_unit_offset(code_point, end_code_unit_index);
+                auto result = view.find_last_code_point_offset(code_point, end_code_unit_index);
                 if (!result.has_value())
                     return {};
                 return FoundIndex { result.value(), view.code_point_offset_of(result.value()) };
@@ -316,7 +332,7 @@ public:
                     Optional<FoundIndex> found_index;
 
                     for (; it != utf8_view.end(); ++it, ++current_code_point_index) {
-                        if (current_code_point_index > end_code_point_index)
+                        if (current_code_point_index >= end_code_point_index)
                             break;
                         if (*it == code_point) {
                             auto byte_index = utf8_view.byte_offset_of(it);
@@ -331,6 +347,62 @@ public:
                 if (!byte_index.has_value())
                     return {};
                 return FoundIndex { byte_index.value(), byte_index.value() };
+            });
+    }
+
+    FoundIndex find_end_of_line(size_t start_code_point_index, size_t start_code_unit_index) const
+    {
+        constexpr auto is_newline = [](u32 ch) { return ch == '\n' || ch == '\r' || ch == 0x2028 || ch == 0x2029; };
+
+        return m_view.visit(
+            [&](Utf16View const& view) -> FoundIndex {
+                size_t code_unit_index = start_code_unit_index;
+                size_t code_point_index = start_code_point_index;
+                while (code_unit_index < view.length_in_code_units()) {
+                    auto code_unit = view.code_unit_at(code_unit_index);
+                    u32 ch = code_unit;
+                    size_t code_units_for_this = 1;
+                    if (AK::UnicodeUtils::is_utf16_high_surrogate(code_unit) && code_unit_index + 1 < view.length_in_code_units()) {
+                        auto next_code_unit = view.code_unit_at(code_unit_index + 1);
+                        if (AK::UnicodeUtils::is_utf16_low_surrogate(next_code_unit)) {
+                            ch = AK::UnicodeUtils::decode_utf16_surrogate_pair(code_unit, next_code_unit);
+                            code_units_for_this = 2;
+                        }
+                    }
+
+                    if (is_newline(ch))
+                        return FoundIndex { code_unit_index, code_point_index };
+                    code_unit_index += code_units_for_this;
+                    ++code_point_index;
+                }
+                return FoundIndex { view.length_in_code_units(), code_point_index };
+            },
+            [&](StringView const& view) -> FoundIndex {
+                if (unicode()) {
+                    Utf8View utf8_view { view };
+                    auto it = utf8_view.begin();
+                    size_t current_code_point_index = 0;
+
+                    // Skip to start position
+                    while (it != utf8_view.end() && current_code_point_index < start_code_point_index) {
+                        ++it;
+                        ++current_code_point_index;
+                    }
+
+                    for (; it != utf8_view.end(); ++it, ++current_code_point_index) {
+                        if (is_newline(*it)) {
+                            return FoundIndex { utf8_view.byte_offset_of(it), current_code_point_index };
+                        }
+                    }
+
+                    return FoundIndex { view.length(), utf8_view.length() };
+                }
+
+                for (size_t i = start_code_unit_index; i < view.length(); ++i) {
+                    if (is_newline(static_cast<u8>(view[i])))
+                        return FoundIndex { i, i };
+                }
+                return FoundIndex { view.length(), view.length() };
             });
     }
 
@@ -424,9 +496,12 @@ struct MatchState {
     COWVector<u64> repetition_marks;
     Vector<u64, 64> checkpoints;
     Vector<i64> step_backs;
+    Vector<FlagsUnderlyingType, 1> modifier_stack;
+    AllOptions current_options;
 
-    explicit MatchState(size_t capture_group_count)
+    explicit MatchState(size_t capture_group_count, AllOptions options = {})
         : capture_group_count(capture_group_count)
+        , current_options(options)
     {
     }
 
@@ -453,20 +528,19 @@ struct MatchState {
         return flat_capture_group_matches.mutable_span().slice(match_index * capture_group_count, capture_group_count);
     }
 
-    // For size_t in {0..100}, ips in {0..500} and repetitions in {0..30}, there are zero collisions.
-    // For the full range, zero collisions were found in 8 million random samples.
+    // For size_t in {0..300}, ips in {0..750} and repetitions in {0..50}, there are zero collisions.
     u64 u64_hash() const
     {
         u64 hash = 0xcbf29ce484222325;
         auto combine = [&hash](auto value) {
-            hash ^= value + 0x9e3779b97f4a7c15 + (hash << 6) + (hash >> 2);
+            hash ^= static_cast<u64>(value);
+            hash *= 0x9e3779b97f4a7c15;
         };
-        auto combine_vector = [&hash](auto const& vector, auto tag) {
-            hash ^= tag * (vector.size() + 1);
-            for (auto& value : vector) {
-                hash ^= value;
-                hash *= 0x100000001b3;
-            }
+        auto combine_vector = [&combine](auto const& vector, auto tag) {
+            combine(tag);
+            combine(vector.size());
+            for (auto& value : vector)
+                combine(value);
         };
 
         combine(string_position_before_match);

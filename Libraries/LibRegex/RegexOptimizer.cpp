@@ -17,6 +17,7 @@
 #include <AK/Vector.h>
 #include <LibRegex/Regex.h>
 #include <LibRegex/RegexBytecodeStreamOptimizer.h>
+#include <LibRegex/RegexDebug.h>
 #include <LibUnicode/CharacterTypes.h>
 #if REGEX_DEBUG
 #    include <AK/ScopeGuard.h>
@@ -587,9 +588,10 @@ void Regex<Parser>::fill_optimization_data(BasicBlockList const& blocks)
 
             for (auto it = compares.ranges.begin(); it != compares.ranges.end(); ++it) {
                 parser_result.optimization_data.starting_ranges.append({ it.key(), *it });
-                parser_result.optimization_data.starting_ranges_insensitive.append({ to_ascii_lowercase(it.key()), to_ascii_lowercase(*it) });
-                quick_sort(parser_result.optimization_data.starting_ranges_insensitive, [](CharRange a, CharRange b) { return a.from < b.from; });
+                for (auto range : Unicode::expand_range_case_insensitive(it.key(), *it))
+                    parser_result.optimization_data.starting_ranges_insensitive.append({ range.from, range.to });
             }
+            quick_sort(parser_result.optimization_data.starting_ranges_insensitive, [](CharRange a, CharRange b) { return a.from < b.from; });
             return;
         }
         case OpCodeId::CompareSimple: {
@@ -608,9 +610,10 @@ void Regex<Parser>::fill_optimization_data(BasicBlockList const& blocks)
 
             for (auto it = compares.ranges.begin(); it != compares.ranges.end(); ++it) {
                 parser_result.optimization_data.starting_ranges.append({ it.key(), *it });
-                parser_result.optimization_data.starting_ranges_insensitive.append({ to_ascii_lowercase(it.key()), to_ascii_lowercase(*it) });
-                quick_sort(parser_result.optimization_data.starting_ranges_insensitive, [](CharRange a, CharRange b) { return a.from < b.from; });
+                for (auto range : Unicode::expand_range_case_insensitive(it.key(), *it))
+                    parser_result.optimization_data.starting_ranges_insensitive.append({ range.from, range.to });
             }
+            quick_sort(parser_result.optimization_data.starting_ranges_insensitive, [](CharRange a, CharRange b) { return a.from < b.from; });
             return;
         }
         case OpCodeId::CheckBegin:
@@ -731,7 +734,7 @@ typename Regex<Parser>::BasicBlockList Regex<Parser>::split_basic_blocks(ByteCod
     return block_boundaries;
 }
 
-static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<CompareTypeAndValuePair> const& rhs)
+static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<CompareTypeAndValuePair> const& rhs, bool insensitive = false, bool unicode_mode = false)
 {
     // We have to fully interpret the two sequences to determine if they overlap (that is, keep track of inversion state and what ranges they cover).
     bool inverse { false };
@@ -794,8 +797,26 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
             return start != end || any_unicode_property_matches(start);
         }
 
-        auto* max = lhs_ranges.find_smallest_not_below(start);
-        return max && *max <= end;
+        for (auto it = lhs_ranges.begin(); it != lhs_ranges.end(); ++it) {
+            auto lhs_start = it.key();
+            auto lhs_end = *it;
+            if (lhs_start <= end && start <= lhs_end)
+                return true;
+        }
+
+        if (insensitive) {
+            auto expanded_ranges = Unicode::expand_range_case_insensitive(start, end);
+            for (auto const& expanded : expanded_ranges) {
+                for (auto it = lhs_ranges.begin(); it != lhs_ranges.end(); ++it) {
+                    auto lhs_start = it.key();
+                    auto lhs_end = *it;
+                    if (lhs_start <= expanded.to && expanded.from <= lhs_end)
+                        return true;
+                }
+            }
+        }
+
+        return false;
     };
 
     auto char_class_contains = [&](CharClass const& value) -> bool {
@@ -805,6 +826,13 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
         if (lhs_negated_char_classes.contains(value))
             return false;
 
+        for (auto const& lhs_class : lhs_char_classes) {
+            for (u32 ch = 0; ch < 128; ++ch) {
+                if (OpCode_Compare<ByteCode>::matches_character_class(value, ch, insensitive, unicode_mode) && OpCode_Compare<ByteCode>::matches_character_class(lhs_class, ch, insensitive, unicode_mode))
+                    return true;
+            }
+        }
+
         if (lhs_ranges.is_empty())
             return false;
 
@@ -812,7 +840,7 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
             auto start = it.key();
             auto end = *it;
             for (u32 ch = start; ch <= end; ++ch) {
-                if (OpCode_Compare<ByteCode>::matches_character_class(value, ch, false))
+                if (OpCode_Compare<ByteCode>::matches_character_class(value, ch, insensitive, unicode_mode))
                     return true;
             }
         }
@@ -888,6 +916,14 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
             break;
         case CharacterCompareType::Char: {
             auto matched = range_contains(pair.value);
+            if (!matched) {
+                for (auto const& char_class : lhs_char_classes) {
+                    if (OpCode_Compare<ByteCode>::matches_character_class(char_class, pair.value, insensitive, unicode_mode)) {
+                        matched = true;
+                        break;
+                    }
+                }
+            }
             if (!in_or() && (current_lhs_inversion_state() ^ matched))
                 return true;
             if (in_or()) {
@@ -915,6 +951,18 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
         case CharacterCompareType::CharRange: {
             auto range = CharRange(pair.value);
             auto contains = range_contains(range);
+            if (!contains) {
+                for (auto const& char_class : lhs_char_classes) {
+                    for (u32 ch = range.from; ch <= range.to; ++ch) {
+                        if (OpCode_Compare<ByteCode>::matches_character_class(char_class, ch, insensitive, unicode_mode)) {
+                            contains = true;
+                            break;
+                        }
+                    }
+                    if (contains)
+                        break;
+                }
+            }
             if (!in_or() && (contains ^ current_lhs_inversion_state()))
                 return true;
 
@@ -1034,7 +1082,7 @@ static bool has_overlap(Vector<CompareTypeAndValuePair> const& lhs, Vector<Compa
     return current_lhs_inversion_state();
 }
 
-static bool has_overlap(StaticallyInterpretedCompares const& lhs, StaticallyInterpretedCompares const& rhs)
+static bool has_overlap(StaticallyInterpretedCompares const& lhs, StaticallyInterpretedCompares const& rhs, bool insensitive = false)
 {
     if (lhs.has_any_unicode_property || rhs.has_any_unicode_property || !lhs.negated_ranges.is_empty() || !rhs.negated_ranges.is_empty() || !lhs.negated_char_classes.is_empty() || !rhs.negated_char_classes.is_empty())
         return true;
@@ -1048,8 +1096,15 @@ static bool has_overlap(StaticallyInterpretedCompares const& lhs, StaticallyInte
             auto rhs_end = *it_rhs;
 
             // Check if ranges overlap
-            if (lhs_start <= rhs_end && rhs_start <= lhs_end) {
+            if (lhs_start <= rhs_end && rhs_start <= lhs_end)
                 return true;
+
+            if (insensitive) {
+                auto expanded_ranges = Unicode::expand_range_case_insensitive(rhs_start, rhs_end);
+                for (auto const& expanded : expanded_ranges) {
+                    if (lhs_start <= expanded.to && expanded.from <= lhs_end)
+                        return true;
+                }
             }
         }
     }
@@ -1068,7 +1123,7 @@ enum class AtomicRewritePreconditionResult {
     SatisfiedWithEmptyHeader,
     NotSatisfied,
 };
-static AtomicRewritePreconditionResult block_satisfies_atomic_rewrite_precondition(ByteCode const& bytecode, Block repeated_block, Block following_block, auto const& all_blocks)
+static AtomicRewritePreconditionResult block_satisfies_atomic_rewrite_precondition(ByteCode const& bytecode, Block repeated_block, Block following_block, auto const& all_blocks, bool insensitive = false, bool unicode_mode = false)
 {
     Vector<Vector<CompareTypeAndValuePair>> repeated_values;
     auto state = MatchState::only_for_enumeration();
@@ -1181,7 +1236,7 @@ static AtomicRewritePreconditionResult block_satisfies_atomic_rewrite_preconditi
                 }))
                 return AtomicRewritePreconditionResult::NotSatisfied;
 
-            if (any_of(repeated_values, [&](auto& repeated_value) { return has_overlap(compares, repeated_value); }))
+            if (any_of(repeated_values, [&](auto& repeated_value) { return has_overlap(compares, repeated_value, insensitive, unicode_mode); }))
                 return AtomicRewritePreconditionResult::NotSatisfied;
 
             return AtomicRewritePreconditionResult::SatisfiedWithProperHeader;
@@ -1306,6 +1361,8 @@ template<typename Parser>
 void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const& basic_blocks)
 {
     auto& bytecode = parser_result.bytecode.get<ByteCode>();
+    bool const insensitive = parser_result.options.has_flag_set(AllFlags::Insensitive);
+    bool const unicode_mode = parser_result.options.has_flag_set(AllFlags::Unicode);
     if constexpr (REGEX_DEBUG) {
         RegexDebug<ByteCode> dbg;
         dbg.print_bytecode(*this);
@@ -1401,12 +1458,12 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
                 // We've found RE0 (and RE1 is just the following block, if any), let's see if the precondition applies.
                 // if RE1 is empty, there's no first(RE1), so this is an automatic pass.
                 if (!fork_fallback_block.has_value()
-                    || (fork_fallback_block->end == fork_fallback_block->start && block_satisfies_atomic_rewrite_precondition(bytecode, forking_block, *fork_fallback_block, basic_blocks) != AtomicRewritePreconditionResult::NotSatisfied)) {
+                    || (fork_fallback_block->end == fork_fallback_block->start && block_satisfies_atomic_rewrite_precondition(bytecode, forking_block, *fork_fallback_block, basic_blocks, insensitive, unicode_mode) != AtomicRewritePreconditionResult::NotSatisfied)) {
                     candidate_blocks.append({ forking_block, fork_fallback_block, AlternateForm::DirectLoopWithoutHeader });
                     break;
                 }
 
-                auto precondition = block_satisfies_atomic_rewrite_precondition(bytecode, forking_block, *fork_fallback_block, basic_blocks);
+                auto precondition = block_satisfies_atomic_rewrite_precondition(bytecode, forking_block, *fork_fallback_block, basic_blocks, insensitive, unicode_mode);
                 if (precondition == AtomicRewritePreconditionResult::SatisfiedWithProperHeader) {
                     candidate_blocks.append({ forking_block, fork_fallback_block, AlternateForm::DirectLoopWithoutHeader });
                     break;
@@ -1430,7 +1487,7 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
                     if (i + 2 < basic_blocks.size())
                         block_following_fork_fallback = basic_blocks[i + 2];
                     if (!block_following_fork_fallback.has_value()
-                        || block_satisfies_atomic_rewrite_precondition(bytecode, *fork_fallback_block, *block_following_fork_fallback, basic_blocks) != AtomicRewritePreconditionResult::NotSatisfied) {
+                        || block_satisfies_atomic_rewrite_precondition(bytecode, *fork_fallback_block, *block_following_fork_fallback, basic_blocks, insensitive, unicode_mode) != AtomicRewritePreconditionResult::NotSatisfied) {
                         candidate_blocks.append({ forking_block, {}, AlternateForm::DirectLoopWithHeader });
                         break;
                     }
@@ -1447,7 +1504,7 @@ void Regex<Parser>::attempt_rewrite_loops_as_atomic_groups(BasicBlockList const&
                     if (i + 2 < basic_blocks.size())
                         block_following_fork_fallback = basic_blocks[i + 2];
                     if (!block_following_fork_fallback.has_value()
-                        || block_satisfies_atomic_rewrite_precondition(bytecode, *fork_fallback_block, *block_following_fork_fallback, basic_blocks) != AtomicRewritePreconditionResult::NotSatisfied) {
+                        || block_satisfies_atomic_rewrite_precondition(bytecode, *fork_fallback_block, *block_following_fork_fallback, basic_blocks, insensitive, unicode_mode) != AtomicRewritePreconditionResult::NotSatisfied) {
                         candidate_blocks.append({ forking_block, {}, AlternateForm::DirectLoopWithoutHeader });
                         break;
                     }
@@ -1677,6 +1734,7 @@ void Regex<Parser>::attempt_rewrite_dot_star_sequences_as_seek(BasicBlockList co
     //          ForkStay bbM
     //          Checkpoint p
     //          Compare AnyChar
+    //          FailIfEmpty              (optional, noop for .*)
     //          JumpNonEmpty (back to ForkStay) p
     //     bbM: {O1}                     (optional non-matching ops)
     //          Compare C
@@ -1758,7 +1816,7 @@ void Regex<Parser>::attempt_rewrite_dot_star_sequences_as_seek(BasicBlockList co
         bool found_following_block = false;
         for (size_t j = 0; j < basic_blocks.size(); ++j) {
             if (basic_blocks[j].start == fork_target) {
-                if (basic_blocks[j].start < basic_blocks[j].end) {
+                if (basic_blocks[j].start <= basic_blocks[j].end) {
                     following_block_idx = j;
                     found_following_block = true;
                     break;
@@ -1807,6 +1865,13 @@ void Regex<Parser>::attempt_rewrite_dot_star_sequences_as_seek(BasicBlockList co
 
         state.instruction_position += third_op.size();
 
+        // (3.5) Skip FailIfEmpty if present
+        {
+            auto& maybe_fail_op = bytecode.get_opcode(state);
+            if (maybe_fail_op.opcode_id() == OpCodeId::FailIfEmpty)
+                state.instruction_position += maybe_fail_op.size();
+        }
+
         // (4) JumpNonEmpty back to ForkStay
         auto& fourth_op = bytecode.get_opcode(state);
         if (fourth_op.opcode_id() != OpCodeId::JumpNonEmpty) {
@@ -1832,7 +1897,7 @@ void Regex<Parser>::attempt_rewrite_dot_star_sequences_as_seek(BasicBlockList co
 
         // The following block must contain a Compare C, with only non-matching ops in between
         state.instruction_position = following_block.start;
-        while (state.instruction_position < following_block.end) {
+        while (state.instruction_position <= following_block.end) {
             auto& op = bytecode.get_opcode(state);
 
             switch (op.opcode_id()) {
@@ -2678,6 +2743,27 @@ void Optimizer::append_character_class(ByteCode& target, Vector<CompareTypeAndVa
         bool is_currently_inverted = false;
 
         auto flush_tables = [&] {
+            auto merge_overlapping_ranges = [](auto& source) {
+                Optional<CharRange> active_range;
+                Vector<ByteCodeValueType> result;
+                for (auto& range : source) {
+                    if (!active_range.has_value()) {
+                        active_range = CharRange(range);
+                        continue;
+                    }
+                    CharRange char_range(range);
+                    if (char_range.from <= active_range->to + 1 && char_range.to + 1 >= active_range->from) {
+                        active_range = CharRange { min(char_range.from, active_range->from), max(char_range.to, active_range->to) };
+                    } else {
+                        result.append(active_range.release_value());
+                        active_range = char_range;
+                    }
+                }
+                if (active_range.has_value())
+                    result.append(active_range.release_value());
+                return result;
+            };
+
             auto append_table = [&](auto& table) {
                 ++argument_count;
                 arguments.append(to_underlying(CharacterCompareType::LookupTable));
@@ -2686,36 +2772,20 @@ void Optimizer::append_character_class(ByteCode& target, Vector<CompareTypeAndVa
                 arguments.append(0);
                 arguments.append(0);
 
-                Optional<CharRange> active_range;
-                Vector<ByteCodeValueType> range_data;
-                for (auto& range : table) {
-                    if (!active_range.has_value()) {
-                        active_range = range;
-                        continue;
-                    }
-
-                    if (range.from <= active_range->to + 1 && range.to + 1 >= active_range->from) {
-                        active_range = CharRange { min(range.from, active_range->from), max(range.to, active_range->to) };
-                    } else {
-                        range_data.append(active_range.release_value());
-                        active_range = range;
-                    }
-                }
-                if (active_range.has_value())
-                    range_data.append(active_range.release_value());
+                auto range_data = merge_overlapping_ranges(table);
                 arguments.extend(range_data);
                 arguments[sensitive_size_index] = range_data.size();
 
-                if (!all_of(range_data, [](CharRange range) { return range.from == to_ascii_lowercase(range.from) && range.to == to_ascii_lowercase(range.to); })) {
-                    Vector<ByteCodeValueType> insensitive_data;
-                    insensitive_data.ensure_capacity(range_data.size());
-                    for (CharRange range : range_data)
-                        insensitive_data.append(CharRange { to_ascii_lowercase(range.from), to_ascii_lowercase(range.to) });
-                    quick_sort(insensitive_data, [](CharRange a, CharRange b) { return a.from < b.from; });
-
-                    arguments.extend(insensitive_data);
-                    arguments[insensitive_size_index] = insensitive_data.size();
+                Vector<ByteCodeValueType> insensitive_data;
+                for (CharRange range : range_data) {
+                    for (auto expanded : Unicode::expand_range_case_insensitive(range.from, range.to))
+                        insensitive_data.append(CharRange { expanded.from, expanded.to });
                 }
+                quick_sort(insensitive_data, [](CharRange a, CharRange b) { return a.from < b.from; });
+
+                auto merged_data = merge_overlapping_ranges(insensitive_data);
+                arguments.extend(merged_data);
+                arguments[insensitive_size_index] = merged_data.size();
             };
 
             auto contains_regular_table = !table.is_empty();

@@ -7,7 +7,10 @@
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/CSS/CSSKeyframesRule.h>
+#include <LibWeb/CSS/CSSStyleRule.h>
+#include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/PropertyID.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
@@ -220,6 +223,8 @@ ErrorOr<void> ViewTransition::capture_the_old_state()
     // 1. Let document be transition’s relevant global object’s associated document.
     auto& document = as<HTML::Window>(HTML::relevant_global_object(*this)).associated_document();
 
+    document.update_layout(DOM::UpdateLayoutReason::ViewTransitionCapture);
+
     // 2. Let namedElements be transition’s named elements.
     auto& named_elements = m_named_elements;
 
@@ -350,6 +355,8 @@ ErrorOr<void> ViewTransition::capture_the_new_state()
 
     // 1. Let document be transition’s relevant global object’s associated document.
     auto& document = as<HTML::Window>(HTML::relevant_global_object(*this)).associated_document();
+
+    document.update_layout(DOM::UpdateLayoutReason::ViewTransitionCapture);
 
     // 2. Let namedElements be transition’s named elements.
     // NOTE: We just use m_named_elements
@@ -609,6 +616,8 @@ void ViewTransition::call_the_update_callback()
     if (m_phase != Phase::Done)
         m_phase = Phase::UpdateCallbackCalled;
 
+    HTML::TemporaryExecutionContext execution_context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
+
     // 3. Let callbackPromise be null.
     WebIDL::Promise* callback_promise;
 
@@ -671,7 +680,6 @@ void ViewTransition::call_the_update_callback()
     });
 
     // 8. React to callbackPromise with fulfillSteps and rejectSteps.
-    HTML::TemporaryExecutionContext context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
     WebIDL::react_to_promise(*callback_promise, fulfill_steps, reject_steps);
 
     // 9. To skip a transition after a timeout, the user agent may perform the following steps in parallel:
@@ -727,11 +735,11 @@ void ViewTransition::skip_the_view_transition(JS::Value reason)
     m_phase = Phase::Done;
 
     // 7. Reject transition’s ready promise with reason.
+    HTML::TemporaryExecutionContext context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
     WebIDL::reject_promise(realm, m_ready_promise, reason);
 
     // 8. Resolve transition’s finished promise with the result of reacting to transition’s update callback done promise:
     //    - If the promise was fulfilled, then return undefined.
-    HTML::TemporaryExecutionContext context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
     WebIDL::resolve_promise(realm, m_finished_promise, WebIDL::react_to_promise(m_update_callback_done_promise, GC::create_function(realm.heap(), [](JS::Value) -> WebIDL::ExceptionOr<JS::Value> { return JS::js_undefined(); }), nullptr)->promise());
 }
 
@@ -855,7 +863,7 @@ ErrorOr<void> ViewTransition::update_pseudo_element_styles()
             // 1. Return failure if any of the following conditions is true:
 
             //    - capturedElement’s new element has a flat tree ancestor that skips its contents.
-            for (auto ancestor = captured_element->new_element->parent_element(); ancestor; ancestor = ancestor->parent_element()) {
+            for (auto ancestor = captured_element->new_element->flat_tree_parent_element(); ancestor; ancestor = ancestor->flat_tree_parent_element()) {
                 if (ancestor->skips_its_contents())
                     return Error::from_string_literal("capturedElement’s new element has a flat tree ancestor that skips its contents.");
             }

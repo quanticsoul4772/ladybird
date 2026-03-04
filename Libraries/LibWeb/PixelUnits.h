@@ -142,9 +142,9 @@ public:
         return from_raw(1);
     }
 
-    float to_float() const;
-    double to_double() const;
-    int to_int() const;
+    constexpr float to_float() const { return static_cast<float>(m_value) / fixed_point_denominator; }
+    constexpr double to_double() const { return static_cast<double>(m_value) / fixed_point_denominator; }
+    constexpr int to_int() const { return m_value / fixed_point_denominator; }
 
     constexpr int raw_value() const { return m_value; }
     constexpr void set_raw_value(int value) { m_value = value; }
@@ -465,6 +465,14 @@ constexpr Web::CSSPixels square_distance_between(Web::CSSPixelPoint const& a, We
     auto delta_x = abs(a.x() - b.x());
     auto delta_y = abs(a.y() - b.y());
     return delta_x * delta_x + delta_y * delta_y;
+}
+
+constexpr Web::CSSPixelPoint constrained(Web::CSSPixelPoint const& point, Web::CSSPixelRect const& rect)
+{
+    return {
+        clamp(point.x(), rect.left(), rect.right() - 1),
+        clamp(point.y(), rect.top(), rect.bottom() - 1),
+    };
 }
 
 template<>

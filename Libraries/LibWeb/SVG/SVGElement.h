@@ -6,9 +6,9 @@
 
 #pragma once
 
-#include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/Export.h>
+#include <LibWeb/HTML/GlobalEventHandlers.h>
 #include <LibWeb/HTML/HTMLOrSVGElement.h>
 #include <LibWeb/SVG/SVGAnimatedString.h>
 
@@ -19,6 +19,7 @@ class WEB_API SVGElement
     , public HTML::GlobalEventHandlers
     , public HTML::HTMLOrSVGElement<SVGElement> {
     WEB_PLATFORM_OBJECT(SVGElement, DOM::Element);
+    GC_DECLARE_ALLOCATOR(SVGElement);
 
 public:
     virtual bool requires_svg_container() const override { return true; }
@@ -47,6 +48,7 @@ protected:
     virtual void children_changed(ChildrenChangedMetadata const*) override;
     virtual void inserted() override;
     virtual void removed_from(Node* old_parent, Node& old_root) override;
+    MUST_UPCALL virtual void adjust_computed_style(CSS::ComputedProperties&) override;
 
     void update_use_elements_that_reference_this();
     void remove_from_use_element_that_reference_this();

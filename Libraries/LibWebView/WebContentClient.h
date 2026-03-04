@@ -7,11 +7,15 @@
 #pragma once
 
 #include <AK/HashMap.h>
+#include <AK/NonnullRawPtr.h>
 #include <AK/SourceLocation.h>
+#include <LibHTTP/Header.h>
 #include <LibIPC/ConnectionToServer.h>
 #include <LibIPC/Limits.h>
 #include <LibIPC/RateLimiter.h>
 #include <LibIPC/Transport.h>
+#include <LibRequests/NetworkError.h>
+#include <LibRequests/RequestTimingInfo.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/CSS/StyleSheetIdentifier.h>
 #include <LibWeb/HTML/ActivateTab.h>
@@ -53,7 +57,7 @@ public:
 
     void web_ui_disconnected(Badge<WebUI>);
 
-    Function<void()> on_web_content_process_crash;
+    void notify_all_views_of_crash();
 
     pid_t pid() const { return m_process_handle.pid; }
     void set_pid(pid_t pid) { m_process_handle.pid = pid; }
@@ -92,10 +96,13 @@ private:
     virtual void did_list_style_sheets(u64 page_id, Vector<Web::CSS::StyleSheetIdentifier> stylesheets) override;
     virtual void did_get_style_sheet_source(u64 page_id, Web::CSS::StyleSheetIdentifier identifier, URL::URL, String source) override;
     virtual void did_take_screenshot(u64 page_id, Gfx::ShareableBitmap screenshot) override;
-    virtual void did_get_internal_page_info(u64 page_id, PageInfoType, String) override;
+    virtual void did_get_internal_page_info(u64 page_id, PageInfoType, Optional<Core::AnonymousBuffer>) override;
     virtual void did_execute_js_console_input(u64 page_id, JsonValue) override;
-    virtual void did_output_js_console_message(u64 page_id, i32 message_index) override;
-    virtual void did_get_js_console_messages(u64 page_id, i32 start_index, Vector<ConsoleOutput>) override;
+    virtual void did_output_js_console_message(u64 page_id, ConsoleOutput) override;
+    virtual void did_start_network_request(u64 page_id, u64 request_id, URL::URL, ByteString method, Vector<HTTP::Header>, ByteBuffer request_body, Optional<String> initiator_type) override;
+    virtual void did_receive_network_response_headers(u64 page_id, u64 request_id, u32 status_code, Optional<String> reason_phrase, Vector<HTTP::Header>) override;
+    virtual void did_receive_network_response_body(u64 page_id, u64 request_id, ByteBuffer data) override;
+    virtual void did_finish_network_request(u64 page_id, u64 request_id, u64 body_size, Requests::RequestTimingInfo, Optional<Requests::NetworkError>) override;
     virtual void did_change_favicon(u64 page_id, Gfx::ShareableBitmap) override;
     virtual void did_request_alert(u64 page_id, String) override;
     virtual void did_request_confirm(u64 page_id, String) override;
@@ -107,12 +114,13 @@ private:
     virtual void did_detect_credential_exfiltration(u64 page_id, String alert_type, String severity, String form_origin, String action_origin, bool uses_https, bool has_password_field, bool is_cross_origin, String description) override;
     virtual void did_block_autofill(u64 page_id, String form_origin, String action_origin, bool is_cross_origin, String reason) override;
     virtual void did_detect_traffic_alert(u64 page_id, ByteString alert_json) override;
+    virtual void did_request_document_cookie_version_index(u64 page_id, i64 document_id, String domain) override;
     virtual Messages::WebContentClient::DidRequestAllCookiesWebdriverResponse did_request_all_cookies_webdriver(URL::URL) override;
     virtual Messages::WebContentClient::DidRequestAllCookiesCookiestoreResponse did_request_all_cookies_cookiestore(URL::URL) override;
     virtual Messages::WebContentClient::DidRequestNamedCookieResponse did_request_named_cookie(URL::URL, String) override;
-    virtual Messages::WebContentClient::DidRequestCookieResponse did_request_cookie(URL::URL, Web::Cookie::Source) override;
-    virtual void did_set_cookie(URL::URL, Web::Cookie::ParsedCookie, Web::Cookie::Source) override;
-    virtual void did_update_cookie(Web::Cookie::Cookie) override;
+    virtual Messages::WebContentClient::DidRequestCookieResponse did_request_cookie(u64 page_id, URL::URL, HTTP::Cookie::Source) override;
+    virtual void did_set_cookie(URL::URL, HTTP::Cookie::ParsedCookie, HTTP::Cookie::Source) override;
+    virtual void did_update_cookie(HTTP::Cookie::Cookie) override;
     virtual void did_expire_cookies_with_time_offset(AK::Duration) override;
     virtual Messages::WebContentClient::DidRequestStorageItemResponse did_request_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key) override;
     virtual Messages::WebContentClient::DidSetStorageItemResponse did_set_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, String value) override;
@@ -128,7 +136,8 @@ private:
     virtual void did_request_resize_window(u64 page_id, Gfx::IntSize) override;
     virtual void did_request_maximize_window(u64 page_id) override;
     virtual void did_request_minimize_window(u64 page_id) override;
-    virtual void did_request_fullscreen_window(u64 page_id) override;
+    virtual Messages::WebContentClient::DidRequestFullscreenWindowResponse did_request_fullscreen_window(u64 page_id) override;
+    virtual void did_request_exit_fullscreen(u64 page_id) override;
     virtual void did_request_file(u64 page_id, ByteString path, i32) override;
     virtual void did_request_color_picker(u64 page_id, Color current_color) override;
     virtual void did_request_file_picker(u64 page_id, Web::HTML::FileFilter accepted_file_types, Web::HTML::AllowMultipleFiles) override;
@@ -137,6 +146,7 @@ private:
     virtual void did_finish_test(u64 page_id, String text) override;
     virtual void did_set_test_timeout(u64 page_id, double milliseconds) override;
     virtual void did_receive_reference_test_metadata(u64 page_id, JsonValue) override;
+    virtual void did_receive_test_variant_metadata(u64 page_id, JsonValue) override;
     virtual void did_set_browser_zoom(u64 page_id, double factor) override;
     virtual void did_find_in_page(u64 page_id, size_t current_match_index, Optional<size_t> total_match_count) override;
     virtual void did_change_theme_color(u64 page_id, Gfx::Color color) override;
@@ -220,8 +230,7 @@ private:
         }
     }
 
-    // FIXME: Does a HashMap holding references make sense?
-    HashMap<u64, ViewImplementation*> m_views;
+    HashMap<u64, NonnullRawPtr<ViewImplementation>> m_views;
 
     ProcessHandle m_process_handle;
 

@@ -71,7 +71,7 @@ private:
     virtual void load_html(u64 page_id, ByteString) override;
     virtual void reload(u64 page_id) override;
     virtual void traverse_the_history_by_delta(u64 page_id, i32 delta) override;
-    virtual void set_viewport_size(u64 page_id, Web::DevicePixelSize) override;
+    virtual void set_viewport(u64 page_id, Web::DevicePixelSize, double device_pixel_ratio) override;
     virtual void key_event(u64 page_id, Web::KeyEvent) override;
     virtual void mouse_event(u64 page_id, Web::MouseEvent) override;
     virtual void drag_event(u64 page_id, Web::DragEvent) override;
@@ -90,6 +90,8 @@ private:
     virtual void request_style_sheet_source(u64 page_id, Web::CSS::StyleSheetIdentifier identifier) override;
 
     virtual void set_listen_for_dom_mutations(u64 page_id, bool) override;
+    virtual void did_connect_devtools_client(u64 page_id) override;
+    virtual void did_disconnect_devtools_client(u64 page_id) override;
     virtual void get_dom_node_inner_html(u64 page_id, Web::UniqueNodeID node_id) override;
     virtual void get_dom_node_outer_html(u64 page_id, Web::UniqueNodeID node_id) override;
     virtual void set_dom_node_outer_html(u64 page_id, Web::UniqueNodeID node_id, String html) override;
@@ -115,7 +117,6 @@ private:
     virtual void set_has_focus(u64 page_id, bool) override;
     virtual void set_is_scripting_enabled(u64 page_id, bool) override;
     virtual void set_zoom_level(u64 page_id, double zoom_level) override;
-    virtual void set_device_pixel_ratio(u64 page_id, double device_pixel_ratio) override;
     virtual void set_maximum_frames_per_second(u64 page_id, double) override;
     virtual void set_window_position(u64 page_id, Web::DevicePixelPoint) override;
     virtual void set_window_size(u64 page_id, Web::DevicePixelSize) override;
@@ -126,7 +127,6 @@ private:
 
     virtual void js_console_input(u64 page_id, String) override;
     virtual void run_javascript(u64 page_id, String) override;
-    virtual void js_console_request_messages(u64 page_id, i32) override;
 
     virtual void alert_closed(u64 page_id) override;
     virtual void confirm_closed(u64 page_id, bool accepted) override;
@@ -140,6 +140,7 @@ private:
     virtual void toggle_media_play_state(u64 page_id) override;
     virtual void toggle_media_mute_state(u64 page_id) override;
     virtual void toggle_media_loop_state(u64 page_id) override;
+    virtual void toggle_media_fullscreen_state(u64 page_id) override;
     virtual void toggle_media_controls_state(u64 page_id) override;
 
     virtual void toggle_page_mute_state(u64 page_id) override;
@@ -176,7 +177,14 @@ private:
     virtual void paste(u64 page_id, Utf16String text) override;
 
     virtual void system_time_zone_changed() override;
-    virtual void cookies_changed(Vector<Web::Cookie::Cookie>) override;
+
+    virtual void set_document_cookie_version_buffer(u64 page_id, Core::AnonymousBuffer document_cookie_version_buffer) override;
+    virtual void set_document_cookie_version_index(u64 page_id, i64 document_id, Core::SharedVersionIndex document_index) override;
+    virtual void cookies_changed(u64 page_id, Vector<HTTP::Cookie::Cookie>) override;
+
+    virtual void request_close(u64 page_id) override;
+
+    virtual void exit_fullscreen(u64 page_id) override;
 
     virtual void form_submission_detected(u64 page_id, String form_origin, String action_origin, bool has_password, bool has_email, bool uses_https) override;
     virtual void credential_alert_action(u64 page_id, String form_origin, String action_origin, String action) override;

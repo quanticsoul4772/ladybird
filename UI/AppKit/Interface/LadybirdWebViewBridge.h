@@ -31,6 +31,8 @@ public:
 
     void set_maximum_frames_per_second(u64 maximum_frames_per_second);
 
+    void exit_fullscreen();
+
     void update_palette();
 
     void enqueue_input_event(Web::MouseEvent);
@@ -41,6 +43,7 @@ public:
     struct Paintable {
         Gfx::Bitmap const& bitmap;
         Gfx::IntSize bitmap_size;
+        void* iosurface_ref { nullptr };
     };
     Optional<Paintable> paintable();
 

@@ -65,6 +65,8 @@ public:
     void find_previous();
     void find_next();
 
+    void request_close();
+
     QIcon const& favicon() const { return m_favicon; }
     QString const& title() const { return m_title; }
 
@@ -145,6 +147,8 @@ private:
     static constexpr i64 RATE_LIMIT_WINDOW_SECONDS = 60;
 
     bool check_policy_rate_limit(String const& file_hash);
+
+    bool m_already_requested_close { false };
 };
 
 }

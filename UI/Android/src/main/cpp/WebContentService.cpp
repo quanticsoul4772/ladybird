@@ -22,9 +22,9 @@
 #include <LibWeb/Loader/GeneratedPagesLoader.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/PermissionsPolicy/AutoplayAllowlist.h>
-#include <LibWeb/Platform/EventLoopPluginSerenity.h>
+#include <LibWeb/Platform/EventLoopPlugin.h>
+#include <LibWeb/Platform/FontPlugin.h>
 #include <LibWebView/HelperProcess.h>
-#include <LibWebView/Plugins/FontPlugin.h>
 #include <LibWebView/Plugins/ImageCodecPlugin.h>
 #include <LibWebView/SiteIsolation.h>
 #include <LibWebView/Utilities.h>
@@ -49,7 +49,7 @@ ErrorOr<int> service_main(int ipc_socket)
 {
     Core::EventLoop event_loop;
 
-    Web::Platform::EventLoopPlugin::install(*new Web::Platform::EventLoopPluginSerenity);
+    Web::Platform::EventLoopPlugin::install(*new Web::Platform::EventLoopPlugin);
 
     auto image_decoder_client = TRY(bind_image_decoder_service());
     Web::Platform::ImageCodecPlugin::install(*new WebView::ImageCodecPlugin(move(image_decoder_client)));
@@ -59,10 +59,10 @@ ErrorOr<int> service_main(int ipc_socket)
     auto request_server_client = TRY(bind_request_server_service());
     Web::ResourceLoader::initialize(Web::Bindings::main_thread_vm().heap(), move(request_server_client));
 
-    bool is_layout_test_mode = false;
+    bool is_test_mode = false;
 
-    Web::HTML::Window::set_internals_object_exposed(is_layout_test_mode);
-    Web::Platform::FontPlugin::install(*new WebView::FontPlugin(is_layout_test_mode));
+    Web::HTML::Window::set_internals_object_exposed(is_test_mode);
+    Web::Platform::FontPlugin::install(*new Web::Platform::FontPlugin(is_test_mode));
 
     // Currently site isolation doesn't work on Android since everything is running
     // in the same process. It would require an entire redesign of this port

@@ -17,7 +17,6 @@
 #include <LibWebView/Application.h>
 #include <LibWebView/HelperProcess.h>
 #include <LibWebView/Menu.h>
-#include <LibWebView/SiteIsolation.h>
 #include <LibWebView/URL.h>
 #include <LibWebView/UserAgent.h>
 #include <LibWebView/ViewImplementation.h>
@@ -48,7 +47,8 @@ Optional<ViewImplementation&> ViewImplementation::find_view_by_id(u64 id)
 }
 
 ViewImplementation::ViewImplementation()
-    : m_view_id(s_view_count++)
+    : m_document_cookie_version_buffer(Core::create_shared_version_buffer())
+    , m_view_id(s_view_count++)
 {
     s_all_views.set(m_view_id, this);
 
@@ -98,12 +98,16 @@ u64 ViewImplementation::page_id() const
 
 void ViewImplementation::create_new_process_for_cross_site_navigation(URL::URL const& url)
 {
-    // Simply replace the old client with a new one
-    // The old WebContent process will be cleaned up automatically
-    m_client_state.client = nullptr;
+    if (m_client_state.client) {
+        m_client_state.client->unregister_view(m_client_state.page_index);
+        client().async_close_server();
+    }
 
     initialize_client();
     VERIFY(m_client_state.client);
+
+    if (on_web_content_process_change_for_cross_site_navigation)
+        on_web_content_process_change_for_cross_site_navigation();
 
     // Don't keep a stale backup bitmap around.
     m_backup_bitmap = nullptr;
@@ -258,6 +262,44 @@ void ViewImplementation::set_preferred_motion(Web::CSS::PreferredMotion motion)
     client().async_set_preferred_motion(page_id(), motion);
 }
 
+void ViewImplementation::notify_cookies_changed(HashTable<String> const& changed_domains, ReadonlySpan<HTTP::Cookie::Cookie> cookies)
+{
+    for (auto const& domain : changed_domains) {
+        if (auto document_index = m_document_cookie_version_indices.get(domain); document_index.has_value())
+            Core::increment_shared_version(m_document_cookie_version_buffer, *document_index);
+    }
+
+    if (!cookies.is_empty())
+        client().async_cookies_changed(page_id(), cookies);
+}
+
+ErrorOr<Core::SharedVersionIndex> ViewImplementation::ensure_document_cookie_version_index(Badge<WebContentClient>, String const& domain)
+{
+    return m_document_cookie_version_indices.try_ensure(domain, [&]() -> ErrorOr<Core::SharedVersionIndex> {
+        Core::SharedVersionIndex document_index = m_document_cookie_version_indices.size();
+
+        if (!Core::initialize_shared_version(m_document_cookie_version_buffer, document_index)) {
+            dbgln("Reached maximum document cookie version count for {}, cannot create new version for {}", m_url, domain);
+            return Error::from_string_literal("Reached maximum document cookie version count");
+        }
+
+        return document_index;
+    });
+}
+
+Optional<Core::SharedVersion> ViewImplementation::document_cookie_version(URL::URL const& url) const
+{
+    auto domain = HTTP::Cookie::canonicalize_domain(url);
+    if (!domain.has_value())
+        return {};
+
+    auto document_index = m_document_cookie_version_indices.get(*domain);
+    if (!document_index.has_value())
+        return {};
+
+    return Core::get_shared_version(m_document_cookie_version_buffer, *document_index);
+}
+
 ByteString ViewImplementation::selected_text()
 {
     return client().get_selected_text(page_id());
@@ -334,6 +376,18 @@ void ViewImplementation::clear_highlighted_dom_node()
 void ViewImplementation::set_listen_for_dom_mutations(bool listen_for_dom_mutations)
 {
     client().async_set_listen_for_dom_mutations(page_id(), listen_for_dom_mutations);
+}
+
+void ViewImplementation::did_connect_devtools_client()
+{
+    m_devtools_connected = true;
+    client().async_did_connect_devtools_client(page_id());
+}
+
+void ViewImplementation::did_disconnect_devtools_client()
+{
+    m_devtools_connected = false;
+    client().async_did_disconnect_devtools_client(page_id());
 }
 
 void ViewImplementation::get_dom_node_inner_html(Web::UniqueNodeID node_id)
@@ -421,9 +475,9 @@ void ViewImplementation::js_console_input(String const& js_source)
     client().async_js_console_input(page_id(), js_source);
 }
 
-void ViewImplementation::js_console_request_messages(i32 start_index)
+void ViewImplementation::exit_fullscreen()
 {
-    client().async_js_console_request_messages(page_id(), start_index);
+    client().async_exit_fullscreen(page_id());
 }
 
 void ViewImplementation::alert_closed()
@@ -535,13 +589,18 @@ void ViewImplementation::did_allocate_iosurface_backing_stores(i32 front_id, Cor
 
     auto bytes_per_row = front_iosurface.bytes_per_row();
 
+    auto* front_ref = front_iosurface.core_foundation_pointer();
+    auto* back_ref = back_iosurface.core_foundation_pointer();
+
     auto front_bitmap = Gfx::Bitmap::create_wrapper(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, front_size, bytes_per_row, front_iosurface.data(), [handle = move(front_iosurface)] { });
     auto back_bitmap = Gfx::Bitmap::create_wrapper(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, back_size, bytes_per_row, back_iosurface.data(), [handle = move(back_iosurface)] { });
 
     m_client_state.front_bitmap.bitmap = front_bitmap.release_value_but_fixme_should_propagate_errors();
     m_client_state.front_bitmap.id = front_id;
+    m_client_state.front_bitmap.iosurface_ref = front_ref;
     m_client_state.back_bitmap.bitmap = back_bitmap.release_value_but_fixme_should_propagate_errors();
     m_client_state.back_bitmap.id = back_id;
+    m_client_state.back_bitmap.iosurface_ref = back_ref;
 }
 #endif
 
@@ -559,7 +618,7 @@ void ViewImplementation::update_zoom()
 
 void ViewImplementation::handle_resize()
 {
-    client().async_set_viewport_size(page_id(), this->viewport_size());
+    client().async_set_viewport(page_id(), this->viewport_size(), m_device_pixel_ratio);
 }
 
 void ViewImplementation::initialize_client(CreateNewClient create_new_client)
@@ -573,21 +632,13 @@ void ViewImplementation::initialize_client(CreateNewClient create_new_client)
         m_client_state.client->register_view(m_client_state.page_index, *this);
     }
 
-    m_client_state.client->on_web_content_process_crash = [this] {
-        Core::deferred_invoke([this] {
-            handle_web_content_process_crash();
-
-            if (on_web_content_crashed)
-                on_web_content_crashed();
-        });
-    };
-
     m_client_state.client_handle = MUST(Web::Crypto::generate_random_uuid());
     client().async_set_window_handle(m_client_state.page_index, m_client_state.client_handle);
     client().async_set_zoom_level(m_client_state.page_index, m_zoom_level);
-    client().async_set_device_pixel_ratio(m_client_state.page_index, m_device_pixel_ratio);
+    client().async_set_viewport(m_client_state.page_index, viewport_size(), m_device_pixel_ratio);
     client().async_set_maximum_frames_per_second(m_client_state.page_index, m_maximum_frames_per_second);
     client().async_set_system_visibility_state(m_client_state.page_index, m_system_visibility_state);
+    client().async_set_document_cookie_version_buffer(m_client_state.page_index, m_document_cookie_version_buffer);
 
     if (auto webdriver_content_ipc_path = Application::browser_options().webdriver_content_ipc_path; webdriver_content_ipc_path.has_value())
         client().async_connect_to_webdriver(m_client_state.page_index, *webdriver_content_ipc_path);
@@ -598,21 +649,38 @@ void ViewImplementation::initialize_client(CreateNewClient create_new_client)
     languages_changed();
     autoplay_settings_changed();
     global_privacy_control_changed();
+
+    // If DevTools is connected, notify the new WebContent process.
+    if (m_devtools_connected)
+        client().async_did_connect_devtools_client(page_id());
 }
 
 void ViewImplementation::handle_web_content_process_crash(LoadErrorPage load_error_page)
 {
-    dbgln("\033[31;1mWebContent process crashed!\033[0m Last page loaded: {}", m_url);
-    dbgln("Consider raising an issue at https://github.com/LadybirdBrowser/ladybird/issues/new/choose");
+    auto const headless_mode = Application::browser_options().headless_mode.has_value();
+
+    if (!headless_mode) {
+        dbgln("\033[31;1mWebContent process crashed!\033[0m Last page loaded: {}", m_url);
+        dbgln("Consider raising an issue at https://github.com/LadybirdBrowser/ladybird/issues/new/choose");
+    }
 
     ++m_crash_count;
     constexpr size_t max_reasonable_crash_count = 5U;
     if (m_crash_count >= max_reasonable_crash_count) {
-        dbgln("WebContent has crashed {} times in quick succession! Not restarting...", m_crash_count);
-        m_repeated_crash_timer->stop();
-        return;
+        if (!headless_mode) {
+            dbgln("WebContent has crashed {} times in quick succession! Not restarting...", m_crash_count);
+            m_repeated_crash_timer->stop();
+            return;
+        }
+        // In headless mode, always respawn - tests need a working WebContent for each test.
+        // Reset the crash count so we can continue running tests.
+        m_crash_count = 0;
     }
     m_repeated_crash_timer->restart();
+
+    // In headless mode, respawn WebContent but skip the error page.
+    if (headless_mode)
+        load_error_page = LoadErrorPage::No;
 
     initialize_client();
     VERIFY(m_client_state.client);
@@ -765,11 +833,17 @@ NonnullRefPtr<Core::Promise<String>> ViewImplementation::request_internal_page_i
     return promise;
 }
 
-void ViewImplementation::did_receive_internal_page_info(Badge<WebContentClient>, PageInfoType, String const& info)
+void ViewImplementation::did_receive_internal_page_info(Badge<WebContentClient>, PageInfoType, Optional<Core::AnonymousBuffer> const& info)
 {
     VERIFY(m_pending_info_request);
 
-    m_pending_info_request->resolve(String { info });
+    String info_string;
+    if (!info.has_value()) {
+        info_string = "(no page)"_string;
+    } else {
+        info_string = MUST(String::from_utf8(info->bytes()));
+    }
+    m_pending_info_request->resolve(move(info_string));
     m_pending_info_request = nullptr;
 }
 
@@ -779,10 +853,13 @@ ErrorOr<LexicalPath> ViewImplementation::dump_gc_graph()
     auto gc_graph_json = TRY(promise->await());
 
     LexicalPath path { Core::StandardPaths::tempfile_directory() };
-    path = path.append(TRY(AK::UnixDateTime::now().to_string("gc-graph-%Y-%m-%d-%H-%M-%S.json"sv)));
+    path = path.append(TRY(AK::UnixDateTime::now().to_string("gc-graph-%Y-%m-%d-%H-%M-%S.js"sv)));
 
+    // Write as a .js file so gc-heap-explorer.html can load it via <script> tag (avoiding CORS issues with file:// URLs)
     auto dump_file = TRY(Core::File::open(path.string(), Core::File::OpenMode::Write));
+    TRY(dump_file->write_until_depleted("var GC_GRAPH_DUMP = "sv.bytes()));
     TRY(dump_file->write_until_depleted(gc_graph_json.bytes()));
+    TRY(dump_file->write_until_depleted(";\n"sv.bytes()));
 
     return path;
 }
@@ -861,6 +938,13 @@ void ViewImplementation::initialize_context_menus()
     m_open_image_action = Action::create("Open Image"sv, ActionID::OpenImage, [this]() {
         load(m_context_menu_url);
     });
+    m_save_image_action = Action::create("Save Image As..."sv, ActionID::SaveImage, [this]() {
+        auto download_path = Application::the().path_for_downloaded_file(m_context_menu_url.basename());
+        if (download_path.is_error())
+            return;
+
+        Application::the().file_downloader().download_file(m_context_menu_url, download_path.release_value());
+    });
     m_copy_image_action = Action::create("Copy Image"sv, ActionID::CopyImage, [this]() {
         if (!m_image_context_menu_bitmap.has_value())
             return;
@@ -903,6 +987,12 @@ void ViewImplementation::initialize_context_menus()
     m_media_loop_action = Action::create_checkable("Loop"sv, ActionID::ToggleMediaLoopState, [this]() {
         client().async_toggle_media_loop_state(page_id());
     });
+    m_media_enter_fullscreen_action = Action::create("Full Screen"sv, ActionID::EnterFullscreen, [this]() {
+        client().async_toggle_media_fullscreen_state(page_id());
+    });
+    m_media_exit_fullscreen_action = Action::create("Exit Full Screen"sv, ActionID::ExitFullscreen, [this]() {
+        client().async_toggle_media_fullscreen_state(page_id());
+    });
 
     m_page_context_menu = Menu::create("Page Context Menu"sv);
     m_page_context_menu->add_action(*m_navigate_back_action);
@@ -928,6 +1018,8 @@ void ViewImplementation::initialize_context_menus()
     m_image_context_menu->add_action(*m_open_image_action);
     m_image_context_menu->add_action(*m_open_in_new_tab_action);
     m_image_context_menu->add_separator();
+    m_image_context_menu->add_action(*m_save_image_action);
+    m_image_context_menu->add_separator();
     m_image_context_menu->add_action(*m_copy_image_action);
     m_image_context_menu->add_action(*m_copy_url_action);
 
@@ -939,6 +1031,8 @@ void ViewImplementation::initialize_context_menus()
     m_media_context_menu->add_action(*m_media_show_controls_action);
     m_media_context_menu->add_action(*m_media_hide_controls_action);
     m_media_context_menu->add_action(*m_media_loop_action);
+    m_media_context_menu->add_action(*m_media_enter_fullscreen_action);
+    m_media_context_menu->add_action(*m_media_exit_fullscreen_action);
     m_media_context_menu->add_separator();
     m_media_context_menu->add_action(*m_open_audio_action);
     m_media_context_menu->add_action(*m_open_video_action);
@@ -1022,8 +1116,28 @@ void ViewImplementation::did_request_media_context_menu(Badge<WebContentClient>,
 
     m_media_loop_action->set_checked(menu.is_looping);
 
+    m_media_enter_fullscreen_action->set_visible(menu.is_video && !menu.is_fullscreen);
+    m_media_exit_fullscreen_action->set_visible(menu.is_video && menu.is_fullscreen);
+
     if (m_media_context_menu->on_activation)
         m_media_context_menu->on_activation(to_widget_position(content_position));
+}
+
+u64 ViewImplementation::add_navigation_listener(NavigationListener listener)
+{
+    auto id = m_next_navigation_listener_id++;
+    m_navigation_listeners.set(id, move(listener));
+    return id;
+}
+
+void ViewImplementation::remove_navigation_listener(u64 listener_id)
+{
+    m_navigation_listeners.remove(listener_id);
+}
+
+void ViewImplementation::request_close()
+{
+    client().async_request_close(page_id());
 }
 
 }

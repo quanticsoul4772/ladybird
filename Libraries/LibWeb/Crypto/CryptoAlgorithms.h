@@ -739,6 +739,18 @@ private:
     }
 };
 
+class CShake : public AlgorithmMethods {
+public:
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> digest(AlgorithmParams const&, ByteBuffer const&) override;
+    static NonnullOwnPtr<AlgorithmMethods> create(JS::Realm& realm) { return adopt_own(*new CShake(realm)); }
+
+private:
+    explicit CShake(JS::Realm& realm)
+        : AlgorithmMethods(realm)
+    {
+    }
+};
+
 struct EcdhKeyDeriveParams : public AlgorithmParams {
     virtual ~EcdhKeyDeriveParams() override;
 
@@ -806,6 +818,79 @@ struct Argon2Params : public AlgorithmParams {
     Optional<ByteBuffer> associated_data;
 
     static JS::ThrowCompletionOr<NonnullOwnPtr<AlgorithmParams>> from_value(JS::VM&, JS::Value);
+};
+
+// https://wicg.github.io/webcrypto-modern-algos/#cshake-params
+struct CShakeParams : public AlgorithmParams {
+    virtual ~CShakeParams() override;
+
+    CShakeParams(u32 length, Optional<ByteBuffer> function_name, Optional<ByteBuffer> customization)
+        : length(length)
+        , function_name(move(function_name))
+        , customization(move(customization))
+
+    {
+    }
+
+    u32 length;
+    Optional<ByteBuffer> function_name;
+    Optional<ByteBuffer> customization;
+
+    static JS::ThrowCompletionOr<NonnullOwnPtr<AlgorithmParams>> from_value(JS::VM&, JS::Value);
+};
+
+// https://wicg.github.io/webcrypto-modern-algos/#dfn-AeadParams
+// NOTE: The AeadParams dictionary is identical to the AesGcmParams
+struct AeadParams : public AlgorithmParams {
+    virtual ~AeadParams() override;
+    AeadParams(ByteBuffer iv, Optional<ByteBuffer> additional_data, Optional<u8> tag_length)
+        : iv(move(iv))
+        , additional_data(move(additional_data))
+        , tag_length(tag_length)
+    {
+    }
+
+    ByteBuffer iv;
+    Optional<ByteBuffer> additional_data;
+    Optional<u8> tag_length;
+
+    static JS::ThrowCompletionOr<NonnullOwnPtr<AlgorithmParams>> from_value(JS::VM&, JS::Value);
+};
+
+class ChaCha20Poly1305 : public AlgorithmMethods {
+public:
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> encrypt(AlgorithmParams const&, GC::Ref<CryptoKey>, ByteBuffer const&) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> decrypt(AlgorithmParams const&, GC::Ref<CryptoKey>, ByteBuffer const&) override;
+    virtual WebIDL::ExceptionOr<Variant<GC::Ref<CryptoKey>, GC::Ref<CryptoKeyPair>>> generate_key(AlgorithmParams const&, bool, Vector<Bindings::KeyUsage> const&) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<CryptoKey>> import_key(AlgorithmParams const&, Bindings::KeyFormat, CryptoKey::InternalKeyData, bool, Vector<Bindings::KeyUsage> const&) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::Object>> export_key(Bindings::KeyFormat, GC::Ref<CryptoKey>) override;
+    virtual WebIDL::ExceptionOr<JS::Value> get_key_length(AlgorithmParams const&) override;
+
+    static NonnullOwnPtr<AlgorithmMethods> create(JS::Realm& realm) { return adopt_own(*new ChaCha20Poly1305(realm)); }
+
+private:
+    explicit ChaCha20Poly1305(JS::Realm& realm)
+        : AlgorithmMethods(realm)
+    {
+    }
+};
+
+class AesOcb : public AlgorithmMethods {
+public:
+    virtual WebIDL::ExceptionOr<JS::Value> get_key_length(AlgorithmParams const&) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<CryptoKey>> import_key(AlgorithmParams const&, Bindings::KeyFormat, CryptoKey::InternalKeyData, bool, Vector<Bindings::KeyUsage> const&) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::Object>> export_key(Bindings::KeyFormat, GC::Ref<CryptoKey>) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> encrypt(AlgorithmParams const&, GC::Ref<CryptoKey>, ByteBuffer const&) override;
+    virtual WebIDL::ExceptionOr<GC::Ref<JS::ArrayBuffer>> decrypt(AlgorithmParams const&, GC::Ref<CryptoKey>, ByteBuffer const&) override;
+    virtual WebIDL::ExceptionOr<Variant<GC::Ref<CryptoKey>, GC::Ref<CryptoKeyPair>>> generate_key(AlgorithmParams const&, bool, Vector<Bindings::KeyUsage> const&) override;
+
+    static NonnullOwnPtr<AlgorithmMethods> create(JS::Realm& realm) { return adopt_own(*new AesOcb(realm)); }
+
+private:
+    explicit AesOcb(JS::Realm& realm)
+        : AlgorithmMethods(realm)
+    {
+    }
 };
 
 ErrorOr<String> base64_url_uint_encode(::Crypto::UnsignedBigInteger);

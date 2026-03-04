@@ -41,7 +41,7 @@ public:
     virtual void parent_context_did_dimension_child_root_box() override;
 
 private:
-    CSSPixels run_caption_layout(CSS::CaptionSide);
+    CSSPixels run_caption_layout(CSS::CaptionSide, AvailableSpace const&);
     CSSPixels compute_capmin();
     void compute_constrainedness();
     void compute_cell_measures();
@@ -77,6 +77,9 @@ private:
     bool distribute_excess_width_by_intrinsic_percentage(CSSPixels excess_width, ColumnFilter column_filter);
 
     bool use_fixed_mode_layout() const;
+
+    CSSPixels table_wrapper_containing_block_width() const;
+    CSSPixels table_wrapper_containing_block_height() const;
 
     CSSPixels m_table_height { 0 };
     CSSPixels m_automatic_content_height { 0 };

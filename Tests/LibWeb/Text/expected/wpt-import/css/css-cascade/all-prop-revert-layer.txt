@@ -1,9 +1,9 @@
 Harness status: OK
 
-Found 279 tests
+Found 286 tests
 
-273 Pass
-6 Fail
+282 Pass
+4 Fail
 Pass	accent-color
 Pass	border-collapse
 Pass	border-spacing
@@ -15,6 +15,7 @@ Pass	color-interpolation
 Pass	color-scheme
 Pass	cursor
 Pass	direction
+Pass	dominant-baseline
 Pass	empty-cells
 Pass	fill
 Pass	fill-opacity
@@ -23,6 +24,7 @@ Pass	font-family
 Pass	font-feature-settings
 Pass	font-kerning
 Pass	font-language-override
+Pass	font-optical-sizing
 Pass	font-size
 Pass	font-style
 Pass	font-variant-alternates
@@ -158,7 +160,7 @@ Pass	counter-set
 Pass	cx
 Pass	cy
 Pass	display
-Fail	filter
+Pass	filter
 Pass	flex-basis
 Pass	flex-direction
 Pass	flex-grow
@@ -222,6 +224,10 @@ Pass	outline-offset
 Pass	outline-style
 Pass	outline-width
 Pass	overflow-block
+Pass	overflow-clip-margin-bottom
+Pass	overflow-clip-margin-left
+Pass	overflow-clip-margin-right
+Pass	overflow-clip-margin-top
 Pass	overflow-inline
 Pass	overflow-x
 Pass	overflow-y
@@ -258,9 +264,10 @@ Pass	text-decoration-color
 Pass	text-decoration-style
 Pass	text-decoration-thickness
 Pass	text-overflow
+Pass	timeline-scope
 Pass	top
 Pass	touch-action
-Fail	transform
+Pass	transform
 Pass	transform-box
 Pass	transform-origin
 Pass	transform-style

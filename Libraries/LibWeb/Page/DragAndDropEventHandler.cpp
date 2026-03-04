@@ -5,6 +5,7 @@
  */
 
 #include <AK/ScopeGuard.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/DragEvent.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
@@ -12,6 +13,7 @@
 #include <LibWeb/HTML/SelectedFile.h>
 #include <LibWeb/MimeSniff/Resource.h>
 #include <LibWeb/Page/DragAndDropEventHandler.h>
+#include <LibWeb/UIEvents/KeyCode.h>
 
 namespace Web {
 

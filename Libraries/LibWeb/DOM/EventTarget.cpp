@@ -64,9 +64,9 @@ WebIDL::ExceptionOr<GC::Ref<EventTarget>> EventTarget::construct_impl(JS::Realm&
 
 void EventTarget::initialize(JS::Realm& realm)
 {
-    // FIXME: We can't do this for HTML::Window or HTML::WorkerGlobalScope, as this will run when creating the initial global object.
+    // FIXME: We can't do this for UniversalGlobalScopeMixin classes, as this will run when creating the initial global object.
     //        During this time, the ESO is not setup, so it will cause a nullptr dereference in host_defined_intrinsics.
-    if (!is_window_or_worker_global_scope_mixin())
+    if (!is_universal_global_scope_mixin())
         WEB_SET_PROTOTYPE_FOR_INTERFACE(EventTarget);
 
     Base::initialize(realm);
@@ -604,9 +604,7 @@ void EventTarget::activate_event_handler(FlyString const& name, HTML::EventHandl
             VERIFY(vm.argument_count() == 1);
 
             // The argument must be an object and it must be an Event.
-            auto event_wrapper_argument = vm.argument(0);
-            VERIFY(event_wrapper_argument.is_object());
-            auto& event = as<DOM::Event>(event_wrapper_argument.as_object());
+            auto& event = vm.argument(0).as<DOM::Event>();
 
             TRY(event_target->process_event_handler_for_event(name, event));
             return JS::js_undefined();

@@ -9,6 +9,7 @@
  */
 
 #include <AK/HashTable.h>
+#include <AK/JsonObjectSerializer.h>
 #include <AK/StringBuilder.h>
 #include <LibGC/DeferGC.h>
 #include <LibIPC/Decoder.h>
@@ -20,6 +21,7 @@
 #include <LibWeb/Bindings/NodePrototype.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleComputer.h>
+#include <LibWeb/DOM/AccessibilityTreeNode.h>
 #include <LibWeb/DOM/Attr.h>
 #include <LibWeb/DOM/CDATASection.h>
 #include <LibWeb/DOM/Comment.h>
@@ -47,6 +49,7 @@
 #include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/HTMLLegendElement.h>
+#include <LibWeb/HTML/HTMLScriptElement.h>
 #include <LibWeb/HTML/HTMLSelectElement.h>
 #include <LibWeb/HTML/HTMLSlotElement.h>
 #include <LibWeb/HTML/HTMLStyleElement.h>
@@ -57,6 +60,7 @@
 #include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/HTML/Scripting/SimilarOriginWindowAgent.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
+#include <LibWeb/HTML/XMLSerializer.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/TextNode.h>
@@ -418,6 +422,19 @@ GC::Ptr<HTML::Navigable> Node::navigable() const
     }
 }
 
+static bool reason_may_affect_has_selectors(StyleInvalidationReason reason)
+{
+    // :has() selectors match based on DOM state only (structure, attributes, pseudo-classes). Reasons that don't change
+    // any DOM state can't affect :has() matching, so we can skip scheduling :has() ancestor invalidation.
+    return !first_is_one_of(reason,
+        StyleInvalidationReason::BaseURLChanged,
+        StyleInvalidationReason::CSSFontLoaded,
+        StyleInvalidationReason::HTMLIFrameElementGeometryChange,
+        StyleInvalidationReason::HTMLObjectElementUpdateLayoutAndChildObjects,
+        StyleInvalidationReason::NavigableSetViewportSize,
+        StyleInvalidationReason::SettingsChange);
+}
+
 void Node::invalidate_style(StyleInvalidationReason reason)
 {
     if (is_character_data())
@@ -435,7 +452,7 @@ void Node::invalidate_style(StyleInvalidationReason reason)
                     return IterationDecision::Continue;
                 });
             }
-        } else {
+        } else if (reason_may_affect_has_selectors(reason)) {
             style_scope.schedule_ancestors_style_invalidation_due_to_presence_of_has(*this);
         }
     }
@@ -747,6 +764,15 @@ void Node::insert_before(GC::Ref<Node> node, GC::Ptr<Node> child, bool suppress_
                 signal_a_slot_change(*this_slot_element);
         }
 
+        // AD-HOC: Register any slot elements in the inserted subtree with the shadow root’s slot registry
+        //         before running assign_slottables_for_a_tree, so the registry is up-to-date.
+        if (auto* shadow_root = as_if<ShadowRoot>(node_to_insert->root())) {
+            node_to_insert->for_each_in_inclusive_subtree_of_type<HTML::HTMLSlotElement>([&](auto& slot) {
+                shadow_root->register_slot(slot);
+                return TraversalDecision::Continue;
+            });
+        }
+
         // 6. Run assign slottables for a tree with node’s root.
         assign_slottables_for_a_tree(node_to_insert->root());
 
@@ -813,7 +839,8 @@ void Node::insert_before(GC::Ref<Node> node, GC::Ptr<Node> child, bool suppress_
     }
 
     if (is_connected()) {
-        if (layout_node() && layout_node()->display().is_contents() && parent_element()) {
+        // NB: Called during DOM insertion, layout is not up to date.
+        if (unsafe_layout_node() && unsafe_layout_node()->display().is_contents() && parent_element()) {
             parent_element()->set_needs_layout_tree_update(true, SetNeedsLayoutTreeUpdateReason::NodeInsertBeforeWithDisplayContents);
         }
         set_needs_layout_tree_update(true, SetNeedsLayoutTreeUpdateReason::NodeInsertBefore);
@@ -953,9 +980,10 @@ void Node::remove(bool suppress_observers)
         // In the future, we should find a way to only invalidate the parts that actually need it.
         invalidate_style(StyleInvalidationReason::NodeRemove);
 
-        // NOTE: If we didn't have a layout node before, rebuilding the layout tree isn't gonna give us one
-        //       after we've been removed from the DOM.
-        if (layout_node())
+        // NOTE: If we didn’t have a layout node before, rebuilding the layout tree isn’t gonna give us one
+        //       after we’ve been removed from the DOM.
+        // NB: Called during DOM removal, layout is not up to date.
+        if (unsafe_layout_node())
             parent->set_needs_layout_tree_update(true, SetNeedsLayoutTreeUpdateReason::NodeRemove);
     }
 
@@ -977,10 +1005,15 @@ void Node::remove(bool suppress_observers)
 
     // 10. If node has an inclusive descendant that is a slot, then:
     auto has_descendent_slot = false;
+    auto* shadow_root = as_if<ShadowRoot>(parent_root);
 
-    for_each_in_inclusive_subtree_of_type<HTML::HTMLSlotElement>([&](auto const&) {
+    for_each_in_inclusive_subtree_of_type<HTML::HTMLSlotElement>([&](auto& slot) {
         has_descendent_slot = true;
-        return TraversalDecision::Break;
+        if (!shadow_root)
+            return TraversalDecision::Break;
+        // AD-HOC: Unregister slot from the shadow root's registry before assign_slottables_for_a_tree.
+        shadow_root->unregister_slot(slot);
+        return TraversalDecision::Continue;
     });
 
     if (has_descendent_slot) {
@@ -1262,9 +1295,10 @@ WebIDL::ExceptionOr<void> Node::move_node(Node& new_parent, Node* child)
         // In the future, we should find a way to only invalidate the parts that actually need it.
         old_parent->invalidate_style(StyleInvalidationReason::NodeRemove);
 
-        // NOTE: If we didn't have a layout node before, rebuilding the layout tree isn't gonna give us one
-        //       after we've been removed from the DOM.
-        if (layout_node())
+        // NOTE: If we didn’t have a layout node before, rebuilding the layout tree isn’t gonna give us one
+        //       after we’ve been removed from the DOM.
+        // NB: Called during DOM node move, layout is not up to date.
+        if (unsafe_layout_node())
             old_parent->set_needs_layout_tree_update(true, SetNeedsLayoutTreeUpdateReason::NodeRemove);
     }
 
@@ -1284,10 +1318,15 @@ WebIDL::ExceptionOr<void> Node::move_node(Node& new_parent, Node* child)
 
     // 16. If node has an inclusive descendant that is a slot:
     auto has_descendent_slot = false;
+    auto* shadow_root = as_if<ShadowRoot>(old_parent_root);
 
-    for_each_in_inclusive_subtree_of_type<HTML::HTMLSlotElement>([&](auto const&) {
+    for_each_in_inclusive_subtree_of_type<HTML::HTMLSlotElement>([&](auto& slot) {
         has_descendent_slot = true;
-        return TraversalDecision::Break;
+        if (!shadow_root)
+            return TraversalDecision::Break;
+        // AD-HOC: Unregister slot from the shadow root's registry before assign_slottables_for_a_tree.
+        shadow_root->unregister_slot(slot);
+        return TraversalDecision::Continue;
     });
 
     if (has_descendent_slot) {
@@ -1342,6 +1381,15 @@ WebIDL::ExceptionOr<void> Node::move_node(Node& new_parent, Node* child)
 
         if (is_named_shadow_host && this_element.is_slottable())
             assign_a_slot(this_element.as_slottable());
+    }
+
+    // AD-HOC: Register any slot elements in the moved subtree with the shadow root's slot registry so the registry is
+    //         up-to-date.
+    if (auto* new_shadow_root = as_if<ShadowRoot>(root())) {
+        for_each_in_inclusive_subtree_of_type<HTML::HTMLSlotElement>([&](auto& slot) {
+            new_shadow_root->register_slot(slot);
+            return TraversalDecision::Continue;
+        });
     }
 
     // 22. If newParent’s root is a shadow root, and newParent is a slot whose assigned nodes is empty, then run signal a slot change for newParent.
@@ -1556,6 +1604,25 @@ void Node::set_document(Document& document)
     }
 }
 
+void Node::recompute_editable_subtree_flag()
+{
+    bool new_value;
+    if (is_document()) {
+        new_value = as<Document>(*this).design_mode_enabled_state();
+    } else if (auto const* html_element = as_if<HTML::HTMLElement>(*this)) {
+        auto state = html_element->content_editable_state();
+        if (state == HTML::ContentEditableState::True || state == HTML::ContentEditableState::PlaintextOnly)
+            new_value = true;
+        else if (state == HTML::ContentEditableState::False)
+            new_value = false;
+        else
+            new_value = parent() && parent()->m_in_editable_subtree;
+    } else {
+        new_value = parent() && parent()->m_in_editable_subtree;
+    }
+    m_in_editable_subtree = new_value;
+}
+
 // https://w3c.github.io/editing/docs/execCommand/#editable
 bool Node::is_editable() const
 {
@@ -1569,7 +1636,7 @@ bool Node::is_editable() const
         return false;
 
     // its parent is an editing host or editable;
-    if (!parent() || !parent()->is_editable_or_editing_host())
+    if (!parent() || !parent()->m_in_editable_subtree)
         return false;
 
     // https://html.spec.whatwg.org/multipage/interaction.html#inert-subtrees
@@ -1605,7 +1672,7 @@ bool Node::is_editing_host() const
     //         `::editing_host()` to automatically traverse to the top-most editing host.
     auto state = html_element->content_editable_state();
     if ((state == HTML::ContentEditableState::True || state == HTML::ContentEditableState::PlaintextOnly)
-        && (!parent() || !parent()->is_editable_or_editing_host())) {
+        && (!parent() || !parent()->m_in_editable_subtree)) {
         return true;
     }
 
@@ -1669,7 +1736,7 @@ void Node::set_needs_layout_tree_update(bool value, SetNeedsLayoutTreeUpdateReas
             // NOTE: We check some conditions here to avoid debug spam in documents that don't do layout.
             auto navigable = this->navigable();
             bool any_ancestor_needs_layout_tree_update = false;
-            for (auto* ancestor = parent_or_shadow_host(); ancestor; ancestor = ancestor->parent_or_shadow_host()) {
+            for (auto* ancestor = flat_tree_parent(); ancestor; ancestor = ancestor->flat_tree_parent()) {
                 if (ancestor->needs_layout_tree_update()) {
                     any_ancestor_needs_layout_tree_update = true;
                     break;
@@ -1689,7 +1756,7 @@ void Node::set_needs_layout_tree_update(bool value, SetNeedsLayoutTreeUpdateReas
     }
 
     if (m_needs_layout_tree_update) {
-        for (auto* ancestor = parent_or_shadow_host(); ancestor; ancestor = ancestor->parent_or_shadow_host()) {
+        for (auto* ancestor = flat_tree_parent(); ancestor; ancestor = ancestor->flat_tree_parent()) {
             if (ancestor->m_child_needs_layout_tree_update)
                 break;
             ancestor->m_child_needs_layout_tree_update = true;
@@ -1704,7 +1771,8 @@ void Node::set_needs_layout_tree_update(bool value, SetNeedsLayoutTreeUpdateReas
             }
         }
 
-        if (auto layout_node = this->layout_node()) {
+        // NB: Propagating layout invalidation, layout is not up to date.
+        if (auto layout_node = this->unsafe_layout_node()) {
             layout_node->set_needs_layout_update(SetNeedsLayoutReason::LayoutTreeUpdate);
 
             // If the layout node has an anonymous parent, rebuild from the nearest non-anonymous ancestor.
@@ -1741,11 +1809,13 @@ void Node::post_connection()
 
 void Node::inserted()
 {
+    recompute_editable_subtree_flag();
     set_needs_style_update(true);
 }
 
 void Node::removed_from(Node*, Node&)
 {
+    m_in_editable_subtree = false;
     m_layout_node = nullptr;
     m_paintable = nullptr;
 }
@@ -1753,6 +1823,7 @@ void Node::removed_from(Node*, Node&)
 // https://dom.spec.whatwg.org/#concept-node-move-ext
 void Node::moved_from(GC::Ptr<Node>)
 {
+    recompute_editable_subtree_flag();
 }
 
 ParentNode* Node::parent_or_shadow_host()
@@ -1772,6 +1843,28 @@ Element* Node::parent_or_shadow_host_element()
         return static_cast<Element*>(parent());
     if (is<ShadowRoot>(*parent()))
         return static_cast<ShadowRoot&>(*parent()).host();
+    return nullptr;
+}
+
+ParentNode* Node::flat_tree_parent()
+{
+    // If we're assigned to a slot, that slot is our flat tree parent.
+    if (is_slottable()) {
+        auto& slottable = as_slottable().visit([](auto& node) -> SlottableMixin& { return *node; });
+        if (auto slot = slottable.assigned_slot())
+            return slot;
+    }
+
+    // Otherwise, this is the parent or shadow host.
+    return parent_or_shadow_host();
+}
+
+Element* Node::flat_tree_parent_element()
+{
+    for (auto* parent = flat_tree_parent(); parent; parent = parent->flat_tree_parent()) {
+        if (auto* element = as_if<Element>(parent))
+            return element;
+    }
     return nullptr;
 }
 
@@ -2571,6 +2664,20 @@ size_t Node::length() const
     return child_count();
 }
 
+Layout::Node const* Node::layout_node() const
+{
+    if (m_layout_node)
+        VERIFY(document().layout_is_up_to_date());
+    return m_layout_node;
+}
+
+Layout::Node* Node::layout_node()
+{
+    if (m_layout_node)
+        VERIFY(document().layout_is_up_to_date());
+    return m_layout_node;
+}
+
 void Node::set_paintable(GC::Ptr<Painting::Paintable> paintable)
 {
     m_paintable = paintable;
@@ -2581,27 +2688,63 @@ void Node::clear_paintable()
     m_paintable = nullptr;
 }
 
+void Node::set_needs_display(InvalidateDisplayList should_invalidate_display_list)
+{
+    if (auto* p = unsafe_paintable())
+        p->set_needs_display(should_invalidate_display_list);
+}
+
+void Node::set_needs_paint_only_properties_update()
+{
+    if (auto* p = unsafe_paintable())
+        p->set_needs_paint_only_properties_update(true);
+}
+
+void Node::set_needs_layout_update(SetNeedsLayoutReason reason)
+{
+    if (auto* node = unsafe_layout_node())
+        node->set_needs_layout_update(reason);
+}
+
 Painting::Paintable const* Node::paintable() const
 {
+    if (m_paintable)
+        VERIFY(document().layout_is_up_to_date());
     return m_paintable;
 }
 
 Painting::Paintable* Node::paintable()
 {
+    if (m_paintable)
+        VERIFY(document().layout_is_up_to_date());
     return m_paintable;
 }
 
 Painting::PaintableBox const* Node::paintable_box() const
 {
-    if (paintable() && paintable()->is_paintable_box())
-        return static_cast<Painting::PaintableBox const*>(paintable());
+    if (auto* p = paintable(); p && p->is_paintable_box())
+        return static_cast<Painting::PaintableBox const*>(p);
     return nullptr;
 }
 
 Painting::PaintableBox* Node::paintable_box()
 {
-    if (paintable() && paintable()->is_paintable_box())
-        return static_cast<Painting::PaintableBox*>(paintable());
+    if (auto* p = paintable(); p && p->is_paintable_box())
+        return static_cast<Painting::PaintableBox*>(p);
+    return nullptr;
+}
+
+Painting::PaintableBox const* Node::unsafe_paintable_box() const
+{
+    if (m_paintable && m_paintable->is_paintable_box())
+        return static_cast<Painting::PaintableBox const*>(m_paintable.ptr());
+    return nullptr;
+}
+
+Painting::PaintableBox* Node::unsafe_paintable_box()
+{
+    if (m_paintable && m_paintable->is_paintable_box())
+        return static_cast<Painting::PaintableBox*>(m_paintable.ptr());
     return nullptr;
 }
 

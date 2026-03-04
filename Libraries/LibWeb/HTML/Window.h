@@ -198,6 +198,7 @@ public:
     [[nodiscard]] GC::Ref<Navigator> navigator();
     [[nodiscard]] GC::Ref<CloseWatcherManager> close_watcher_manager();
     [[nodiscard]] GC::Ref<CookieStore::CookieStore> cookie_store();
+    [[nodiscard]] GC::Ref<Speech::SpeechSynthesis> speech_synthesis();
 
     void alert(String const& message = {});
     bool confirm(Optional<String> const& message);
@@ -249,6 +250,8 @@ public:
     void capture_events();
     void release_events();
 
+    [[nodiscard]] GC::Ref<External> external();
+
     [[nodiscard]] GC::Ref<CustomElementRegistry> custom_elements();
 
     HighResolutionTime::DOMHighResTimeStamp last_activation_timestamp() const { return m_last_activation_timestamp; }
@@ -261,7 +264,10 @@ public:
 
     void consume_history_action_user_activation();
 
+    static bool in_test_mode();
+    static void set_enable_test_mode(bool);
     static void set_internals_object_exposed(bool);
+    static bool is_internals_object_exposed();
 
     [[nodiscard]] OrderedHashMap<FlyString, GC::Ref<Navigable>> document_tree_child_navigable_target_name_property_set();
 
@@ -273,7 +279,7 @@ public:
 private:
     explicit Window(JS::Realm&);
 
-    virtual bool is_window_or_worker_global_scope_mixin() const final { return true; }
+    virtual bool is_universal_global_scope_mixin() const final { return true; }
 
     virtual void visit_edges(Cell::Visitor&) override;
     virtual void finalize() override;
@@ -315,6 +321,7 @@ private:
     GC::Ptr<Location> m_location;
     GC::Ptr<CloseWatcherManager> m_close_watcher_manager;
     GC::Ptr<CookieStore::CookieStore> m_cookie_store;
+    GC::Ptr<Speech::SpeechSynthesis> m_speech_synthesis;
 
     // https://html.spec.whatwg.org/multipage/nav-history-apis.html#window-navigation-api
     GC::Ptr<Navigation> m_navigation;
@@ -358,6 +365,9 @@ private:
     GC::Ptr<BarProp const> m_scrollbars;
     GC::Ptr<BarProp const> m_statusbar;
     GC::Ptr<BarProp const> m_toolbar;
+
+    // https://html.spec.whatwg.org/multipage/obsolete.html#dom-external
+    GC::Ptr<External> m_external;
 };
 
 void run_animation_frame_callbacks(DOM::Document&, double now);

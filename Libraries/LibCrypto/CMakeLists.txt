@@ -11,10 +11,12 @@ set(SOURCES
     BigInt/UnsignedBigInteger.cpp
     Certificate/Certificate.cpp
     Cipher/AES.cpp
+    Cipher/ChaCha.cpp
     ConstantTimeComparison.cpp
     Curves/EdwardsCurve.cpp
     Curves/SECPxxxr1.cpp
     Hash/Argon2.cpp
+    Hash/SHAKE.cpp
     Hash/BLAKE2b.cpp
     Hash/HKDF.cpp
     Hash/MD5.cpp
@@ -26,7 +28,6 @@ set(SOURCES
     PK/MLDSA.cpp
     PK/MLKEM.cpp
     PK/RSA.cpp
-    SecureRandom.cpp
 )
 
 ladybird_lib(LibCrypto crypto)

@@ -6,13 +6,14 @@
 
 #pragma once
 
-#include <AK/HashMap.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/OwnPtr.h>
+#include <AK/String.h>
 #include <AK/Utf16FlyString.h>
 #include <LibGC/CellAllocator.h>
 #include <LibGC/Weak.h>
 #include <LibGC/WeakInlines.h>
+#include <LibJS/Bytecode/ClassBlueprint.h>
 #include <LibJS/Bytecode/IdentifierTable.h>
 #include <LibJS/Bytecode/Label.h>
 #include <LibJS/Bytecode/Operand.h>
@@ -92,6 +93,11 @@ struct SourceRecord {
     u32 source_end_offset {};
 };
 
+struct SourceMapEntry {
+    u32 bytecode_offset {};
+    SourceRecord source_record {};
+};
+
 class JS_API Executable final : public Cell {
     GC_CELL(Executable, Cell);
     GC_DECLARE_ALLOCATOR(Executable);
@@ -126,27 +132,30 @@ public:
     NonnullOwnPtr<RegexTable> regex_table;
     Vector<Value> constants;
 
+    Vector<GC::Ptr<SharedFunctionInstanceData>> shared_function_data;
+    Vector<ClassBlueprint> class_blueprints;
+
     NonnullRefPtr<SourceCode const> source_code;
-    size_t number_of_registers { 0 };
+    u32 number_of_registers { 0 };
     bool is_strict_mode { false };
 
-    size_t registers_and_constants_and_locals_count { 0 };
+    u32 registers_and_locals_count { 0 };
+    u32 registers_and_locals_and_constants_count { 0 };
 
     struct ExceptionHandlers {
         size_t start_offset;
         size_t end_offset;
-        Optional<size_t> handler_offset;
-        Optional<size_t> finalizer_offset;
+        size_t handler_offset;
     };
 
     Vector<ExceptionHandlers> exception_handlers;
     Vector<size_t> basic_block_start_offsets;
 
-    HashMap<size_t, SourceRecord> source_map;
+    Vector<SourceMapEntry> source_map;
 
     Vector<LocalVariable> local_variable_names;
-    size_t local_index_base { 0 };
-    size_t argument_index_base { 0 };
+    u32 local_index_base { 0 };
+    u32 argument_index_base { 0 };
 
     Optional<PropertyKeyTableIndex> length_identifier;
 
@@ -166,6 +175,7 @@ public:
     [[nodiscard]] UnrealizedSourceRange source_range_at(size_t offset) const;
 
     void dump() const;
+    [[nodiscard]] String dump_to_string() const;
 
     [[nodiscard]] Operand original_operand_from_raw(u32) const;
 

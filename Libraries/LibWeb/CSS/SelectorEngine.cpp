@@ -5,9 +5,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/Keyword.h>
 #include <LibWeb/CSS/Parser/Parser.h>
+#include <LibWeb/CSS/PseudoClass.h>
 #include <LibWeb/CSS/SelectorEngine.h>
 #include <LibWeb/DOM/Attr.h>
 #include <LibWeb/DOM/Document.h>
@@ -141,10 +143,10 @@ static inline bool matches_lang_pseudo_class(DOM::Element const& element, Vector
 }
 
 // https://drafts.csswg.org/selectors-4/#relational
-static inline bool matches_relative_selector(CSS::Selector const& selector, size_t compound_index, DOM::Element const& element, GC::Ptr<DOM::Element const> shadow_host, MatchContext& context, GC::Ref<DOM::Element const> anchor)
+static inline bool matches_relative_selector(CSS::Selector const& selector, size_t compound_index, DOM::Element const& element, GC::Ptr<DOM::Element const> shadow_host, MatchContext& context, GC::Ref<DOM::Element const> anchor, GC::Ptr<DOM::ParentNode const> scope)
 {
     if (compound_index >= selector.compound_selectors().size())
-        return matches(selector, element, shadow_host, context, {}, {}, SelectorKind::Relative, anchor);
+        return matches(selector, element, shadow_host, context, {}, scope, SelectorKind::Relative, anchor);
 
     switch (selector.compound_selectors()[compound_index].combinator) {
     // Shouldn't be possible because we've parsed relative selectors, which always have a combinator, implicitly or explicitly.
@@ -157,7 +159,7 @@ static inline bool matches_relative_selector(CSS::Selector const& selector, size
             if (!descendant.is_element())
                 return TraversalDecision::Continue;
             auto const& descendant_element = static_cast<DOM::Element const&>(descendant);
-            if (matches(selector, descendant_element, shadow_host, context, {}, {}, SelectorKind::Relative, anchor)) {
+            if (matches(selector, descendant_element, shadow_host, context, {}, scope, SelectorKind::Relative, anchor)) {
                 has = true;
                 matching_descendant = &descendant_element;
                 return TraversalDecision::Break;
@@ -178,9 +180,9 @@ static inline bool matches_relative_selector(CSS::Selector const& selector, size
             if (!child.is_element())
                 return IterationDecision::Continue;
             auto const& child_element = static_cast<DOM::Element const&>(child);
-            if (!matches(selector, compound_index, child_element, shadow_host, context, {}, SelectorKind::Relative, anchor))
+            if (!matches(selector, compound_index, child_element, shadow_host, context, scope, SelectorKind::Relative, anchor))
                 return IterationDecision::Continue;
-            if (matches_relative_selector(selector, compound_index + 1, child_element, shadow_host, context, anchor)) {
+            if (matches_relative_selector(selector, compound_index + 1, child_element, shadow_host, context, anchor, scope)) {
                 has = true;
                 return IterationDecision::Break;
             }
@@ -195,18 +197,18 @@ static inline bool matches_relative_selector(CSS::Selector const& selector, size
         auto* sibling = element.next_element_sibling();
         if (!sibling)
             return false;
-        if (!matches(selector, compound_index, *sibling, shadow_host, context, {}, SelectorKind::Relative, anchor))
+        if (!matches(selector, compound_index, *sibling, shadow_host, context, scope, SelectorKind::Relative, anchor))
             return false;
-        return matches_relative_selector(selector, compound_index + 1, *sibling, shadow_host, context, anchor);
+        return matches_relative_selector(selector, compound_index + 1, *sibling, shadow_host, context, anchor, scope);
     }
     case CSS::Selector::Combinator::SubsequentSibling: {
         if (context.collect_per_element_selector_involvement_metadata) {
             const_cast<DOM::Element&>(*anchor).set_affected_by_has_pseudo_class_with_relative_selector_that_has_sibling_combinator(true);
         }
         for (auto const* sibling = element.next_element_sibling(); sibling; sibling = sibling->next_element_sibling()) {
-            if (!matches(selector, compound_index, *sibling, shadow_host, context, {}, SelectorKind::Relative, anchor))
+            if (!matches(selector, compound_index, *sibling, shadow_host, context, scope, SelectorKind::Relative, anchor))
                 continue;
-            if (matches_relative_selector(selector, compound_index + 1, *sibling, shadow_host, context, anchor))
+            if (matches_relative_selector(selector, compound_index + 1, *sibling, shadow_host, context, anchor, scope))
                 return true;
         }
         return false;
@@ -218,14 +220,14 @@ static inline bool matches_relative_selector(CSS::Selector const& selector, size
 }
 
 // https://drafts.csswg.org/selectors-4/#relational
-static inline bool matches_has_pseudo_class(CSS::Selector const& selector, DOM::Element const& anchor, GC::Ptr<DOM::Element const> shadow_host, MatchContext& context)
+static inline bool matches_has_pseudo_class(CSS::Selector const& selector, DOM::Element const& anchor, GC::Ptr<DOM::Element const> shadow_host, MatchContext& context, GC::Ptr<DOM::ParentNode const> scope)
 {
     if (context.has_result_cache) {
         if (auto cached = context.has_result_cache->get({ &selector, &anchor }); cached.has_value())
             return cached.value() == HasMatchResult::Matched;
     }
 
-    bool result = matches_relative_selector(selector, 0, anchor, shadow_host, context, anchor);
+    bool result = matches_relative_selector(selector, 0, anchor, shadow_host, context, anchor, scope);
 
     if (context.has_result_cache)
         context.has_result_cache->set({ &selector, &anchor }, result ? HasMatchResult::Matched : HasMatchResult::NotMatched);
@@ -505,7 +507,7 @@ static bool matches_open_state_pseudo_class(DOM::Element const& element, bool op
     return false;
 }
 
-// https://drafts.csswg.org/css-scoping/#host-selector
+// https://drafts.csswg.org/css-shadow-1/#host-selector
 static inline bool matches_host_pseudo_class(GC::Ref<DOM::Element const> element, GC::Ptr<DOM::Element const> shadow_host, MatchContext& context, CSS::SelectorList const& argument_selector_list)
 {
     // When evaluated in the context of a shadow tree, it matches the shadow tree’s shadow host if the shadow host,
@@ -555,6 +557,9 @@ static inline bool matches_pseudo_class(CSS::Selector::SimpleSelector::PseudoCla
     case CSS::PseudoClass::FocusWithin: {
         auto focused_area = element.document().focused_area();
         return focused_area && element.is_inclusive_ancestor_of(*focused_area);
+    }
+    case CSS::PseudoClass::Fullscreen: {
+        return element.is_fullscreen_element();
     }
     case CSS::PseudoClass::FirstChild:
         if (context.collect_per_element_selector_involvement_metadata) {
@@ -650,20 +655,20 @@ static inline bool matches_pseudo_class(CSS::Selector::SimpleSelector::PseudoCla
         }
         // These selectors should be relative selectors (https://drafts.csswg.org/selectors-4/#relative-selector)
         for (auto& selector : pseudo_class.argument_selector_list) {
-            if (matches_has_pseudo_class(selector, element, shadow_host, context))
+            if (matches_has_pseudo_class(selector, element, shadow_host, context, scope))
                 return true;
         }
         return false;
     case CSS::PseudoClass::Is:
     case CSS::PseudoClass::Where:
         for (auto& selector : pseudo_class.argument_selector_list) {
-            if (matches(selector, element, shadow_host, context))
+            if (matches(selector, element, shadow_host, context, {}, scope))
                 return true;
         }
         return false;
     case CSS::PseudoClass::Not:
         for (auto& selector : pseudo_class.argument_selector_list) {
-            if (matches(selector, element, shadow_host, context))
+            if (matches(selector, element, shadow_host, context, {}, scope))
                 return false;
         }
         return true;
@@ -784,17 +789,8 @@ static inline bool matches_pseudo_class(CSS::Selector::SimpleSelector::PseudoCla
         return !matches_read_write_pseudo_class(element);
     case CSS::PseudoClass::ReadWrite:
         return matches_read_write_pseudo_class(element);
-    case CSS::PseudoClass::PlaceholderShown: {
-        // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-placeholder-shown
-        //  The :placeholder-shown pseudo-class must match any element falling into one of the following categories:
-        // - input elements that have a placeholder attribute whose value is currently being presented to the user.
-        if (is<HTML::HTMLInputElement>(element) && element.has_attribute(HTML::AttributeNames::placeholder)) {
-            auto const& input_element = static_cast<HTML::HTMLInputElement const&>(element);
-            return input_element.placeholder_element() && input_element.placeholder_value().has_value();
-        }
-        // - FIXME: textarea elements that have a placeholder attribute whose value is currently being presented to the user.
-        return false;
-    }
+    case CSS::PseudoClass::PlaceholderShown:
+        return element.matches_placeholder_shown_pseudo_class();
     case CSS::PseudoClass::Open:
         return matches_open_state_pseudo_class(element, pseudo_class.type == CSS::PseudoClass::Open);
     case CSS::PseudoClass::Modal: {
@@ -1174,7 +1170,9 @@ static inline bool matches(CSS::Selector::SimpleSelector const& component, DOM::
     VERIFY_NOT_REACHED();
 }
 
-bool matches(CSS::Selector const& selector, int component_list_index, DOM::Element const& initial_element, GC::Ptr<DOM::Element const> shadow_host, MatchContext& context, GC::Ptr<DOM::ParentNode const> scope, SelectorKind selector_kind, GC::Ptr<DOM::Element const> anchor)
+bool matches(CSS::Selector const& selector, int component_list_index, DOM::Element const& initial_element,
+    GC::Ptr<DOM::Element const> shadow_host, MatchContext& context, GC::Ptr<DOM::ParentNode const> scope,
+    SelectorKind selector_kind, GC::Ptr<DOM::Element const> anchor)
 {
     auto& compound_selector = selector.compound_selectors()[component_list_index];
     NonnullRawPtr element_for_compound_matching { initial_element };
@@ -1251,20 +1249,35 @@ bool matches(CSS::Selector const& selector, int component_list_index, DOM::Eleme
 
 bool fast_matches(CSS::Selector const& selector, DOM::Element const& element_to_match, GC::Ptr<DOM::Element const> shadow_host, MatchContext& context);
 
-bool matches(CSS::Selector const& selector, DOM::Element const& element, GC::Ptr<DOM::Element const> shadow_host, MatchContext& context, Optional<CSS::PseudoElement> pseudo_element, GC::Ptr<DOM::ParentNode const> scope, SelectorKind selector_kind, GC::Ptr<DOM::Element const> anchor)
+bool matches(CSS::Selector const& selector, DOM::Element const& element, GC::Ptr<DOM::Element const> shadow_host,
+    MatchContext& context, Optional<CSS::PseudoElement> pseudo_element, GC::Ptr<DOM::ParentNode const> scope,
+    SelectorKind selector_kind, GC::Ptr<DOM::Element const> anchor)
 {
-    if (selector_kind == SelectorKind::Normal && selector.can_use_fast_matches()) {
+    if (selector_kind == SelectorKind::Normal && selector.can_use_fast_matches())
         return fast_matches(selector, element, shadow_host, context);
-    }
+
     VERIFY(!selector.compound_selectors().is_empty());
-    // FIXME: Selectors can have multiple pseudo-elements, and we need to check them one by one, not just do a simple match.
-    //        Ignoring it for ::part() is a hack.
-    if (!selector.has_part_pseudo_element()) {
+    if (selector.has_part_pseudo_element()) {
+        // For ::part() selectors, find any additional pseudo-element beyond ::part() (e.g., the ::selection in
+        // ::part(foo)::selection) and verify it matches the target pseudo-element. A bare ::part(foo) selector has no
+        // additional pseudo-element and should only match base element styles.
+        Optional<CSS::PseudoElement> target_pseudo;
+        for (auto const& simple : selector.compound_selectors().last().simple_selectors) {
+            if (simple.type == CSS::Selector::SimpleSelector::Type::PseudoElement
+                && simple.pseudo_element().type() != CSS::PseudoElement::Part) {
+                target_pseudo = simple.pseudo_element().type();
+                break;
+            }
+        }
+        if (target_pseudo != pseudo_element)
+            return false;
+    } else {
         if (pseudo_element.has_value() && selector.pseudo_element().has_value() && selector.pseudo_element().value().type() != pseudo_element)
             return false;
         if (!pseudo_element.has_value() && selector.pseudo_element().has_value())
             return false;
     }
+
     return matches(selector, selector.compound_selectors().size() - 1, element, shadow_host, context, scope, selector_kind, anchor);
 }
 

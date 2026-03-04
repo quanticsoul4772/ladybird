@@ -24,8 +24,10 @@
 #include <LibWeb/ARIA/RoleType.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/CSS/ComputedProperties.h>
+#include <LibWeb/CSS/CustomPropertyData.h>
 #include <LibWeb/CSS/Parser/ErrorReporter.h>
 #include <LibWeb/CSS/StyleComputer.h>
+#include <LibWeb/CSS/StyleSheetList.h>
 #include <LibWeb/CookieStore/CookieStore.h>
 #include <LibWeb/DOM/Attr.h>
 #include <LibWeb/DOM/CharacterData.h>
@@ -38,6 +40,7 @@
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
+#include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/SelectedFile.h>
 #include <LibWeb/HTML/Storage.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
@@ -55,6 +58,7 @@
 #include <LibWeb/PermissionsPolicy/AutoplayAllowlist.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWebView/Attribute.h>
+#include <LibWebView/ViewImplementation.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/PageClient.h>
 #include <WebContent/PageHost.h>
@@ -199,10 +203,10 @@ void ConnectionFromClient::traverse_the_history_by_delta(u64 page_id, i32 delta)
         page->page().traverse_the_history_by_delta(delta);
 }
 
-void ConnectionFromClient::set_viewport_size(u64 page_id, Web::DevicePixelSize size)
+void ConnectionFromClient::set_viewport(u64 page_id, Web::DevicePixelSize size, double device_pixel_ratio)
 {
     if (auto page = this->page(page_id); page.has_value())
-        page->set_viewport_size(size);
+        page->set_viewport(size, device_pixel_ratio);
 }
 
 void ConnectionFromClient::ready_to_paint(u64 page_id)
@@ -339,13 +343,15 @@ void ConnectionFromClient::debug_request(u64 page_id, ByteString request, ByteSt
     }
 
     if (request == "dump-all-resolved-styles") {
-        auto dump_style = [](String const& title, Web::CSS::ComputedProperties const& style, OrderedHashMap<FlyString, Web::CSS::StyleProperty> const& custom_properties) {
+        auto dump_style = [](String const& title, Web::CSS::ComputedProperties const& style, RefPtr<Web::CSS::CustomPropertyData const> custom_property_data) {
             dbgln("+ {}", title);
             for (size_t i = to_underlying(Web::CSS::first_longhand_property_id); i < to_underlying(Web::CSS::last_longhand_property_id); ++i) {
                 dbgln("|  {} = {}", Web::CSS::string_from_property_id(static_cast<Web::CSS::PropertyID>(i)), style.property(static_cast<Web::CSS::PropertyID>(i)).to_string(Web::CSS::SerializationMode::Normal));
             }
-            for (auto const& [name, property] : custom_properties) {
-                dbgln("|  {} = {}", name, property.value->to_string(Web::CSS::SerializationMode::Normal));
+            if (custom_property_data) {
+                custom_property_data->for_each_property([](FlyString const& name, Web::CSS::StyleProperty const& property) {
+                    dbgln("|  {} = {}", name, property.value->to_string(Web::CSS::SerializationMode::Normal));
+                });
             }
             dbgln("---");
         };
@@ -359,12 +365,12 @@ void ConnectionFromClient::debug_request(u64 page_id, ByteString request, ByteSt
                     nodes_to_visit.enqueue(child.ptr());
                 if (auto* element = as_if<Web::DOM::Element>(node)) {
                     auto styles = doc->style_computer().compute_style({ *element });
-                    dump_style(MUST(String::formatted("Element {}", node->debug_description())), styles, element->custom_properties({}));
+                    dump_style(MUST(String::formatted("Element {}", node->debug_description())), styles, element->custom_property_data({}));
 
                     for (auto pseudo_element_index = 0; pseudo_element_index < to_underlying(Web::CSS::PseudoElement::KnownPseudoElementCount); ++pseudo_element_index) {
                         auto pseudo_element_type = static_cast<Web::CSS::PseudoElement>(pseudo_element_index);
                         if (auto pseudo_element = element->get_pseudo_element(pseudo_element_type); pseudo_element.has_value() && pseudo_element->computed_properties()) {
-                            dump_style(MUST(String::formatted("PseudoElement {}::{}", node->debug_description(), Web::CSS::pseudo_element_name(pseudo_element_type))), *pseudo_element->computed_properties(), pseudo_element->custom_properties());
+                            dump_style(MUST(String::formatted("PseudoElement {}::{}", node->debug_description(), Web::CSS::pseudo_element_name(pseudo_element_type))), *pseudo_element->computed_properties(), pseudo_element->custom_property_data());
                         }
                     }
                 }
@@ -499,9 +505,10 @@ void ConnectionFromClient::inspect_dom_node(u64 page_id, WebView::DOMNodePropert
         });
 
         // FIXME: Custom properties are not yet included in ComputedProperties, so add them manually.
-        auto custom_properties = element.custom_properties(pseudo_element);
-        for (auto const& [name, value] : custom_properties) {
-            serialized.set(name, value.value->to_string(Web::CSS::SerializationMode::Normal));
+        if (auto custom_property_data = element.custom_property_data(pseudo_element)) {
+            custom_property_data->for_each_property([&](FlyString const& name, Web::CSS::StyleProperty const& value) {
+                serialized.set(name, value.value->to_string(Web::CSS::SerializationMode::Normal));
+            });
         }
 
         return serialized;
@@ -662,6 +669,21 @@ void ConnectionFromClient::set_listen_for_dom_mutations(u64 page_id, bool listen
         return;
 
     page->page().set_listen_for_dom_mutations(listen_for_dom_mutations);
+}
+
+void ConnectionFromClient::did_connect_devtools_client(u64 page_id)
+{
+    if (auto page = this->page(page_id); page.has_value())
+        page->did_connect_devtools_client();
+}
+
+void ConnectionFromClient::did_disconnect_devtools_client(u64 page_id)
+{
+    auto page = this->page(page_id);
+    if (!page.has_value())
+        return;
+
+    page->did_disconnect_devtools_client();
 }
 
 void ConnectionFromClient::get_dom_node_inner_html(u64 page_id, Web::UniqueNodeID node_id)
@@ -1016,7 +1038,7 @@ void ConnectionFromClient::request_internal_page_info(u64 page_id, WebView::Page
 {
     auto page = this->page(page_id);
     if (!page.has_value()) {
-        async_did_get_internal_page_info(page_id, type, "(no page)"_string);
+        async_did_get_internal_page_info(page_id, type, {});
         return;
     }
 
@@ -1050,7 +1072,9 @@ void ConnectionFromClient::request_internal_page_info(u64 page_id, WebView::Page
         append_gc_graph(builder);
     }
 
-    async_did_get_internal_page_info(page_id, type, MUST(builder.to_string()));
+    auto buffer = MUST(Core::AnonymousBuffer::create_with_size(builder.length()));
+    memcpy(buffer.data<void>(), builder.string_view().characters_without_null_termination(), builder.length());
+    async_did_get_internal_page_info(page_id, type, buffer);
 }
 
 Messages::WebContentServer::GetSelectedTextResponse ConnectionFromClient::get_selected_text(u64 page_id)
@@ -1179,12 +1203,6 @@ void ConnectionFromClient::set_is_scripting_enabled(u64 page_id, bool is_scripti
         page->set_is_scripting_enabled(is_scripting_enabled);
 }
 
-void ConnectionFromClient::set_device_pixel_ratio(u64 page_id, double device_pixel_ratio)
-{
-    if (auto page = this->page(page_id); page.has_value())
-        page->set_device_pixel_ratio(device_pixel_ratio);
-}
-
 void ConnectionFromClient::set_zoom_level(u64 page_id, double zoom_level)
 {
     if (auto page = this->page(page_id); page.has_value())
@@ -1262,12 +1280,6 @@ void ConnectionFromClient::run_javascript(u64 page_id, String js_source)
         page->run_javascript(js_source);
 }
 
-void ConnectionFromClient::js_console_request_messages(u64 page_id, i32 start_index)
-{
-    if (auto page = this->page(page_id); page.has_value())
-        page->js_console_request_messages(start_index);
-}
-
 void ConnectionFromClient::alert_closed(u64 page_id)
 {
     if (auto page = this->page(page_id); page.has_value())
@@ -1328,6 +1340,12 @@ void ConnectionFromClient::toggle_media_loop_state(u64 page_id)
         page->page().toggle_media_loop_state();
 }
 
+void ConnectionFromClient::toggle_media_fullscreen_state(u64 page_id)
+{
+    if (auto page = this->page(page_id); page.has_value())
+        page->page().toggle_media_fullscreen_state();
+}
+
 void ConnectionFromClient::toggle_media_controls_state(u64 page_id)
 {
     if (auto page = this->page(page_id); page.has_value())
@@ -1352,13 +1370,43 @@ void ConnectionFromClient::system_time_zone_changed()
     Unicode::clear_system_time_zone_cache();
 }
 
-void ConnectionFromClient::cookies_changed(Vector<Web::Cookie::Cookie> cookies)
+void ConnectionFromClient::set_document_cookie_version_buffer(u64 page_id, Core::AnonymousBuffer document_cookie_version_buffer)
 {
-    for (auto& navigable : Web::HTML::all_navigables()) {
-        auto window = navigable->active_window();
+    if (auto page = this->page(page_id); page.has_value())
+        page->page().client().page_did_receive_document_cookie_version_buffer(move(document_cookie_version_buffer));
+}
+
+void ConnectionFromClient::set_document_cookie_version_index(u64 page_id, i64 document_id, Core::SharedVersionIndex document_index)
+{
+    if (auto page = this->page(page_id); page.has_value())
+        page->page().client().page_did_receive_document_cookie_version_index(document_id, document_index);
+}
+
+void ConnectionFromClient::cookies_changed(u64 page_id, Vector<HTTP::Cookie::Cookie> cookies)
+{
+    if (auto page = this->page(page_id); page.has_value()) {
+        auto window = page->page().top_level_traversable()->active_window();
         if (!window)
             return;
-        window->cookie_store()->process_cookie_changes(cookies);
+
+        window->cookie_store()->process_cookie_changes(move(cookies));
+    }
+}
+
+// https://html.spec.whatwg.org/multipage/speculative-loading.html#nav-traversal-ui:close-a-top-level-traversable
+void ConnectionFromClient::request_close(u64 page_id)
+{
+    // Browser user agents should offer users the ability to arbitrarily close any top-level traversable in their top-level traversable set.
+    // For example, by clicking a "close tab" button.
+    if (auto page = this->page(page_id); page.has_value())
+        page->page().top_level_traversable()->close_top_level_traversable();
+}
+
+void ConnectionFromClient::exit_fullscreen(u64 page_id)
+{
+    if (auto page = this->page(page_id); page.has_value()) {
+        Web::HTML::TemporaryExecutionContext context(page->page().top_level_browsing_context().active_document()->realm(), Web::HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
+        page->page().top_level_browsing_context().active_document()->fully_exit_fullscreen();
     }
 }
 

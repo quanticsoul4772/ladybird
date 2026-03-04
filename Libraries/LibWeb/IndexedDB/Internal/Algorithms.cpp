@@ -8,6 +8,7 @@
 #include <AK/Math.h>
 #include <AK/NumericLimits.h>
 #include <AK/QuickSort.h>
+#include <LibGC/HeapVector.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
@@ -325,7 +326,7 @@ WebIDL::ExceptionOr<GC::Ref<Key>> convert_a_value_to_a_key(JS::Realm& realm, JS:
         seen.append(input);
 
         // 3. Let keys be a new empty list.
-        Vector<GC::Root<Key>> keys;
+        auto keys = realm.heap().allocate<GC::HeapVector<GC::Ref<Key>>>();
 
         // 4. Let index be 0.
         u64 index = 0;
@@ -351,7 +352,7 @@ WebIDL::ExceptionOr<GC::Ref<Key>> convert_a_value_to_a_key(JS::Realm& realm, JS:
                 return key;
 
             // 7. Append key to keys.
-            keys.append(key);
+            keys->elements().append(key);
 
             // 8. Increase index by 1.
             index++;
@@ -882,7 +883,7 @@ WebIDL::ExceptionOr<GC::Ref<Key>> convert_a_value_to_a_multi_entry_key(JS::Realm
         Vector<JS::Value> seen { value };
 
         // 3. Let keys be a new empty list.
-        Vector<GC::Root<Key>> keys;
+        auto keys = realm.heap().allocate<GC::HeapVector<GC::Ref<Key>>>();
 
         // 4. Let index be 0.
         u64 index = 0;
@@ -903,8 +904,8 @@ WebIDL::ExceptionOr<GC::Ref<Key>> convert_a_value_to_a_multi_entry_key(JS::Realm
                 if (!completion_key.is_error()) {
                     auto key = completion_key.release_value();
 
-                    if (!key->is_invalid() && !keys.contains_slow(key))
-                        keys.append(key);
+                    if (!key->is_invalid() && !keys->elements().contains_slow(key))
+                        keys->elements().append(key);
                 }
             }
 
@@ -2194,7 +2195,7 @@ bool cleanup_indexed_database_transactions(GC::Ref<HTML::EventLoop> event_loop)
 bool is_a_potentially_valid_key_range(JS::Realm& realm, JS::Value value)
 {
     // 1. If value is a key range, return true.
-    if (value.is_object() && is<IDBKeyRange>(value.as_object()))
+    if (value.is<IDBKeyRange>())
         return true;
 
     // 2. Else if Type(value) is Number, return true.
@@ -2389,8 +2390,13 @@ WebIDL::ExceptionOr<GC::Ref<IDBRequest>> create_a_request_to_retrieve_multiple_i
         [](GC::Ref<IDBIndex> index) -> Variant<GC::Ref<ObjectStore>, GC::Ref<Index>> { return index->index(); },
         [](GC::Ref<IDBObjectStore> object_store) -> Variant<GC::Ref<ObjectStore>, GC::Ref<Index>> { return object_store->store(); });
 
-    // FIXME: 2. If source has been deleted, throw an "InvalidStateError" DOMException.
-    // FIXME: 3. If source is an index and source’s object store has been deleted, throw an "InvalidStateError" DOMException.
+    // 2. If source has been deleted, throw an "InvalidStateError" DOMException.
+    // 3. If source is an index and source’s object store has been deleted, throw an "InvalidStateError" DOMException.
+    auto is_source_or_object_store_deleted = source.visit(
+        [](GC::Ref<ObjectStore> object_store) { return object_store->is_deleted(); },
+        [](GC::Ref<Index> index) { return index->is_deleted() || index->object_store()->is_deleted(); });
+    if (is_source_or_object_store_deleted)
+        return WebIDL::InvalidStateError::create(realm, "Source or its object store has been deleted"_utf16);
 
     // 4. Let transaction be sourceHandle’s transaction.
     auto transaction = source_handle.visit(

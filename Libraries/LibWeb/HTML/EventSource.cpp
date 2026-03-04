@@ -72,7 +72,7 @@ WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::construct_impl(JS::Realm&
     request->header_list()->set({ "Accept"sv, "text/event-stream"sv });
 
     // 11. Set request's cache mode to "no-store".
-    request->set_cache_mode(Fetch::Infrastructure::Request::CacheMode::NoStore);
+    request->set_cache_mode(HTTP::CacheMode::NoStore);
 
     // 12. Set request's initiator type to "other".
     request->set_initiator_type(Fetch::Infrastructure::Request::InitiatorType::Other);
@@ -178,6 +178,8 @@ void EventSource::initialize(JS::Realm& realm)
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#garbage-collection
 void EventSource::finalize()
 {
+    Base::finalize();
+
     // If an EventSource object is garbage collected while its connection is still open, the user agent must abort any
     // instance of the fetch algorithm opened by this EventSource.
     if (m_ready_state != ReadyState::Closed) {

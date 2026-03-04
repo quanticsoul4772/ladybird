@@ -51,10 +51,13 @@ using ByteCodeValueType = u64;
     __ENUMERATE_OPCODE(CheckStepBack)              \
     __ENUMERATE_OPCODE(CheckSavedPosition)         \
     __ENUMERATE_OPCODE(ClearCaptureGroup)          \
+    __ENUMERATE_OPCODE(FailIfEmpty)                \
     __ENUMERATE_OPCODE(Repeat)                     \
     __ENUMERATE_OPCODE(ResetRepeat)                \
     __ENUMERATE_OPCODE(Checkpoint)                 \
     __ENUMERATE_OPCODE(CompareSimple)              \
+    __ENUMERATE_OPCODE(SaveModifiers)              \
+    __ENUMERATE_OPCODE(RestoreModifiers)           \
     __ENUMERATE_OPCODE(Exit)
 
 // clang-format off
@@ -163,8 +166,9 @@ struct CompareTypeAndValuePair {
 };
 
 REGEX_API extern u32 s_next_string_table_serial;
+
 template<typename StringType>
-struct REGEX_API StringTable {
+struct StringTable {
     StringTable()
         : m_serial(s_next_string_table_serial++)
     {
@@ -497,6 +501,17 @@ public:
         m_group_name_mappings.set(capture_groups_count - 1, name_string_index);
     }
 
+    void insert_bytecode_save_modifiers(FlagsUnderlyingType new_modifiers)
+    {
+        empend(static_cast<ByteCodeValueType>(OpCodeId::SaveModifiers));
+        empend(static_cast<ByteCodeValueType>(new_modifiers));
+    }
+
+    void insert_bytecode_restore_modifiers()
+    {
+        empend(static_cast<ByteCodeValueType>(OpCodeId::RestoreModifiers));
+    }
+
     enum class LookAroundType {
         LookAhead,
         LookBehind,
@@ -626,6 +641,10 @@ public:
                 return transform_bytecode_repetition_min_one(bytecode_to_repeat, greedy);
         }
 
+        if (minimum == 0 && maximum.has_value() && maximum.value() == 1) {
+            return transform_bytecode_repetition_zero_or_one(bytecode_to_repeat, greedy);
+        }
+
         ByteCode new_bytecode;
         new_bytecode.insert_bytecode_repetition_n(bytecode_to_repeat, minimum, min_repetition_mark_id);
 
@@ -633,10 +652,14 @@ public:
             // (REPEAT REGEXP MIN)
             // LABEL _MAX_LOOP            |
             // FORK END                   |
+            // CHECKPOINT (if min==0)     |
             // REGEXP                     |
+            // FAILIFEMPTY (if min==0)    |
             // REPEAT _MAX_LOOP MAX-MIN   | if max > min
             // FORK END                   |
+            // CHECKPOINT (if min==0)     |
             // REGEXP                     |
+            // FAILIFEMPTY (if min==0)    |
             // LABEL END                  |
             // RESET _MAX_LOOP            |
             auto jump_kind = static_cast<ByteCodeValueType>(greedy ? OpCodeId::ForkStay : OpCodeId::ForkJump);
@@ -644,18 +667,48 @@ public:
                 new_bytecode.empend(jump_kind);
                 new_bytecode.empend((ByteCodeValueType)0); // Placeholder for the jump target.
                 auto pre_loop_fork_jump_index = new_bytecode.size();
+
+                auto checkpoint1 = minimum == 0 ? s_next_checkpoint_serial_id++ : 0;
+                if (minimum == 0) {
+                    new_bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::Checkpoint));
+                    new_bytecode.empend(static_cast<ByteCodeValueType>(checkpoint1));
+                }
+
                 new_bytecode.extend(bytecode_to_repeat);
+
+                if (minimum == 0) {
+                    new_bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::FailIfEmpty));
+                    new_bytecode.empend(checkpoint1);
+                }
+
                 auto repetitions = maximum.value() - minimum;
                 auto fork_jump_address = new_bytecode.size();
                 if (repetitions > 1) {
+                    auto repeated_bytecode_size = bytecode_to_repeat.size();
+                    if (minimum == 0)
+                        repeated_bytecode_size += 4; // Checkpoint + FailIfEmpty
+
                     new_bytecode.empend((ByteCodeValueType)OpCodeId::Repeat);
-                    new_bytecode.empend(bytecode_to_repeat.size() + 2);
+                    new_bytecode.empend(repeated_bytecode_size + 2);
                     new_bytecode.empend(static_cast<ByteCodeValueType>(repetitions - 1));
                     new_bytecode.empend(max_repetition_mark_id);
                     new_bytecode.empend(jump_kind);
                     new_bytecode.empend((ByteCodeValueType)0); // Placeholder for the jump target.
                     auto post_loop_fork_jump_index = new_bytecode.size();
+
+                    auto checkpoint2 = minimum == 0 ? s_next_checkpoint_serial_id++ : 0;
+                    if (minimum == 0) {
+                        new_bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::Checkpoint));
+                        new_bytecode.empend(static_cast<ByteCodeValueType>(checkpoint2));
+                    }
+
                     new_bytecode.extend(bytecode_to_repeat);
+
+                    if (minimum == 0) {
+                        new_bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::FailIfEmpty));
+                        new_bytecode.empend(checkpoint2);
+                    }
+
                     fork_jump_address = new_bytecode.size();
 
                     new_bytecode[post_loop_fork_jump_index - 1] = (ByteCodeValueType)(fork_jump_address - post_loop_fork_jump_index);
@@ -739,6 +792,7 @@ public:
         // FORKJUMP _END  (FORKSTAY -> Greedy)
         // CHECKPOINT _C
         // REGEXP
+        // FAILIFEMPTY _C
         // JUMP_NONEMPTY _C _START JUMP
         // LABEL _END
 
@@ -750,13 +804,16 @@ public:
         else
             bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
 
-        bytecode.empend(bytecode_to_repeat.size() + 2 + 4); // Jump to the _END label
+        bytecode.empend(bytecode_to_repeat.size() + 2 + 4 + 2); // Jump to the _END label
 
         auto checkpoint = s_next_checkpoint_serial_id++;
         bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::Checkpoint));
         bytecode.empend(static_cast<ByteCodeValueType>(checkpoint));
 
         bytecode.extend(bytecode_to_repeat);
+
+        bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::FailIfEmpty));
+        bytecode.empend(checkpoint);
 
         bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::JumpNonEmpty));
         bytecode.empend(-bytecode.size() - 3); // Jump(...) to the _START label...
@@ -770,7 +827,9 @@ public:
     static void transform_bytecode_repetition_zero_or_one(ByteCode& bytecode_to_repeat, bool greedy)
     {
         // FORKJUMP _END (FORKSTAY -> Greedy)
+        // CHECKPOINT _C
         // REGEXP
+        // FAILIFEMPTY _C
         // LABEL _END
         ByteCode bytecode;
 
@@ -779,9 +838,16 @@ public:
         else
             bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::ForkJump));
 
-        bytecode.empend(bytecode_to_repeat.size()); // Jump to the _END label
+        bytecode.empend(bytecode_to_repeat.size() + 4); // Jump to the _END label
+
+        auto checkpoint = s_next_checkpoint_serial_id++;
+        bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::Checkpoint));
+        bytecode.empend(static_cast<ByteCodeValueType>(checkpoint));
 
         bytecode.extend(move(bytecode_to_repeat));
+
+        bytecode.empend(static_cast<ByteCodeValueType>(OpCodeId::FailIfEmpty));
+        bytecode.empend(checkpoint);
         // LABEL _END = bytecode.size()
 
         bytecode_to_repeat = move(bytecode);
@@ -857,7 +923,7 @@ StringView character_class_name(CharClass ch_class);
 StringView fork_if_condition_name(ForkIfCondition condition);
 
 template<typename ByteCode>
-class REGEX_API OpCode {
+class OpCode {
 public:
     OpCode() = default;
     virtual ~OpCode() = default;
@@ -871,7 +937,7 @@ public:
         return m_bytecode->at(state().instruction_position + 1 + offset);
     }
 
-    ALWAYS_INLINE StringView name() const;
+    ALWAYS_INLINE StringView name() const { return name(opcode_id()); }
     static StringView name(OpCodeId);
 
     ALWAYS_INLINE void set_state(MatchState const& state) { m_state = &state; }
@@ -895,7 +961,36 @@ protected:
 };
 
 template<typename ByteCode>
-class OpCode_Exit final : public OpCode<ByteCode> {
+class REGEX_API OpCode_SaveModifiers final : public OpCode<ByteCode> {
+public:
+    using OpCode<ByteCode>::argument;
+    using OpCode<ByteCode>::name;
+    using OpCode<ByteCode>::state;
+    using OpCode<ByteCode>::bytecode;
+
+    ExecutionResult execute(MatchInput const& input, MatchState& state) const override;
+    ALWAYS_INLINE OpCodeId opcode_id() const override { return OpCodeId::SaveModifiers; }
+    ALWAYS_INLINE size_t size() const override { return 2; }
+    ALWAYS_INLINE FlagsUnderlyingType new_modifiers() const { return argument(0); }
+    ByteString arguments_string() const override { return ByteString::formatted("new_modifiers={:#x}", new_modifiers()); }
+};
+
+template<typename ByteCode>
+class REGEX_API OpCode_RestoreModifiers final : public OpCode<ByteCode> {
+public:
+    using OpCode<ByteCode>::argument;
+    using OpCode<ByteCode>::name;
+    using OpCode<ByteCode>::state;
+    using OpCode<ByteCode>::bytecode;
+
+    ExecutionResult execute(MatchInput const& input, MatchState& state) const override;
+    ALWAYS_INLINE OpCodeId opcode_id() const override { return OpCodeId::RestoreModifiers; }
+    ALWAYS_INLINE size_t size() const override { return 1; }
+    ByteString arguments_string() const override { return ByteString::empty(); }
+};
+
+template<typename ByteCode>
+class REGEX_API OpCode_Exit final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -909,7 +1004,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_FailForks final : public OpCode<ByteCode> {
+class REGEX_API OpCode_FailForks final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -923,7 +1018,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_PopSaved final : public OpCode<ByteCode> {
+class REGEX_API OpCode_PopSaved final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -937,7 +1032,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_Save final : public OpCode<ByteCode> {
+class REGEX_API OpCode_Save final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -951,7 +1046,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_Restore final : public OpCode<ByteCode> {
+class REGEX_API OpCode_Restore final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -965,7 +1060,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_GoBack final : public OpCode<ByteCode> {
+class REGEX_API OpCode_GoBack final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -980,7 +1075,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_SetStepBack final : public OpCode<ByteCode> {
+class REGEX_API OpCode_SetStepBack final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -995,7 +1090,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_IncStepBack final : public OpCode<ByteCode> {
+class REGEX_API OpCode_IncStepBack final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1009,7 +1104,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_CheckStepBack final : public OpCode<ByteCode> {
+class REGEX_API OpCode_CheckStepBack final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1023,7 +1118,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_CheckSavedPosition final : public OpCode<ByteCode> {
+class REGEX_API OpCode_CheckSavedPosition final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1037,7 +1132,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_Jump final : public OpCode<ByteCode> {
+class REGEX_API OpCode_Jump final : public OpCode<ByteCode> {
 
 public:
     using OpCode<ByteCode>::argument;
@@ -1056,7 +1151,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_ForkJump : public OpCode<ByteCode> {
+class REGEX_API OpCode_ForkJump : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1074,7 +1169,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_ForkReplaceJump final : public OpCode_ForkJump<ByteCode> {
+class REGEX_API OpCode_ForkReplaceJump final : public OpCode_ForkJump<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1088,7 +1183,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_ForkStay : public OpCode<ByteCode> {
+class REGEX_API OpCode_ForkStay : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1106,7 +1201,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_ForkReplaceStay final : public OpCode_ForkStay<ByteCode> {
+class REGEX_API OpCode_ForkReplaceStay final : public OpCode_ForkStay<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1120,7 +1215,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_CheckBegin final : public OpCode<ByteCode> {
+class REGEX_API OpCode_CheckBegin final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1134,7 +1229,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_CheckEnd final : public OpCode<ByteCode> {
+class REGEX_API OpCode_CheckEnd final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1148,7 +1243,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_CheckBoundary final : public OpCode<ByteCode> {
+class REGEX_API OpCode_CheckBoundary final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1164,7 +1259,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_ClearCaptureGroup final : public OpCode<ByteCode> {
+class REGEX_API OpCode_ClearCaptureGroup final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1179,7 +1274,22 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_SaveLeftCaptureGroup final : public OpCode<ByteCode> {
+class REGEX_API OpCode_FailIfEmpty final : public OpCode<ByteCode> {
+public:
+    using OpCode<ByteCode>::argument;
+    using OpCode<ByteCode>::name;
+    using OpCode<ByteCode>::state;
+    using OpCode<ByteCode>::bytecode;
+
+    ExecutionResult execute(MatchInput const& input, MatchState& state) const override;
+    ALWAYS_INLINE OpCodeId opcode_id() const override { return OpCodeId::FailIfEmpty; }
+    ALWAYS_INLINE size_t size() const override { return 2; }
+    ALWAYS_INLINE size_t checkpoint() const { return argument(0); }
+    ByteString arguments_string() const override { return ByteString::formatted("checkpoint={}", checkpoint()); }
+};
+
+template<typename ByteCode>
+class REGEX_API OpCode_SaveLeftCaptureGroup final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1194,7 +1304,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_SaveRightCaptureGroup final : public OpCode<ByteCode> {
+class REGEX_API OpCode_SaveRightCaptureGroup final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1209,7 +1319,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_SaveRightNamedCaptureGroup final : public OpCode<ByteCode> {
+class REGEX_API OpCode_SaveRightNamedCaptureGroup final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1256,7 +1366,7 @@ public:
     using OpCode<ByteCode>::name;
     using OpCode<ByteCode>::state;
     using OpCode<ByteCode>::bytecode;
-    static bool matches_character_class(CharClass, u32, bool insensitive);
+    static bool matches_character_class(CharClass, u32, bool insensitive, bool unicode_mode);
 
     Vector<CompareTypeAndValuePair> flat_compares() const;
 
@@ -1266,8 +1376,8 @@ protected:
     ALWAYS_INLINE static bool compare_string(MatchInput const& input, MatchState& state, RegexStringView str, bool& had_zero_length_match);
     ALWAYS_INLINE static void compare_character_class(MatchInput const& input, MatchState& state, CharClass character_class, u32 ch, bool inverse, bool& inverse_matched);
     ALWAYS_INLINE static void compare_character_range(MatchInput const& input, MatchState& state, u32 from, u32 to, u32 ch, bool inverse, bool& inverse_matched);
-    ALWAYS_INLINE static void compare_property(MatchInput const& input, MatchState& state, Unicode::Property property, bool inverse, bool& inverse_matched);
-    ALWAYS_INLINE static void compare_general_category(MatchInput const& input, MatchState& state, Unicode::GeneralCategory general_category, bool inverse, bool& inverse_matched);
+    ALWAYS_INLINE static void compare_property(MatchInput const& input, MatchState& state, Unicode::Property property, bool inverse, bool is_double_negation, bool& inverse_matched);
+    ALWAYS_INLINE static void compare_general_category(MatchInput const& input, MatchState& state, Unicode::GeneralCategory general_category, bool inverse, bool is_double_negation, bool& inverse_matched);
     ALWAYS_INLINE static void compare_script(MatchInput const& input, MatchState& state, Unicode::Script script, bool inverse, bool& inverse_matched);
     ALWAYS_INLINE static void compare_script_extension(MatchInput const& input, MatchState& state, Unicode::Script script, bool inverse, bool& inverse_matched);
 };
@@ -1306,7 +1416,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_Repeat : public OpCode<ByteCode> {
+class REGEX_API OpCode_Repeat : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1333,7 +1443,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_ResetRepeat : public OpCode<ByteCode> {
+class REGEX_API OpCode_ResetRepeat : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1352,7 +1462,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_Checkpoint final : public OpCode<ByteCode> {
+class REGEX_API OpCode_Checkpoint final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1367,7 +1477,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_JumpNonEmpty final : public OpCode<ByteCode> {
+class REGEX_API OpCode_JumpNonEmpty final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;
@@ -1390,7 +1500,7 @@ public:
 };
 
 template<typename ByteCode>
-class OpCode_ForkIf final : public OpCode<ByteCode> {
+class REGEX_API OpCode_ForkIf final : public OpCode<ByteCode> {
 public:
     using OpCode<ByteCode>::argument;
     using OpCode<ByteCode>::name;

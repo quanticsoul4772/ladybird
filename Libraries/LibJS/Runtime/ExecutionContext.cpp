@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2024, Andreas Kling <andreas@ladybird.org>
+ * Copyright (c) 2020-2026, Andreas Kling <andreas@ladybird.org>
  * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2022, Luke Wilde <lukew@serenityos.org>
  * Copyright (c) 2024-2025, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
@@ -16,13 +16,12 @@
 namespace JS {
 
 GC_DEFINE_ALLOCATOR(CachedSourceRange);
-GC_DEFINE_ALLOCATOR(ExecutionContextRareData);
 
 class ExecutionContextAllocator {
 public:
-    NonnullOwnPtr<ExecutionContext> allocate(u32 registers_and_constants_and_locals_count, u32 arguments_count)
+    NonnullOwnPtr<ExecutionContext> allocate(u32 registers_and_locals_count, u32 constants_count, u32 arguments_count)
     {
-        auto tail_size = registers_and_constants_and_locals_count + arguments_count;
+        auto tail_size = registers_and_locals_count + constants_count + arguments_count;
 
         void* slot = nullptr;
         if (tail_size <= 4 && !m_execution_contexts_with_4_tail.is_empty()) {
@@ -40,7 +39,7 @@ public:
         }
 
         if (slot) {
-            return adopt_own(*new (slot) ExecutionContext(registers_and_constants_and_locals_count, arguments_count));
+            return adopt_own(*new (slot) ExecutionContext(registers_and_locals_count, constants_count, arguments_count));
         }
 
         auto tail_allocation_size = [tail_size] -> u32 {
@@ -60,7 +59,7 @@ public:
         };
 
         auto* memory = ::operator new(sizeof(ExecutionContext) + tail_allocation_size() * sizeof(Value));
-        return adopt_own(*::new (memory) ExecutionContext(registers_and_constants_and_locals_count, arguments_count));
+        return adopt_own(*::new (memory) ExecutionContext(registers_and_locals_count, constants_count, arguments_count));
     }
     void deallocate(void* ptr, u32 tail_size)
     {
@@ -92,9 +91,9 @@ private:
 
 static NeverDestroyed<ExecutionContextAllocator> s_execution_context_allocator;
 
-NonnullOwnPtr<ExecutionContext> ExecutionContext::create(u32 registers_and_constants_and_locals_count, u32 arguments_count)
+NonnullOwnPtr<ExecutionContext> ExecutionContext::create(u32 registers_and_locals_count, u32 constants_count, u32 arguments_count)
 {
-    return s_execution_context_allocator->allocate(registers_and_constants_and_locals_count, arguments_count);
+    return s_execution_context_allocator->allocate(registers_and_locals_count, constants_count, arguments_count);
 }
 
 void ExecutionContext::operator delete(void* ptr)
@@ -105,7 +104,9 @@ void ExecutionContext::operator delete(void* ptr)
 
 NonnullOwnPtr<ExecutionContext> ExecutionContext::copy() const
 {
-    auto copy = create(registers_and_constants_and_locals_and_arguments_count, arguments.size());
+    // NB: We pass the entire non-argument count as registers_and_locals_count with 0 constants.
+    //     This means all slots get initialized to empty, but we immediately overwrite them below.
+    auto copy = create(registers_and_constants_and_locals_and_arguments_count - arguments.size(), 0, arguments.size());
     copy->function = function;
     copy->realm = realm;
     copy->script_or_module = script_or_module;
@@ -116,12 +117,6 @@ NonnullOwnPtr<ExecutionContext> ExecutionContext::copy() const
     copy->this_value = this_value;
     copy->executable = executable;
     copy->passed_argument_count = passed_argument_count;
-    if (m_rare_data) {
-        auto copy_rare_data = copy->ensure_rare_data();
-        copy_rare_data->unwind_contexts = m_rare_data->unwind_contexts;
-        copy_rare_data->saved_lexical_environments = m_rare_data->saved_lexical_environments;
-        copy_rare_data->previously_scheduled_jumps = m_rare_data->previously_scheduled_jumps;
-    }
     copy->registers_and_constants_and_locals_and_arguments_count = registers_and_constants_and_locals_and_arguments_count;
     for (size_t i = 0; i < registers_and_constants_and_locals_and_arguments_count; ++i)
         copy->registers_and_constants_and_locals_and_arguments()[i] = registers_and_constants_and_locals_and_arguments()[i];
@@ -136,7 +131,8 @@ void ExecutionContext::visit_edges(Cell::Visitor& visitor)
     visitor.visit(variable_environment);
     visitor.visit(lexical_environment);
     visitor.visit(private_environment);
-    visitor.visit(m_rare_data);
+    visitor.visit(cached_source_range);
+    visitor.visit(context_owner);
     visitor.visit(this_value);
     visitor.visit(executable);
     visitor.visit(registers_and_constants_and_locals_and_arguments_span());
@@ -148,25 +144,6 @@ void ExecutionContext::visit_edges(Cell::Visitor& visitor)
         [&](auto& script_or_module) {
             visitor.visit(script_or_module);
         });
-}
-
-void ExecutionContextRareData::visit_edges(Cell::Visitor& visitor)
-{
-    Base::visit_edges(visitor);
-    visitor.visit(context_owner);
-    visitor.visit(cached_source_range);
-    for (auto& context : unwind_contexts) {
-        visitor.visit(context.lexical_environment);
-    }
-    visitor.visit(saved_lexical_environments);
-}
-
-GC::Ref<ExecutionContextRareData> ExecutionContext::ensure_rare_data()
-{
-    if (!m_rare_data) {
-        m_rare_data = GC::Heap::the().allocate<ExecutionContextRareData>();
-    }
-    return *m_rare_data;
 }
 
 }

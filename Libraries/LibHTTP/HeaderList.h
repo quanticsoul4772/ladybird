@@ -8,7 +8,6 @@
 #pragma once
 
 #include <AK/ByteString.h>
-#include <AK/HashTable.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/RefCounted.h>
@@ -50,7 +49,47 @@ public:
     struct ExtractLengthFailure { };
     [[nodiscard]] Variant<Empty, u64, ExtractLengthFailure> extract_length() const;
 
+    struct ExtractContentRangeFailure { };
+    struct ContentRangeValues {
+        u64 first_byte_pos { 0 };
+        u64 last_byte_pos { 0 };
+        Optional<u64> complete_length;
+    };
+    [[nodiscard]] Variant<ContentRangeValues, ExtractContentRangeFailure> extract_content_range_values() const;
+
     [[nodiscard]] Vector<ByteString> unique_names() const;
+
+    template<typename Callback>
+    void delete_all_matching(Callback&& callback)
+    {
+        m_headers.remove_all_matching(forward<Callback>(callback));
+    }
+
+    template<typename Callback>
+    void for_each_header_value(StringView name, Callback&& callback) const
+    {
+        for (auto const& header : m_headers) {
+            if (!header.name.equals_ignoring_ascii_case(name))
+                continue;
+            if (callback(header.value) == IterationDecision::Break)
+                break;
+        }
+    }
+
+    template<typename Callback>
+    void for_each_vary_header(Callback&& callback) const
+    {
+        for_each_header_value("Vary"sv, [&](StringView value) -> IterationDecision {
+            IterationDecision result;
+
+            value.for_each_split_view(","sv, SplitBehavior::Nothing, [&](StringView header) -> IterationDecision {
+                result = callback(normalize_header_value(header));
+                return result;
+            });
+
+            return result;
+        });
+    }
 
 private:
     explicit HeaderList(Vector<Header>);

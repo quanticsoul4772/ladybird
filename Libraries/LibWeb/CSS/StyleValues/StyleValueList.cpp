@@ -25,22 +25,20 @@ bool StyleValueList::Properties::operator==(Properties const& other) const
 
 ValueComparingNonnullRefPtr<StyleValue const> StyleValueList::absolutized(ComputationContext const& computation_context) const
 {
-    StyleValueVector absolutized_style_values;
-    absolutized_style_values.ensure_capacity(m_properties.values.size());
-
-    bool any_absolutized = false;
-
-    for (auto const& value : m_properties.values) {
-        auto absolutized_style_value = value->absolutized(computation_context);
-        if (absolutized_style_value != value)
-            any_absolutized = true;
-        absolutized_style_values.append(value->absolutized(computation_context));
+    for (size_t i = 0; i < m_properties.values.size(); ++i) {
+        auto absolutized_value = m_properties.values[i]->absolutized(computation_context);
+        if (absolutized_value != m_properties.values[i]) {
+            StyleValueVector result;
+            result.ensure_capacity(m_properties.values.size());
+            for (size_t j = 0; j < i; ++j)
+                result.append(m_properties.values[j]);
+            result.append(move(absolutized_value));
+            for (size_t j = i + 1; j < m_properties.values.size(); ++j)
+                result.append(m_properties.values[j]->absolutized(computation_context));
+            return StyleValueList::create(move(result), m_properties.separator);
+        }
     }
-
-    if (!any_absolutized)
-        return *this;
-
-    return StyleValueList::create(move(absolutized_style_values), m_properties.separator);
+    return *this;
 }
 
 void StyleValueList::serialize(StringBuilder& builder, SerializationMode mode) const
@@ -61,7 +59,7 @@ void StyleValueList::serialize(StringBuilder& builder, SerializationMode mode) c
     }
 
     auto first_value = m_properties.values.first();
-    if (all_of(m_properties.values, [&](auto const& property) { return property == first_value; }) && m_properties.separator != Separator::Comma) {
+    if (all_of(m_properties.values, [&](auto const& property) { return property == first_value; }) && m_properties.separator != Separator::Comma && m_properties.collapsible == Collapsible::Yes) {
         first_value->serialize(builder, mode);
         return;
     }

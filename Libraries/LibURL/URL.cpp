@@ -2,7 +2,7 @@
  * Copyright (c) 2018-2020, Andreas Kling <andreas@ladybird.org>
  * Copyright (c) 2021, Max Wipfli <mail@maxwipfli.ch>
  * Copyright (c) 2024, Sam Atkins <sam@ladybird.org>
- * Copyright (c) 2023-2025, Shannon Booth <shannon@serenityos.org>
+ * Copyright (c) 2023-2026, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -18,6 +18,8 @@
 #include <LibURL/URL.h>
 
 namespace URL {
+
+static bool s_file_scheme_urls_have_tuple_origins = false;
 
 Optional<URL> URL::complete_url(StringView relative_url) const
 {
@@ -99,31 +101,22 @@ void URL::append_path(StringView path)
 bool URL::cannot_have_a_username_or_password_or_port() const
 {
     // A URL cannot have a username/password/port if its host is null or the empty string, or its scheme is "file".
-
     return !m_data->host.has_value() || m_data->host->is_empty_host() || m_data->scheme == "file"sv;
 }
 
 // https://url.spec.whatwg.org/#default-port
 Optional<u16> default_port_for_scheme(StringView scheme)
 {
-    // Spec defined mappings with port:
-    if (scheme == "ftp")
+    if (scheme == "ftp"sv)
         return 21;
-    if (scheme == "http")
+    if (scheme == "http"sv)
         return 80;
-    if (scheme == "https")
+    if (scheme == "https"sv)
         return 443;
-    if (scheme == "ws")
+    if (scheme == "ws"sv)
         return 80;
-    if (scheme == "wss")
+    if (scheme == "wss"sv)
         return 443;
-
-    // NOTE: not in spec, but we support these too
-    if (scheme == "irc")
-        return 6667;
-    if (scheme == "ircs")
-        return 6697;
-
     return {};
 }
 
@@ -262,18 +255,11 @@ String URL::serialize(ExcludeFragment exclude_fragment) const
     }
 
     // 3. If url’s host is null, url does not have an opaque path, url’s path’s size is greater than 1, and url’s path[0] is the empty string, then append U+002F (/) followed by U+002E (.) to output.
+    if (!host().has_value() && !has_an_opaque_path() && paths().size() > 1 && paths()[0].is_empty())
+        output.append("/."sv);
+
     // 4. Append the result of URL path serializing url to output.
-    // FIXME: Implement this closer to spec steps.
-    if (has_an_opaque_path()) {
-        output.append(m_data->paths[0]);
-    } else {
-        if (!m_data->host.has_value() && m_data->paths.size() > 1 && m_data->paths[0].is_empty())
-            output.append("/."sv);
-        for (auto& segment : m_data->paths) {
-            output.append('/');
-            output.append(segment);
-        }
-    }
+    output.append(serialize_path());
 
     // 5. If url’s query is non-null, append U+003F (?), followed by url’s query, to output.
     if (m_data->query.has_value()) {
@@ -332,6 +318,17 @@ ByteString URL::serialize_for_display() const
     return builder.to_byte_string();
 }
 
+void set_file_scheme_urls_have_tuple_origins()
+{
+    VERIFY(!s_file_scheme_urls_have_tuple_origins);
+    s_file_scheme_urls_have_tuple_origins = true;
+}
+
+bool file_scheme_urls_have_tuple_origins()
+{
+    return s_file_scheme_urls_have_tuple_origins;
+}
+
 // https://url.spec.whatwg.org/#concept-url-origin
 Origin URL::origin() const
 {
@@ -371,8 +368,21 @@ Origin URL::origin() const
     // AD-HOC: Our resource:// is basically an alias to file://
     if (scheme() == "file"sv || scheme() == "resource"sv) {
         // Unfortunate as it is, this is left as an exercise to the reader. When in doubt, return a new opaque origin.
-        // Note: We must return an origin with the `file://' protocol for `file://' iframes to work from `file://' pages.
-        return Origin(scheme(), String {}, {});
+
+        // Our implementation-defined behavior is to return an opaque origin for file:// URLs,
+        // tagged explicitly as a "file" opaque origin rather than a fully anonymous one.
+        //
+        // This keeps file:// URLs opaque by default while still allowing downstream code to
+        // identify and special-case them where needed - for example, to match cases where
+        // other browsers treat a file:// origin as if it were a tuple origin.
+        //
+        // A process-wide flag can opt into tuple origins for file:// URLs instead. This is
+        // intended for development/testing scenarios where web features requiring a non-opaque
+        // origin (such as localStorage) need to work with file:// pages.
+        if (file_scheme_urls_have_tuple_origins())
+            return Origin { scheme(), String {}, {} };
+
+        return Origin::create_opaque(Origin::OpaqueData::Type::File);
     }
 
     // -> Otherwise

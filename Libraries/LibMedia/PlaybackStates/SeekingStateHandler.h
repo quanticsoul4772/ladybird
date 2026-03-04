@@ -34,6 +34,12 @@ public:
         begin_seek();
     }
 
+    virtual void on_exit() override
+    {
+        for (auto const& track : m_tracks_enabled_while_seeking)
+            PlaybackStateHandler::on_track_enabled(track);
+    }
+
     virtual void seek(AK::Duration timestamp, SeekMode mode) override
     {
         m_target_timestamp = timestamp;
@@ -49,14 +55,19 @@ public:
     virtual void enter_buffering() override { }
     virtual void exit_buffering() override { }
 
+    virtual void on_track_enabled(Track const& track) override
+    {
+        m_tracks_enabled_while_seeking.append(track);
+    }
+
 private:
     struct SeekData : public RefCounted<SeekData> {
         SeekData(PlaybackManager& manager)
-            : manager(manager)
+            : manager(manager.weak())
         {
         }
 
-        NonnullRefPtr<PlaybackManager> manager;
+        WeakPlaybackManager manager;
 
         size_t id { 0 };
 
@@ -71,6 +82,8 @@ private:
 
     static void possibly_complete_seek(SeekData& seek_data)
     {
+        if (!seek_data.manager)
+            return;
         if (seek_data.video_seeks_completed != seek_data.video_seeks_in_flight)
             return;
         if (seek_data.audio_seeks_completed != seek_data.audio_seeks_in_flight)
@@ -108,7 +121,10 @@ private:
 
     static void begin_audio_seeks(SeekData& seek_data)
     {
-        seek_data.audio_seeks_in_flight = count_audio_tracks(seek_data.manager);
+        if (!seek_data.manager)
+            return;
+
+        seek_data.audio_seeks_in_flight = count_audio_tracks(*seek_data.manager);
 
         if (seek_data.audio_seeks_in_flight == 0) {
             possibly_complete_seek(seek_data);
@@ -164,6 +180,7 @@ private:
     AK::Duration m_target_timestamp;
     SeekMode m_mode { SeekMode::Accurate };
     size_t m_current_seek_id { 0 };
+    Vector<Track> m_tracks_enabled_while_seeking;
 };
 
 }

@@ -266,6 +266,11 @@ EventResult Page::handle_doubleclick(DevicePixelPoint position, DevicePixelPoint
     return top_level_traversable()->event_handler().handle_doubleclick(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers);
 }
 
+EventResult Page::handle_tripleclick(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers)
+{
+    return top_level_traversable()->event_handler().handle_tripleclick(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers);
+}
+
 EventResult Page::handle_drag_and_drop_event(DragEvent::Type type, DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, Vector<HTML::SelectedFile> files)
 {
     return top_level_traversable()->event_handler().handle_drag_and_drop_event(type, device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers, move(files));
@@ -541,10 +546,47 @@ void Page::unregister_media_element(Badge<HTML::HTMLMediaElement>, UniqueNodeID 
     });
 }
 
+template<typename Callback>
+void Page::for_each_media_element(Callback&& callback)
+{
+    for (auto media_id : m_media_elements) {
+        if (auto* node = DOM::Node::from_unique_id(media_id))
+            callback(as<HTML::HTMLMediaElement>(*node));
+    }
+}
+
 void Page::update_all_media_element_video_sinks()
 {
     for_each_media_element([](auto& media_element) {
         media_element.update_video_frame_and_timeline();
+    });
+}
+
+void Page::register_canvas_element(Badge<HTML::HTMLCanvasElement>, UniqueNodeID canvas_id)
+{
+    m_canvas_elements.append(canvas_id);
+}
+
+void Page::unregister_canvas_element(Badge<HTML::HTMLCanvasElement>, UniqueNodeID canvas_id)
+{
+    m_canvas_elements.remove_all_matching([&](auto candidate_id) {
+        return candidate_id == canvas_id;
+    });
+}
+
+template<typename Callback>
+void Page::for_each_canvas_element(Callback&& callback)
+{
+    for (auto canvas_id : m_canvas_elements) {
+        if (auto* node = DOM::Node::from_unique_id(canvas_id))
+            callback(as<HTML::HTMLCanvasElement>(*node));
+    }
+}
+
+void Page::present_all_canvas_element_surfaces()
+{
+    for_each_canvas_element([](auto& canvas_element) {
+        canvas_element.present();
     });
 }
 
@@ -594,6 +636,16 @@ void Page::toggle_media_loop_state()
         media_element->remove_attribute(HTML::AttributeNames::loop);
     else
         media_element->set_attribute_value(HTML::AttributeNames::loop, String {});
+}
+
+void Page::toggle_media_fullscreen_state()
+{
+    auto media_element = media_context_menu_element();
+    if (!media_element)
+        return;
+
+    HTML::TemporaryExecutionContext execution_context { media_element->realm() };
+    media_element->toggle_fullscreen();
 }
 
 void Page::toggle_media_controls_state()
@@ -824,6 +876,7 @@ ErrorOr<void> IPC::encode(Encoder& encoder, Web::Page::MediaContextMenu const& m
     TRY(encoder.encode(menu.is_muted));
     TRY(encoder.encode(menu.has_user_agent_controls));
     TRY(encoder.encode(menu.is_looping));
+    TRY(encoder.encode(menu.is_fullscreen));
     return {};
 }
 
@@ -837,5 +890,6 @@ ErrorOr<Web::Page::MediaContextMenu> IPC::decode(Decoder& decoder)
         .is_muted = TRY(decoder.decode<bool>()),
         .has_user_agent_controls = TRY(decoder.decode<bool>()),
         .is_looping = TRY(decoder.decode<bool>()),
+        .is_fullscreen = TRY(decoder.decode<bool>()),
     };
 }

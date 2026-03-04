@@ -41,6 +41,8 @@ CSSConditionRule
 CSSCounterStyleRule
 CSSFontFaceDescriptors
 CSSFontFaceRule
+CSSFontFeatureValuesMap
+CSSFontFeatureValuesRule
 CSSGroupingRule
 CSSImageValue
 CSSImportRule
@@ -151,6 +153,7 @@ EvalError
 Event
 EventSource
 EventTarget
+External
 FederatedCredential
 File
 FileList
@@ -368,6 +371,7 @@ ResizeObserverSize
 Response
 SVGAElement
 SVGAnimatedEnumeration
+SVGAnimatedInteger
 SVGAnimatedLength
 SVGAnimatedLengthList
 SVGAnimatedNumber
@@ -387,6 +391,7 @@ SVGFEBlendElement
 SVGFEColorMatrixElement
 SVGFEComponentTransferElement
 SVGFECompositeElement
+SVGFEDisplacementMapElement
 SVGFEDropShadowElement
 SVGFEFloodElement
 SVGFEFuncAElement
@@ -399,6 +404,7 @@ SVGFEMergeElement
 SVGFEMergeNodeElement
 SVGFEMorphologyElement
 SVGFEOffsetElement
+SVGFETurbulenceElement
 SVGFilterElement
 SVGForeignObjectElement
 SVGGElement
@@ -416,6 +422,7 @@ SVGMetadataElement
 SVGNumber
 SVGNumberList
 SVGPathElement
+SVGPatternElement
 SVGPoint
 SVGPolygonElement
 SVGPolylineElement
@@ -441,6 +448,7 @@ SVGViewElement
 Screen
 ScreenOrientation
 ScriptProcessorNode
+ScrollTimeline
 SecurityPolicyViolationEvent
 Selection
 Serial
@@ -455,6 +463,17 @@ SharedArrayBuffer
 SharedWorker
 SourceBuffer
 SourceBufferList
+SpeechGrammar
+SpeechGrammarList
+SpeechRecognition
+SpeechRecognitionAlternative
+SpeechRecognitionEvent
+SpeechRecognitionPhrase
+SpeechRecognitionResult
+SpeechRecognitionResultList
+SpeechSynthesis
+SpeechSynthesisUtterance
+SpeechSynthesisVoice
 StaticRange
 StereoPannerNode
 Storage
@@ -547,6 +566,8 @@ XMLSerializer
 XPathEvaluator
 XPathExpression
 XPathResult
+XRSession
+XRSessionEvent
 XRSystem
 __finishTest
 __preventMultipleTestFunctions

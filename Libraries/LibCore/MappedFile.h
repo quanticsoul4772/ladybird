@@ -7,17 +7,17 @@
 
 #pragma once
 
-#include <AK/ByteBuffer.h>
 #include <AK/Error.h>
 #include <AK/MemoryStream.h>
 #include <AK/Noncopyable.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/RefCounted.h>
+#include <LibCore/Export.h>
 #include <LibCore/Forward.h>
 
 namespace Core {
 
-class MappedFile : public FixedMemoryStream {
+class CORE_API MappedFile : public FixedMemoryStream {
     AK_MAKE_NONCOPYABLE(MappedFile);
     AK_MAKE_NONMOVABLE(MappedFile);
 

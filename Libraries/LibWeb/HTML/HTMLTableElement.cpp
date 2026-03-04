@@ -7,6 +7,7 @@
 
 #include <LibWeb/Bindings/HTMLTableElementPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
@@ -73,6 +74,7 @@ bool HTMLTableElement::is_presentational_hint(FlyString const& name) const
 
 void HTMLTableElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
 {
+    Base::apply_presentational_hints(cascaded_properties);
     for_each_attribute([&](auto& name, auto& value) {
         if (name == HTML::AttributeNames::width) {
             if (auto parsed_value = parse_nonzero_dimension_value(value))

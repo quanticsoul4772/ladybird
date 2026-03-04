@@ -6,10 +6,12 @@
  * Copyright (c) 2023, Cameron Youell <cameronyouell@gmail.com>
  * Copyright (c) 2024-2025, stasoid <stasoid@yahoo.com>
  * Copyright (c) 2025, ayeteadoe <ayeteadoe@gmail.com>
+ * Copyright (c) 2026, Gregory Bertilson <gregory@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Array.h>
 #include <AK/ByteString.h>
 #include <AK/ScopeGuard.h>
 #include <LibCore/Process.h>
@@ -98,9 +100,9 @@ ErrorOr<void> ioctl(int fd, unsigned request, ...)
 {
     va_list ap;
     va_start(ap, request);
-    u_long arg = va_arg(ap, FlatPtr);
+    u_long* arg = va_arg(ap, u_long*);
     va_end(ap);
-    if (::ioctlsocket(fd, request, &arg) == SOCKET_ERROR)
+    if (::ioctlsocket(fd, request, arg) == SOCKET_ERROR)
         return Error::from_windows_error();
     return {};
 }
@@ -211,10 +213,10 @@ ErrorOr<int> dup(int handle)
         return Error::from_windows_error(ERROR_INVALID_HANDLE);
     }
     if (is_socket(handle)) {
-        WSAPROTOCOL_INFO pi = {};
-        if (WSADuplicateSocket(handle, GetCurrentProcessId(), &pi))
+        WSAPROTOCOL_INFOW pi = {};
+        if (WSADuplicateSocketW(handle, GetCurrentProcessId(), &pi))
             return Error::from_windows_error();
-        SOCKET socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, &pi, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
+        SOCKET socket = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, &pi, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
         if (socket == INVALID_SOCKET)
             return Error::from_windows_error();
         return socket;
@@ -354,6 +356,20 @@ ErrorOr<void> set_close_on_exec(int handle, bool enabled)
     return {};
 }
 
+ErrorOr<Array<int, 2>> pipe2(int flags)
+{
+    SECURITY_ATTRIBUTES sa = {};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = (flags & O_CLOEXEC) ? FALSE : TRUE;
+
+    HANDLE read_handle = nullptr;
+    HANDLE write_handle = nullptr;
+    if (!CreatePipe(&read_handle, &write_handle, &sa, 0))
+        return Error::from_windows_error();
+
+    return Array<int, 2> { to_fd(read_handle), to_fd(write_handle) };
+}
+
 ErrorOr<bool> isatty(int handle)
 {
     return GetFileType(to_handle(handle)) == FILE_TYPE_CHAR;
@@ -402,7 +418,7 @@ ErrorOr<void> kill(pid_t pid, int signal)
     return {};
 }
 
-ErrorOr<size_t> transfer_file_through_pipe(int source_fd, int target_fd, size_t source_offset, size_t source_length)
+ErrorOr<size_t> transfer_file_through_socket(int source_fd, int target_fd, size_t source_offset, size_t source_length)
 {
     // FIXME: We could use TransmitFile (https://learn.microsoft.com/en-us/windows/win32/api/mswsock/nf-mswsock-transmitfile)
     //        here. But in order to transmit a subset of the file, we have to use overlapped IO.

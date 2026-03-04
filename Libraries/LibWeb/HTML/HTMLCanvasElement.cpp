@@ -10,6 +10,7 @@
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Bindings/HTMLCanvasElementPrototype.h>
+#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
@@ -24,6 +25,7 @@
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Layout/CanvasBox.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/WebGL/WebGL2RenderingContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContext.h>
@@ -46,6 +48,13 @@ void HTMLCanvasElement::initialize(JS::Realm& realm)
 {
     WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLCanvasElement);
     Base::initialize(realm);
+    document().page().register_canvas_element({}, unique_id());
+}
+
+void HTMLCanvasElement::finalize()
+{
+    Base::finalize();
+    document().page().unregister_canvas_element({}, unique_id());
 }
 
 void HTMLCanvasElement::visit_edges(Cell::Visitor& visitor)
@@ -77,6 +86,7 @@ bool HTMLCanvasElement::is_presentational_hint(FlyString const& name) const
 
 void HTMLCanvasElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
 {
+    Base::apply_presentational_hints(cascaded_properties);
     // https://html.spec.whatwg.org/multipage/rendering.html#attributes-for-embedded-content-and-images
     // The width and height attributes map to the aspect-ratio property on canvas elements.
 
@@ -129,8 +139,17 @@ WebIDL::UnsignedLong HTMLCanvasElement::height() const
     return 150;
 }
 
+Painting::ExternalContentSource& HTMLCanvasElement::ensure_external_content_source()
+{
+    if (!m_external_content_source)
+        m_external_content_source = Painting::ExternalContentSource::create();
+    return *m_external_content_source;
+}
+
 void HTMLCanvasElement::reset_context_to_default_state()
 {
+    if (m_external_content_source)
+        m_external_content_source->clear();
     m_context.visit(
         [](GC::Ref<CanvasRenderingContext2D>& context) {
             context->reset_to_default_state();
@@ -190,8 +209,7 @@ void HTMLCanvasElement::attribute_changed(FlyString const& local_name, Optional<
     if (local_name.is_one_of(HTML::AttributeNames::width, HTML::AttributeNames::height)) {
         notify_context_about_canvas_size_change();
         reset_context_to_default_state();
-        if (auto layout_node = this->layout_node())
-            layout_node->set_needs_layout_update(DOM::SetNeedsLayoutReason::HTMLCanvasElementWidthOrHeightChange);
+        set_needs_layout_update(DOM::SetNeedsLayoutReason::HTMLCanvasElementWidthOrHeightChange);
     }
 }
 
@@ -310,7 +328,6 @@ String HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
         return "data:,"_string;
 
     // 3. Let file be a serialization of this canvas element's bitmap as a file, passing type and quality if given.
-    auto snapshot = Gfx::ImmutableBitmap::create_snapshot_from_painting_surface(*surface);
     auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, surface->size()));
     surface->read_into_bitmap(*bitmap);
     Optional<double> quality = js_quality.is_number() ? js_quality.as_double() : Optional<double>();
@@ -393,10 +410,16 @@ RefPtr<Gfx::Bitmap> HTMLCanvasElement::get_bitmap_from_surface()
     return bitmap;
 }
 
+void HTMLCanvasElement::set_canvas_content_dirty()
+{
+    m_canvas_content_dirty = true;
+}
+
 void HTMLCanvasElement::present()
 {
-    if (auto surface = this->surface())
-        surface->flush();
+    if (!m_canvas_content_dirty)
+        return;
+    m_canvas_content_dirty = false;
 
     m_context.visit(
         [](GC::Ref<CanvasRenderingContext2D>&) {
@@ -411,6 +434,12 @@ void HTMLCanvasElement::present()
         [](Empty) {
             // Do nothing.
         });
+
+    if (auto surface = this->surface()) {
+        surface->flush();
+        auto snapshot = Gfx::ImmutableBitmap::create_snapshot_from_painting_surface(*surface);
+        ensure_external_content_source().update(snapshot);
+    }
 }
 
 RefPtr<Gfx::PaintingSurface> HTMLCanvasElement::surface() const

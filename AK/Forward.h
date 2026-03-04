@@ -28,6 +28,7 @@ class Utf16StringData;
 
 enum class TrailingCodePointTransformation : u8;
 
+class AtomicRefCountedBase;
 class BigEndianInputBitStream;
 class BigEndianOutputBitStream;
 class Bitmap;
@@ -86,6 +87,9 @@ using Bytes = Span<u8>;
 template<typename T, AK::MemoryOrder DefaultMemoryOrder>
 class Atomic;
 
+template<typename T>
+class AtomicRefCounted;
+
 template<typename T, typename TSizeCalculationPolicy = DefaultSizeCalculationPolicy>
 class SinglyLinkedList;
 
@@ -125,6 +129,12 @@ class Function;
 template<typename Out, typename... In>
 class Function<Out(In...)>;
 
+template<typename>
+class JsonArraySerializer;
+
+template<typename>
+class JsonObjectSerializer;
+
 template<typename T>
 class NonnullRefPtr;
 
@@ -147,6 +157,12 @@ template<typename T, typename TDeleter = DefaultDelete<T>>
 class OwnPtr;
 
 template<typename T>
+struct ValueComparingNonnullRefPtr;
+
+template<typename T>
+struct ValueComparingRefPtr;
+
+template<typename T>
 class WeakPtr;
 
 enum class FastLastAccess : u8 {
@@ -164,6 +180,8 @@ class [[nodiscard]] ErrorOr;
 #if USING_AK_GLOBALLY
 using AK::Array;
 using AK::Atomic;
+using AK::AtomicRefCounted;
+using AK::AtomicRefCountedBase;
 using AK::Badge;
 using AK::BigEndianInputBitStream;
 using AK::BigEndianOutputBitStream;
@@ -188,7 +206,9 @@ using AK::HashTable;
 using AK::IPv4Address;
 using AK::IPv6Address;
 using AK::JsonArray;
+using AK::JsonArraySerializer;
 using AK::JsonObject;
+using AK::JsonObjectSerializer;
 using AK::JsonValue;
 using AK::LexicalPath;
 using AK::LittleEndianInputBitStream;
@@ -219,6 +239,8 @@ using AK::Utf32CodePointIterator;
 using AK::Utf32View;
 using AK::Utf8CodePointIterator;
 using AK::Utf8View;
+using AK::ValueComparingNonnullRefPtr;
+using AK::ValueComparingRefPtr;
 using AK::Vector;
 
 #endif

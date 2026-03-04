@@ -21,7 +21,7 @@ namespace Web::Painting {
 
 static RefPtr<DisplayList> compute_text_clip_paths(DisplayListRecordingContext& context, Paintable const& paintable, CSSPixelPoint containing_block_location)
 {
-    auto text_clip_paths = DisplayList::create(context.device_pixels_per_css_pixel());
+    auto text_clip_paths = DisplayList::create();
     DisplayListRecorder display_list_recorder(*text_clip_paths);
     // Remove containing block offset, so executing the display list will produce mask at (0, 0)
     display_list_recorder.translate(-context.floored_device_point(containing_block_location).to_type<int>());
@@ -75,7 +75,7 @@ static BackgroundBox get_box(CSS::BackgroundBox box_clip, BackgroundBox border_b
 }
 
 // https://www.w3.org/TR/css-backgrounds-3/#backgrounds
-void paint_background(DisplayListRecordingContext& context, PaintableBox const& paintable_box, CSS::ImageRendering image_rendering, ResolvedBackground resolved_background, BorderRadiiData const& border_radii)
+void paint_background(DisplayListRecordingContext& context, PaintableBox const& paintable_box, CSS::ImageRendering image_rendering, ResolvedBackground const& resolved_background, BorderRadiiData const& border_radii)
 {
     auto& display_list_recorder = context.display_list_recorder();
 
@@ -87,19 +87,22 @@ void paint_background(DisplayListRecordingContext& context, PaintableBox const& 
     auto paint_into_isolated_group = any_of(resolved_background.layers, [](auto const& layer) {
         return layer.blend_mode != CSS::MixBlendMode::Normal;
     });
-    if (paint_into_isolated_group) {
-        display_list_recorder.save_layer();
-    }
 
     bool is_root_element = paintable_box.layout_node().is_root_element();
     bool needs_text_clip = resolved_background.needs_text_clip && !is_root_element;
 
+    RefPtr<DisplayList> text_clip_display_list;
+    Gfx::IntRect text_clip_rect;
     if (needs_text_clip) {
+        text_clip_display_list = compute_text_clip_paths(context, paintable_box, resolved_background.background_rect.location());
+        text_clip_rect = context.rounded_device_rect(resolved_background.background_rect).to_type<int>();
         display_list_recorder.save();
-        auto display_list = compute_text_clip_paths(context, paintable_box, resolved_background.background_rect.location());
-        auto rect = context.rounded_device_rect(resolved_background.background_rect);
-        display_list_recorder.add_mask(move(display_list), rect.to_type<int>());
+        display_list_recorder.add_clip_rect(text_clip_rect);
+        display_list_recorder.save_layer();
     }
+
+    if (paint_into_isolated_group)
+        display_list_recorder.save_layer();
 
     BackgroundBox border_box {
         resolved_background.background_rect,
@@ -176,9 +179,6 @@ void paint_background(DisplayListRecordingContext& context, PaintableBox const& 
         case CSS::BackgroundAttachment::Scroll:
             break;
         }
-
-        if (background_positioning_area.is_empty())
-            continue;
 
         image_rect.set_left(background_positioning_area.left() + layer.position_x);
         image_rect.set_top(background_positioning_area.top() + layer.position_y);
@@ -288,7 +288,7 @@ void paint_background(DisplayListRecordingContext& context, PaintableBox const& 
 
         Gfx::CompositingAndBlendingOperator compositing_and_blending_operator = mix_blend_mode_to_compositing_and_blending_operator(layer.blend_mode);
         if (compositing_and_blending_operator != Gfx::CompositingAndBlendingOperator::Normal) {
-            display_list_recorder.apply_compositing_and_blending_operator(compositing_and_blending_operator);
+            display_list_recorder.apply_effects(1.0f, compositing_and_blending_operator);
         }
 
         if (auto color = image.color_if_single_pixel_bitmap(); color.has_value()) {
@@ -326,10 +326,14 @@ void paint_background(DisplayListRecordingContext& context, PaintableBox const& 
         }
     }
 
-    if (needs_text_clip) {
+    if (paint_into_isolated_group)
         display_list_recorder.restore();
-    }
-    if (paint_into_isolated_group) {
+
+    if (needs_text_clip) {
+        display_list_recorder.apply_effects(1.0f, Gfx::CompositingAndBlendingOperator::DestinationIn);
+        display_list_recorder.paint_nested_display_list(move(text_clip_display_list), text_clip_rect);
+        display_list_recorder.restore();
+        display_list_recorder.restore();
         display_list_recorder.restore();
     }
 }
@@ -361,13 +365,12 @@ ResolvedBackground resolve_background_layers(Vector<CSS::BackgroundLayerData> co
         }
         auto concrete_image_size = CSS::run_default_sizing_algorithm(
             specified_width, specified_height,
-            image.natural_width(), image.natural_height(), image.natural_aspect_ratio(),
+            { image.natural_width(), image.natural_height(), image.natural_aspect_ratio() },
             background_positioning_area.size());
 
-        // If any of these are zero, the NaNs will pop up in the painting code.
-        if (background_positioning_area.is_empty() || concrete_image_size.is_empty()) {
+        // If the image has no size, there's nothing to paint.
+        if (concrete_image_size.is_empty())
             continue;
-        }
 
         // Size
         CSSPixelRect image_rect;
@@ -392,9 +395,8 @@ ResolvedBackground resolve_background_layers(Vector<CSS::BackgroundLayerData> co
         }
 
         // If after sizing we have a 0px image, we're done. Attempting to paint this would be an infinite loop.
-        if (image_rect.is_empty()) {
+        if (image_rect.is_empty())
             continue;
-        }
 
         // If background-repeat is round for one (or both) dimensions, there is a second step.
         // The UA must scale the image in that dimension (or both dimensions) so that it fits a
@@ -430,6 +432,10 @@ ResolvedBackground resolve_background_layers(Vector<CSS::BackgroundLayerData> co
                 }
             }
         }
+
+        // If after round adjustments we have a 0px image, we're done.
+        if (image_rect.is_empty())
+            continue;
 
         CSSPixels space_x = background_positioning_area.width() - image_rect.width();
         CSSPixels space_y = background_positioning_area.height() - image_rect.height();

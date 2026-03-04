@@ -311,36 +311,33 @@ public:
 
         // 6. Let serialized be an uninitialized value.
         // NOTE: We created the serialized value above.
-
-        if (value.is_object()) {
-            auto const& object = value.as_object();
-
+        if (auto object = value.as_if<JS::Object>()) {
             // 7. If value has a [[BooleanData]] internal slot, then set serialized to { [[Type]]: "Boolean", [[BooleanData]]: value.[[BooleanData]] }.
-            if (auto const* boolean_object = as_if<JS::BooleanObject>(object)) {
+            if (auto const* boolean_object = as_if<JS::BooleanObject>(*object)) {
                 serialized.encode(ValueTag::BooleanObject);
                 serialized.encode(boolean_object->boolean());
             }
 
             // 8. Otherwise, if value has a [[NumberData]] internal slot, then set serialized to { [[Type]]: "Number", [[NumberData]]: value.[[NumberData]] }.
-            else if (auto const* number_object = as_if<JS::NumberObject>(object)) {
+            else if (auto const* number_object = as_if<JS::NumberObject>(*object)) {
                 serialized.encode(ValueTag::NumberObject);
                 serialized.encode(number_object->number());
             }
 
             // 9. Otherwise, if value has a [[BigIntData]] internal slot, then set serialized to { [[Type]]: "BigInt", [[BigIntData]]: value.[[BigIntData]] }.
-            else if (auto const* big_int_object = as_if<JS::BigIntObject>(object)) {
+            else if (auto const* big_int_object = as_if<JS::BigIntObject>(*object)) {
                 serialized.encode(ValueTag::BigIntObject);
                 serialized.encode(MUST(big_int_object->bigint().big_integer().to_base(10)));
             }
 
             // 10. Otherwise, if value has a [[StringData]] internal slot, then set serialized to { [[Type]]: "String", [[StringData]]: value.[[StringData]] }.
-            else if (auto const* string_object = as_if<JS::StringObject>(object)) {
+            else if (auto const* string_object = as_if<JS::StringObject>(*object)) {
                 serialized.encode(ValueTag::StringObject);
                 serialized.encode(string_object->primitive_string().utf8_string());
             }
 
             // 11. Otherwise, if value has a [[DateValue]] internal slot, then set serialized to { [[Type]]: "Date", [[DateValue]]: value.[[DateValue]] }.
-            else if (auto const* date = as_if<JS::Date>(object)) {
+            else if (auto const* date = as_if<JS::Date>(*object)) {
                 serialized.encode(ValueTag::DateObject);
                 serialized.encode(date->date_value());
             }
@@ -348,7 +345,7 @@ public:
             // 12. Otherwise, if value has a [[RegExpMatcher]] internal slot, then set serialized to
             //     { [[Type]]: "RegExp", [[RegExpMatcher]]: value.[[RegExpMatcher]], [[OriginalSource]]: value.[[OriginalSource]],
             //       [[OriginalFlags]]: value.[[OriginalFlags]] }.
-            else if (auto const* reg_exp_object = as_if<JS::RegExpObject>(object)) {
+            else if (auto const* reg_exp_object = as_if<JS::RegExpObject>(*object)) {
                 // NOTE: A Regex<ECMA262> object is perfectly happy to be reconstructed with just the source+flags.
                 //       In the future, we could optimize the work being done on the deserialize step by serializing
                 //       more of the internal state (the [[RegExpMatcher]] internal slot).
@@ -358,19 +355,19 @@ public:
             }
 
             // 13. Otherwise, if value has an [[ArrayBufferData]] internal slot, then:
-            else if (auto const* array_buffer = as_if<JS::ArrayBuffer>(object)) {
+            else if (auto const* array_buffer = as_if<JS::ArrayBuffer>(*object)) {
                 TRY(serialize_array_buffer(m_vm, serialized, *array_buffer, m_for_storage));
             }
 
             // 14. Otherwise, if value has a [[ViewedArrayBuffer]] internal slot, then:
-            else if (auto const* typed_array_base = as_if<JS::TypedArrayBase>(object)) {
+            else if (auto const* typed_array_base = as_if<JS::TypedArrayBase>(*object)) {
                 TRY(serialize_viewed_array_buffer(m_vm, serialized, *typed_array_base, m_for_storage, m_memory));
-            } else if (auto const* data_view = as_if<JS::DataView>(object)) {
+            } else if (auto const* data_view = as_if<JS::DataView>(*object)) {
                 TRY(serialize_viewed_array_buffer(m_vm, serialized, *data_view, m_for_storage, m_memory));
             }
 
             // 15. Otherwise, if value has a [[MapData]] internal slot, then:
-            else if (is<JS::Map>(object)) {
+            else if (is<JS::Map>(*object)) {
                 // 1. Set serialized to { [[Type]]: "Map", [[MapData]]: a new empty List }.
                 serialized.encode(ValueTag::MapObject);
 
@@ -379,7 +376,7 @@ public:
             }
 
             // 16. Otherwise, if value has a [[SetData]] internal slot, then:
-            else if (is<JS::Set>(object)) {
+            else if (is<JS::Set>(*object)) {
                 // 1. Set serialized to { [[Type]]: "Set", [[SetData]]: a new empty List }.
                 serialized.encode(ValueTag::SetObject);
 
@@ -388,9 +385,9 @@ public:
             }
 
             // 17. Otherwise, if value has an [[ErrorData]] internal slot and value is not a platform object, then:
-            else if (is<JS::Error>(object) && !is<Bindings::PlatformObject>(object)) {
+            else if (is<JS::Error>(*object) && !is<Bindings::PlatformObject>(*object)) {
                 // 1. Let name be ? Get(value, "name").
-                auto name = TRY(object.get(m_vm.names.name));
+                auto name = TRY(object->get(m_vm.names.name));
 
                 // 2. If name is not one of "Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", or "URIError", then set name to "Error".
                 auto type = ErrorType::Error;
@@ -398,7 +395,7 @@ public:
                     type = error_name_to_type(name.as_string().utf8_string_view());
 
                 // 3. Let valueMessageDesc be ? value.[[GetOwnProperty]]("message").
-                auto value_message_descriptor = TRY(object.internal_get_own_property(m_vm.names.message));
+                auto value_message_descriptor = TRY(object->internal_get_own_property(m_vm.names.message));
 
                 // 4. Let message be undefined if IsDataDescriptor(valueMessageDesc) is false, and ? ToString(valueMessageDesc.[[Value]]) otherwise.
                 Optional<Utf16String> message;
@@ -407,7 +404,7 @@ public:
 
                 // FIXME: Spec bug - https://github.com/whatwg/html/issues/11321
                 // MISSING STEP: Let valueCauseDesc be ? value.[[GetOwnProperty]]("cause").
-                auto value_cause_descriptor = TRY(object.internal_get_own_property(m_vm.names.cause));
+                auto value_cause_descriptor = TRY(object->internal_get_own_property(m_vm.names.cause));
 
                 // MISSING STEP: Let cause be undefined if IsDataDescriptor(valueCauseDesc) is false, and ? ToString(valueCauseDesc.[[Value]]) otherwise.
                 Optional<Utf16String> cause;
@@ -423,11 +420,11 @@ public:
             }
 
             // 18. Otherwise, if value is an Array exotic object, then:
-            else if (is<JS::Array>(object)) {
+            else if (is<JS::Array>(*object)) {
                 // 1. Let valueLenDescriptor be ? OrdinaryGetOwnProperty(value, "length").
                 // 2. Let valueLen be valueLenDescriptor.[[Value]].
                 // NON-STANDARD: Array objects in LibJS do not have a real length property, so it must be accessed the usual way
-                u64 length = MUST(JS::length_of_array_like(m_vm, object));
+                u64 length = MUST(JS::length_of_array_like(m_vm, *object));
 
                 // 3. Set serialized to { [[Type]]: "Array", [[Length]]: valueLen, [[Properties]]: a new empty List }.
                 serialized.encode(ValueTag::ArrayObject);
@@ -438,20 +435,20 @@ public:
             }
 
             // 19. Otherwise, if value is a platform object that is a serializable object:
-            else if (auto const* serializable = as_if<Bindings::Serializable>(object)) {
+            else if (auto const* serializable = as_if<Bindings::Serializable>(*object)) {
                 // FIXME: 1. If value has a [[Detached]] internal slot whose value is true, then throw a "DataCloneError" DOMException.
 
                 // 2. Let typeString be the identifier of the primary interface of value.
                 // 3. Set serialized to { [[Type]]: typeString }.
                 serialized.encode(ValueTag::SerializableObject);
-                serialized.encode(serializable->serialize_type());
+                serialized.encode(as<Bindings::PlatformObject>(serializable)->interface_name());
 
                 // 4. Set deep to true
                 deep = true;
             }
 
             // 20. Otherwise, if value is a platform object, then throw a "DataCloneError" DOMException.
-            else if (is<Bindings::PlatformObject>(object)) {
+            else if (is<Bindings::PlatformObject>(*object)) {
                 return throw_completion(WebIDL::DataCloneError::create(*m_vm.current_realm(), "Cannot serialize platform objects"_utf16));
             }
 
@@ -856,10 +853,10 @@ public:
             VERIFY(tag == ValueTag::SerializableObject);
 
             // 1. Let interfaceName be serialized.[[Type]].
-            auto interface_name = m_serialized.decode<SerializeType>();
+            auto interface_name = m_serialized.decode<Bindings::InterfaceName>();
 
             // 2. If the interface identified by interfaceName is not exposed in targetRealm, then throw a "DataCloneError" DOMException.
-            if (!is_serializable_interface_exposed_on_target_realm(interface_name, realm))
+            if (!is_exposed(interface_name, realm))
                 return WebIDL::DataCloneError::create(realm, "Unsupported type"_utf16);
 
             // 3. Set value to a new instance of the interface identified by interfaceName, created in targetRealm.
@@ -942,83 +939,40 @@ public:
     }
 
 private:
-    static bool is_serializable_interface_exposed_on_target_realm(SerializeType name, JS::Realm& realm)
-    {
-        auto const& intrinsics = Bindings::host_defined_intrinsics(realm);
-        switch (name) {
-        case SerializeType::Blob:
-            return intrinsics.is_interface_exposed<Bindings::BlobPrototype>(realm);
-        case SerializeType::File:
-            return intrinsics.is_interface_exposed<Bindings::FilePrototype>(realm);
-        case SerializeType::FileList:
-            return intrinsics.is_interface_exposed<Bindings::FileListPrototype>(realm);
-        case SerializeType::DOMException:
-            return intrinsics.is_interface_exposed<Bindings::DOMExceptionPrototype>(realm);
-        case SerializeType::DOMMatrixReadOnly:
-            return intrinsics.is_interface_exposed<Bindings::DOMMatrixReadOnlyPrototype>(realm);
-        case SerializeType::DOMMatrix:
-            return intrinsics.is_interface_exposed<Bindings::DOMMatrixPrototype>(realm);
-        case SerializeType::DOMPointReadOnly:
-            return intrinsics.is_interface_exposed<Bindings::DOMPointReadOnlyPrototype>(realm);
-        case SerializeType::DOMPoint:
-            return intrinsics.is_interface_exposed<Bindings::DOMPointPrototype>(realm);
-        case SerializeType::DOMRectReadOnly:
-            return intrinsics.is_interface_exposed<Bindings::DOMRectReadOnlyPrototype>(realm);
-        case SerializeType::DOMRect:
-            return intrinsics.is_interface_exposed<Bindings::DOMRectPrototype>(realm);
-        case SerializeType::CryptoKey:
-            return intrinsics.is_interface_exposed<Bindings::CryptoKeyPrototype>(realm);
-        case SerializeType::DOMQuad:
-            return intrinsics.is_interface_exposed<Bindings::DOMQuadPrototype>(realm);
-        case SerializeType::ImageData:
-            return intrinsics.is_interface_exposed<Bindings::ImageDataPrototype>(realm);
-        case SerializeType::ImageBitmap:
-            return intrinsics.is_interface_exposed<Bindings::ImageBitmapPrototype>(realm);
-        case SerializeType::QuotaExceededError:
-            return intrinsics.is_interface_exposed<Bindings::QuotaExceededErrorPrototype>(realm);
-        case SerializeType::Unknown:
-            dbgln("Unknown interface type for serialization: {}", to_underlying(name));
-            break;
-        default:
-            VERIFY_NOT_REACHED();
-        }
-        return false;
-    }
-
-    static GC::Ref<Bindings::PlatformObject> create_serialized_type(SerializeType serialize_type, JS::Realm& realm)
+    static GC::Ref<Bindings::PlatformObject> create_serialized_type(Bindings::InterfaceName serialize_type, JS::Realm& realm)
     {
         switch (serialize_type) {
-        case SerializeType::Blob:
+        case Bindings::InterfaceName::Blob:
             return FileAPI::Blob::create(realm);
-        case SerializeType::File:
+        case Bindings::InterfaceName::File:
             return FileAPI::File::create(realm);
-        case SerializeType::FileList:
+        case Bindings::InterfaceName::FileList:
             return FileAPI::FileList::create(realm);
-        case SerializeType::DOMException:
+        case Bindings::InterfaceName::DOMException:
             return WebIDL::DOMException::create(realm);
-        case SerializeType::DOMMatrixReadOnly:
+        case Bindings::InterfaceName::DOMMatrixReadOnly:
             return Geometry::DOMMatrixReadOnly::create(realm);
-        case SerializeType::DOMMatrix:
+        case Bindings::InterfaceName::DOMMatrix:
             return Geometry::DOMMatrix::create(realm);
-        case SerializeType::DOMPointReadOnly:
+        case Bindings::InterfaceName::DOMPointReadOnly:
             return Geometry::DOMPointReadOnly::create(realm);
-        case SerializeType::DOMPoint:
+        case Bindings::InterfaceName::DOMPoint:
             return Geometry::DOMPoint::create(realm);
-        case SerializeType::DOMRectReadOnly:
+        case Bindings::InterfaceName::DOMRectReadOnly:
             return Geometry::DOMRectReadOnly::create(realm);
-        case SerializeType::DOMRect:
+        case Bindings::InterfaceName::DOMRect:
             return Geometry::DOMRect::create(realm);
-        case SerializeType::CryptoKey:
+        case Bindings::InterfaceName::CryptoKey:
             return Crypto::CryptoKey::create(realm);
-        case SerializeType::DOMQuad:
+        case Bindings::InterfaceName::DOMQuad:
             return Geometry::DOMQuad::create(realm);
-        case SerializeType::ImageData:
+        case Bindings::InterfaceName::ImageData:
             return ImageData::create(realm);
-        case SerializeType::ImageBitmap:
+        case Bindings::InterfaceName::ImageBitmap:
             return ImageBitmap::create(realm);
-        case SerializeType::QuotaExceededError:
+        case Bindings::InterfaceName::QuotaExceededError:
             return WebIDL::QuotaExceededError::create(realm);
-        case SerializeType::Unknown:
+        case Bindings::InterfaceName::Unknown:
         default:
             VERIFY_NOT_REACHED();
         }
@@ -1141,18 +1095,17 @@ WebIDL::ExceptionOr<SerializedTransferRecord> structured_serialize_with_transfer
 
 static bool is_transferable_interface_exposed_on_target_realm(TransferType name, JS::Realm& realm)
 {
-    auto const& intrinsics = Bindings::host_defined_intrinsics(realm);
     switch (name) {
     case TransferType::MessagePort:
-        return intrinsics.is_interface_exposed<Bindings::MessagePortPrototype>(realm);
+        return is_exposed(Bindings::InterfaceName::MessagePort, realm);
     case TransferType::ReadableStream:
-        return intrinsics.is_interface_exposed<Bindings::ReadableStreamPrototype>(realm);
+        return is_exposed(Bindings::InterfaceName::ReadableStream, realm);
     case TransferType::WritableStream:
-        return intrinsics.is_interface_exposed<Bindings::WritableStreamPrototype>(realm);
+        return is_exposed(Bindings::InterfaceName::WritableStream, realm);
     case TransferType::TransformStream:
-        return intrinsics.is_interface_exposed<Bindings::TransformStreamPrototype>(realm);
+        return is_exposed(Bindings::InterfaceName::TransformStream, realm);
     case TransferType::ImageBitmap:
-        return intrinsics.is_interface_exposed<Bindings::ImageBitmapPrototype>(realm);
+        return is_exposed(Bindings::InterfaceName::ImageBitmap, realm);
     case TransferType::Unknown:
         dbgln("Unknown interface type for transfer: {}", to_underlying(name));
         break;

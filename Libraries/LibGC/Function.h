@@ -15,9 +15,10 @@ namespace GC {
 template<typename T>
 class Function final : public Cell {
     GC_CELL(Function, Cell);
+    GC_DECLARE_ALLOCATOR(Function);
 
 public:
-    static Ref<Function> create(Heap& heap, ESCAPING AK::Function<T> function)
+    static Ref<Function> create(Heap& heap, ESCAPING AK::Function<T>&& function)
     {
         return heap.allocate<Function>(move(function));
     }
@@ -27,7 +28,7 @@ public:
     [[nodiscard]] AK::Function<T> const& function() const { return m_function; }
 
 private:
-    Function(AK::Function<T> function)
+    Function(AK::Function<T>&& function)
         : m_function(move(function))
     {
     }
@@ -46,5 +47,8 @@ static Ref<Function<T>> create_function(Heap& heap, ESCAPING Callable&& function
 {
     return Function<T>::create(heap, AK::Function<T> { forward<Callable>(function) });
 }
+
+template<typename T>
+GC_DEFINE_ALLOCATOR(Function<T>);
 
 }

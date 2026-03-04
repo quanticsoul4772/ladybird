@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2024, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
- * Copyright (c) 2025, Jelle Raaijmakers <jelle@ladybird.org>
+ * Copyright (c) 2025-2026, Jelle Raaijmakers <jelle@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -34,7 +34,7 @@ void EditingHostManager::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_active_contenteditable_element);
 }
 
-void EditingHostManager::handle_insert(Utf16String const& value)
+void EditingHostManager::handle_insert(FlyString const&, Utf16String const& value)
 {
     // https://w3c.github.io/editing/docs/execCommand/#additional-requirements
     // When the user instructs the user agent to insert text inside an editing host, such as by typing on the keyboard
@@ -42,7 +42,6 @@ void EditingHostManager::handle_insert(Utf16String const& value)
     // relevant document, with value equal to the text the user provided. If the user inserts multiple characters at
     // once or in quick succession, this specification does not define whether it is treated as one insertion or several
     // consecutive insertions.
-
     auto editing_result = m_document->exec_command(Editing::CommandNames::insertText, false, value);
     if (editing_result.is_exception())
         dbgln("handle_insert(): editing resulted in exception: {}", editing_result.exception());
@@ -107,9 +106,10 @@ void EditingHostManager::move_cursor_to_start(CollapseSelection collapse)
     if (collapse == CollapseSelection::Yes) {
         MUST(selection->collapse(node, 0));
         m_document->reset_cursor_blink_cycle();
-        return;
+    } else {
+        MUST(selection->set_base_and_extent(*selection->anchor_node(), selection->anchor_offset(), *node, 0));
     }
-    MUST(selection->set_base_and_extent(*selection->anchor_node(), selection->anchor_offset(), *node, 0));
+    selection->scroll_focus_into_view();
 }
 
 void EditingHostManager::move_cursor_to_end(CollapseSelection collapse)
@@ -122,9 +122,10 @@ void EditingHostManager::move_cursor_to_end(CollapseSelection collapse)
     if (collapse == CollapseSelection::Yes) {
         m_document->reset_cursor_blink_cycle();
         MUST(selection->collapse(node, node->length()));
-        return;
+    } else {
+        MUST(selection->set_base_and_extent(*selection->anchor_node(), selection->anchor_offset(), *node, node->length()));
     }
-    MUST(selection->set_base_and_extent(*selection->anchor_node(), selection->anchor_offset(), *node, node->length()));
+    selection->scroll_focus_into_view();
 }
 
 void EditingHostManager::increment_cursor_position_offset(CollapseSelection collapse)
@@ -171,7 +172,7 @@ void EditingHostManager::decrement_cursor_position_to_previous_line(CollapseSele
         selection->move_offset_to_previous_line(collapse == CollapseSelection::Yes);
 }
 
-void EditingHostManager::handle_delete(DeleteDirection direction)
+void EditingHostManager::handle_delete(FlyString const& input_type)
 {
     // https://w3c.github.io/editing/docs/execCommand/#additional-requirements
     // When the user instructs the user agent to delete the previous character inside an editing host, such as by
@@ -180,7 +181,7 @@ void EditingHostManager::handle_delete(DeleteDirection direction)
     // When the user instructs the user agent to delete the next character inside an editing host, such as by pressing
     // the Delete key while the cursor is in an editable node, the user agent must call execCommand("forwarddelete") on
     // the relevant document.
-    auto command = direction == DeleteDirection::Backward ? Editing::CommandNames::delete_ : Editing::CommandNames::forwardDelete;
+    auto command = input_type == UIEvents::InputTypes::deleteContentBackward ? Editing::CommandNames::delete_ : Editing::CommandNames::forwardDelete;
     auto editing_result = m_document->exec_command(command, false, {});
     if (editing_result.is_exception())
         dbgln("handle_delete(): editing resulted in exception: {}", editing_result.exception());

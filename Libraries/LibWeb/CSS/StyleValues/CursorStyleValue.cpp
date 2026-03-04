@@ -7,10 +7,12 @@
 #include "CursorStyleValue.h"
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Painter.h>
+#include <LibGfx/PaintingSurface.h>
 #include <LibWeb/CSS/Sizing.h>
 #include <LibWeb/CSS/StyleValues/AbstractImageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
 #include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/DisplayListPlayerSkia.h>
@@ -74,7 +76,7 @@ Optional<Gfx::ImageCursor> CursorStyleValue::make_image_cursor(Layout::NodeWithS
         // 32x32 is selected arbitrarily.
         // FIXME: Ask the OS for the default size?
         CSSPixelSize const default_cursor_size { 32, 32 };
-        auto cursor_css_size = run_default_sizing_algorithm({}, {}, image.natural_width(), image.natural_height(), image.natural_aspect_ratio(), default_cursor_size);
+        auto cursor_css_size = run_default_sizing_algorithm({}, {}, { image.natural_width(), image.natural_height(), image.natural_aspect_ratio() }, default_cursor_size);
         // FIXME: How do we determine what cursor sizes the OS allows?
         // We don't multiply by the pixel ratio, because we want to use the image's actual pixel size.
         DevicePixelSize cursor_device_size { cursor_css_size.to_type<double>().to_rounded<int>() };
@@ -98,7 +100,7 @@ Optional<Gfx::ImageCursor> CursorStyleValue::make_image_cursor(Layout::NodeWithS
         painter->clear_rect(bitmap.rect().to_type<float>(), Color::Transparent);
 
         // Paint the cursor into a bitmap.
-        auto display_list = Painting::DisplayList::create(document.page().client().device_pixels_per_css_pixel());
+        auto display_list = Painting::DisplayList::create();
         Painting::DisplayListRecorder display_list_recorder(display_list);
         DisplayListRecordingContext paint_context { display_list_recorder, document.page().palette(), document.page().client().device_pixels_per_css_pixel(), document.page().chrome_metrics() };
 
@@ -124,17 +126,7 @@ Optional<Gfx::ImageCursor> CursorStyleValue::make_image_cursor(Layout::NodeWithS
     if (m_properties.x && m_properties.y) {
         VERIFY(document.window());
 
-        auto resolved_value = [](StyleValue const& value) {
-            if (value.is_number())
-                return value.as_number().number();
-
-            if (value.is_calculated() && value.as_calculated().resolves_to_number())
-                return value.as_calculated().resolve_number({}).value();
-
-            VERIFY_NOT_REACHED();
-        };
-
-        hotspot = { resolved_value(*m_properties.x), resolved_value(*m_properties.y) };
+        hotspot = { number_from_style_value(*m_properties.x, {}), number_from_style_value(*m_properties.y, {}) };
     }
 
     return Gfx::ImageCursor {

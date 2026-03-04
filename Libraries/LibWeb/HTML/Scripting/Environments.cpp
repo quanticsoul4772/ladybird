@@ -13,6 +13,8 @@
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Fetch/Infrastructure/FetchRecord.h>
+#include <LibWeb/HTML/BrowsingContext.h>
+#include <LibWeb/HTML/PolicyContainers.h>
 #include <LibWeb/HTML/Scripting/Agent.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
@@ -27,6 +29,8 @@
 
 namespace Web::HTML {
 
+GC_DEFINE_ALLOCATOR(Environment);
+
 Environment::~Environment() = default;
 
 void Environment::visit_edges(Cell::Visitor& visitor)
@@ -38,7 +42,7 @@ void Environment::visit_edges(Cell::Visitor& visitor)
 EnvironmentSettingsObject::EnvironmentSettingsObject(NonnullOwnPtr<JS::ExecutionContext> realm_execution_context)
     : m_realm_execution_context(move(realm_execution_context))
 {
-    m_realm_execution_context->ensure_rare_data()->context_owner = this;
+    m_realm_execution_context->context_owner = this;
 
     // Register with the responsible event loop so we can perform step 4 of "perform a microtask checkpoint".
     responsible_event_loop().register_environment_settings_object({}, *this);
@@ -298,7 +302,11 @@ bool is_scripting_enabled(JS::Realm const& realm)
 
     // The user has not disabled scripting for realm at this time. (User agents may provide users with the option to disable scripting globally, or in a finer-grained manner, e.g., on a per-origin basis, down to the level of individual realms.)
     auto const& document = as<HTML::Window>(realm.global_object()).associated_document();
-    if (!document.page().is_scripting_enabled())
+
+    // NB: about:settings and about:processes are internal pages using javascript, so we do not consider user configuration for these pages.
+    if (document.url() != URL::about_settings()
+        && document.url() != URL::about_processes()
+        && !document.page().is_scripting_enabled())
         return false;
 
     // Either settings's global object is not a Window object, or settings's global object's associated Document's active sandboxing flag set does not have its sandboxed scripts browsing context flag set.
@@ -539,15 +547,16 @@ JS::Object& entry_global_object()
 bool is_secure_context(Environment const& environment)
 {
     // 1. If environment is an environment settings object, then:
-    if (is<EnvironmentSettingsObject>(environment)) {
+    if (auto const* environment_settings_object = as_if<EnvironmentSettingsObject>(environment)) {
         // 1. Let global be environment's global object.
-        // FIXME: Add a const global_object() getter to ESO
-        auto& global = static_cast<EnvironmentSettingsObject&>(const_cast<Environment&>(environment)).global_object();
+        auto const& global = environment_settings_object->global_object();
 
         // 2. If global is a WorkerGlobalScope, then:
-        if (is<WorkerGlobalScope>(global)) {
-            // FIXME: 1. If global's owner set[0]'s relevant settings object is a secure context, then return true.
+        if (auto const* worker = as_if<WorkerGlobalScope>(global)) {
+            // 1. If global's owner set[0]'s relevant settings object is a secure context, then return true.
             // NOTE: We only need to check the 0th item since they will necessarily all be consistent.
+            if (worker->owner_set().at(0).visit([](auto const& owner) { return owner.relevant_settings_object_is_secure_context; }))
+                return true;
 
             // 2. Return false.
             return false;
@@ -574,18 +583,34 @@ bool is_non_secure_context(Environment const& environment)
 
 SerializedEnvironmentSettingsObject EnvironmentSettingsObject::serialize()
 {
+    auto serialized_global = [this]() -> SerializedGlobal {
+        bool relevant_settings_object_is_secure_context = is_secure_context(*this);
+        if (auto const* window = as_if<Window>(global_object())) {
+            return SerializedWindow {
+                .associated_document {
+                    .url = window->associated_document().url(),
+                    .relevant_settings_object_is_secure_context = relevant_settings_object_is_secure_context,
+                }
+            };
+        }
+        VERIFY(is<WorkerGlobalScope>(global_object()));
+        return SerializedWorkerGlobalScope {
+            .relevant_settings_object_is_secure_context = relevant_settings_object_is_secure_context,
+        };
+    }();
+
     return SerializedEnvironmentSettingsObject {
         .id = this->id,
         .creation_url = this->creation_url,
         .top_level_creation_url = this->top_level_creation_url,
         .top_level_origin = this->top_level_origin,
-        .api_url_character_encoding = api_url_character_encoding(),
         .api_base_url = api_base_url(),
         .origin = origin(),
         .has_cross_site_ancestor = has_cross_site_ancestor(),
         .policy_container = policy_container()->serialize(),
         .cross_origin_isolated_capability = cross_origin_isolated_capability(),
         .time_origin = this->time_origin(),
+        .global = move(serialized_global),
     };
 }
 

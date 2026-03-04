@@ -11,6 +11,7 @@
 #include <AK/StringBuilder.h>
 #include <LibRegex/RegexMatcher.h>
 #include <LibRegex/RegexParser.h>
+#include <LibUnicode/CharacterTypes.h>
 
 #if REGEX_DEBUG
 #    include <LibRegex/RegexDebug.h>
@@ -177,13 +178,13 @@ RegexResult Matcher<Parser>::match(Vector<RegexStringView> const& views, Optiona
     size_t match_count { 0 };
 
     MatchInput input;
-    MatchState state { m_pattern->parser_result.capture_groups_count };
     size_t operations = 0;
 
     input.pattern = m_pattern->pattern_value;
 
     input.regex_options = m_regex_options | regex_options.value_or({}).value();
     input.start_offset = m_pattern->start_offset;
+    MatchState state(m_pattern->parser_result.capture_groups_count, input.regex_options);
     size_t lines_to_skip = 0;
 
     bool unicode = input.regex_options.has_flag_set(AllFlags::Unicode) || input.regex_options.has_flag_set(AllFlags::UnicodeSets);
@@ -276,6 +277,8 @@ RegexResult Matcher<Parser>::match(Vector<RegexStringView> const& views, Optiona
 
             state.instruction_position = 0;
             state.repetition_marks.clear();
+            state.modifier_stack.clear();
+            state.current_options = input.regex_options;
 
             auto result = execute(input, state, temp_operations);
             // This success is acceptable only if it doesn't read anything from the input (input length is 0).
@@ -336,6 +339,10 @@ RegexResult Matcher<Parser>::match(Vector<RegexStringView> const& views, Optiona
             }
             state.instruction_position = 0;
             state.repetition_marks.clear();
+            state.modifier_stack.clear();
+            state.current_options = input.regex_options;
+            state.string_position_before_rseek = NumericLimits<size_t>::max();
+            state.string_position_in_code_units_before_rseek = NumericLimits<size_t>::max();
 
             if (auto const result = execute(input, state, operations); result == ExecuteResult::Matched) {
                 succeeded = true;
@@ -507,13 +514,6 @@ private:
     Node* m_last { nullptr };
 };
 
-struct SufficientlyUniformValueTraits : DefaultTraits<u64> {
-    static constexpr unsigned hash(u64 value)
-    {
-        return (value >> 32) ^ value;
-    }
-};
-
 template<class Parser>
 Matcher<Parser>::ExecuteResult Matcher<Parser>::execute(MatchInput const& input, MatchState& state, size_t& operations) const
 {
@@ -542,7 +542,7 @@ Matcher<Parser>::ExecuteResult Matcher<Parser>::execute(MatchInput const& input,
                 haystack = input_view.substring_view(state.string_position_in_code_units, needle_view.length_in_code_units());
 
             if (is_insensitive) {
-                if (!haystack.equals_ignoring_ascii_case(needle_view))
+                if (!Unicode::ranges_equal_ignoring_case(haystack, needle_view, input.view.unicode()))
                     return ExecuteResult::DidNotMatch;
             } else {
                 if (haystack != needle_view)
@@ -559,7 +559,7 @@ Matcher<Parser>::ExecuteResult Matcher<Parser>::execute(MatchInput const& input,
     }
 
     BumpAllocatedLinkedList<MatchState> states_to_try_next;
-    HashTable<u64, SufficientlyUniformValueTraits> seen_state_hashes;
+    HashTable<u64, IdentityHashTraits<u64>> seen_state_hashes;
 #if REGEX_DEBUG
     size_t recursion_level = 0;
 #endif
@@ -714,6 +714,6 @@ template<typename Parser>
 struct AK::Traits<regex::CacheKey<Parser>> : public AK::DefaultTraits<regex::CacheKey<Parser>> {
     static unsigned hash(regex::CacheKey<Parser> const& key)
     {
-        return pair_int_hash(key.pattern.hash(), int_hash(to_underlying(key.options.value())));
+        return pair_int_hash(key.pattern.hash(), to_underlying(key.options.value()));
     }
 };

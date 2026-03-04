@@ -55,6 +55,8 @@ static NSString* const TOOLBAR_TAB_OVERVIEW_IDENTIFIER = @"ToolbarTabOverviewIde
     OwnPtr<WebView::Autocomplete> m_autocomplete;
 }
 
+@property (nonatomic, assign) BOOL already_requested_close;
+
 @property (nonatomic, strong) Tab* parent;
 
 @property (nonatomic, strong) NSToolbar* toolbar;
@@ -401,6 +403,21 @@ static NSString* const TOOLBAR_TAB_OVERVIEW_IDENTIFIER = @"ToolbarTabOverviewIde
     [delegate setActiveTab:[self tab]];
 }
 
+- (BOOL)windowShouldClose:(NSWindow*)sender
+{
+    // Prevent closing on first request so WebContent can cleanly shutdown (e.g. asking if the user is sure they want
+    // to leave, closing WebSocket connections, etc.)
+    if (!self.already_requested_close) {
+        self.already_requested_close = true;
+        [[[self tab] web_view] requestClose];
+        return false;
+    }
+
+    // If the user has already requested a close, then respect the user's request and just close the tab.
+    // For example, the WebContent process may not be responding.
+    return true;
+}
+
 - (void)windowWillClose:(NSNotification*)notification
 {
     auto* delegate = (ApplicationDelegate*)[NSApp delegate];
@@ -434,6 +451,11 @@ static NSString* const TOOLBAR_TAB_OVERVIEW_IDENTIFIER = @"ToolbarTabOverviewIde
 - (void)windowDidChangeScreen:(NSNotification*)notification
 {
     [[[self tab] web_view] handleDisplayRefreshRateChange];
+}
+
+- (void)windowDidExitFullScreen:(NSNotification*)notification
+{
+    [[[self tab] web_view] handleExitFullScreen];
 }
 
 #pragma mark - NSToolbarDelegate

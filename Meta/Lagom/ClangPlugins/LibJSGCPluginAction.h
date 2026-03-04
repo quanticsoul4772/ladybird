@@ -13,7 +13,6 @@
 struct LibJSCellMacro {
     enum class Type {
         GCCell,
-        ForeignCell,
         JSObject,
         JSEnvironment,
         JSPrototypeObject,
@@ -62,6 +61,7 @@ public:
     }
 
     bool VisitCXXRecordDecl(clang::CXXRecordDecl*);
+    bool VisitCXXMethodDecl(clang::CXXMethodDecl*);
 
 private:
     struct CellMacroExpectation {

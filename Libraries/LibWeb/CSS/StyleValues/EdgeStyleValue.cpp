@@ -5,6 +5,7 @@
  */
 
 #include "EdgeStyleValue.h"
+#include <LibWeb/CSS/Enums.h>
 #include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
 #include <LibWeb/CSS/StyleValues/LengthStyleValue.h>
 #include <LibWeb/CSS/ValueType.h>
@@ -67,7 +68,10 @@ ValueComparingNonnullRefPtr<EdgeStyleValue const> EdgeStyleValue::with_resolved_
 
 ValueComparingNonnullRefPtr<StyleValue const> EdgeStyleValue::absolutized(ComputationContext const& computation_context) const
 {
-    return EdgeStyleValue::create({}, with_resolved_keywords()->offset()->absolutized(computation_context));
+    auto absolutized_offset = with_resolved_keywords()->offset()->absolutized(computation_context);
+    if (!m_properties.edge.has_value() && m_properties.offset == absolutized_offset)
+        return *this;
+    return EdgeStyleValue::create({}, absolutized_offset);
 }
 
 }

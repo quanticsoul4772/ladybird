@@ -6,13 +6,16 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/CSS/CounterStyle.h>
 #include <LibWeb/CSS/CountersSet.h>
 #include <LibWeb/CSS/Enums.h>
 #include <LibWeb/CSS/Keyword.h>
 #include <LibWeb/CSS/Serialize.h>
+#include <LibWeb/CSS/StyleValues/CounterStyleStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CounterStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CustomIdentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StringStyleValue.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
 
 namespace Web::CSS {
@@ -30,73 +33,6 @@ CounterStyleValue::CounterStyleValue(CounterFunction function, FlyString counter
 
 CounterStyleValue::~CounterStyleValue() = default;
 
-// https://drafts.csswg.org/css-counter-styles-3/#generate-a-counter
-static String generate_a_counter_representation(StyleValue const& counter_style, i32 value)
-{
-    // When asked to generate a counter representation using a particular counter style for a particular
-    // counter value, follow these steps:
-    // TODO: 1. If the counter style is unknown, exit this algorithm and instead generate a counter representation
-    //    using the decimal style and the same counter value.
-    // TODO: 2. If the counter value is outside the range of the counter style, exit this algorithm and instead
-    //    generate a counter representation using the counter style’s fallback style and the same counter value.
-    // TODO: 3. Using the counter value and the counter algorithm for the counter style, generate an initial
-    //    representation for the counter value.
-    //    If the counter value is negative and the counter style uses a negative sign, instead generate an
-    //    initial representation using the absolute value of the counter value.
-    // TODO: 4. Prepend symbols to the representation as specified in the pad descriptor.
-    // TODO: 5. If the counter value is negative and the counter style uses a negative sign, wrap the representation
-    //    in the counter style’s negative sign as specified in the negative descriptor.
-    // TODO: 6. Return the representation.
-
-    // FIXME: Below is an ad-hoc implementation until we support @counter-style.
-    //  It's based largely on the ListItemMarkerBox code, with minimal adjustments.
-    if (counter_style.is_custom_ident()) {
-        auto counter_style_name = counter_style.as_custom_ident().custom_ident();
-        auto keyword = keyword_from_string(counter_style_name);
-        if (keyword.has_value()) {
-            if (auto list_style_type = keyword_to_counter_style_name_keyword(*keyword); list_style_type.has_value()) {
-                switch (*list_style_type) {
-                case CounterStyleNameKeyword::Square:
-                    return "▪"_string;
-                case CounterStyleNameKeyword::Circle:
-                    return "◦"_string;
-                case CounterStyleNameKeyword::Disc:
-                    return "•"_string;
-                case CounterStyleNameKeyword::DisclosureClosed:
-                    return "▸"_string;
-                case CounterStyleNameKeyword::DisclosureOpen:
-                    return "▾"_string;
-                case CounterStyleNameKeyword::Decimal:
-                    return MUST(String::formatted("{}", value));
-                case CounterStyleNameKeyword::DecimalLeadingZero:
-                    // This is weird, but in accordance to spec.
-                    if (value < 10)
-                        return MUST(String::formatted("0{}", value));
-                    return MUST(String::formatted("{}", value));
-                case CounterStyleNameKeyword::LowerAlpha:
-                case CounterStyleNameKeyword::LowerLatin:
-                    return String::bijective_base_from(value - 1, String::Case::Lower);
-                case CounterStyleNameKeyword::UpperAlpha:
-                case CounterStyleNameKeyword::UpperLatin:
-                    return String::bijective_base_from(value - 1, String::Case::Upper);
-                case CounterStyleNameKeyword::LowerGreek:
-                    return String::greek_letter_from(value);
-                case CounterStyleNameKeyword::LowerRoman:
-                    return String::roman_number_from(value, String::Case::Lower);
-                case CounterStyleNameKeyword::UpperRoman:
-                    return String::roman_number_from(value, String::Case::Upper);
-                default:
-                    break;
-                }
-            }
-        }
-    }
-    // FIXME: Handle `symbols()` function for counter_style.
-
-    dbgln("FIXME: Unsupported counter style '{}'", counter_style.to_string(SerializationMode::Normal));
-    return MUST(String::formatted("{}", value));
-}
-
 String CounterStyleValue::resolve(DOM::AbstractElement& element_reference) const
 {
     // "If no counter named <counter-name> exists on an element where counter() or counters() is used,
@@ -105,13 +41,15 @@ String CounterStyleValue::resolve(DOM::AbstractElement& element_reference) const
     if (!counters_set.last_counter_with_name(m_properties.counter_name).has_value())
         counters_set.instantiate_a_counter(m_properties.counter_name, element_reference, false, 0);
 
+    auto const& registered_counter_styles = element_reference.document().registered_counter_styles();
+
     // counter( <counter-name>, <counter-style>? )
     // "Represents the value of the innermost counter in the element’s CSS counters set named <counter-name>
     // using the counter style named <counter-style>."
     if (m_properties.function == CounterFunction::Counter) {
         // NOTE: This should always be present because of the handling of a missing counter above.
         auto& counter = counters_set.last_counter_with_name(m_properties.counter_name).value();
-        return generate_a_counter_representation(m_properties.counter_style, counter.value.value_or(0).value());
+        return generate_a_counter_representation(m_properties.counter_style->as_counter_style().resolve_counter_style(registered_counter_styles), registered_counter_styles, counter.value.value_or(0).value());
     }
 
     // counters( <counter-name>, <string>, <counter-style>? )
@@ -124,7 +62,7 @@ String CounterStyleValue::resolve(DOM::AbstractElement& element_reference) const
         if (counter.name != m_properties.counter_name)
             continue;
 
-        auto counter_string = generate_a_counter_representation(m_properties.counter_style, counter.value.value_or(0).value());
+        auto counter_string = generate_a_counter_representation(m_properties.counter_style->as_counter_style().resolve_counter_style(registered_counter_styles), registered_counter_styles, counter.value.value_or(0).value());
         if (!stb.is_empty())
             stb.append(m_properties.join_string);
         stb.append(counter_string);

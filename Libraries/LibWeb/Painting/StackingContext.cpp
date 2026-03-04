@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2020-2022, Andreas Kling <andreas@ladybird.org>
  * Copyright (c) 2022, Sam Atkins <atkinssj@serenityos.org>
- * Copyright (c) 2024-2025, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
+ * Copyright (c) 2024-2026, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
  * Copyright (c) 2025, Jelle Raaijmakers <jelle@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -9,17 +9,18 @@
 
 #include <AK/QuickSort.h>
 #include <AK/TemporaryChange.h>
-#include <LibGfx/AffineTransform.h>
-#include <LibGfx/Matrix4x4.h>
 #include <LibGfx/Rect.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/Layout/ReplacedBox.h>
 #include <LibWeb/Layout/Viewport.h>
-#include <LibWeb/Painting/Blending.h>
+#include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/DisplayList.h>
 #include <LibWeb/Painting/DisplayListRecorder.h>
 #include <LibWeb/Painting/PaintableBox.h>
+#include <LibWeb/Painting/PaintableWithLines.h>
 #include <LibWeb/Painting/SVGSVGPaintable.h>
 #include <LibWeb/Painting/StackingContext.h>
+#include <LibWeb/Painting/ViewportPaintable.h>
 #include <LibWeb/SVG/SVGMaskElement.h>
 
 namespace Web::Painting {
@@ -30,9 +31,10 @@ static void paint_node(Paintable const& paintable, DisplayListRecordingContext& 
 {
     TemporaryChange save_nesting_level(context.display_list_recorder().m_save_nesting_level, 0);
 
-    paintable.before_paint(context, phase);
+    if (auto const* paintable_box = as_if<PaintableBox>(paintable))
+        context.display_list_recorder().set_accumulated_visual_context(paintable_box->accumulated_visual_context());
     paintable.paint(context, phase);
-    paintable.after_paint(context, phase);
+    context.display_list_recorder().set_accumulated_visual_context({});
 
     VERIFY(context.display_list_recorder().m_save_nesting_level == 0);
 }
@@ -89,8 +91,6 @@ static PaintPhase to_paint_phase(StackingContext::StackingContextPaintPhase phas
         return PaintPhase::Background;
     case StackingContext::StackingContextPaintPhase::Foreground:
         return PaintPhase::Foreground;
-    case StackingContext::StackingContextPaintPhase::FocusAndOverlay:
-        return PaintPhase::Overlay;
     default:
         VERIFY_NOT_REACHED();
     }
@@ -112,7 +112,6 @@ void StackingContext::paint_node_as_stacking_context(Paintable const& paintable,
     paint_descendants(context, paintable, StackingContextPaintPhase::Foreground);
     paint_node(paintable, context, PaintPhase::Outline);
     paint_node(paintable, context, PaintPhase::Overlay);
-    paint_descendants(context, paintable, StackingContextPaintPhase::FocusAndOverlay);
 }
 
 void StackingContext::paint_svg(DisplayListRecordingContext& context, PaintableBox const& paintable, PaintPhase phase)
@@ -122,9 +121,7 @@ void StackingContext::paint_svg(DisplayListRecordingContext& context, PaintableB
 
     paint_node(paintable, context, PaintPhase::Background);
     paint_node(paintable, context, PaintPhase::Border);
-    paintable.before_paint(context, PaintPhase::Foreground);
     SVGSVGPaintable::paint_svg_box(context, paintable, phase);
-    paintable.after_paint(context, PaintPhase::Foreground);
 }
 
 void StackingContext::paint_descendants(DisplayListRecordingContext& context, Paintable const& paintable, StackingContextPaintPhase phase)
@@ -196,11 +193,8 @@ void StackingContext::paint_descendants(DisplayListRecordingContext& context, Pa
         case StackingContextPaintPhase::Foreground:
             paint_node(child, context, PaintPhase::Foreground);
             paint_descendants(context, child, phase);
-            break;
-        case StackingContextPaintPhase::FocusAndOverlay:
             paint_node(child, context, PaintPhase::Outline);
             paint_node(child, context, PaintPhase::Overlay);
-            paint_descendants(context, child, phase);
             break;
         }
 
@@ -223,22 +217,14 @@ void StackingContext::paint_internal(DisplayListRecordingContext& context) const
         paint_node(svg_svg_paintable, context, PaintPhase::Background);
         paint_node(svg_svg_paintable, context, PaintPhase::Border);
 
-        svg_svg_paintable.before_paint(context, PaintPhase::Foreground);
         SVGSVGPaintable::paint_descendants(context, svg_svg_paintable, PaintPhase::Foreground);
-        svg_svg_paintable.after_paint(context, PaintPhase::Foreground);
 
         paint_node(svg_svg_paintable, context, PaintPhase::Outline);
         if (context.should_paint_overlay()) {
             paint_node(svg_svg_paintable, context, PaintPhase::Overlay);
-            paint_descendants(context, svg_svg_paintable, StackingContextPaintPhase::FocusAndOverlay);
         }
         return;
     }
-
-    context.display_list_recorder().push_scroll_frame_id({});
-    ScopeGuard restore_scroll_frame_id([&] {
-        context.display_list_recorder().pop_scroll_frame_id();
-    });
 
     // For a more elaborate description of the algorithm, see CSS 2.1 Appendix E
     // Draw the background and borders for the context root (steps 1, 2)
@@ -292,21 +278,18 @@ void StackingContext::paint_internal(DisplayListRecordingContext& context) const
 
     if (context.should_paint_overlay()) {
         paint_node(paintable_box(), context, PaintPhase::Overlay);
-        paint_descendants(context, paintable_box(), StackingContextPaintPhase::FocusAndOverlay);
     }
-}
-
-// FIXME: This extracts the affine 2D part of the full transformation matrix.
-//  Use the whole matrix when we get better transformation support in LibGfx or use LibGL for drawing the bitmap
-Gfx::AffineTransform StackingContext::affine_transform_matrix() const
-{
-    return Gfx::extract_2d_affine_transform(paintable_box().transform());
 }
 
 void StackingContext::paint(DisplayListRecordingContext& context) const
 {
-    auto opacity = paintable_box().computed_values().opacity();
-    if (opacity == 0.0f)
+    // https://drafts.csswg.org/css-transforms-1/#transform-function-lists
+    // If a transform function causes the current transformation matrix of an object to be non-invertible, the object
+    // and its content do not get displayed.
+    if (paintable_box().has_non_invertible_css_transform())
+        return;
+
+    if (paintable_box().computed_values().opacity() == 0.0f)
         return;
 
     TemporaryChange save_nesting_level(context.display_list_recorder().m_save_nesting_level, 0);
@@ -314,112 +297,65 @@ void StackingContext::paint(DisplayListRecordingContext& context) const
         VERIFY(context.display_list_recorder().m_save_nesting_level == 0);
     });
 
-    auto to_device_pixels_scale = float(context.device_pixels_per_css_pixel());
-    auto source_paintable_rect = context.enclosing_device_rect(paintable_box().absolute_paint_rect()).to_type<int>();
-
-    auto transform_matrix = paintable_box().transform();
-    // https://drafts.csswg.org/css-transforms-2/#perspective
-    // Second, the 'perspective' and 'perspective-origin' properties can be applied to an element to influence the
-    // rendering of its 3d-transformed children, giving them a shared perspective that provides the impression of
-    // them living in the same three-dimensional scene.
-    Optional<Gfx::FloatMatrix4x4> parent_perspective_matrix;
-    if (auto const* parent = as_if<PaintableBox>(paintable_box().parent()))
-        parent_perspective_matrix = parent->perspective_matrix();
-
-    auto transform_origin = paintable_box().transform_origin().to_type<float>();
-
-    Gfx::CompositingAndBlendingOperator compositing_and_blending_operator = mix_blend_mode_to_compositing_and_blending_operator(paintable_box().computed_values().mix_blend_mode());
-
-    DisplayListRecorder::PushStackingContextParams push_stacking_context_params {
-        .opacity = opacity,
-        .compositing_and_blending_operator = compositing_and_blending_operator,
-        .isolate = paintable_box().computed_values().isolation() == CSS::Isolation::Isolate,
-        .transform = StackingContextTransform(transform_origin, transform_matrix, parent_perspective_matrix, to_device_pixels_scale),
-    };
-
     auto const& computed_values = paintable_box().computed_values();
-    if (auto clip_path = computed_values.clip_path(); clip_path.has_value() && clip_path->is_basic_shape()) {
-        auto const& masking_area = paintable_box().get_masking_area();
-        auto const& basic_shape = computed_values.clip_path()->basic_shape();
-        auto path = basic_shape.to_path(*masking_area, paintable_box().layout_node());
-        auto device_pixel_scale = context.device_pixels_per_css_pixel();
-        push_stacking_context_params.clip_path = path.copy_transformed(Gfx::AffineTransform {}.set_scale(device_pixel_scale, device_pixel_scale).set_translation(source_paintable_rect.location().to_type<float>()));
-    }
-
-    if (paintable_box().layout_node().has_paint_containment()) {
-        push_stacking_context_params.bounding_rect = context.enclosing_device_rect(paintable_box().overflow_clip_edge_rect());
-    }
-
-    auto has_css_transform = paintable_box().has_css_transform();
-    if (has_css_transform) {
-        paintable_box().apply_clip_overflow_rect(context, PaintPhase::Foreground);
-    }
-    paintable_box().apply_scroll_offset(context);
-
     auto mask_image = computed_values.mask_image();
-    Optional<Gfx::Filter> resolved_filter;
-    if (computed_values.filter().has_filters())
-        resolved_filter = paintable_box().resolve_filter(context, computed_values.filter());
 
-    bool needs_to_save_state = mask_image || paintable_box().get_masking_area().has_value();
+    auto effective_state = paintable_box().accumulated_visual_context();
+    context.display_list_recorder().set_accumulated_visual_context(effective_state);
 
-    bool needs_to_push_stacking_context = push_stacking_context_params.opacity != 1.0f
-        || push_stacking_context_params.compositing_and_blending_operator != Gfx::CompositingAndBlendingOperator::Normal
-        || push_stacking_context_params.isolate
-        || push_stacking_context_params.clip_path.has_value()
-        || has_css_transform;
-
-    if (needs_to_push_stacking_context) {
-        context.display_list_recorder().push_stacking_context(push_stacking_context_params);
-    } else if (needs_to_save_state) {
-        context.display_list_recorder().save();
+    // For elements with SVG filters, emit a transparent FillRect to trigger filter application.
+    // This ensures content-generating filters (feFlood, feImage) work even with empty source.
+    if (auto const& bounds = paintable_box().filter().svg_filter_bounds; bounds.has_value()) {
+        auto device_rect = context.enclosing_device_rect(*bounds).to_type<int>();
+        context.display_list_recorder().fill_rect_transparent(device_rect);
     }
 
-    if (resolved_filter.has_value())
-        context.display_list_recorder().apply_filter(*resolved_filter);
+    // Collect all masks (CSS mask-image, SVG <mask>, SVG <clipPath>).
+    Vector<DisplayListRecorder::MaskInfo> masks;
 
     if (mask_image) {
-        auto mask_display_list = DisplayList::create(context.device_pixels_per_css_pixel());
+        auto mask_display_list = DisplayList::create();
         DisplayListRecorder display_list_recorder(*mask_display_list);
         auto mask_painting_context = context.clone(display_list_recorder);
         auto mask_rect_in_device_pixels = context.enclosing_device_rect(paintable_box().absolute_padding_box_rect());
         mask_image->paint(mask_painting_context, { {}, mask_rect_in_device_pixels.size() }, CSS::ImageRendering::Auto);
-        context.display_list_recorder().add_mask(mask_display_list, mask_rect_in_device_pixels.to_type<int>());
+        masks.append({ mask_display_list, mask_rect_in_device_pixels.to_type<int>(), Gfx::MaskKind::Alpha });
     }
 
-    if (auto masking_area = paintable_box().get_masking_area(); masking_area.has_value()) {
-        auto mask_bitmap = paintable_box().calculate_mask(context, *masking_area);
-        if (mask_bitmap) {
-            auto masking_area_rect = context.enclosing_device_rect(*masking_area).to_type<int>();
-            context.display_list_recorder().apply_mask_bitmap(masking_area_rect.location(), mask_bitmap.release_nonnull(), *paintable_box().get_mask_type());
+    if (auto mask_area = paintable_box().get_mask_area(); mask_area.has_value()) {
+        if (auto mask_display_list = paintable_box().calculate_mask(context, *mask_area)) {
+            auto rect = context.enclosing_device_rect(*mask_area).to_type<int>();
+            auto kind = paintable_box().get_mask_type().value_or(Gfx::MaskKind::Alpha);
+            masks.append({ mask_display_list, rect, kind });
         }
     }
 
+    if (auto clip_area = paintable_box().get_clip_area(); clip_area.has_value()) {
+        if (auto clip_display_list = paintable_box().calculate_clip(context, *clip_area)) {
+            auto rect = context.enclosing_device_rect(*clip_area).to_type<int>();
+            masks.append({ clip_display_list, rect, Gfx::MaskKind::Alpha });
+        }
+    }
+
+    context.display_list_recorder().begin_masks(masks);
+
+    auto context_before_children = context.display_list_recorder().accumulated_visual_context();
+
     paint_internal(context);
 
-    if (resolved_filter.has_value())
-        context.display_list_recorder().restore();
+    context.display_list_recorder().set_accumulated_visual_context(context_before_children);
 
-    if (needs_to_push_stacking_context) {
-        context.display_list_recorder().pop_stacking_context();
-    } else if (needs_to_save_state) {
-        context.display_list_recorder().restore();
-    }
-    paintable_box().reset_scroll_offset(context);
-    if (has_css_transform)
-        paintable_box().clear_clip_overflow_rect(context, PaintPhase::Foreground);
+    context.display_list_recorder().end_masks(masks);
 }
 
 TraversalDecision StackingContext::hit_test(CSSPixelPoint position, HitTestType type, Function<TraversalDecision(HitTestResult)> const& callback) const
 {
-    if (paintable_box().computed_values().visibility() != CSS::Visibility::Visible)
+    // AD-HOC: Elements with non-invertible transforms are not displayed per the spec,
+    //         so they should not be hit-testable either.
+    if (paintable_box().has_non_invertible_css_transform())
         return TraversalDecision::Continue;
 
-    auto const inverse_transform = affine_transform_matrix().inverse().value_or({});
-    auto const transform_origin = paintable_box().transform_origin();
-    // NOTE: This CSSPixels -> Float -> CSSPixels conversion is because we can't AffineTransform::map() a CSSPixelPoint.
-    auto const offset_position = position.translated(-transform_origin).to_type<float>();
-    auto const transformed_position = inverse_transform.map(offset_position).to_type<CSSPixels>() + transform_origin;
+    auto const is_visible = paintable_box().computed_values().visibility() == CSS::Visibility::Visible;
 
     // NOTE: Hit testing basically happens in reverse painting order.
     // https://www.w3.org/TR/CSS22/visuren.html#z-index
@@ -429,17 +365,17 @@ TraversalDecision StackingContext::hit_test(CSSPixelPoint position, HitTestType 
     for (auto const child : m_children.in_reverse()) {
         if (child->paintable_box().computed_values().z_index().value_or(0) <= 0)
             break;
-        if (child->hit_test(transformed_position, type, callback) == TraversalDecision::Break)
+        if (child->hit_test(position, type, callback) == TraversalDecision::Break)
             return TraversalDecision::Break;
     }
 
     // 6. the child stacking contexts with stack level 0 and the positioned descendants with stack level 0.
     for (auto const& paintable_box : m_positioned_descendants_and_stacking_contexts_with_stack_level_0.in_reverse()) {
         if (paintable_box->stacking_context()) {
-            if (paintable_box->stacking_context()->hit_test(transformed_position, type, callback) == TraversalDecision::Break)
+            if (paintable_box->stacking_context()->hit_test(position, type, callback) == TraversalDecision::Break)
                 return TraversalDecision::Break;
         } else {
-            if (paintable_box->hit_test(transformed_position, type, callback) == TraversalDecision::Break)
+            if (paintable_box->hit_test(position, type, callback) == TraversalDecision::Break)
                 return TraversalDecision::Break;
         }
     }
@@ -448,7 +384,27 @@ TraversalDecision StackingContext::hit_test(CSSPixelPoint position, HitTestType 
     if (paintable_box().layout_node().children_are_inline() && is<Layout::BlockContainer>(paintable_box().layout_node())) {
         for (auto const* paintable = paintable_box().last_child(); paintable; paintable = paintable->previous_sibling()) {
             if (paintable->is_inline() && !paintable->is_absolutely_positioned() && !paintable->has_stacking_context()) {
-                if (paintable->hit_test(transformed_position, type, callback) == TraversalDecision::Break)
+                if (paintable->hit_test(position, type, callback) == TraversalDecision::Break)
+                    return TraversalDecision::Break;
+            }
+        }
+
+        // Hit test the stacking context root's own fragments if it's a PaintableWithLines.
+        if (is<PaintableWithLines>(paintable_box())) {
+            auto const& paintable_with_lines = as<PaintableWithLines>(paintable_box());
+            auto pixel_ratio = static_cast<float>(paintable_box().document().page().client().device_pixels_per_css_pixel());
+            auto const& scroll_state = paintable_box().document().paintable()->scroll_state_snapshot();
+            Optional<CSSPixelPoint> local_position;
+            if (auto state = paintable_box().accumulated_visual_context()) {
+                auto result = state->transform_point_for_hit_test(position.to_type<float>() * pixel_ratio, scroll_state);
+                if (result.has_value())
+                    local_position = (*result / pixel_ratio).to_type<CSSPixels>();
+            } else {
+                local_position = position;
+            }
+
+            if (local_position.has_value()) {
+                if (paintable_with_lines.hit_test_fragments(position, local_position.value(), type, callback) == TraversalDecision::Break)
                     return TraversalDecision::Break;
             }
         }
@@ -456,7 +412,7 @@ TraversalDecision StackingContext::hit_test(CSSPixelPoint position, HitTestType 
 
     // 4. the non-positioned floats.
     for (auto const& paintable_box : m_non_positioned_floating_descendants.in_reverse()) {
-        if (paintable_box->hit_test(transformed_position, type, callback) == TraversalDecision::Break)
+        if (paintable_box->hit_test(position, type, callback) == TraversalDecision::Break)
             return TraversalDecision::Break;
     }
 
@@ -468,7 +424,7 @@ TraversalDecision StackingContext::hit_test(CSSPixelPoint position, HitTestType 
 
             auto const& paintable_box = as<PaintableBox>(*child);
             if (!paintable_box.is_absolutely_positioned() && !paintable_box.is_floating() && !paintable_box.stacking_context()) {
-                if (paintable_box.hit_test(transformed_position, type, callback) == TraversalDecision::Break)
+                if (paintable_box.hit_test(position, type, callback) == TraversalDecision::Break)
                     return TraversalDecision::Break;
             }
         }
@@ -479,22 +435,26 @@ TraversalDecision StackingContext::hit_test(CSSPixelPoint position, HitTestType 
     for (auto const child : m_children.in_reverse()) {
         if (child->paintable_box().computed_values().z_index().value_or(0) >= 0)
             break;
-        if (child->hit_test(transformed_position, type, callback) == TraversalDecision::Break)
+        if (child->hit_test(position, type, callback) == TraversalDecision::Break)
             return TraversalDecision::Break;
     }
 
-    if (!paintable_box().visible_for_hit_testing())
+    // Hidden elements and elements with pointer-events: none shouldn't be hit.
+    if (!is_visible || !paintable_box().visible_for_hit_testing())
         return TraversalDecision::Continue;
 
-    auto const enclosing_scroll_offset = paintable_box().cumulative_offset_of_enclosing_scroll_frame();
-    auto const raw_position_adjusted_by_scroll_offset = position.translated(-enclosing_scroll_offset);
-    // NOTE: This CSSPixels -> Float -> CSSPixels conversion is because we can't AffineTransform::map() a CSSPixelPoint.
-    auto const offset_position_adjusted_by_scroll_offset = raw_position_adjusted_by_scroll_offset.translated(-transform_origin).to_type<float>();
-    auto const transformed_position_adjusted_by_scroll_offset = inverse_transform.map(offset_position_adjusted_by_scroll_offset).to_type<CSSPixels>() + transform_origin;
+    auto pixel_ratio = static_cast<float>(paintable_box().document().page().client().device_pixels_per_css_pixel());
+    auto const& scroll_state = paintable_box().document().paintable()->scroll_state_snapshot();
+    Optional<CSSPixelPoint> local_position;
+    if (auto state = paintable_box().accumulated_visual_context()) {
+        auto result = state->transform_point_for_hit_test(position.to_type<float>() * pixel_ratio, scroll_state);
+        if (result.has_value())
+            local_position = (*result / pixel_ratio).to_type<CSSPixels>();
+    } else {
+        local_position = position;
+    }
 
-    // 1. the background and borders of the element forming the stacking context.
-    if (paintable_box().visible_for_hit_testing()
-        && paintable_box().absolute_border_box_rect().contains(transformed_position_adjusted_by_scroll_offset)) {
+    if (local_position.has_value() && paintable_box().absolute_border_box_rect().contains(local_position.value())) {
         if (callback({ const_cast<PaintableBox&>(paintable_box()) }) == TraversalDecision::Break)
             return TraversalDecision::Break;
     }
@@ -515,10 +475,9 @@ void StackingContext::dump(StringBuilder& builder, int indent) const
         builder.append("auto"sv);
     builder.append(')');
 
-    auto affine_transform = affine_transform_matrix();
-    if (!affine_transform.is_identity()) {
-        builder.appendff(", transform: {}", affine_transform);
-    }
+    if (paintable_box().has_css_transform())
+        builder.append(", has_transform"sv);
+
     builder.append('\n');
     for (auto& child : m_children)
         child->dump(builder, indent + 1);

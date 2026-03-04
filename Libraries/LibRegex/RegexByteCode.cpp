@@ -19,12 +19,6 @@ constexpr static u32 const ParagraphSeparator { 0x2029 };
 
 namespace regex {
 
-template<typename ByteCode>
-StringView OpCode<ByteCode>::name() const
-{
-    return name(opcode_id());
-}
-
 StringView execution_result_name(ExecutionResult result)
 {
     switch (result) {
@@ -159,6 +153,20 @@ static bool restore_string_position(MatchInput const& input, MatchState& state)
     return true;
 }
 
+static bool is_word_character(u32 code_point, bool case_insensitive, bool unicode_mode)
+{
+    if (is_ascii_alphanumeric(code_point) || code_point == '_')
+        return true;
+
+    if (case_insensitive && unicode_mode) {
+        auto canonical = Unicode::canonicalize(code_point, unicode_mode);
+        if (is_ascii_alphanumeric(canonical) || canonical == '_')
+            return true;
+    }
+
+    return false;
+}
+
 OwnPtr<OpCode<ByteCode>> ByteCode::s_opcodes[(size_t)OpCodeId::Last + 1];
 bool ByteCode::s_opcodes_initialized { false };
 
@@ -238,6 +246,26 @@ void FlatByteCode::ensure_opcodes_initialized()
         }
     }
     s_opcodes_initialized = true;
+}
+
+template<typename ByteCode>
+ALWAYS_INLINE ExecutionResult OpCode_SaveModifiers<ByteCode>::execute(MatchInput const&, MatchState& state) const
+{
+    auto current_flags = to_underlying(state.current_options.value());
+    state.modifier_stack.append(current_flags);
+    state.current_options = AllOptions { static_cast<AllFlags>(new_modifiers()) };
+    return ExecutionResult::Continue;
+}
+
+template<typename ByteCode>
+ALWAYS_INLINE ExecutionResult OpCode_RestoreModifiers<ByteCode>::execute(MatchInput const&, MatchState& state) const
+{
+    if (state.modifier_stack.is_empty())
+        return ExecutionResult::Failed;
+
+    auto previous_modifiers = state.modifier_stack.take_last();
+    state.current_options = AllOptions { static_cast<AllFlags>(previous_modifiers) };
+    return ExecutionResult::Continue;
 }
 
 template<typename ByteCode>
@@ -439,7 +467,7 @@ ALWAYS_INLINE ExecutionResult OpCode_CheckBegin<ByteCode>::execute(MatchInput co
         if (state.string_position == 0)
             return true;
 
-        if (input.regex_options.has_flag_set(AllFlags::Multiline) && input.regex_options.has_flag_set(AllFlags::Internal_ConsiderNewline)) {
+        if (state.current_options.has_flag_set(AllFlags::Multiline) && state.current_options.has_flag_set(AllFlags::Internal_ConsiderNewline)) {
             auto input_view = input.view.substring_view(state.string_position - 1, 1).code_point_at(0);
             return input_view == '\r' || input_view == '\n' || input_view == LineSeparator || input_view == ParagraphSeparator;
         }
@@ -447,12 +475,12 @@ ALWAYS_INLINE ExecutionResult OpCode_CheckBegin<ByteCode>::execute(MatchInput co
         return false;
     }();
 
-    if (is_at_line_boundary && (input.regex_options & AllFlags::MatchNotBeginOfLine))
+    if (is_at_line_boundary && (state.current_options & AllFlags::MatchNotBeginOfLine))
         return ExecutionResult::Failed_ExecuteLowPrioForks;
 
-    if ((is_at_line_boundary && !(input.regex_options & AllFlags::MatchNotBeginOfLine))
-        || (!is_at_line_boundary && (input.regex_options & AllFlags::MatchNotBeginOfLine))
-        || (is_at_line_boundary && (input.regex_options & AllFlags::Global)))
+    if ((is_at_line_boundary && !(state.current_options & AllFlags::MatchNotBeginOfLine))
+        || (!is_at_line_boundary && (state.current_options & AllFlags::MatchNotBeginOfLine))
+        || (is_at_line_boundary && (state.current_options & AllFlags::Global)))
         return ExecutionResult::Continue;
 
     return ExecutionResult::Failed_ExecuteLowPrioForks;
@@ -461,7 +489,9 @@ ALWAYS_INLINE ExecutionResult OpCode_CheckBegin<ByteCode>::execute(MatchInput co
 template<typename ByteCode>
 ALWAYS_INLINE ExecutionResult OpCode_CheckBoundary<ByteCode>::execute(MatchInput const& input, MatchState& state) const
 {
-    auto isword = [](auto ch) { return is_ascii_alphanumeric(ch) || ch == '_'; };
+    auto isword = [&](auto ch) {
+        return is_word_character(ch, state.current_options & AllFlags::Insensitive, input.view.unicode());
+    };
     auto is_word_boundary = [&] {
         if (state.string_position == input.view.length()) {
             return (state.string_position > 0 && isword(input.view.code_point_at(state.string_position_in_code_units - 1)));
@@ -495,18 +525,18 @@ ALWAYS_INLINE ExecutionResult OpCode_CheckEnd<ByteCode>::execute(MatchInput cons
         if (state.string_position == input.view.length())
             return true;
 
-        if (input.regex_options.has_flag_set(AllFlags::Multiline) && input.regex_options.has_flag_set(AllFlags::Internal_ConsiderNewline)) {
+        if (state.current_options.has_flag_set(AllFlags::Multiline) && state.current_options.has_flag_set(AllFlags::Internal_ConsiderNewline)) {
             auto input_view = input.view.substring_view(state.string_position, 1).code_point_at(0);
             return input_view == '\r' || input_view == '\n' || input_view == LineSeparator || input_view == ParagraphSeparator;
         }
 
         return false;
     }();
-    if (is_at_line_boundary && (input.regex_options & AllFlags::MatchNotEndOfLine))
+    if (is_at_line_boundary && (state.current_options & AllFlags::MatchNotEndOfLine))
         return ExecutionResult::Failed_ExecuteLowPrioForks;
 
-    if ((is_at_line_boundary && !(input.regex_options & AllFlags::MatchNotEndOfLine))
-        || (!is_at_line_boundary && (input.regex_options & AllFlags::MatchNotEndOfLine || input.regex_options & AllFlags::MatchNotBeginOfLine)))
+    if ((is_at_line_boundary && !(state.current_options & AllFlags::MatchNotEndOfLine))
+        || (!is_at_line_boundary && (state.current_options & AllFlags::MatchNotEndOfLine || state.current_options & AllFlags::MatchNotBeginOfLine)))
         return ExecutionResult::Continue;
 
     return ExecutionResult::Failed_ExecuteLowPrioForks;
@@ -519,6 +549,19 @@ ALWAYS_INLINE ExecutionResult OpCode_ClearCaptureGroup<ByteCode>::execute(MatchI
         auto group = state.mutable_capture_group_matches(input.match_index);
         group[id() - 1].reset();
     }
+    return ExecutionResult::Continue;
+}
+
+template<typename ByteCode>
+ALWAYS_INLINE ExecutionResult OpCode_FailIfEmpty<ByteCode>::execute(MatchInput const&, MatchState& state) const
+{
+    u64 current_position = state.string_position + 1;
+    auto checkpoint_position = state.checkpoints.get(checkpoint()).value_or(current_position);
+
+    if (checkpoint_position == current_position) {
+        return ExecutionResult::Failed_ExecuteLowPrioForks;
+    }
+
     return ExecutionResult::Continue;
 }
 
@@ -608,11 +651,35 @@ template<typename ByteCode>
 ALWAYS_INLINE ExecutionResult OpCode_RSeekTo<ByteCode>::execute(MatchInput const& input, MatchState& state) const
 {
     auto ch = argument(0);
-    auto last_position = exchange(state.string_position_before_rseek, state.string_position);
-    auto last_position_in_code_units = exchange(state.string_position_in_code_units_before_rseek, state.string_position_in_code_units);
-    auto next = input.view.find_index_of_previous(ch, last_position, last_position_in_code_units);
-    if (!next.has_value())
+
+    size_t search_from;
+    size_t search_from_in_code_units;
+    auto line_limited = false;
+
+    if (state.string_position_before_rseek == NumericLimits<size_t>::max()) {
+        state.string_position_before_rseek = state.string_position;
+        state.string_position_in_code_units_before_rseek = state.string_position_in_code_units;
+
+        if (!input.regex_options.has_flag_set(AllFlags::SingleLine)) {
+            auto end_of_line = input.view.find_end_of_line(state.string_position, state.string_position_in_code_units);
+            search_from = end_of_line.code_point_index + 1;
+            search_from_in_code_units = end_of_line.code_unit_index + 1;
+            line_limited = true;
+        } else {
+            search_from = NumericLimits<size_t>::max();
+            search_from_in_code_units = NumericLimits<size_t>::max();
+        }
+    } else {
+        search_from = state.string_position;
+        search_from_in_code_units = state.string_position_in_code_units;
+    }
+
+    auto next = input.view.find_index_of_previous(ch, search_from, search_from_in_code_units);
+    if (!next.has_value() || next->code_unit_index < state.string_position_in_code_units_before_rseek) {
+        if (line_limited)
+            return ExecutionResult::Failed_ExecuteLowPrioForks;
         return ExecutionResult::Failed_ExecuteLowPrioForksButNoFurtherPossibleMatches;
+    }
     state.string_position = next->code_point_index;
     state.string_position_in_code_units = next->code_unit_index;
     return ExecutionResult::Continue;
@@ -723,11 +790,11 @@ ALWAYS_INLINE ExecutionResult CompareInternals<ByteCode, IsSimple>::execute(Matc
 
             auto input_view = input.view.substring_view(state.string_position, 1).code_point_at(0);
             auto is_equivalent_to_newline = input_view == '\n'
-                || (input.regex_options.has_flag_set(AllFlags::Internal_ECMA262DotSemantics)
+                || (state.current_options.has_flag_set(AllFlags::Internal_ECMA262DotSemantics)
                         ? (input_view == '\r' || input_view == LineSeparator || input_view == ParagraphSeparator)
                         : false);
 
-            if (!is_equivalent_to_newline || (input.regex_options.has_flag_set(AllFlags::SingleLine) && input.regex_options.has_flag_set(AllFlags::Internal_ConsiderNewline))) {
+            if (!is_equivalent_to_newline || (state.current_options.has_flag_set(AllFlags::SingleLine) && state.current_options.has_flag_set(AllFlags::Internal_ConsiderNewline))) {
                 if (current_inversion_state())
                     inverse_matched = true;
                 else
@@ -779,7 +846,7 @@ ALWAYS_INLINE ExecutionResult CompareInternals<ByteCode, IsSimple>::execute(Matc
             auto insensitive_range_data = bytecode().flat_data().slice(offset, count_insensitive);
             offset += count_insensitive;
 
-            bool const insensitive = input.regex_options & AllFlags::Insensitive;
+            bool const insensitive = state.current_options & AllFlags::Insensitive;
             auto ch = input.view.unicode_aware_code_point_at(state.string_position_in_code_units);
 
             if (insensitive)
@@ -900,12 +967,12 @@ ALWAYS_INLINE ExecutionResult CompareInternals<ByteCode, IsSimple>::execute(Matc
         }
         case CharacterCompareType::Property: {
             auto property = static_cast<Unicode::Property>(bytecode_data[offset++]);
-            compare_property(input, state, property, current_inversion_state(), inverse_matched);
+            compare_property(input, state, property, current_inversion_state(), temporary_inverse && inverse, inverse_matched);
             break;
         }
         case CharacterCompareType::GeneralCategory: {
             auto general_category = static_cast<Unicode::GeneralCategory>(bytecode_data[offset++]);
-            compare_general_category(input, state, general_category, current_inversion_state(), inverse_matched);
+            compare_general_category(input, state, general_category, current_inversion_state(), temporary_inverse && inverse, inverse_matched);
             break;
         }
         case CharacterCompareType::Script: {
@@ -947,10 +1014,10 @@ ALWAYS_INLINE ExecutionResult CompareInternals<ByteCode, IsSimple>::execute(Matc
                         value = input.view.code_point_at(current_code_unit_offset);
                     }
 
-                    if (input.regex_options & AllFlags::Insensitive) {
+                    if (state.current_options & AllFlags::Insensitive) {
                         bool found_child = false;
                         for (auto const& [key, child] : current->children()) {
-                            if (to_ascii_lowercase(key) == to_ascii_lowercase(value)) {
+                            if (Unicode::canonicalize(key, input.view.unicode()) == Unicode::canonicalize(value, input.view.unicode())) {
                                 current = static_cast<StringSetTrie const*>(child.ptr());
                                 current_code_unit_offset++;
                                 found_child = true;
@@ -1183,15 +1250,8 @@ ALWAYS_INLINE void CompareInternals<ByteCode, IsSimple>::compare_char(MatchInput
         : input.view.unicode_aware_code_point_at(state.string_position_in_code_units);
 
     bool equal;
-    if (input.regex_options & AllFlags::Insensitive) {
-        if (input.view.unicode()) {
-            auto lhs = String::from_code_point(input_view);
-            auto rhs = String::from_code_point(ch1);
-
-            equal = lhs.equals_ignoring_case(rhs);
-        } else {
-            equal = to_ascii_lowercase(input_view) == to_ascii_lowercase(ch1);
-        }
+    if (state.current_options & AllFlags::Insensitive) {
+        equal = Unicode::canonicalize(input_view, input.view.unicode()) == Unicode::canonicalize(ch1, input.view.unicode());
     } else {
         equal = input_view == ch1;
     }
@@ -1228,8 +1288,8 @@ ALWAYS_INLINE bool CompareInternals<ByteCode, IsSimple>::compare_string(MatchInp
 
     auto subject = input.view.substring_view(state.string_position, str.length());
     bool equals;
-    if (input.regex_options & AllFlags::Insensitive)
-        equals = subject.equals_ignoring_case(str);
+    if (state.current_options & AllFlags::Insensitive)
+        equals = subject.equals_ignoring_case(str, input.view.unicode());
     else
         equals = subject.equals(str);
 
@@ -1242,7 +1302,7 @@ ALWAYS_INLINE bool CompareInternals<ByteCode, IsSimple>::compare_string(MatchInp
 template<typename ByteCode, bool IsSimple>
 ALWAYS_INLINE void CompareInternals<ByteCode, IsSimple>::compare_character_class(MatchInput const& input, MatchState& state, CharClass character_class, u32 ch, bool inverse, bool& inverse_matched)
 {
-    if (matches_character_class(character_class, ch, input.regex_options & AllFlags::Insensitive)) {
+    if (matches_character_class(character_class, ch, state.current_options & AllFlags::Insensitive, input.view.unicode())) {
         if (inverse)
             inverse_matched = true;
         else
@@ -1251,7 +1311,7 @@ ALWAYS_INLINE void CompareInternals<ByteCode, IsSimple>::compare_character_class
 }
 
 template<typename ByteCode, bool IsSimple>
-bool CompareInternals<ByteCode, IsSimple>::matches_character_class(CharClass character_class, u32 ch, bool insensitive)
+bool CompareInternals<ByteCode, IsSimple>::matches_character_class(CharClass character_class, u32 ch, bool insensitive, bool unicode_mode)
 {
     constexpr auto is_space_or_line_terminator = [](u32 code_point) {
         if ((code_point == 0x0a) || (code_point == 0x0d) || (code_point == 0x2028) || (code_point == 0x2029))
@@ -1285,7 +1345,7 @@ bool CompareInternals<ByteCode, IsSimple>::matches_character_class(CharClass cha
     case CharClass::Upper:
         return is_ascii_upper_alpha(ch) || (insensitive && is_ascii_lower_alpha(ch));
     case CharClass::Word:
-        return is_ascii_alphanumeric(ch) || ch == '_';
+        return is_word_character(ch, insensitive, unicode_mode);
     case CharClass::Xdigit:
         return is_ascii_hex_digit(ch);
     }
@@ -1296,13 +1356,14 @@ bool CompareInternals<ByteCode, IsSimple>::matches_character_class(CharClass cha
 template<typename ByteCode, bool IsSimple>
 ALWAYS_INLINE void CompareInternals<ByteCode, IsSimple>::compare_character_range(MatchInput const& input, MatchState& state, u32 from, u32 to, u32 ch, bool inverse, bool& inverse_matched)
 {
-    if (input.regex_options & AllFlags::Insensitive) {
-        from = to_ascii_lowercase(from);
-        to = to_ascii_lowercase(to);
-        ch = to_ascii_lowercase(ch);
+    bool matched = false;
+    if (state.current_options & AllFlags::Insensitive) {
+        matched = Unicode::code_point_matches_range_ignoring_case(ch, from, to, input.view.unicode());
+    } else {
+        matched = (ch >= from && ch <= to);
     }
 
-    if (ch >= from && ch <= to) {
+    if (matched) {
         if (inverse)
             inverse_matched = true;
         else
@@ -1311,36 +1372,85 @@ ALWAYS_INLINE void CompareInternals<ByteCode, IsSimple>::compare_character_range
 }
 
 template<typename ByteCode, bool IsSimple>
-ALWAYS_INLINE void CompareInternals<ByteCode, IsSimple>::compare_property(MatchInput const& input, MatchState& state, Unicode::Property property, bool inverse, bool& inverse_matched)
+ALWAYS_INLINE void CompareInternals<ByteCode, IsSimple>::compare_property(MatchInput const& input, MatchState& state, Unicode::Property property, bool inverse, bool is_double_negation, bool& inverse_matched)
 {
     if (state.string_position == input.view.length())
         return;
 
     u32 code_point = input.view.code_point_at(state.string_position_in_code_units);
-    bool equal = Unicode::code_point_has_property(code_point, property);
+    bool case_insensitive = (state.current_options & AllFlags::Insensitive) && input.view.unicode();
+    bool is_unicode_sets_mode = state.current_options.has_flag_set(AllFlags::UnicodeSets);
 
-    if (equal) {
-        if (inverse)
-            inverse_matched = true;
-        else
+    // In /u mode, case folding happens after complementing: \P{x} matches caseFold(allChars - charsWithX).
+    // This means a code point matches the inverted property if ANY of its case variants lacks the property.
+    // In /v mode, case folding happens before complementing: \P{x} matches caseFold(allChars) - caseFold(charsWithX),
+    // so we can just use normal case-insensitive matching and invert the result.
+    if ((inverse || is_double_negation) && case_insensitive && !is_unicode_sets_mode) {
+        bool any_variant_lacks_property = false;
+        Unicode::for_each_case_folded_code_point(code_point, [&](u32 variant) {
+            if (!Unicode::code_point_has_property(variant, property)) {
+                any_variant_lacks_property = true;
+                return IterationDecision::Break;
+            }
+            return IterationDecision::Continue;
+        });
+
+        if (is_double_negation) {
+            if (any_variant_lacks_property)
+                return;
             advance_string_position(state, input.view, code_point);
+        } else if (!any_variant_lacks_property) {
+            inverse_matched = true;
+            return;
+        }
+    } else {
+        auto case_sensitivity = case_insensitive && (is_unicode_sets_mode || !inverse) ? CaseSensitivity::CaseInsensitive : CaseSensitivity::CaseSensitive;
+        if (Unicode::code_point_has_property(code_point, property, case_sensitivity)) {
+            if (inverse)
+                inverse_matched = true;
+            else
+                advance_string_position(state, input.view, code_point);
+        }
     }
 }
 
 template<typename ByteCode, bool IsSimple>
-ALWAYS_INLINE void CompareInternals<ByteCode, IsSimple>::compare_general_category(MatchInput const& input, MatchState& state, Unicode::GeneralCategory general_category, bool inverse, bool& inverse_matched)
+ALWAYS_INLINE void CompareInternals<ByteCode, IsSimple>::compare_general_category(MatchInput const& input, MatchState& state, Unicode::GeneralCategory general_category, bool inverse, bool is_double_negation, bool& inverse_matched)
 {
     if (state.string_position == input.view.length())
         return;
 
     u32 code_point = input.view.code_point_at(state.string_position_in_code_units);
-    bool equal = Unicode::code_point_has_general_category(code_point, general_category);
+    bool case_insensitive = (state.current_options & AllFlags::Insensitive) && input.view.unicode();
+    bool is_unicode_sets_mode = state.current_options.has_flag_set(AllFlags::UnicodeSets);
 
-    if (equal) {
-        if (inverse)
-            inverse_matched = true;
-        else
+    // See comment in compare_property for /u vs /v mode case folding semantics.
+    if ((inverse || is_double_negation) && case_insensitive && !is_unicode_sets_mode) {
+        bool any_variant_lacks_category = false;
+        Unicode::for_each_case_folded_code_point(code_point, [&](u32 variant) {
+            if (!Unicode::code_point_has_general_category(variant, general_category)) {
+                any_variant_lacks_category = true;
+                return IterationDecision::Break;
+            }
+            return IterationDecision::Continue;
+        });
+
+        if (is_double_negation) {
+            if (any_variant_lacks_category)
+                return;
             advance_string_position(state, input.view, code_point);
+        } else if (!any_variant_lacks_category) {
+            inverse_matched = true;
+            return;
+        }
+    } else {
+        auto case_sensitivity = case_insensitive && (is_unicode_sets_mode || !inverse) ? CaseSensitivity::CaseInsensitive : CaseSensitivity::CaseSensitive;
+        if (Unicode::code_point_has_general_category(code_point, general_category, case_sensitivity)) {
+            if (inverse)
+                inverse_matched = true;
+            else
+                advance_string_position(state, input.view, code_point);
+        }
     }
 }
 
@@ -1719,13 +1829,15 @@ ALWAYS_INLINE ExecutionResult OpCode_JumpNonEmpty<ByteCode>::execute(MatchInput 
     return ExecutionResult::Continue;
 }
 
-template class OpCode_Compare<ByteCode>;
-template class OpCode<ByteCode>;
 template class CompareInternals<ByteCode, true>;
 template class CompareInternals<ByteCode, false>;
-template class OpCode_Compare<FlatByteCode>;
-template class OpCode<FlatByteCode>;
 template class CompareInternals<FlatByteCode, true>;
 template class CompareInternals<FlatByteCode, false>;
+
+#define __ENUMERATE_OPCODE(opcode)            \
+    template class OpCode_##opcode<ByteCode>; \
+    template class OpCode_##opcode<FlatByteCode>;
+ENUMERATE_OPCODES
+#undef __ENUMERATE_OPCODE
 
 }

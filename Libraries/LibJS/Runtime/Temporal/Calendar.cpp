@@ -2,11 +2,12 @@
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2023-2024, Shannon Booth <shannon@serenityos.org>
- * Copyright (c) 2024-2025, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2024-2026, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/GenericShorthands.h>
 #include <AK/NonnullRawPtr.h>
 #include <AK/QuickSort.h>
 #include <LibJS/Runtime/AbstractOperations.h>
@@ -193,7 +194,7 @@ ThrowCompletionOr<MonthCode> parse_month_code(VM& vm, StringView month_code)
     // 4. Let isLeapMonth be false.
     auto is_leap_month = false;
 
-    // 5. If the length of monthCode is 4, then
+    // 5. If the length of monthCode = 4, then
     if (month_code.length() == 4) {
         // a. Assert: The fourth code unit of monthCode is 0x004C (LATIN CAPITAL LETTER L).
         VERIFY(month_code[3] == 'L');
@@ -228,8 +229,7 @@ String create_month_code(u8 month_number, bool is_leap_month)
         return MUST(String::formatted("M{:02}L", month_number));
     }
 
-    // 4. Else,
-    //     a. Return the string-concatenation of the code unit 0x004D (LATIN CAPITAL LETTER M) and numberPart.
+    // 4. Return the string-concatenation of the code unit 0x004D (LATIN CAPITAL LETTER M) and numberPart.
     return MUST(String::formatted("M{:02}", month_number));
 }
 
@@ -320,11 +320,9 @@ ThrowCompletionOr<CalendarFields> prepare_calendar_fields(VM& vm, StringView cal
         }
         // d. Else if requiredFieldNames is a List, then
         else if (auto const* required = required_field_names.get_pointer<CalendarFieldList>()) {
-            // i. If requiredFieldNames contains key, then
-            if (required->contains_slow(key)) {
-                // 1. Throw a TypeError exception.
+            // i. If requiredFieldNames contains key, throw a TypeError exception.
+            if (required->contains_slow(key))
                 return vm.throw_completion<TypeError>(ErrorType::MissingRequiredProperty, *property);
-            }
 
             // ii. Set result's field whose name is given in the Field Name column of the same row to the corresponding
             //     Default value of the same row.
@@ -332,11 +330,9 @@ ThrowCompletionOr<CalendarFields> prepare_calendar_fields(VM& vm, StringView cal
         }
     }
 
-    // 10. If requiredFieldNames is PARTIAL and any is false, then
-    if (required_field_names.has<Partial>() && !any) {
-        // a. Throw a TypeError exception.
+    // 10. If requiredFieldNames is PARTIAL and any is false, throw a TypeError exception.
+    if (required_field_names.has<Partial>() && !any)
         return vm.throw_completion<TypeError>(ErrorType::TemporalObjectMustBePartialTemporalObject);
-    }
 
     // 11. Return result.
     return result;
@@ -430,11 +426,11 @@ ThrowCompletionOr<ISODate> calendar_date_add(VM& vm, StringView calendar, ISODat
         // b. Set intermediate to ? RegulateISODate(intermediate.[[Year]], intermediate.[[Month]], isoDate.[[Day]], overflow).
         auto intermediate_date = TRY(regulate_iso_date(vm, intermediate.year, intermediate.month, iso_date.day, overflow));
 
-        // c. Let d be intermediate.[[Day]] + duration.[[Days]] + 7 × duration.[[Weeks]].
-        auto day = intermediate_date.day + duration.days + (7 * duration.weeks);
+        // c. Let days be duration.[[Days]] + 7 × duration.[[Weeks]].
+        auto days = duration.days + (7 * duration.weeks);
 
-        // d. Let result be BalanceISODate(intermediate.[[Year]], intermediate.[[Month]], d).
-        result = balance_iso_date(intermediate_date.year, intermediate_date.month, day);
+        // d. Let result be AddDaysToISODate(intermediate, days).
+        result = add_days_to_iso_date(intermediate_date, days);
     }
     // 2. Else,
     else {
@@ -461,35 +457,37 @@ DateDuration non_iso_date_until(VM& vm, StringView calendar, ISODate one, ISODat
 // 12.3.9 CalendarDateUntil ( calendar, one, two, largestUnit ), https://tc39.es/proposal-temporal/#sec-temporal-calendardateuntil
 DateDuration calendar_date_until(VM& vm, StringView calendar, ISODate one, ISODate two, Unit largest_unit)
 {
-    // 1. If calendar is "iso8601", then
+    // 1. Let sign be CompareISODate(one, two).
+    auto sign = compare_iso_date(one, two);
+
+    // 2. If sign = 0, return ZeroDateDuration().
+    if (sign == 0)
+        return zero_date_duration(vm);
+
+    // 3. If calendar is "iso8601", then
     if (calendar == "iso8601"sv) {
-        // a. Let sign be -CompareISODate(one, two).
-        auto sign = compare_iso_date(one, two);
+        // a. Set sign to -sign.
         sign *= -1;
 
-        // b. If sign = 0, return ZeroDateDuration().
-        if (sign == 0)
-            return zero_date_duration(vm);
-
-        // c. Let years be 0.
+        // b. Let years be 0.
         double years = 0;
 
-        // e. Let months be 0.
+        // d. Let months be 0.
         double months = 0;
 
         // OPTIMIZATION: If the largestUnit is MONTH, we want to skip ahead to the correct year. If implemented in exact
         //               accordance with the spec, we could enter the second ISODateSurpasses loop below with a very large
         //               number of months to traverse.
 
-        // d. If largestUnit is YEAR, then
-        // f. If largestUnit is YEAR or largestUnit is MONTH, then
+        // c. If largestUnit is YEAR, then
+        // e. If largestUnit is either YEAR or MONTH, then
         if (largest_unit == Unit::Year || largest_unit == Unit::Month) {
-            // d.i. Let candidateYears be sign.
+            // c.i. Let candidateYears be sign.
             auto candidate_years = two.year - one.year;
             if (candidate_years != 0)
                 candidate_years -= sign;
 
-            // d.ii. Repeat, while ISODateSurpasses(sign, one, two, candidateYears, 0, 0, 0) is false,
+            // c.ii. Repeat, while ISODateSurpasses(sign, one, two, candidateYears, 0, 0, 0) is false,
             while (!iso_date_surpasses(vm, sign, one, two, candidate_years, 0, 0, 0)) {
                 // 1. Set years to candidateYears.
                 years = candidate_years;
@@ -498,10 +496,10 @@ DateDuration calendar_date_until(VM& vm, StringView calendar, ISODate one, ISODa
                 candidate_years += sign;
             }
 
-            // f.i. Let candidateMonths be sign.
+            // e.i. Let candidateMonths be sign.
             double candidate_months = sign;
 
-            // f.ii. Repeat, while ISODateSurpasses(sign, one, two, years, candidateMonths, 0, 0) is false,
+            // e.ii. Repeat, while ISODateSurpasses(sign, one, two, years, candidateMonths, 0, 0) is false,
             while (!iso_date_surpasses(vm, sign, one, two, years, candidate_months, 0, 0)) {
                 // 1. Set months to candidateMonths.
                 months = candidate_months;
@@ -516,7 +514,7 @@ DateDuration calendar_date_until(VM& vm, StringView calendar, ISODate one, ISODa
             }
         }
 
-        // g. Let weeks be 0.
+        // f. Let weeks be 0.
         double weeks = 0;
 
         // OPTIMIZATION: If the largestUnit is DAY, we do not want to enter an ISODateSurpasses loop. The loop would have
@@ -533,36 +531,30 @@ DateDuration calendar_date_until(VM& vm, StringView calendar, ISODate one, ISODa
             days = fmod(days, 7.0);
         }
 
-        // l. Return ! CreateDateDurationRecord(years, months, weeks, days).
+        // k. Return ! CreateDateDurationRecord(years, months, weeks, days).
         return MUST(create_date_duration_record(vm, years, months, weeks, days));
     }
 
-    // 2. Return NonISODateUntil(calendar, one, two, largestUnit).
+    // 4. Return NonISODateUntil(calendar, one, two, largestUnit).
     return non_iso_date_until(vm, calendar, one, two, largest_unit);
 }
 
 // 12.3.10 ToTemporalCalendarIdentifier ( temporalCalendarLike ), https://tc39.es/proposal-temporal/#sec-temporal-totemporalcalendaridentifier
 ThrowCompletionOr<String> to_temporal_calendar_identifier(VM& vm, Value temporal_calendar_like)
 {
-    // 1. If temporalCalendarLike is an Object, then
-    if (temporal_calendar_like.is_object()) {
-        auto const& temporal_calendar_object = temporal_calendar_like.as_object();
-
-        // a. If temporalCalendarLike has an [[InitializedTemporalDate]], [[InitializedTemporalDateTime]],
-        //    [[InitializedTemporalMonthDay]], [[InitializedTemporalYearMonth]], or [[InitializedTemporalZonedDateTime]]
-        //    internal slot, then
-        //     i. Return temporalCalendarLike.[[Calendar]].
-        if (is<PlainDate>(temporal_calendar_object))
-            return static_cast<PlainDate const&>(temporal_calendar_object).calendar();
-        if (is<PlainDateTime>(temporal_calendar_object))
-            return static_cast<PlainDateTime const&>(temporal_calendar_object).calendar();
-        if (is<PlainMonthDay>(temporal_calendar_object))
-            return static_cast<PlainMonthDay const&>(temporal_calendar_object).calendar();
-        if (is<PlainYearMonth>(temporal_calendar_object))
-            return static_cast<PlainYearMonth const&>(temporal_calendar_object).calendar();
-        if (is<ZonedDateTime>(temporal_calendar_object))
-            return static_cast<ZonedDateTime const&>(temporal_calendar_object).calendar();
-    }
+    // 1. If temporalCalendarLike is an Object and temporalCalendarLike has an [[InitializedTemporalDate]],
+    //    [[InitializedTemporalDateTime]], [[InitializedTemporalMonthDay]], [[InitializedTemporalYearMonth]], or
+    //    [[InitializedTemporalZonedDateTime]] internal slot, return temporalCalendarLike.[[Calendar]].
+    if (auto plain_date = temporal_calendar_like.as_if<PlainDate>())
+        return plain_date->calendar();
+    if (auto plain_date_time = temporal_calendar_like.as_if<PlainDateTime>())
+        return plain_date_time->calendar();
+    if (auto plain_month_day = temporal_calendar_like.as_if<PlainMonthDay>())
+        return plain_month_day->calendar();
+    if (auto plain_year_month = temporal_calendar_like.as_if<PlainYearMonth>())
+        return plain_year_month->calendar();
+    if (auto zoned_date_time = temporal_calendar_like.as_if<ZonedDateTime>())
+        return zoned_date_time->calendar();
 
     // 2. If temporalCalendarLike is not a String, throw a TypeError exception.
     if (!temporal_calendar_like.is_string())
@@ -581,25 +573,23 @@ ThrowCompletionOr<String> get_temporal_calendar_identifier_with_iso_default(VM& 
     // 1. If item has an [[InitializedTemporalDate]], [[InitializedTemporalDateTime]], [[InitializedTemporalMonthDay]],
     //    [[InitializedTemporalYearMonth]], or [[InitializedTemporalZonedDateTime]] internal slot, then
     //     a. Return item.[[Calendar]].
-    if (is<PlainDate>(item))
-        return static_cast<PlainDate const&>(item).calendar();
-    if (is<PlainDateTime>(item))
-        return static_cast<PlainDateTime const&>(item).calendar();
-    if (is<PlainMonthDay>(item))
-        return static_cast<PlainMonthDay const&>(item).calendar();
-    if (is<PlainYearMonth>(item))
-        return static_cast<PlainYearMonth const&>(item).calendar();
-    if (is<ZonedDateTime>(item))
-        return static_cast<PlainYearMonth const&>(item).calendar();
+    if (auto const* plain_date = as_if<PlainDate>(item))
+        return plain_date->calendar();
+    if (auto const* plain_date_time = as_if<PlainDateTime>(item))
+        return plain_date_time->calendar();
+    if (auto const* plain_month_day = as_if<PlainMonthDay>(item))
+        return plain_month_day->calendar();
+    if (auto const* plain_year_month = as_if<PlainYearMonth>(item))
+        return plain_year_month->calendar();
+    if (auto const* zoned_date_time = as_if<ZonedDateTime>(item))
+        return zoned_date_time->calendar();
 
     // 2. Let calendarLike be ? Get(item, "calendar").
     auto calendar_like = TRY(item.get(vm.names.calendar));
 
-    // 3. If calendarLike is undefined, then
-    if (calendar_like.is_undefined()) {
-        // a. Return "iso8601".
+    // 3. If calendarLike is undefined, return "iso8601".
+    if (calendar_like.is_undefined())
         return "iso8601"_string;
-    }
 
     // 4. Return ? ToTemporalCalendarIdentifier(calendarLike).
     return TRY(to_temporal_calendar_identifier(vm, calendar_like));
@@ -651,9 +641,8 @@ ThrowCompletionOr<ISODate> calendar_month_day_from_fields(VM& vm, StringView cal
     // 2. Let result be ? CalendarMonthDayToISOReferenceDate(calendar, fields, overflow).
     auto result = TRY(calendar_month_day_to_iso_reference_date(vm, calendar, fields, overflow));
 
-    // 3. If ISODateWithinLimits(result) is false, throw a RangeError exception.
-    if (!iso_date_within_limits(result))
-        return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidISODate);
+    // 3. Assert: ISODateWithinLimits(result) is true.
+    VERIFY(iso_date_within_limits(result));
 
     // 4. Return result.
     return result;
@@ -689,12 +678,12 @@ bool calendar_equals(StringView one, StringView two)
 // 12.3.17 ISODaysInMonth ( year, month ), https://tc39.es/proposal-temporal/#sec-temporal-isodaysinmonth
 u8 iso_days_in_month(double year, double month)
 {
-    // 1. If month is 1, 3, 5, 7, 8, 10, or 12, return 31.
-    if (month == 1 || month == 3 || month == 5 || month == 7 || month == 8 || month == 10 || month == 12)
+    // 1. If month is one of 1, 3, 5, 7, 8, 10, or 12, return 31.
+    if (first_is_one_of(month, 1, 3, 5, 7, 8, 10, 12))
         return 31;
 
-    // 2. If month is 4, 6, 9, or 11, return 30.
-    if (month == 4 || month == 6 || month == 9 || month == 11)
+    // 2. If month is one of 4, 6, 9, or 11, return 30.
+    if (first_is_one_of(month, 4, 6, 9, 11))
         return 30;
 
     // 3. Assert: month is 2.
@@ -918,7 +907,7 @@ CalendarDate calendar_iso_to_date(StringView calendar, ISODate iso_date)
 // 12.3.27 CalendarExtraFields ( calendar, fields ), https://tc39.es/proposal-temporal/#sec-temporal-calendarextrafields
 Vector<CalendarField> calendar_extra_fields(StringView calendar, CalendarFieldList)
 {
-    // 1. If calendar is "iso8601", return an empty List.
+    // 1. If calendar is "iso8601", return a new empty List.
     if (calendar == "iso8601"sv)
         return {};
 
@@ -939,7 +928,7 @@ Vector<CalendarField> calendar_field_keys_to_ignore(StringView calendar, Readonl
 {
     // 1. If calendar is "iso8601", then
     if (calendar == "iso8601"sv) {
-        // a. Let ignoredKeys be an empty List.
+        // a. Let ignoredKeys be a new empty List.
         Vector<CalendarField> ignored_keys;
 
         // b. For each element key of keys, do
@@ -979,48 +968,49 @@ ThrowCompletionOr<void> calendar_resolve_fields(VM& vm, StringView calendar, Cal
 {
     // 1. If calendar is "iso8601", then
     if (calendar == "iso8601"sv) {
-        // a. If type is DATE or YEAR-MONTH and fields.[[Year]] is UNSET, throw a TypeError exception.
-        if ((type == DateType::Date || type == DateType::YearMonth) && !fields.year.has_value())
+        // a. Let needsYear be false.
+        // b. If type is either DATE or YEAR-MONTH, set needsYear to true.
+        auto needs_year = type == DateType::Date || type == DateType::YearMonth;
+
+        // c. Let needsDay be false.
+        // d. If type is either DATE or MONTH-DAY, set needsDay to true.
+        auto needs_day = type == DateType::Date || type == DateType::MonthDay;
+
+        // e. If needsYear is true and fields.[[Year]] is UNSET, throw a TypeError exception.
+        if (needs_year && !fields.year.has_value())
             return vm.throw_completion<TypeError>(ErrorType::MissingRequiredProperty, "year"sv);
 
-        // b. If type is DATE or MONTH-DAY and fields.[[Day]] is UNSET, throw a TypeError exception.
-        if ((type == DateType::Date || type == DateType::MonthDay) && !fields.day.has_value())
+        // f. If needsDay is true and fields.[[Day]] is UNSET, throw a TypeError exception.
+        if (needs_day && !fields.day.has_value())
             return vm.throw_completion<TypeError>(ErrorType::MissingRequiredProperty, "day"sv);
 
-        // c. Let month be fields.[[Month]].
-        auto const& month = fields.month;
+        // g. If fields.[[Month]] is UNSET and fields.[[MonthCode]] is UNSET, throw a TypeError exception.
+        if (!fields.month.has_value() && !fields.month_code.has_value())
+            return vm.throw_completion<TypeError>(ErrorType::MissingRequiredProperty, "month"sv);
 
-        // d. Let monthCode be fields.[[MonthCode]].
-        auto const& month_code = fields.month_code;
+        // h. If fields.[[MonthCode]] is not UNSET, then
+        if (fields.month_code.has_value()) {
+            // i. Let parsedMonthCode be ! ParseMonthCode(fields.[[MonthCode]]).
+            auto parsed_month_code = MUST(parse_month_code(vm, *fields.month_code));
 
-        // e. If monthCode is UNSET, then
-        if (!month_code.has_value()) {
-            // i. If month is UNSET, throw a TypeError exception.
-            if (!month.has_value())
-                return vm.throw_completion<TypeError>(ErrorType::MissingRequiredProperty, "month"sv);
+            // ii. If parsedMonthCode.[[IsLeapMonth]] is true, throw a RangeError exception.
+            if (parsed_month_code.is_leap_month)
+                return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarFieldName, "monthCode"sv);
 
-            // ii. Return UNUSED.
-            return {};
+            // iii. Let month be parsedMonthCode.[[MonthNumber]].
+            auto month = parsed_month_code.month_number;
+
+            // iv. If month > 12, throw a RangeError exception.
+            if (month > 12)
+                return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarFieldName, "monthCode"sv);
+
+            // v. If fields.[[Month]] is not UNSET and fields.[[Month]] ≠ month, throw a RangeError exception.
+            if (fields.month.has_value() && fields.month != month)
+                return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarFieldName, "month"sv);
+
+            // vi. Set fields.[[Month]] to month.
+            fields.month = month;
         }
-
-        // f. Assert: monthCode is a month code.
-        // g. Let parsedMonthCode be ! ParseMonthCode(monthCode).
-        auto parsed_month_code = MUST(parse_month_code(vm, *month_code));
-
-        // h. If parsedMonthCode.[[IsLeapMonth]] is true, throw a RangeError exception.
-        if (parsed_month_code.is_leap_month)
-            return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarFieldName, "monthCode"sv);
-
-        // i. If parsedMonthCode.[[MonthNumber]] > 12, throw a RangeError exception.
-        if (parsed_month_code.month_number > 12)
-            return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarFieldName, "monthCode"sv);
-
-        // j. If month is not UNSET and month ≠ parsedMonthCode.[[MonthNumber]], throw a RangeError exception.
-        if (month.has_value() && month != parsed_month_code.month_number)
-            return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarFieldName, "month"sv);
-
-        // k. Set fields.[[Month]] to parsedMonthCode.[[MonthNumber]].
-        fields.month = parsed_month_code.month_number;
     }
     // 2. Else,
     else {

@@ -223,12 +223,14 @@ static ThrowCompletionOr<Value> regexp_builtin_exec(VM& vm, RegExpObject& regexp
     //       i. Assert: r is a State.
     //       ii. Set matchSucceeded to true.
 
+    auto utf16_view = string->utf16_string_view();
+
     // 13.b and 13.c
     regex.start_offset = full_unicode && last_index <= string->length_in_utf16_code_units()
-        ? string->utf16_string_view().code_point_offset_of(last_index)
+        ? utf16_view.code_point_offset_of(last_index)
         : last_index;
 
-    result = regex.match(string->utf16_string_view());
+    result = regex.match(utf16_view);
 
     // 13.d and 13.a
     if (!result.success || last_index > string->length_in_utf16_code_units()) {
@@ -251,8 +253,8 @@ static ThrowCompletionOr<Value> regexp_builtin_exec(VM& vm, RegExpObject& regexp
 
     // 15. If fullUnicode is true, set e to ! GetStringIndex(S, Input, e).
     if (full_unicode) {
-        match_index = string->utf16_string_view().code_unit_offset_of(match.global_offset);
-        end_index = string->utf16_string_view().code_unit_offset_of(end_index);
+        match_index = utf16_view.code_unit_offset_of(match.global_offset);
+        end_index = match_index + match.view.length_in_code_units();
     }
 
     // 16. If global is true or sticky is true, then
@@ -425,7 +427,7 @@ static ThrowCompletionOr<Value> regexp_builtin_exec(VM& vm, RegExpObject& regexp
                 }
             }
         }
-        auto indices_array = make_match_indices_index_pair_array(vm, string->utf16_string_view(), indices, indices_group_names, has_groups);
+        auto indices_array = make_match_indices_index_pair_array(vm, utf16_view, indices, indices_group_names, has_groups);
 
         // Make sure indices.groups includes all named groups in source order
         if (has_groups) {
@@ -460,11 +462,9 @@ ThrowCompletionOr<Value> regexp_exec(VM& vm, Object& regexp_object, GC::Ref<Prim
     auto* typed_regexp_object = as_if<RegExpObject>(regexp_object);
 
     // 2. If IsCallable(exec) is true, then
-    if (exec.is_function()) {
-        auto& exec_function = exec.as_function();
-        if (typed_regexp_object && exec_function.builtin() == Bytecode::Builtin::RegExpPrototypeExec) {
+    if (auto exec_function = exec.as_if<FunctionObject>()) {
+        if (typed_regexp_object && exec_function->builtin() == Bytecode::Builtin::RegExpPrototypeExec)
             return regexp_builtin_exec(vm, *typed_regexp_object, string);
-        }
 
         // a. Let result be ? Call(exec, R, « S »).
         auto result = TRY(call(vm, exec_function, &regexp_object, string));
@@ -1207,18 +1207,16 @@ JS_DEFINE_NATIVE_FUNCTION(RegExpPrototype::compile)
         return vm.throw_completion<TypeError>(ErrorType::RegExpCompileError, "legacy features is not enabled");
 
     // 7. If Type(pattern) is Object and pattern has a [[RegExpMatcher]] internal slot, then
-    if (pattern.is_object() && is<RegExpObject>(pattern.as_object())) {
+    if (auto regexp_pattern = pattern.as_if<RegExpObject>()) {
         // a. If flags is not undefined, throw a TypeError exception.
         if (!flags.is_undefined())
             return vm.throw_completion<TypeError>(ErrorType::NotUndefined, flags);
 
-        auto& regexp_pattern = static_cast<RegExpObject&>(pattern.as_object());
-
         // b. Let P be pattern.[[OriginalSource]].
-        pattern = PrimitiveString::create(vm, regexp_pattern.pattern());
+        pattern = PrimitiveString::create(vm, regexp_pattern->pattern());
 
         // c. Let F be pattern.[[OriginalFlags]].
-        flags = PrimitiveString::create(vm, regexp_pattern.flags());
+        flags = PrimitiveString::create(vm, regexp_pattern->flags());
     }
     // 8. Else,
     //     a. Let P be pattern.

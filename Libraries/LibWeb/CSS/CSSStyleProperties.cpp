@@ -9,6 +9,7 @@
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSStyleProperties.h>
+#include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyNameAndID.h>
@@ -18,6 +19,7 @@
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/CSS/StyleValues/LengthStyleValue.h>
 #include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
+#include <LibWeb/CSS/StyleValues/PendingSubstitutionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ShorthandStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
@@ -173,13 +175,12 @@ Optional<StyleProperty const&> CSSStyleProperties::custom_property(FlyString con
 
         element.document().update_style();
 
-        auto const* element_to_check = &element;
-        while (element_to_check) {
-            if (auto property = element_to_check->custom_properties(pseudo_element).get(custom_property_name); property.has_value())
-                return *property;
+        auto data = element.custom_property_data(pseudo_element);
+        if (!data)
+            return {};
 
-            element_to_check = element_to_check->parent_element();
-        }
+        if (auto const* property = data->get(custom_property_name))
+            return *property;
 
         return {};
     }
@@ -486,6 +487,30 @@ Optional<StyleProperty> CSSStyleProperties::get_property_internal(PropertyNameAn
                 last_important_flag = declaration->important;
             }
 
+            // https://drafts.csswg.org/css-values-5/#pending-substitution-value
+            // If all of the component longhand properties for a given shorthand are pending-substitution values from
+            // the same original shorthand value, the shorthand property must serialize to that original
+            // (arbitrary substitution function-containing) value.
+            // Otherwise, if any of the component longhand properties for a given shorthand are pending-substitution
+            // values, or contain arbitrary substitution functions of their own that have not yet been substituted, the
+            // shorthand property must serialize to the empty string.
+            if (list.first()->is_pending_substitution()) {
+                auto const& original_shorthand_value = list.first()->as_pending_substitution().original_shorthand_value();
+                auto all_from_same_original = all_of(list, [&](auto const& value) {
+                    return value->is_pending_substitution()
+                        && &value->as_pending_substitution().original_shorthand_value() == &original_shorthand_value;
+                });
+                if (all_from_same_original) {
+                    return StyleProperty {
+                        .important = last_important_flag.value(),
+                        .property_id = property.id(),
+                        .value = original_shorthand_value,
+                    };
+                }
+            }
+            if (any_of(list, [](auto const& value) { return value->is_pending_substitution() || value->is_unresolved(); }))
+                return {};
+
             // 3. If important flags of all declarations in list are same, then return the serialization of list.
             // NOTE: Currently we implement property-specific shorthand serialization in ShorthandStyleValue::to_string().
             return StyleProperty {
@@ -520,16 +545,26 @@ Optional<StyleProperty> CSSStyleProperties::get_direct_property(PropertyNameAndI
         if (!abstract_element.element().is_connected())
             return {};
 
-        Layout::NodeWithStyle* layout_node = abstract_element.layout_node();
+        // NB: We grab the layout node before deciding whether update_layout() is needed.
+        //     For properties that don't need layout or a layout node (the else branch below),
+        //     we skip update_layout() entirely and use whatever layout node already exists.
+        //     For the other paths, we call update_layout() and re-fetch below.
+        Layout::NodeWithStyle* layout_node = abstract_element.unsafe_layout_node();
 
-        // FIXME: Be smarter about updating layout if there's no layout node.
-        //        We may legitimately have no layout node if we're not visible, but this protects against situations
-        //        where we're requesting the computed style before layout has happened.
-        if (!layout_node || property_needs_layout_for_getcomputedstyle(property_id)) {
+        // Determine what work is needed for this property:
+        // 1. Properties that need layout computation (used values) - always run update_layout()
+        // 2. Properties that need a layout node for special resolution - ensure layout node exists
+        // 3. Everything else - just update_style() and return computed value
+        bool const needs_layout = property_needs_layout_for_getcomputedstyle(property_id);
+        bool const needs_layout_node = property_needs_layout_node_for_resolved_value(property_id) || property_is_logical_alias(property_id) || property_is_shorthand(property_id);
+
+        if (needs_layout || needs_layout_node) {
+            // Properties that need layout computation or layout node for special resolution
+            // always need update_layout() to ensure both style and layout tree are up to date.
             abstract_element.document().update_layout(DOM::UpdateLayoutReason::ResolvedCSSStyleDeclarationProperty);
             layout_node = abstract_element.layout_node();
-        } else {
-            // FIXME: If we had a way to update style for a single element, this would be a good place to use it.
+        } else if (abstract_element.document().element_needs_style_update(abstract_element)) {
+            // Just ensure styles are up to date.
             abstract_element.document().update_style();
         }
 
@@ -555,7 +590,6 @@ Optional<StyleProperty> CSSStyleProperties::get_direct_property(PropertyNameAndI
 
         if (!layout_node) {
             auto style = abstract_element.document().style_computer().compute_style(abstract_element);
-
             return StyleProperty {
                 .property_id = property_id,
                 .value = style->property(property_id),
@@ -1318,7 +1352,6 @@ String CSSStyleProperties::serialize_a_css_value(Vector<StyleProperty> list) con
         return ShorthandStyleValue::create(shorthand_id, longhand_ids, longhand_values);
     };
 
-    // FIXME: Not all shorthands are represented by ShorthandStyleValue, we still need to add support for those that don't.
     return make_shorthand_value(shorthand.value())->to_string(SerializationMode::Normal);
 }
 

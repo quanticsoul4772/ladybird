@@ -44,16 +44,17 @@ jobs:
       # Pull requests can trail behind `master` and can cause breakage if merging before running the CI checks on an updated branch.
       # Luckily, GitHub creates and maintains a merge branch that is updated whenever the target or source branch is modified. By
       # checking this branch out, we gain a stabler `master` at the cost of reproducibility.
-      - uses: actions/checkout@v6.0.1
+      - uses: actions/checkout@v6.0.2
         if: ${{ github.event_name != 'pull_request' }}
 
-      - uses: actions/checkout@v6.0.1
+      - uses: actions/checkout@v6.0.2
         if: ${{ github.event_name == 'pull_request' }}
         with:
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
 
       - name: Set Up Environment
         uses: ./.github/actions/setup
+        id: 'setup'
         with:
           os: ${{ inputs.os_name }}
           arch: ${{ inputs.arch }}
@@ -66,11 +67,7 @@ jobs:
         id: 'build-parameters'
         run: |
           CMAKE_OPTIONS="-DENABLE_CI_BASELINE_CPU=ON"
-          if ${{ inputs.toolchain == 'Swift' }} ; then
-            echo "host_cc=$(swiftly use --print-location)/usr/bin/clang" >> "$GITHUB_OUTPUT"
-            echo "host_cxx=$(swiftly use --print-location)/usr/bin/clang++" >> "$GITHUB_OUTPUT"
-            CMAKE_OPTIONS="$CMAKE_OPTIONS -DENABLE_SWIFT=ON"
-          elif ${{ inputs.os_name == 'Linux' }} ; then
+          if ${{ inputs.os_name == 'Linux' }} ; then
             # FIXME: https://github.com/WebAssembly/wabt/issues/2533
             #        wabt doesn't have binary releases for arm64 Linux
             if ${{ inputs.arch == 'arm64' }} ; then
@@ -79,11 +76,11 @@ jobs:
             fi
 
             if ${{ inputs.toolchain == 'Clang' }} ; then
-              echo "host_cc=clang-20" >> "$GITHUB_OUTPUT"
-              echo "host_cxx=clang++-20" >> "$GITHUB_OUTPUT"
+              echo "host_cc=clang-${{ steps.setup.outputs.llvm_version }}" >> "$GITHUB_OUTPUT"
+              echo "host_cxx=clang++-${{ steps.setup.outputs.llvm_version }}" >> "$GITHUB_OUTPUT"
             elif ${{ inputs.toolchain == 'GNU' }} ; then
-              echo "host_cc=gcc-14" >> "$GITHUB_OUTPUT"
-              echo "host_cxx=g++-14" >> "$GITHUB_OUTPUT"
+              echo "host_cc=gcc-${{ steps.setup.outputs.gcc_version }}" >> "$GITHUB_OUTPUT"
+              echo "host_cxx=g++-${{ steps.setup.outputs.gcc_version }}" >> "$GITHUB_OUTPUT"
             fi
           elif ${{ inputs.os_name == 'macOS' }} ; then
             echo "host_cc=$(xcrun --find clang)" >> "$GITHUB_OUTPUT"
@@ -110,7 +107,6 @@ jobs:
           toolchain: ${{ inputs.toolchain }}
           cache_key_extra: ${{ inputs.os_name == 'Windows' && inputs.build_preset || steps.build-parameters.outputs.ccache_key }}
           ccache_path: ${{ env.CCACHE_DIR }}
-          download_cache_path: ${{ github.workspace }}/Build/caches
           vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
 
       - name: Set dynamic environment variables
@@ -193,7 +189,7 @@ jobs:
       # === TEST ===
 
       - name: Test
-        if: ${{ contains(inputs.build_preset, 'Sanitizer') }}
+        if: ${{ inputs.build_preset == 'Sanitizer' }}
         working-directory: ${{ github.workspace }}
         run: ctest --preset ${{ inputs.build_preset }} --output-on-failure --test-dir Build --timeout 1800
         env:
@@ -203,7 +199,7 @@ jobs:
           UBSAN_OPTIONS: 'log_path="${{ github.workspace }}/ubsan.log"'
 
       - name: Test
-        if: ${{ inputs.build_preset != 'Fuzzers' && inputs.build_preset != 'All_Debug' && !contains(inputs.build_preset, 'Sanitizer') }}
+        if: ${{ inputs.build_preset != 'Fuzzers' && inputs.build_preset != 'All_Debug' && inputs.build_preset != 'Sanitizer' }}
         working-directory: ${{ github.workspace }}
         run: ctest --output-on-failure --test-dir Build --timeout 1800
         env:
@@ -211,15 +207,15 @@ jobs:
 
       - name: Upload LibWeb Test Artifacts
         if: ${{ always() && inputs.build_preset != 'Fuzzers' && inputs.build_preset != 'All_Debug' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
-          name: libweb-test-artifacts-${{ inputs.os_name }}-${{ inputs.build_preset }}-${{ inputs.toolchain }}-${{ inputs.clang_plugins }}
+          name: libweb-test-artifacts-${{ inputs.os_name }}-${{ inputs.arch }}-${{ inputs.build_preset }}-${{ inputs.toolchain }}-${{ inputs.clang_plugins }}
           path: ${{ github.workspace }}/Build/Lagom/Tests/LibWeb/test-web/test-dumps/
           retention-days: 0
           if-no-files-found: ignore
 
       - name: Sanitizer Output
-        if: ${{ !cancelled() && inputs.build_preset == 'Sanitizer' }}
+        if: ${{ !cancelled() && inputs.os_name != 'Windows' && inputs.build_preset == 'Sanitizer' }}
         working-directory: ${{ github.workspace }}
         run: |
           log_output=$(find . -maxdepth 1 \( -name 'asan.log.*' -o -name 'ubsan.log.*' \) -exec cat {} \; )
@@ -234,7 +230,6 @@ jobs:
         if: ${{ inputs.os_name == 'Linux' && inputs.build_preset == 'Sanitizer' }}
         working-directory: ${{ github.workspace }}
         run: |
-          set -e
           git ls-files '*.ipc' | xargs ./Build/bin/IPCMagicLinter
         env:
           ASAN_OPTIONS: 'strict_string_checks=1:check_initialization_order=1:strict_init_order=1:detect_stack_use_after_return=1:allocator_may_return_null=1'

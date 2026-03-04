@@ -10,6 +10,7 @@
 
 #include "IDLParser.h"
 #include <AK/Assertions.h>
+#include <AK/CharacterTypes.h>
 #include <AK/Function.h>
 #include <AK/LexicalPath.h>
 #include <AK/QuickSort.h>
@@ -349,6 +350,8 @@ void Parser::parse_attribute(HashMap<ByteString, ByteString>& extended_attribute
         consume_whitespace();
     else if (lexer.consume_specific("setlike"sv) && !inherit)
         parse_setlike(interface, readonly);
+    else if (lexer.consume_specific("maplike"sv) && !inherit)
+        parse_maplike(interface, readonly);
     else
         report_parsing_error("expected 'attribute'"sv, filename, input, lexer.tell());
 
@@ -583,11 +586,39 @@ void Parser::parse_setlike(Interface& interface, bool is_readonly)
     if (interface.value_iterator_type.has_value() || interface.pair_iterator_types.has_value())
         report_parsing_error("Interfaces with a setlike declaration must not must not be iterable."sv, filename, input, lexer.tell());
 
+    if (interface.map_key_type.has_value())
+        report_parsing_error("Interfaces with a setlike declaration must not have a maplike declaration."sv, filename, input, lexer.tell());
+
     assert_string("setlike"sv);
     assert_specific('<');
 
     interface.set_entry_type = parse_type();
     interface.is_set_readonly = is_readonly;
+
+    assert_specific('>');
+    assert_specific(';');
+}
+
+void Parser::parse_maplike(Interface& interface, bool is_readonly)
+{
+    if (interface.supports_indexed_properties())
+        report_parsing_error("Interfaces with a maplike declaration must not support indexed properties."sv, filename, input, lexer.tell());
+
+    if (interface.value_iterator_type.has_value() || interface.pair_iterator_types.has_value())
+        report_parsing_error("Interfaces with a maplike declaration must not must not be iterable."sv, filename, input, lexer.tell());
+
+    if (interface.set_entry_type.has_value())
+        report_parsing_error("Interfaces with a maplike declaration must not have a setlike declaration."sv, filename, input, lexer.tell());
+
+    assert_string("maplike"sv);
+    assert_specific('<');
+
+    interface.map_key_type = parse_type();
+    consume_whitespace();
+    assert_specific(',');
+    consume_whitespace();
+    interface.map_value_type = parse_type();
+    interface.is_map_readonly = is_readonly;
 
     assert_specific('>');
     assert_specific(';');
@@ -756,6 +787,12 @@ void Parser::parse_interface(Interface& interface)
         if (lexer.next_is("setlike"sv)) {
             bool is_readonly = false;
             parse_setlike(interface, is_readonly);
+            continue;
+        }
+
+        if (lexer.next_is("maplike"sv)) {
+            bool is_readonly = false;
+            parse_maplike(interface, is_readonly);
             continue;
         }
 
@@ -1054,6 +1091,19 @@ void Parser::parse_interface_mixin(Interface& interface)
     interface.mixins.set(move(name), &mixin_interface);
 }
 
+void Parser::parse_partial_interface_mixin(Interface& interface)
+{
+    assert_string("partial"sv);
+    consume_whitespace();
+    assert_string("interface"sv);
+    consume_whitespace();
+    assert_string("mixin"sv);
+
+    auto partial_mixin = make<Interface>();
+    parse_interface(*partial_mixin);
+    interface.partial_mixins.append(move(partial_mixin));
+}
+
 void Parser::parse_callback_function(HashMap<ByteString, ByteString>& extended_attributes, Interface& interface)
 {
     assert_string("callback"sv);
@@ -1091,6 +1141,8 @@ void Parser::parse_non_interface_entities(bool allow_interface, Interface& inter
             parse_enumeration(extended_attributes, interface);
         } else if (lexer.next_is("typedef"sv)) {
             parse_typedef(interface);
+        } else if (lexer.next_is("partial interface mixin"sv)) {
+            parse_partial_interface_mixin(interface);
         } else if (lexer.next_is("partial interface"sv)) {
             parse_partial_interface(extended_attributes, interface);
         } else if (lexer.next_is("interface mixin"sv)) {
@@ -1263,6 +1315,17 @@ Interface& Parser::parse()
         }
 
         interface.callback_functions.update(import.callback_functions);
+
+        for (auto& partial_mixin : import.partial_mixins) {
+            if (auto it = interface.mixins.find(partial_mixin->name); it != interface.mixins.end())
+                it->value->extend_with_partial_interface(*partial_mixin);
+        }
+    }
+
+    // Extend mixins with partial mixins from this file
+    for (auto& partial_mixin : interface.partial_mixins) {
+        if (auto it = interface.mixins.find(partial_mixin->name); it != interface.mixins.end())
+            it->value->extend_with_partial_interface(*partial_mixin);
     }
 
     // Resolve mixins

@@ -6,7 +6,6 @@
 
 #include <AK/Debug.h>
 #include <AK/Enumerate.h>
-#include <AK/Function.h>
 #include <AK/GenericLexer.h>
 #include <AK/HashMap.h>
 #include <AK/SourceGenerator.h>
@@ -85,7 +84,7 @@ static bool is_simple_type(ByteString const& type)
     // Small types that it makes sense just to pass by value.
     if (type.starts_with("ReadonlySpan<"sv) && type.ends_with(">"sv))
         return true;
-    return type.is_one_of("AK::CaseSensitivity", "AK::Duration", "Gfx::Color", "ReadonlyBytes", "StringView", "Web::DevicePixels", "Gfx::IntPoint", "Gfx::FloatPoint", "Web::DevicePixelPoint", "Gfx::IntSize", "Gfx::FloatSize", "Web::DevicePixelSize", "Web::DevicePixelRect", "Core::File::OpenMode", "Web::Cookie::Source", "Web::EventResult", "Web::HTML::AllowMultipleFiles", "Web::HTML::AudioPlayState", "Web::HTML::HistoryHandlingBehavior", "Web::HTML::VisibilityState", "WebView::PageInfoType");
+    return type.is_one_of("AK::CaseSensitivity", "AK::Duration", "Gfx::Color", "ReadonlyBytes", "StringView", "Web::DevicePixels", "Gfx::IntPoint", "Gfx::FloatPoint", "Web::DevicePixelPoint", "Gfx::IntSize", "Gfx::FloatSize", "Web::DevicePixelSize", "Web::DevicePixelRect", "Core::File::OpenMode", "HTTP::Cookie::Source", "Web::EventResult", "Web::HTML::AllowMultipleFiles", "Web::HTML::AudioPlayState", "Web::HTML::HistoryHandlingBehavior", "Web::HTML::VisibilityState", "WebView::PageInfoType");
 }
 
 static bool is_primitive_or_simple_type(ByteString const& type)
@@ -787,8 +786,9 @@ void generate_proxy_method(SourceGenerator& message_generator, Endpoint const& e
         return { };)~~~");
         }
     } else {
+        // Async messages silently ignore send failures (e.g. peer disconnected).
         message_generator.append(R"~~~());
-        MUST(m_connection.post_message(move(message_buffer))); )~~~");
+        (void)m_connection.post_message(message_buffer); )~~~");
     }
 
     message_generator.appendln(R"~~~(
@@ -924,6 +924,19 @@ public:
     {
         switch (message->message_id()) {)~~~");
     for (auto const& message : endpoint.messages) {
+        auto message_generator = generator.fork();
+        message_generator.set("message.pascal_name", pascal_case(message.name));
+        message_generator.append(R"~~~(
+        case (int)Messages::@endpoint.name@::MessageID::@message.pascal_name@:
+            return handle_@message.pascal_name@(*message);)~~~");
+    }
+    generator.appendln(R"~~~(
+        default:
+            return Error::from_string_literal("Unknown message ID for @endpoint.name@ endpoint");
+        }
+    })~~~");
+
+    for (auto const& message : endpoint.messages) {
         auto do_handle_message = [&](ByteString const& name, Vector<Parameter> const& parameters, bool returns_something) {
             auto message_generator = generator.fork();
 
@@ -945,44 +958,40 @@ public:
             message_generator.set("handler_name", name);
             message_generator.set("arguments", argument_generator.to_byte_string());
             message_generator.append(R"~~~(
-        case (int)Messages::@endpoint.name@::MessageID::@message.pascal_name@: {)~~~");
+    NEVER_INLINE ErrorOr<OwnPtr<IPC::MessageBuffer>> handle_@message.pascal_name@(IPC::Message& message)
+    {)~~~");
 
             // Inject rate limiting check if message is rate-limited
             if (message.rate_limited) {
                 message_generator.append(R"~~~(
-            if (!check_rate_limit())
-                return Error::from_string_literal("Rate limit exceeded for @handler_name@");)~~~");
+        if (!check_rate_limit())
+            return Error::from_string_literal("Rate limit exceeded for @handler_name@");)~~~");
             }
 
             if (returns_something) {
                 if (message.outputs.is_empty()) {
                     message_generator.append(R"~~~(
-            [[maybe_unused]] auto& request = static_cast<Messages::@endpoint.name@::@message.pascal_name@&>(*message);
-            @handler_name@(@arguments@);
-            auto response = Messages::@endpoint.name@::@message.response_type@ { };
-            return make<IPC::MessageBuffer>(TRY(response.encode()));)~~~");
+        [[maybe_unused]] auto& request = static_cast<Messages::@endpoint.name@::@message.pascal_name@&>(message);
+        @handler_name@(@arguments@);
+        auto response = Messages::@endpoint.name@::@message.response_type@ { };
+        return make<IPC::MessageBuffer>(TRY(response.encode()));)~~~");
                 } else {
                     message_generator.append(R"~~~(
-            [[maybe_unused]] auto& request = static_cast<Messages::@endpoint.name@::@message.pascal_name@&>(*message);
-            auto response = @handler_name@(@arguments@);
-            return make<IPC::MessageBuffer>(TRY(response.encode()));)~~~");
+        [[maybe_unused]] auto& request = static_cast<Messages::@endpoint.name@::@message.pascal_name@&>(message);
+        auto response = @handler_name@(@arguments@);
+        return make<IPC::MessageBuffer>(TRY(response.encode()));)~~~");
                 }
             } else {
                 message_generator.append(R"~~~(
-            [[maybe_unused]] auto& request = static_cast<Messages::@endpoint.name@::@message.pascal_name@&>(*message);
-            @handler_name@(@arguments@);
-            return nullptr;)~~~");
+        [[maybe_unused]] auto& request = static_cast<Messages::@endpoint.name@::@message.pascal_name@&>(message);
+        @handler_name@(@arguments@);
+        return nullptr;)~~~");
             }
             message_generator.append(R"~~~(
-        })~~~");
+    })~~~");
         };
         do_handle_message(message.name, message.inputs, message.is_synchronous);
     }
-    generator.appendln(R"~~~(
-        default:
-            return Error::from_string_literal("Unknown message ID for @endpoint.name@ endpoint");
-        }
-    })~~~");
 
     for (auto const& message : endpoint.messages) {
         auto message_generator = generator.fork();
@@ -1037,6 +1046,7 @@ void build(StringBuilder& builder, Vector<Endpoint> const& endpoints)
     generator.appendln(R"~~~(#include <AK/Error.h>
 #include <AK/MemoryStream.h>
 #include <AK/OwnPtr.h>
+#include <AK/Platform.h>
 #include <AK/Result.h>
 #include <AK/Utf8View.h>
 #include <LibIPC/Connection.h>

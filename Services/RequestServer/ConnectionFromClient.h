@@ -8,6 +8,9 @@
 
 #include <AK/Badge.h>
 #include <AK/HashMap.h>
+#include <LibHTTP/Cache/CacheMode.h>
+#include <LibHTTP/Cache/DiskCacheSettings.h>
+#include <LibHTTP/Forward.h>
 #include <LibIPC/ConnectionFromClient.h>
 #include <LibWebSocket/WebSocket.h>
 #include <RequestServer/Forward.h>
@@ -21,27 +24,40 @@ class ConnectionFromClient final
     C_OBJECT(ConnectionFromClient);
 
 public:
+    enum class IsPrimaryConnection {
+        No,
+        Yes,
+    };
+
+    using ConnectionMap = HashMap<int, NonnullRefPtr<ConnectionFromClient>>;
+
     ~ConnectionFromClient() override;
 
     virtual void die() override;
 
-    void start_revalidation_request(Badge<Request>, ByteString method, URL::URL, NonnullRefPtr<HTTP::HeaderList> request_headers, ByteBuffer request_body, Core::ProxyData proxy_data);
+    static Optional<ConnectionFromClient&> primary_connection();
+
+    void start_revalidation_request(Badge<Request>, ByteString method, URL::URL, NonnullRefPtr<HTTP::HeaderList> request_headers, ByteBuffer request_body, HTTP::Cookie::IncludeCredentials, Core::ProxyData proxy_data);
     void request_complete(Badge<Request>, Request const&);
 
 private:
-    explicit ConnectionFromClient(NonnullOwnPtr<IPC::Transport>);
+    ConnectionFromClient(NonnullOwnPtr<IPC::Transport>, IsPrimaryConnection, ConnectionMap&, Optional<HTTP::DiskCache&>);
 
     virtual Messages::RequestServer::InitTransportResponse init_transport(int peer_pid) override;
     virtual Messages::RequestServer::ConnectNewClientResponse connect_new_client() override;
     virtual Messages::RequestServer::ConnectNewClientsResponse connect_new_clients(size_t count) override;
 
+    virtual void set_disk_cache_settings(HTTP::DiskCacheSettings) override;
+
     virtual Messages::RequestServer::IsSupportedProtocolResponse is_supported_protocol(ByteString) override;
     virtual void set_dns_server(ByteString host_or_address, u16 port, bool use_tls, bool validate_dnssec_locally) override;
     virtual void set_use_system_dns() override;
-    virtual void start_request(u64 request_id, ByteString, URL::URL, Vector<HTTP::Header>, ByteBuffer, Core::ProxyData) override;
+    virtual void start_request(u64 request_id, ByteString, URL::URL, Vector<HTTP::Header>, ByteBuffer, HTTP::CacheMode, HTTP::Cookie::IncludeCredentials, Core::ProxyData) override;
     virtual Messages::RequestServer::StopRequestResponse stop_request(u64 request_id) override;
     virtual Messages::RequestServer::SetCertificateResponse set_certificate(u64 request_id, ByteString, ByteString) override;
     virtual void ensure_connection(u64 request_id, URL::URL url, ::RequestServer::CacheLevel cache_level) override;
+
+    virtual void retrieved_http_cookie(int client_id, u64 request_id, String cookie) override;
 
     virtual void estimate_cache_size_accessed_since(u64 cache_size_estimation_id, UnixDateTime since) override;
     virtual void remove_cache_entries_accessed_since(UnixDateTime since) override;
@@ -55,7 +71,10 @@ private:
     static int on_timeout_callback(void*, long timeout_ms, void* user_data);
     void check_active_requests();
 
-    static ErrorOr<IPC::File> create_client_socket();
+    ErrorOr<IPC::File> create_client_socket();
+
+    ConnectionMap& m_connections;
+    Optional<HTTP::DiskCache&> m_disk_cache;
 
     void* m_curl_multi { nullptr };
 

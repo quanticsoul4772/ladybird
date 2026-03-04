@@ -13,6 +13,7 @@
 #include <core/SkScalar.h>
 #include <effects/SkColorMatrix.h>
 #include <effects/SkImageFilters.h>
+#include <effects/SkPerlinNoiseShader.h>
 
 namespace Gfx {
 
@@ -85,6 +86,32 @@ Filter Filter::flood(Gfx::Color color, float opacity)
     color_skia = SkColorSetA(color_skia, static_cast<u8>(opacity * 255));
 
     return Filter(Impl::create(SkImageFilters::Shader(SkShaders::Color(color_skia))));
+}
+
+Filter Filter::displacement_map(Optional<Filter const&> color, Optional<Filter const&> displacement, float scale, ChannelSelector x_channel_selector, ChannelSelector y_channel_selector)
+{
+    sk_sp<SkImageFilter> color_skia = color.has_value() ? color->m_impl->filter : nullptr;
+    sk_sp<SkImageFilter> displacement_skia = displacement.has_value() ? displacement->m_impl->filter : nullptr;
+
+    auto convert_channel_selector = [](ChannelSelector channel_selector) {
+        switch (channel_selector) {
+        case ChannelSelector::Red:
+            return SkColorChannel::kR;
+        case ChannelSelector::Green:
+            return SkColorChannel::kG;
+        case ChannelSelector::Blue:
+            return SkColorChannel::kB;
+        case ChannelSelector::Alpha:
+            return SkColorChannel::kA;
+        }
+
+        VERIFY_NOT_REACHED();
+    };
+
+    auto x_channel_selector_skia = convert_channel_selector(x_channel_selector);
+    auto y_channel_selector_skia = convert_channel_selector(y_channel_selector);
+    auto filter = SkImageFilters::DisplacementMap(x_channel_selector_skia, y_channel_selector_skia, scale, displacement_skia, color_skia);
+    return Filter(Impl::create(filter));
 }
 
 Filter Filter::drop_shadow(float offset_x, float offset_y, float radius, Gfx::Color color,
@@ -294,6 +321,22 @@ Filter Filter::offset(float dx, float dy, Optional<Filter const&> input)
 {
     sk_sp<SkImageFilter> input_skia = input.has_value() ? input->m_impl->filter : nullptr;
     return Filter(Impl::create(SkImageFilters::Offset(dx, dy, input_skia)));
+}
+
+Filter Filter::turbulence(TurbulenceType turbulence_type, float base_frequency_x, float base_frequency_y, i32 num_octaves, float seed, Gfx::IntSize const& tile_stitch_size)
+{
+    sk_sp<SkShader> turbulence_shader = [&] {
+        auto skia_size = SkISize::Make(tile_stitch_size.width(), tile_stitch_size.height());
+        switch (turbulence_type) {
+        case TurbulenceType::Turbulence:
+            return SkShaders::MakeTurbulence(base_frequency_x, base_frequency_y, num_octaves, seed, &skia_size);
+        case TurbulenceType::FractalNoise:
+            return SkShaders::MakeFractalNoise(base_frequency_x, base_frequency_y, num_octaves, seed, &skia_size);
+        }
+        VERIFY_NOT_REACHED();
+    }();
+
+    return Filter(Impl::create(SkImageFilters::Shader(move(turbulence_shader))));
 }
 
 }

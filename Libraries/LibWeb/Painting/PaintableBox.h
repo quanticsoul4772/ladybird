@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2022-2025, Andreas Kling <andreas@ladybird.org>
- * Copyright (c) 2024-2025, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
+ * Copyright (c) 2024-2026, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,13 +9,17 @@
 
 #include <LibGfx/Forward.h>
 #include <LibWeb/CSS/StyleValues/GridTrackSizeListStyleValue.h>
+#include <LibWeb/Forward.h>
 #include <LibWeb/Layout/Box.h>
+#include <LibWeb/Painting/AccumulatedVisualContext.h>
 #include <LibWeb/Painting/BackgroundPainting.h>
 #include <LibWeb/Painting/BoxModelMetrics.h>
 #include <LibWeb/Painting/ChromeMetrics.h>
-#include <LibWeb/Painting/ClipFrame.h>
+#include <LibWeb/Painting/DisplayList.h>
 #include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/Painting/PaintableFragment.h>
+#include <LibWeb/Painting/ResolvedCSSFilter.h>
+#include <LibWeb/Painting/ScrollFrame.h>
 
 namespace Web::Painting {
 
@@ -23,14 +27,14 @@ WEB_API void set_paint_viewport_scrollbars(bool enabled);
 
 class WEB_API PaintableBox : public Paintable {
     GC_CELL(PaintableBox, Paintable);
+    GC_DECLARE_ALLOCATOR(PaintableBox);
 
 public:
     static GC::Ref<PaintableBox> create(Layout::Box const&);
     static GC::Ref<PaintableBox> create(Layout::InlineNode const&);
     virtual ~PaintableBox();
 
-    virtual void before_paint(DisplayListRecordingContext&, PaintPhase) const override;
-    virtual void after_paint(DisplayListRecordingContext&, PaintPhase) const override;
+    virtual void reset_for_relayout();
 
     virtual void paint(DisplayListRecordingContext&, PaintPhase) const override;
 
@@ -39,9 +43,12 @@ public:
     void set_stacking_context(GC::Ref<StackingContext>);
     void invalidate_stacking_context();
 
-    virtual Optional<CSSPixelRect> get_masking_area() const;
+    virtual Optional<CSSPixelRect> get_mask_area() const { return {}; }
     virtual Optional<Gfx::MaskKind> get_mask_type() const { return {}; }
-    virtual RefPtr<Gfx::ImmutableBitmap> calculate_mask(DisplayListRecordingContext&, CSSPixelRect const&) const;
+    virtual RefPtr<DisplayList> calculate_mask(DisplayListRecordingContext&, CSSPixelRect const&) const { return {}; }
+
+    virtual Optional<CSSPixelRect> get_clip_area() const { return {}; }
+    virtual RefPtr<DisplayList> calculate_clip(DisplayListRecordingContext&, CSSPixelRect const&) const { return {}; }
 
     Layout::NodeWithStyleAndBoxModelMetrics const& layout_node_with_style_and_box_metrics() const { return as<Layout::NodeWithStyleAndBoxModelMetrics const>(layout_node()); }
 
@@ -63,8 +70,9 @@ public:
     };
 
     CSSPixelPoint scroll_offset() const;
-    [[nodiscard]] ScrollHandled set_scroll_offset(CSSPixelPoint);
-    [[nodiscard]] ScrollHandled scroll_by(int delta_x, int delta_y);
+    ScrollHandled set_scroll_offset(CSSPixelPoint);
+    ScrollHandled scroll_by(int delta_x, int delta_y);
+    void scroll_into_view(CSSPixelRect);
 
     void set_offset(CSSPixelPoint);
     void set_offset(float x, float y) { set_offset({ x, y }); }
@@ -82,7 +90,6 @@ public:
     CSSPixelRect absolute_padding_box_rect() const;
     CSSPixelRect absolute_border_box_rect() const;
     CSSPixelRect overflow_clip_edge_rect() const;
-    CSSPixelRect absolute_paint_rect() const;
 
     // These united versions of the above rects take continuation into account.
     CSSPixelRect absolute_united_border_box_rect() const;
@@ -105,6 +112,8 @@ public:
     CSSPixels absolute_y() const { return absolute_rect().y(); }
     CSSPixelPoint absolute_position() const { return absolute_rect().location(); }
 
+    CSSPixelPoint transform_to_local_coordinates(CSSPixelPoint position) const;
+
     [[nodiscard]] bool has_scrollable_overflow() const
     {
         if (!m_overflow_data.has_value())
@@ -121,6 +130,11 @@ public:
             || computed_values.scale();
     }
 
+    [[nodiscard]] bool has_non_invertible_css_transform() const { return m_has_non_invertible_css_transform; }
+    void set_has_non_invertible_css_transform(bool value) { m_has_non_invertible_css_transform = value; }
+
+    [[nodiscard]] bool overflow_property_applies() const;
+
     [[nodiscard]] Optional<CSSPixelRect> scrollable_overflow_rect() const
     {
         if (!m_overflow_data.has_value())
@@ -131,12 +145,6 @@ public:
     void set_overflow_data(OverflowData data) { m_overflow_data = move(data); }
 
     virtual void set_needs_display(InvalidateDisplayList = InvalidateDisplayList::Yes) override;
-
-    void apply_scroll_offset(DisplayListRecordingContext&) const;
-    void reset_scroll_offset(DisplayListRecordingContext&) const;
-
-    void apply_clip_overflow_rect(DisplayListRecordingContext&, PaintPhase) const;
-    void clear_clip_overflow_rect(DisplayListRecordingContext&, PaintPhase) const;
 
     [[nodiscard]] virtual TraversalDecision hit_test(CSSPixelPoint position, HitTestType type, Function<TraversalDecision(HitTestResult)> const& callback) const override;
     Optional<HitTestResult> hit_test(CSSPixelPoint, HitTestType) const;
@@ -192,20 +200,17 @@ public:
     void set_box_shadow_data(Vector<ShadowData> box_shadow_data) { m_box_shadow_data = move(box_shadow_data); }
     Vector<ShadowData> const& box_shadow_data() const { return m_box_shadow_data; }
 
-    void set_transform(Gfx::FloatMatrix4x4 transform) { m_transform = transform; }
-    Gfx::FloatMatrix4x4 const& transform() const { return m_transform; }
-
-    void set_perspective_matrix(Optional<Gfx::FloatMatrix4x4> perspective_matrix) { m_perspective_matrix = perspective_matrix; }
-    Optional<Gfx::FloatMatrix4x4> const& perspective_matrix() const { return m_perspective_matrix; }
-
-    void set_transform_origin(CSSPixelPoint transform_origin) { m_transform_origin = transform_origin; }
-    CSSPixelPoint const& transform_origin() const { return m_transform_origin; }
-
     void set_outline_data(Optional<BordersData> outline_data) { m_outline_data = outline_data; }
     Optional<BordersData> const& outline_data() const { return m_outline_data; }
 
     void set_outline_offset(CSSPixels outline_offset) { m_outline_offset = outline_offset; }
     CSSPixels outline_offset() const { return m_outline_offset; }
+
+    void set_filter(ResolvedCSSFilter filter) { m_filter = move(filter); }
+    ResolvedCSSFilter const& filter() const { return m_filter; }
+
+    void set_backdrop_filter(ResolvedCSSFilter backdrop_filter) { m_backdrop_filter = move(backdrop_filter); }
+    ResolvedCSSFilter const& backdrop_filter() const { return m_backdrop_filter; }
 
     Optional<CSSPixelRect> get_clip_rect() const;
 
@@ -216,15 +221,9 @@ public:
 
     RefPtr<ScrollFrame const> nearest_scroll_frame() const;
 
-    CSSPixelRect border_box_rect_relative_to_nearest_scrollable_ancestor() const;
     PaintableBox const* nearest_scrollable_ancestor() const;
 
-    struct StickyInsets {
-        Optional<CSSPixels> top;
-        Optional<CSSPixels> right;
-        Optional<CSSPixels> bottom;
-        Optional<CSSPixels> left;
-    };
+    using StickyInsets = Painting::StickyInsets;
     StickyInsets const& sticky_insets() const { return *m_sticky_insets; }
     void set_sticky_insets(OwnPtr<StickyInsets> sticky_insets) { m_sticky_insets = move(sticky_insets); }
 
@@ -238,27 +237,17 @@ public:
 
     void set_enclosing_scroll_frame(RefPtr<ScrollFrame const> const& scroll_frame) { m_enclosing_scroll_frame = scroll_frame; }
     void set_own_scroll_frame(RefPtr<ScrollFrame> const& scroll_frame) { m_own_scroll_frame = scroll_frame; }
-    void set_enclosing_clip_frame(RefPtr<ClipFrame const> const& clip_frame) { m_enclosing_clip_frame = clip_frame; }
-    void set_own_clip_frame(RefPtr<ClipFrame const> const& clip_frame) { m_own_clip_frame = clip_frame; }
+
+    void set_accumulated_visual_context(auto state) { m_accumulated_visual_context = move(state); }
+    [[nodiscard]] auto accumulated_visual_context() const { return m_accumulated_visual_context; }
+    void set_accumulated_visual_context_for_descendants(auto state) { m_accumulated_visual_context_for_descendants = move(state); }
+    [[nodiscard]] auto accumulated_visual_context_for_descendants() const { return m_accumulated_visual_context_for_descendants; }
 
     [[nodiscard]] RefPtr<ScrollFrame const> enclosing_scroll_frame() const { return m_enclosing_scroll_frame; }
     [[nodiscard]] Optional<int> scroll_frame_id() const;
-    [[nodiscard]] CSSPixelPoint cumulative_offset_of_enclosing_scroll_frame() const;
-    [[nodiscard]] Optional<CSSPixelRect> clip_rect_for_hit_testing() const;
 
     [[nodiscard]] RefPtr<ScrollFrame const> own_scroll_frame() const { return m_own_scroll_frame; }
     [[nodiscard]] Optional<int> own_scroll_frame_id() const;
-    [[nodiscard]] CSSPixelPoint own_scroll_frame_offset() const
-    {
-        if (m_own_scroll_frame)
-            return m_own_scroll_frame->own_offset();
-        return {};
-    }
-
-    [[nodiscard]] RefPtr<ClipFrame const> enclosing_clip_frame() const { return m_enclosing_clip_frame; }
-    [[nodiscard]] RefPtr<ClipFrame const> own_clip_frame() const { return m_own_clip_frame; }
-
-    Optional<Gfx::Filter> resolve_filter(DisplayListRecordingContext&, CSS::Filter const& computed_filter) const;
 
 protected:
     explicit PaintableBox(Layout::Box const&);
@@ -274,7 +263,6 @@ protected:
     virtual void paint_inspector_overlay_internal(DisplayListRecordingContext&) const override;
 
     virtual CSSPixelRect compute_absolute_rect() const;
-    virtual CSSPixelRect compute_absolute_paint_rect() const;
 
     struct ScrollbarData {
         CSSPixelRect gutter_rect;
@@ -285,10 +273,6 @@ protected:
         Horizontal,
         Vertical,
     };
-    enum class AdjustThumbRectForScrollOffset {
-        No,
-        Yes,
-    };
     [[nodiscard]] TraversalDecision hit_test_children(CSSPixelPoint position, HitTestType type, Function<TraversalDecision(HitTestResult)> const& callback) const;
     [[nodiscard]] TraversalDecision hit_test_continuation(Function<TraversalDecision(HitTestResult)> const& callback) const;
     [[nodiscard]] TraversalDecision hit_test_chrome(CSSPixelPoint adjusted_position, Function<TraversalDecision(HitTestResult)> const& callback) const;
@@ -296,8 +280,7 @@ protected:
     Optional<ScrollbarData> compute_scrollbar_data(
         ScrollDirection direction,
         ChromeMetrics const& chrome_metrics,
-        AdjustThumbRectForScrollOffset = AdjustThumbRectForScrollOffset::No) const;
-    CSSPixelPoint adjust_position_for_cumulative_scroll_offset(CSSPixelPoint position) const;
+        ScrollStateSnapshot const* = nullptr) const;
     CSSPixels available_scrollbar_length(ScrollDirection direction, ChromeMetrics const& chrome_metrics) const;
     Optional<CSSPixelRect> absolute_scrollbar_rect(ScrollDirection direction, bool with_gutter, ChromeMetrics const& chrome_metrics) const;
     Optional<CSSPixelRect> absolute_resizer_rect(ChromeMetrics const& chrome_metrics) const;
@@ -325,29 +308,30 @@ private:
     CSSPixelSize m_content_size;
 
     Optional<CSSPixelRect> mutable m_absolute_rect;
-    Optional<CSSPixelRect> mutable m_absolute_paint_rect;
+    Optional<CSSPixelRect> mutable m_absolute_padding_box_rect;
+    Optional<CSSPixelRect> mutable m_absolute_border_box_rect;
 
     RefPtr<ScrollFrame const> m_enclosing_scroll_frame;
     RefPtr<ScrollFrame const> m_own_scroll_frame;
-    RefPtr<ClipFrame const> m_enclosing_clip_frame;
-    RefPtr<ClipFrame const> m_own_clip_frame;
+    RefPtr<AccumulatedVisualContext const> m_accumulated_visual_context;
+    RefPtr<AccumulatedVisualContext const> m_accumulated_visual_context_for_descendants;
 
     Optional<BordersDataWithElementKind> m_override_borders_data;
     Optional<TableCellCoordinates> m_table_cell_coordinates;
 
     BorderRadiiData m_border_radii_data;
     Vector<ShadowData> m_box_shadow_data;
-    Gfx::FloatMatrix4x4 m_transform { Gfx::FloatMatrix4x4::identity() };
-    CSSPixelPoint m_transform_origin;
-    Optional<Gfx::FloatMatrix4x4> m_perspective_matrix {};
-
     Optional<BordersData> m_outline_data;
     CSSPixels m_outline_offset { 0 };
+
+    ResolvedCSSFilter m_filter;
+    ResolvedCSSFilter m_backdrop_filter;
 
     Optional<CSSPixels> m_scroll_thumb_grab_position;
     Optional<ScrollDirection> m_scroll_thumb_dragging_direction;
     mutable bool m_draw_enlarged_horizontal_scrollbar { false };
     mutable bool m_draw_enlarged_vertical_scrollbar { false };
+    bool m_has_non_invertible_css_transform { false };
 
     ResolvedBackground m_resolved_background;
 

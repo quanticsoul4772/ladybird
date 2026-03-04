@@ -11,6 +11,7 @@
 #include <AK/Optional.h>
 #include <AK/Vector.h>
 #include <LibGC/Ptr.h>
+#include <LibGC/WeakHashSet.h>
 #include <LibWeb/Animations/KeyframeEffect.h>
 #include <LibWeb/CSS/CascadeOrigin.h>
 #include <LibWeb/CSS/Selector.h>
@@ -88,8 +89,7 @@ public:
 
     [[nodiscard]] RuleCache const& get_pseudo_class_rule_cache(PseudoClass) const;
 
-    template<typename Callback>
-    void for_each_stylesheet(CascadeOrigin, Callback) const;
+    void for_each_stylesheet(CascadeOrigin, Function<void(CSS::CSSStyleSheet&)> const&) const;
 
     void make_rule_cache_for_cascade_origin(CascadeOrigin, SelectorInsights&);
 
@@ -103,11 +103,11 @@ public:
     [[nodiscard]] bool may_have_has_selectors() const;
     [[nodiscard]] bool have_has_selectors() const;
 
-    void for_each_active_css_style_sheet(Function<void(CSS::CSSStyleSheet&)>&& callback) const;
+    void for_each_active_css_style_sheet(Function<void(CSS::CSSStyleSheet&)> const& callback) const;
 
     void invalidate_style_of_elements_affected_by_has();
 
-    void schedule_ancestors_style_invalidation_due_to_presence_of_has(DOM::Node& node) { m_pending_nodes_for_style_invalidation_due_to_presence_of_has.set(node); }
+    void schedule_ancestors_style_invalidation_due_to_presence_of_has(DOM::Node& node);
 
     void visit_edges(GC::Cell::Visitor&);
 
@@ -121,7 +121,7 @@ public:
 
     GC::Ptr<CSSStyleSheet> m_user_style_sheet;
 
-    HashTable<GC::Weak<DOM::Node>> m_pending_nodes_for_style_invalidation_due_to_presence_of_has;
+    GC::WeakHashSet<DOM::Node> m_pending_nodes_for_style_invalidation_due_to_presence_of_has;
 
     GC::Ref<DOM::Node> m_node;
 };

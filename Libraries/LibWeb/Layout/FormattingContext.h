@@ -21,6 +21,40 @@ template<typename T>
     return ::max(min, ::min(value, max));
 }
 
+enum class Alignment {
+    Baseline,
+    Center,
+    End,
+    Normal,
+    Safe,
+    SelfEnd,
+    SelfStart,
+    SpaceAround,
+    SpaceBetween,
+    SpaceEvenly,
+    Start,
+    Stretch,
+    Unsafe,
+};
+
+enum class AbsposAxisMode {
+    // Both insets auto: offset = static_position + margin
+    StaticPosition,
+    // At least one explicit inset: offset = rect.origin + inset + margin
+    InsetFromRect,
+};
+
+struct AbsposContainingBlockInfo {
+    // Containing block rect in CB Box's content-edge coordinates.
+    CSSPixelRect rect;
+    AbsposAxisMode horizontal_axis_mode;
+    AbsposAxisMode vertical_axis_mode;
+    // Grid alignment for axes with auto CSS insets.
+    // When set, the base method applies alignment-driven insets after sizing.
+    Optional<Alignment> horizontal_alignment;
+    Optional<Alignment> vertical_alignment;
+};
+
 class FormattingContext {
 #if FORMATTING_CONTEXT_TRACE_DEBUG
     friend class FormattingContextTracer;
@@ -36,6 +70,7 @@ public:
         Grid,
         Table,
         SVG,
+        ReplacedWithChildren,
         InternalReplaced, // Internal hack formatting context for replaced elements. FIXME: Get rid of this.
         InternalDummy,    // Internal hack formatting context for unimplemented things. FIXME: Get rid of this.
     };
@@ -55,6 +90,8 @@ public:
             return "TFC"sv;
         case Type::SVG:
             return "SVG"sv;
+        case Type::ReplacedWithChildren:
+            return "Replaced, with children"sv;
         case Type::InternalReplaced:
             return "Replaced"sv;
         case Type::InternalDummy:
@@ -113,8 +150,6 @@ public:
     [[nodiscard]] CSSPixelRect content_box_rect(LayoutState::UsedValues const&) const;
     [[nodiscard]] CSSPixelRect content_box_rect_in_ancestor_coordinate_space(LayoutState::UsedValues const&, Box const& ancestor_box) const;
     [[nodiscard]] CSSPixels box_baseline(Box const&) const;
-    [[nodiscard]] CSSPixelRect content_box_rect_in_static_position_ancestor_coordinate_space(Box const&) const;
-
     [[nodiscard]] CSSPixels containing_block_width_for(NodeWithStyleAndBoxModelMetrics const&) const;
 
     [[nodiscard]] CSSPixels calculate_stretch_fit_width(Box const&, AvailableSize const&) const;
@@ -167,7 +202,9 @@ protected:
 
     ShrinkToFitResult calculate_shrink_to_fit_widths(Box const&);
 
-    void layout_absolutely_positioned_element(Box const&, AvailableSpace const&);
+    void layout_absolutely_positioned_element(Box const&, AbsposContainingBlockInfo const&);
+    void layout_absolutely_positioned_children();
+    virtual AbsposContainingBlockInfo resolve_abspos_containing_block_info(Box const&);
     void compute_width_for_absolutely_positioned_element(Box const&, AvailableSpace const&);
     void compute_width_for_absolutely_positioned_non_replaced_element(Box const&, AvailableSpace const&);
     void compute_width_for_absolutely_positioned_replaced_element(Box const&, AvailableSpace const&);

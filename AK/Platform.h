@@ -234,6 +234,15 @@
 #    define LIFETIME_BOUND
 #endif
 
+#if defined(MUST_UPCALL)
+#    undef MUST_UPCALL
+#endif
+#if defined(AK_COMPILER_CLANG)
+#    define MUST_UPCALL [[clang::annotate("must_upcall")]]
+#else
+#    define MUST_UPCALL
+#endif
+
 // GCC doesn't have __has_feature but clang does
 #ifndef __has_feature
 #    define __has_feature(...) 0
@@ -283,12 +292,8 @@
 #endif
 
 #ifndef AK_SYSTEM_CACHE_ALIGNMENT_SIZE
-#    if ARCH(AARCH64) || ARCH(X86_64)
-#        define AK_SYSTEM_CACHE_ALIGNMENT_SIZE 64
-#    else
-#        define AK_SYSTEM_CACHE_ALIGNMENT_SIZE 128
-#    endif
-#endif /* AK_SYSTEM_CACHE_ALIGNMENT_SIZE */
+#    define AK_SYSTEM_CACHE_ALIGNMENT_SIZE __GCC_DESTRUCTIVE_SIZE
+#endif
 
 #ifdef AK_CACHE_ALIGNED
 #    undef AK_CACHE_ALIGNED

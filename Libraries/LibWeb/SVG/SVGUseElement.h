@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/FlyString.h>
+#include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/DOM/DocumentObserver.h>
 #include <LibWeb/SVG/SVGAnimatedLength.h>
 #include <LibWeb/SVG/SVGGraphicsElement.h>
@@ -52,13 +53,15 @@ private:
 
     static Optional<FlyString> parse_id_from_href(StringView);
 
-    GC::Ptr<DOM::Element> referenced_element();
+    GC::Ptr<DOM::Element> referenced_element() const;
 
     void fetch_the_document(URL::URL const& url);
     bool is_referenced_element_same_document() const;
 
     void clone_element_tree_as_our_shadow_tree(Element* to_clone);
     bool is_valid_reference_element(Element const& reference_element) const;
+    bool would_create_circular_reference(Element const& target) const;
+    bool would_create_circular_reference_impl(Element const& target, GC::HeapHashTable<GC::Ref<Element const>>& visited) const;
 
     Optional<float> m_x;
     Optional<float> m_y;

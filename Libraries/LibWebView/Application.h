@@ -9,7 +9,6 @@
 #include <AK/ByteString.h>
 #include <AK/LexicalPath.h>
 #include <AK/Optional.h>
-#include <AK/Swift.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Forward.h>
 #include <LibDatabase/Forward.h>
@@ -24,6 +23,7 @@
 #include <LibWeb/CSS/PreferredMotion.h>
 #include <LibWeb/Clipboard/SystemClipboard.h>
 #include <LibWeb/HTML/ActivateTab.h>
+#include <LibWebView/FileDownloader.h>
 #include <LibWebView/Forward.h>
 #include <LibWebView/Options.h>
 #include <LibWebView/Process.h>
@@ -72,6 +72,8 @@ public:
     void set_process_mach_port(pid_t, Core::MachPort&&);
 #endif
     Optional<Process&> find_process(pid_t);
+
+    virtual bool should_capture_web_content_output() const { return false; }
 
     ErrorOr<LexicalPath> path_for_downloaded_file(StringView file) const;
 
@@ -125,6 +127,8 @@ public:
 
     Menu& debug_menu() { return *m_debug_menu; }
 
+    FileDownloader& file_downloader() { return m_file_downloader; }
+
     void apply_view_options(Badge<ViewImplementation>, ViewImplementation&);
 
     ErrorOr<void> toggle_devtools_enabled();
@@ -143,7 +147,7 @@ protected:
     virtual void create_platform_options(BrowserOptions&, RequestServerOptions&, WebContentOptions&) { }
     virtual NonnullOwnPtr<Core::EventLoop> create_platform_event_loop();
 
-    virtual Optional<ByteString> ask_user_for_download_folder() const { return {}; }
+    virtual Optional<ByteString> ask_user_for_download_path([[maybe_unused]] StringView file) const { return {}; }
 
     virtual void on_devtools_enabled() const;
     virtual void on_devtools_disabled() const;
@@ -187,9 +191,14 @@ private:
     virtual void listen_for_style_sheet_sources(DevTools::TabDescription const&, OnStyleSheetSourceReceived) const override;
     virtual void stop_listening_for_style_sheet_sources(DevTools::TabDescription const&) const override;
     virtual void evaluate_javascript(DevTools::TabDescription const&, String const&, OnScriptEvaluationComplete) const override;
-    virtual void listen_for_console_messages(DevTools::TabDescription const&, OnConsoleMessageAvailable, OnReceivedConsoleMessages) const override;
+    virtual void listen_for_console_messages(DevTools::TabDescription const&, OnConsoleMessage) const override;
     virtual void stop_listening_for_console_messages(DevTools::TabDescription const&) const override;
-    virtual void request_console_messages(DevTools::TabDescription const&, i32) const override;
+    virtual void listen_for_network_events(DevTools::TabDescription const&, OnNetworkRequestStarted, OnNetworkResponseHeadersReceived, OnNetworkResponseBodyReceived, OnNetworkRequestFinished) const override;
+    virtual void stop_listening_for_network_events(DevTools::TabDescription const&) const override;
+    virtual void listen_for_navigation_events(DevTools::TabDescription const&, OnNavigationStarted, OnNavigationFinished) const override;
+    virtual void stop_listening_for_navigation_events(DevTools::TabDescription const&) const override;
+    virtual void did_connect_devtools_client(DevTools::TabDescription const&) const override;
+    virtual void did_disconnect_devtools_client(DevTools::TabDescription const&) const override;
 
     static Application* s_the;
 
@@ -250,12 +259,16 @@ private:
 
     Optional<Web::Clipboard::SystemClipboardRepresentation> m_clipboard;
 
+    FileDownloader m_file_downloader;
+
 #if defined(AK_OS_MACOS)
     OwnPtr<MachPortServer> m_mach_port_server;
 #endif
 
     OwnPtr<DevTools::DevToolsServer> m_devtools;
-} SWIFT_IMMORTAL_REFERENCE;
+
+    mutable HashMap<u64, u64> m_navigation_listener_ids;
+};
 
 }
 

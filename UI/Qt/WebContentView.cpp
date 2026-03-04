@@ -418,7 +418,24 @@ void WebContentView::mouseMoveEvent(QMouseEvent* event)
 
 void WebContentView::mousePressEvent(QMouseEvent* event)
 {
-    enqueue_native_event(Web::MouseEvent::Type::MouseDown, *event);
+    auto elapsed = event->timestamp() - m_last_click_timestamp;
+    auto distance = (event->position() - m_last_click_position).manhattanLength();
+
+    if (elapsed < static_cast<u64>(QApplication::doubleClickInterval()) && distance < QApplication::startDragDistance())
+        ++m_click_count;
+    else
+        m_click_count = 1;
+    m_last_click_timestamp = event->timestamp();
+    m_last_click_position = event->position();
+
+    if (m_click_count == 3) {
+        enqueue_native_event(Web::MouseEvent::Type::TripleClick, *event);
+        m_click_count = 0;
+    } else if (m_click_count == 2) {
+        enqueue_native_event(Web::MouseEvent::Type::DoubleClick, *event);
+    } else {
+        enqueue_native_event(Web::MouseEvent::Type::MouseDown, *event);
+    }
 }
 
 void WebContentView::mouseReleaseEvent(QMouseEvent* event)
@@ -443,7 +460,9 @@ void WebContentView::wheelEvent(QWheelEvent* event)
 
 void WebContentView::mouseDoubleClickEvent(QMouseEvent* event)
 {
-    enqueue_native_event(Web::MouseEvent::Type::DoubleClick, *event);
+    // NOTE: Qt calls this instead of mousePressEvent on the 2nd click. Forward to mousePressEvent so our click
+    //       counting logic handles double and triple clicks uniformly.
+    mousePressEvent(event);
 }
 
 void WebContentView::dragEnterEvent(QDragEnterEvent* event)
@@ -530,13 +549,12 @@ void WebContentView::resizeEvent(QResizeEvent* event)
 void WebContentView::set_viewport_rect(Gfx::IntRect rect)
 {
     m_viewport_size = rect.size();
-    client().async_set_viewport_size(m_client_state.page_index, rect.size().to_type<Web::DevicePixels>());
+    handle_resize();
 }
 
 void WebContentView::set_device_pixel_ratio(double device_pixel_ratio)
 {
     m_device_pixel_ratio = device_pixel_ratio;
-    client().async_set_device_pixel_ratio(m_client_state.page_index, m_device_pixel_ratio);
     update_viewport_size();
     handle_resize();
 }

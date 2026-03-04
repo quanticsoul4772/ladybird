@@ -35,6 +35,12 @@ namespace WebView {
 Application* Application::s_the = nullptr;
 
 struct ApplicationSettingsObserver : public SettingsObserver {
+    virtual void browsing_data_settings_changed() override
+    {
+        auto const& browsing_data_settings = Application::settings().browsing_data_settings();
+        Application::request_server_client().async_set_disk_cache_settings(browsing_data_settings.disk_cache_settings);
+    }
+
     virtual void dns_settings_changed() override
     {
         Application::settings().dns_settings().visit(
@@ -112,7 +118,7 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     Optional<StringView> default_time_zone;
     Optional<u16> dns_server_port;
     bool use_dns_over_tls = false;
-    bool layout_test_mode = false;
+    bool enable_test_mode = false;
     bool validate_dnssec_locally = false;
     bool log_all_js_exceptions = false;
     bool disable_site_isolation = false;
@@ -120,7 +126,9 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     bool disable_http_memory_cache = false;
     bool disable_http_disk_cache = false;
     bool disable_content_filter = false;
+    Optional<StringView> resource_substitution_map_path;
     bool enable_autoplay = false;
+    bool expose_experimental_interfaces = false;
     bool expose_internals_object = false;
     bool force_cpu_painting = false;
     bool force_fontconfig = false;
@@ -164,7 +172,7 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     args_parser.add_option(debug_process, "Wait for a debugger to attach to the given process name (WebContent, RequestServer, etc.)", "debug-process", 0, "process-name");
     args_parser.add_option(profile_process, "Enable callgrind profiling of the given process name (WebContent, RequestServer, etc.)", "profile-process", 0, "process-name");
     args_parser.add_option(webdriver_content_ipc_path, "Path to WebDriver IPC for WebContent", "webdriver-content-path", 0, "path", Core::ArgsParser::OptionHideMode::CommandLineAndMarkdown);
-    args_parser.add_option(layout_test_mode, "Enable layout test mode", "layout-test-mode");
+    args_parser.add_option(enable_test_mode, "Enable test mode", "test-mode");
     args_parser.add_option(log_all_js_exceptions, "Log all JavaScript exceptions", "log-all-js-exceptions");
     args_parser.add_option(disable_site_isolation, "Disable site isolation", "disable-site-isolation");
     args_parser.add_option(enable_idl_tracing, "Enable IDL tracing", "enable-idl-tracing");
@@ -172,6 +180,7 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     args_parser.add_option(disable_http_disk_cache, "Disable HTTP disk cache", "disable-http-disk-cache");
     args_parser.add_option(disable_content_filter, "Disable content filter", "disable-content-filter");
     args_parser.add_option(enable_autoplay, "Enable multimedia autoplay", "enable-autoplay");
+    args_parser.add_option(expose_experimental_interfaces, "Expose experimental IDL interfaces", "expose-experimental-interfaces");
     args_parser.add_option(expose_internals_object, "Expose internals object", "expose-internals-object");
     args_parser.add_option(force_cpu_painting, "Force CPU painting", "force-cpu-painting");
     args_parser.add_option(force_fontconfig, "Force using fontconfig for font loading", "force-fontconfig");
@@ -182,6 +191,7 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     args_parser.add_option(use_dns_over_tls, "Use DNS over TLS", "dot");
     args_parser.add_option(validate_dnssec_locally, "Validate DNSSEC locally", "dnssec");
     args_parser.add_option(default_time_zone, "Default time zone", "default-time-zone", 0, "time-zone-id");
+    args_parser.add_option(resource_substitution_map_path, "Path to JSON file mapping URLs to local files", "resource-map", 0, "path");
 
     args_parser.add_option(Core::ArgsParser::Option {
         .argument_mode = Core::ArgsParser::OptionArgumentMode::Optional,
@@ -214,10 +224,8 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
 
     // Our persisted SQL storage assumes it runs in a singleton process. If we have multiple UI processes accessing
     // the same underlying database, one of them is likely to fail.
-    if (force_new_process) {
+    if (force_new_process)
         disable_sql_database = true;
-        disable_http_disk_cache = true;
-    }
 
     if (!dns_server_port.has_value())
         dns_server_port = use_dns_over_tls ? 853 : 53;
@@ -262,20 +270,28 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     if (webdriver_content_ipc_path.has_value())
         m_browser_options.webdriver_content_ipc_path = *webdriver_content_ipc_path;
 
+    auto http_disk_cache_mode = HTTPDiskCacheMode::Enabled;
+    if (disable_http_disk_cache)
+        http_disk_cache_mode = HTTPDiskCacheMode::Disabled;
+    else if (force_new_process)
+        http_disk_cache_mode = HTTPDiskCacheMode::Partitioned;
+
     m_request_server_options = {
         .certificates = move(certificates),
-        .http_disk_cache_mode = disable_http_disk_cache ? HTTPDiskCacheMode::Disabled : HTTPDiskCacheMode::Enabled,
+        .http_disk_cache_mode = http_disk_cache_mode,
+        .resource_substitution_map_path = resource_substitution_map_path.has_value() ? Optional<ByteString> { *resource_substitution_map_path } : OptionalNone {},
     };
 
     m_web_content_options = {
         .command_line = MUST(String::join(' ', m_arguments.strings)),
         .executable_path = MUST(String::from_byte_string(MUST(Core::System::current_executable_path()))),
         .user_agent_preset = move(user_agent_preset),
-        .is_layout_test_mode = layout_test_mode ? IsLayoutTestMode::Yes : IsLayoutTestMode::No,
+        .is_test_mode = enable_test_mode ? IsTestMode::Yes : IsTestMode::No,
         .log_all_js_exceptions = log_all_js_exceptions ? LogAllJSExceptions::Yes : LogAllJSExceptions::No,
         .disable_site_isolation = disable_site_isolation ? DisableSiteIsolation::Yes : DisableSiteIsolation::No,
         .enable_idl_tracing = enable_idl_tracing ? EnableIDLTracing::Yes : EnableIDLTracing::No,
         .enable_http_memory_cache = disable_http_memory_cache ? EnableMemoryHTTPCache::No : EnableMemoryHTTPCache::Yes,
+        .expose_experimental_interfaces = expose_experimental_interfaces ? ExposeExperimentalInterfaces::Yes : ExposeExperimentalInterfaces::No,
         .expose_internals_object = expose_internals_object ? ExposeInternalsObject::Yes : ExposeInternalsObject::No,
         .force_cpu_painting = force_cpu_painting ? ForceCPUPainting::Yes : ForceCPUPainting::No,
         .force_fontconfig = force_fontconfig ? ForceFontconfig::Yes : ForceFontconfig::No,
@@ -286,6 +302,14 @@ ErrorOr<void> Application::initialize(Main::Arguments const& arguments)
     };
 
     create_platform_options(m_browser_options, m_request_server_options, m_web_content_options);
+
+    // Test mode implies experimental interfaces and internals object are exposed and the Skia CPU backend is used.
+    if (m_web_content_options.is_test_mode == IsTestMode::Yes) {
+        m_web_content_options.expose_experimental_interfaces = ExposeExperimentalInterfaces::Yes;
+        m_web_content_options.expose_internals_object = ExposeInternalsObject::Yes;
+        m_web_content_options.force_cpu_painting = ForceCPUPainting::Yes;
+    }
+
     initialize_actions();
 
     m_event_loop = create_platform_event_loop();
@@ -402,6 +426,10 @@ ErrorOr<void> Application::launch_services()
 ErrorOr<void> Application::launch_request_server()
 {
     m_request_server_client = TRY(launch_request_server_process());
+
+    m_request_server_client->on_retrieve_http_cookie = [this](URL::URL const& url) {
+        return m_cookie_jar->get_cookie(url, HTTP::Cookie::Source::Http);
+    };
 
     m_request_server_client->on_request_server_died = [this]() {
         m_request_server_client = nullptr;
@@ -608,11 +636,8 @@ void Application::process_did_exit(Process&& process)
         }
         break;
     case ProcessType::WebContent:
-        if (auto client = process.client<WebContentClient>(); client.has_value()) {
-            dbgln_if(WEBVIEW_PROCESS_DEBUG, "Restart WebContent process");
-            if (auto on_web_content_process_crash = move(client->on_web_content_process_crash))
-                on_web_content_process_crash();
-        }
+        if (auto client = process.client<WebContentClient>(); client.has_value())
+            client->notify_all_views_of_crash();
         break;
     case ProcessType::WebWorker:
         dbgln_if(WEBVIEW_PROCESS_DEBUG, "WebWorker {} died, not sure what to do.", process.pid());
@@ -625,25 +650,22 @@ void Application::process_did_exit(Process&& process)
 
 ErrorOr<LexicalPath> Application::path_for_downloaded_file(StringView file) const
 {
-    auto downloads_directory = Core::StandardPaths::downloads_directory();
+    if (browser_options().headless_mode.has_value()) {
+        auto downloads_directory = Core::StandardPaths::downloads_directory();
 
-    if (!FileSystem::is_directory(downloads_directory)) {
-        if (browser_options().headless_mode.has_value()) {
+        if (!FileSystem::is_directory(downloads_directory)) {
             dbgln("Unable to ask user for download folder in headless mode, please ensure {} is a directory or use the XDG_DOWNLOAD_DIR environment variable to set a new download directory", downloads_directory);
             return Error::from_errno(ENOENT);
         }
 
-        auto maybe_downloads_directory = ask_user_for_download_folder();
-        if (!maybe_downloads_directory.has_value())
-            return Error::from_errno(ECANCELED);
-
-        downloads_directory = maybe_downloads_directory.release_value();
+        return LexicalPath::join(downloads_directory, file);
     }
 
-    if (!FileSystem::is_directory(downloads_directory))
-        return Error::from_errno(ENOENT);
+    auto download_path = ask_user_for_download_path(file);
+    if (!download_path.has_value())
+        return Error::from_errno(ECANCELED);
 
-    return LexicalPath::join(downloads_directory, file);
+    return LexicalPath { download_path.release_value() };
 }
 
 void Application::display_download_confirmation_dialog(StringView download_name, LexicalPath const& path) const
@@ -890,7 +912,13 @@ void Application::initialize_actions()
     m_debug_menu->add_action(Action::create("Dump GC graph"sv, ActionID::DumpGCGraph, [this]() {
         if (auto view = active_web_view(); view.has_value()) {
             auto gc_graph_path = view->dump_gc_graph();
-            warnln("\033[33;1mDumped GC-graph into {}\033[0m", gc_graph_path);
+            if (gc_graph_path.is_error()) {
+                warnln("\033[31;1mFailed to dump GC graph: {}\033[0m", gc_graph_path.error());
+            } else {
+                warnln("\033[33;1mDumped GC graph into {}\033[0m", gc_graph_path.value());
+                if (auto source_dir = Core::Environment::get("LADYBIRD_SOURCE_DIR"sv); source_dir.has_value())
+                    warnln("\033[33;1mGC graph explorer: file://{}/Meta/gc-heap-explorer.html?script=file://{}\033[0m", *source_dir, gc_graph_path.value());
+            }
         }
     }));
     m_debug_menu->add_separator();
@@ -1287,15 +1315,13 @@ void Application::evaluate_javascript(DevTools::TabDescription const& descriptio
     view->js_console_input(script);
 }
 
-void Application::listen_for_console_messages(DevTools::TabDescription const& description, OnConsoleMessageAvailable on_console_message_available, OnReceivedConsoleMessages on_received_console_output) const
+void Application::listen_for_console_messages(DevTools::TabDescription const& description, OnConsoleMessage on_console_message) const
 {
     auto view = ViewImplementation::find_view_by_id(description.id);
     if (!view.has_value())
         return;
 
-    view->on_console_message_available = move(on_console_message_available);
-    view->on_received_console_messages = move(on_received_console_output);
-    view->js_console_request_messages(0);
+    view->on_console_message = move(on_console_message);
 }
 
 void Application::stop_listening_for_console_messages(DevTools::TabDescription const& description) const
@@ -1304,17 +1330,93 @@ void Application::stop_listening_for_console_messages(DevTools::TabDescription c
     if (!view.has_value())
         return;
 
-    view->on_console_message_available = nullptr;
-    view->on_received_console_messages = nullptr;
+    view->on_console_message = nullptr;
 }
 
-void Application::request_console_messages(DevTools::TabDescription const& description, i32 start_index) const
+void Application::listen_for_network_events(DevTools::TabDescription const& description, OnNetworkRequestStarted on_request_started, OnNetworkResponseHeadersReceived on_response_headers, OnNetworkResponseBodyReceived on_response_body, OnNetworkRequestFinished on_request_finished) const
 {
     auto view = ViewImplementation::find_view_by_id(description.id);
     if (!view.has_value())
         return;
 
-    view->js_console_request_messages(start_index);
+    view->on_network_request_started = [on_request_started = move(on_request_started)](u64 request_id, URL::URL const& url, ByteString const& method, Vector<HTTP::Header> const& headers, ByteBuffer request_body, Optional<String> initiator_type) {
+        on_request_started({ request_id, url.to_string(), MUST(String::from_byte_string(method)), UnixDateTime::now(), headers, move(request_body), move(initiator_type) });
+    };
+
+    view->on_network_response_headers_received = [on_response_headers = move(on_response_headers)](u64 request_id, u32 status_code, Optional<String> const& reason_phrase, Vector<HTTP::Header> const& headers) {
+        on_response_headers({ request_id, status_code, reason_phrase, headers });
+    };
+
+    view->on_network_response_body_received = [on_response_body = move(on_response_body)](u64 request_id, ByteBuffer data) {
+        on_response_body(request_id, move(data));
+    };
+
+    view->on_network_request_finished = [on_request_finished = move(on_request_finished)](u64 request_id, u64 body_size, Requests::RequestTimingInfo const& timing_info, Optional<Requests::NetworkError> const& network_error) {
+        on_request_finished({ request_id, body_size, timing_info, network_error });
+    };
+}
+
+void Application::stop_listening_for_network_events(DevTools::TabDescription const& description) const
+{
+    auto view = ViewImplementation::find_view_by_id(description.id);
+    if (!view.has_value())
+        return;
+
+    view->on_network_request_started = nullptr;
+    view->on_network_response_headers_received = nullptr;
+    view->on_network_response_body_received = nullptr;
+    view->on_network_request_finished = nullptr;
+}
+
+void Application::listen_for_navigation_events(DevTools::TabDescription const& description, OnNavigationStarted on_started, OnNavigationFinished on_finished) const
+{
+    auto view = ViewImplementation::find_view_by_id(description.id);
+    if (!view.has_value())
+        return;
+
+    ViewImplementation::NavigationListener listener;
+    listener.on_load_start = [on_started = move(on_started)](URL::URL const& url, bool) {
+        on_started(url.to_string());
+    };
+    listener.on_load_finish = [view_id = view->view_id(), on_finished = move(on_finished)](URL::URL const& url) {
+        auto view = ViewImplementation::find_view_by_id(view_id);
+        if (!view.has_value())
+            return;
+        on_finished(url.to_string(), view->title().to_well_formed_utf8());
+    };
+
+    auto listener_id = view->add_navigation_listener(move(listener));
+    m_navigation_listener_ids.set(description.id, listener_id);
+}
+
+void Application::stop_listening_for_navigation_events(DevTools::TabDescription const& description) const
+{
+    auto view = ViewImplementation::find_view_by_id(description.id);
+    if (!view.has_value())
+        return;
+
+    if (auto listener_id = m_navigation_listener_ids.get(description.id); listener_id.has_value()) {
+        view->remove_navigation_listener(listener_id.value());
+        m_navigation_listener_ids.remove(description.id);
+    }
+}
+
+void Application::did_connect_devtools_client(DevTools::TabDescription const& description) const
+{
+    auto view = ViewImplementation::find_view_by_id(description.id);
+    if (!view.has_value())
+        return;
+
+    view->did_connect_devtools_client();
+}
+
+void Application::did_disconnect_devtools_client(DevTools::TabDescription const& description) const
+{
+    auto view = ViewImplementation::find_view_by_id(description.id);
+    if (!view.has_value())
+        return;
+
+    view->did_disconnect_devtools_client();
 }
 
 }

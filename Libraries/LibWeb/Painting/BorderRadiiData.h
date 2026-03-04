@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <LibGfx/Point.h>
+#include <LibGfx/Rect.h>
 #include <LibWeb/CSS/ComputedValues.h>
 #include <LibWeb/Export.h>
 
@@ -40,12 +42,6 @@ struct WEB_API BorderRadiusData {
         if (vertical_radius != 0)
             vertical_radius = max(CSSPixels(0), vertical_radius - vertical);
     }
-
-    inline void union_max_radii(BorderRadiusData const& other)
-    {
-        horizontal_radius = max(horizontal_radius, other.horizontal_radius);
-        vertical_radius = max(vertical_radius, other.vertical_radius);
-    }
 };
 
 struct CornerRadii {
@@ -57,6 +53,54 @@ struct CornerRadii {
     inline bool has_any_radius() const
     {
         return top_left || top_right || bottom_right || bottom_left;
+    }
+
+    bool contains(Gfx::IntPoint point, Gfx::IntRect const& rect) const
+    {
+        if (!rect.contains(point))
+            return false;
+
+        if (!has_any_radius())
+            return true;
+
+        auto const px = point.x();
+        auto const py = point.y();
+
+        auto outside_ellipse = [&](CornerRadius const& r, int cx, int cy) {
+            auto dx = static_cast<float>(px - cx) / r.horizontal_radius;
+            auto dy = static_cast<float>(py - cy) / r.vertical_radius;
+            return dx * dx + dy * dy > 1.f;
+        };
+
+        if (top_left) {
+            auto cx = rect.left() + top_left.horizontal_radius;
+            auto cy = rect.top() + top_left.vertical_radius;
+            if (px < cx && py < cy && outside_ellipse(top_left, cx, cy))
+                return false;
+        }
+
+        if (top_right) {
+            auto cx = rect.right() - top_right.horizontal_radius;
+            auto cy = rect.top() + top_right.vertical_radius;
+            if (px > cx && py < cy && outside_ellipse(top_right, cx, cy))
+                return false;
+        }
+
+        if (bottom_right) {
+            auto cx = rect.right() - bottom_right.horizontal_radius;
+            auto cy = rect.bottom() - bottom_right.vertical_radius;
+            if (px > cx && py > cy && outside_ellipse(bottom_right, cx, cy))
+                return false;
+        }
+
+        if (bottom_left) {
+            auto cx = rect.left() + bottom_left.horizontal_radius;
+            auto cy = rect.bottom() - bottom_left.vertical_radius;
+            if (px < cx && py > cy && outside_ellipse(bottom_left, cx, cy))
+                return false;
+        }
+
+        return true;
     }
 };
 
@@ -71,12 +115,19 @@ struct BorderRadiiData {
         return top_left || top_right || bottom_right || bottom_left;
     }
 
-    inline void union_max_radii(BorderRadiiData const& other)
+    bool contains(CSSPixelPoint point, CSSPixelRect const& rect) const
     {
-        top_left.union_max_radii(other.top_left);
-        top_right.union_max_radii(other.top_right);
-        bottom_right.union_max_radii(other.bottom_right);
-        bottom_left.union_max_radii(other.bottom_left);
+        if (!rect.contains(point))
+            return false;
+
+        if (!has_any_radius())
+            return true;
+
+        auto to_corner = [](BorderRadiusData const& r) -> CornerRadius {
+            return { static_cast<int>(r.horizontal_radius.to_float()), static_cast<int>(r.vertical_radius.to_float()) };
+        };
+        CornerRadii corners { to_corner(top_left), to_corner(top_right), to_corner(bottom_right), to_corner(bottom_left) };
+        return corners.contains(point.to_type<int>(), rect.to_type<int>());
     }
 
     inline void shrink(CSSPixels top, CSSPixels right, CSSPixels bottom, CSSPixels left)

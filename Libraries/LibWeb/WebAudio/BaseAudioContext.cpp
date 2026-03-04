@@ -8,6 +8,8 @@
 
 #include <LibWeb/Bindings/BaseAudioContextPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/DOM/Document.h>
+#include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
 #include <LibWeb/HTML/Window.h>
@@ -19,6 +21,7 @@
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebAudio/BiquadFilterNode.h>
 #include <LibWeb/WebAudio/ChannelMergerNode.h>
+#include <LibWeb/WebAudio/ControlMessageQueue.h>
 #include <LibWeb/WebAudio/DynamicsCompressorNode.h>
 #include <LibWeb/WebAudio/GainNode.h>
 #include <LibWeb/WebAudio/OscillatorNode.h>
@@ -32,6 +35,7 @@ BaseAudioContext::BaseAudioContext(JS::Realm& realm, float sample_rate)
     : DOM::EventTarget(realm)
     , m_sample_rate(sample_rate)
     , m_listener(AudioListener::create(realm, *this))
+    , m_control_message_queue(make<ControlMessageQueue>())
 {
 }
 
@@ -171,7 +175,8 @@ WebIDL::ExceptionOr<GC::Ref<PeriodicWave>> BaseAudioContext::create_periodic_wav
 
 // https://webaudio.github.io/web-audio-api/#dom-baseaudiocontext-createscriptprocessor
 WebIDL::ExceptionOr<GC::Ref<ScriptProcessorNode>> BaseAudioContext::create_script_processor(
-    WebIDL::UnsignedLong buffer_size, WebIDL::UnsignedLong number_of_input_channels,
+    WebIDL::UnsignedLong buffer_size,
+    WebIDL::UnsignedLong number_of_input_channels,
     WebIDL::UnsignedLong number_of_output_channels)
 {
     // The bufferSize parameter determines the buffer size in units of sample-frames. If it’s not passed in, or if the
@@ -222,6 +227,12 @@ void BaseAudioContext::queue_a_media_element_task(GC::Ref<GC::Function<void()>> 
 {
     auto task = HTML::Task::create(vm(), m_media_element_event_task_source.source, HTML::current_principal_settings_object().responsible_document(), steps);
     (void)HTML::main_thread_event_loop().task_queue().add(task);
+}
+
+void BaseAudioContext::queue_control_message(ControlMessage message)
+{
+    m_control_message_queue->enqueue(move(message));
+    // FIXME: Should signal the rendering thread when implemented
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-baseaudiocontext-decodeaudiodata

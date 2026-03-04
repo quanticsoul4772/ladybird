@@ -75,6 +75,7 @@ enum SpecialContext : u8 {
     BorderRadius,
     CubicBezierFunctionXCoordinate,
     DOMMatrixInitString,
+    FontStyleAngle,
     MediaCondition,
     RadialSizeLengthPercentage,
     RandomValueSharingFixedValue,
@@ -91,14 +92,21 @@ enum class ParsingMode {
     SVGPresentationAttribute, // See https://svgwg.org/svg2-draft/types.html#presentation-attribute-css-value
 };
 
+enum class IsUAStyleSheet {
+    Yes,
+    No,
+};
+
 struct ParsingParams {
     explicit ParsingParams(ParsingMode = ParsingMode::Normal);
     explicit ParsingParams(JS::Realm&, ParsingMode = ParsingMode::Normal);
+    explicit ParsingParams(JS::Realm&, IsUAStyleSheet);
     explicit ParsingParams(DOM::Document const&, ParsingMode = ParsingMode::Normal);
 
     GC::Ptr<JS::Realm> realm;
     GC::Ptr<DOM::Document const> document;
     ParsingMode mode { ParsingMode::Normal };
+    IsUAStyleSheet is_ua_style_sheet { IsUAStyleSheet::No };
 
     Vector<ValueParsingContext> value_context;
     Vector<RuleContext> rule_context;
@@ -277,13 +285,16 @@ private:
         Yes,
     };
     Optional<FlyString> parse_layer_name(TokenStream<ComponentValue>&, AllowBlankLayerName);
+    Optional<Vector<FlyString>> parse_comma_separated_family_name_list(TokenStream<ComponentValue>&);
 
     bool is_valid_in_the_current_context(Declaration const&) const;
     bool is_valid_in_the_current_context(AtRule const&) const;
     bool is_valid_in_the_current_context(QualifiedRule const&) const;
     GC::Ptr<CSSRule> convert_to_rule(Rule const&, Nested);
     GC::Ptr<CSSStyleRule> convert_to_style_rule(QualifiedRule const&, Nested);
+    GC::Ptr<CSSCounterStyleRule> convert_to_counter_style_rule(AtRule const&);
     GC::Ptr<CSSFontFaceRule> convert_to_font_face_rule(AtRule const&);
+    GC::Ptr<CSSFontFeatureValuesRule> convert_to_font_feature_values_rule(AtRule const&);
     GC::Ptr<CSSKeyframesRule> convert_to_keyframes_rule(AtRule const&);
     GC::Ptr<CSSImportRule> convert_to_import_rule(AtRule const&);
     GC::Ptr<CSSRule> convert_to_layer_rule(AtRule const&, Nested);
@@ -407,6 +418,10 @@ private:
     RefPtr<StyleValue const> parse_color_scheme_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_corner_shape_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_counter_value(TokenStream<ComponentValue>&);
+    Optional<FlyString> parse_counter_style_name(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_counter_style_value(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_symbol_value(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_nonnegative_integer_symbol_pair_value(TokenStream<ComponentValue>&);
     enum class AllowReversed {
         No,
         Yes,
@@ -495,6 +510,8 @@ private:
     RefPtr<StyleValue const> parse_list_style_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_mask_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_math_depth_value(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_overflow_clip_margin_value(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_overflow_clip_margin_shorthand(PropertyID, TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_paint_order_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_place_content_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_place_items_value(TokenStream<ComponentValue>&);
@@ -520,6 +537,7 @@ private:
     RefPtr<StyleValue const> parse_rotate_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_stroke_dasharray_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_easing_value(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_timeline_scope_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_transform_function_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_transform_list_value(TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_transform_origin_value(TokenStream<ComponentValue>&);
@@ -588,6 +606,7 @@ private:
     GC::Ptr<DOM::Document const> m_document;
     GC::Ptr<JS::Realm> m_realm;
     ParsingMode m_parsing_mode { ParsingMode::Normal };
+    IsUAStyleSheet m_is_ua_style_sheet { IsUAStyleSheet::No };
 
     Vector<Token> m_tokens;
     TokenStream<Token> m_token_stream;

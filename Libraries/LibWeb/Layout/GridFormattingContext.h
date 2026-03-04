@@ -17,22 +17,6 @@ enum class GridDimension {
     Column
 };
 
-enum class Alignment {
-    Baseline,
-    Center,
-    End,
-    Normal,
-    Safe,
-    SelfEnd,
-    SelfStart,
-    SpaceAround,
-    SpaceBetween,
-    SpaceEvenly,
-    Start,
-    Stretch,
-    Unsafe,
-};
-
 struct GridPosition {
     int row;
     int column;
@@ -166,6 +150,7 @@ public:
     int max_row_index() const { return m_max_row_index; }
 
     bool is_occupied(int column_index, int row_index) const;
+    bool is_area_occupied(int column_start, int row_start, int column_span, int row_span) const;
 
     FoundUnoccupiedPlace find_unoccupied_place(GridDimension dimension, int& column_index, int& row_index, int column_span, int row_span) const;
 
@@ -222,15 +207,6 @@ private:
         static GridTrack create_from_definition(CSS::ExplicitGridTrack const& definition, bool is_auto_fit);
         static GridTrack create_auto();
         static GridTrack create_gap(CSSPixels size);
-    };
-
-    struct GridArea {
-        String name;
-        size_t row_start { 0 };
-        size_t row_end { 1 };
-        size_t column_start { 0 };
-        size_t column_end { 1 };
-        bool invalid { false }; /* FIXME: Ignore ignore invalid areas during layout */
     };
 
     Vector<Vector<CSS::GridLineName>> m_row_lines;
@@ -325,7 +301,7 @@ private:
     void determine_grid_container_height();
     void determine_intrinsic_size_of_grid_container(AvailableSpace const& available_space);
 
-    void layout_absolutely_positioned_element(Box const&);
+    virtual AbsposContainingBlockInfo resolve_abspos_containing_block_info(Box const&) override;
     virtual void parent_context_did_dimension_child_root_box() override;
 
     void resolve_grid_item_sizes(GridDimension dimension);
@@ -346,12 +322,13 @@ private:
         size_t span { 1 };
     };
     PlacementPosition resolve_grid_position(Box const& child_box, GridDimension dimension);
+    size_t resolve_grid_span(Box const& child_box, GridDimension dimension) const;
 
     void place_grid_items();
     void place_item_with_row_and_column_position(Box const& child_box);
     void place_item_with_row_position(Box const& child_box);
-    void place_item_with_column_position(Box const& child_box, int& auto_placement_cursor_x, int& auto_placement_cursor_y);
-    void place_item_with_no_declared_position(Box const& child_box, int& auto_placement_cursor_x, int& auto_placement_cursor_y);
+    void place_item_with_column_position(Box const& child_box, int& auto_placement_cursor_row);
+    void place_item_with_no_declared_position(Box const& child_box, int& auto_placement_cursor_column, int& auto_placement_cursor_row);
     void record_grid_placement(GridItem);
 
     void initialize_grid_tracks_from_definition(GridDimension);

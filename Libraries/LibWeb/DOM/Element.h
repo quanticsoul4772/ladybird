@@ -6,19 +6,14 @@
 
 #pragma once
 
-#include <AK/IterationDecision.h>
 #include <AK/Optional.h>
 #include <LibWeb/ARIA/ARIAMixin.h>
-#include <LibWeb/ARIA/AttributeNames.h>
 #include <LibWeb/Animations/Animatable.h>
 #include <LibWeb/Bindings/ElementPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/ShadowRootPrototype.h>
-#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/Selector.h>
-#include <LibWeb/CSS/StyleInvalidation.h>
 #include <LibWeb/CSS/StyleProperty.h>
-#include <LibWeb/CSS/StylePropertyMapReadOnly.h>
 #include <LibWeb/DOM/ChildNode.h>
 #include <LibWeb/DOM/NonDocumentTypeChildNode.h>
 #include <LibWeb/DOM/ParentNode.h>
@@ -28,10 +23,11 @@
 #include <LibWeb/Export.h>
 #include <LibWeb/HTML/AttributeNames.h>
 #include <LibWeb/HTML/EventLoop/Task.h>
-#include <LibWeb/HTML/LazyLoadingElement.h>
 #include <LibWeb/HTML/ScrollOptions.h>
 #include <LibWeb/HTML/TagNames.h>
-#include <LibWeb/IntersectionObserver/IntersectionObserver.h>
+#include <LibWeb/HTML/TokenizedFeatures.h>
+#include <LibWeb/HTML/UserNavigationInvolvement.h>
+#include <LibWeb/IntersectionObserver/IntersectionObserverRegistration.h>
 #include <LibWeb/TrustedTypes/TrustedHTML.h>
 #include <LibWeb/TrustedTypes/TrustedScript.h>
 #include <LibWeb/TrustedTypes/TrustedScriptURL.h>
@@ -116,11 +112,14 @@ class WEB_API Element
     , public ARIA::ARIAMixin
     , public Animations::Animatable {
     WEB_PLATFORM_OBJECT(Element, ParentNode);
+    GC_DECLARE_ALLOCATOR(Element);
 
 public:
     virtual ~Element() override;
 
     virtual bool is_dom_element() const final { return true; }
+
+    virtual Node& slottable_as_node() override { return *this; }
 
     FlyString const& qualified_name() const { return m_qualified_name.as_string(); }
     FlyString const& html_uppercased_qualified_name() const;
@@ -151,6 +150,13 @@ public:
     Optional<String> get_attribute(FlyString const& name) const;
     Optional<String> get_attribute_ns(Optional<FlyString> const& namespace_, FlyString const& name) const;
     String get_attribute_value(FlyString const& local_name, Optional<FlyString> const& namespace_ = {}) const;
+
+    String get_an_elements_target(Optional<String> target = {}) const;
+    HTML::TokenizedFeature::NoOpener get_an_elements_noopener(URL::URL const& url, StringView target) const;
+
+    bool cannot_navigate() const;
+
+    void follow_the_hyperlink(Optional<String> hyperlink_suffix, HTML::UserNavigationInvolvement = HTML::UserNavigationInvolvement::None);
 
     Optional<String> lang() const;
     void invalidate_lang_value();
@@ -224,6 +230,9 @@ public:
     GC::Ptr<Layout::NodeWithStyle> layout_node();
     GC::Ptr<Layout::NodeWithStyle const> layout_node() const;
 
+    GC::Ptr<Layout::NodeWithStyle> unsafe_layout_node();
+    GC::Ptr<Layout::NodeWithStyle const> unsafe_layout_node() const;
+
     GC::Ptr<CSS::ComputedProperties> computed_properties(Optional<CSS::PseudoElement> = {});
     GC::Ptr<CSS::ComputedProperties const> computed_properties(Optional<CSS::PseudoElement> = {}) const;
     void set_computed_properties(Optional<CSS::PseudoElement>, GC::Ptr<CSS::ComputedProperties>);
@@ -256,6 +265,21 @@ public:
 
     WebIDL::ExceptionOr<void> insert_adjacent_html(String const& position, TrustedTypes::TrustedHTMLOrString const&);
 
+    enum class FullscreenRequester {
+        Bindings,
+        WebDriver,
+    };
+    GC::Ref<WebIDL::Promise> request_fullscreen(FullscreenRequester = FullscreenRequester::Bindings);
+
+    void set_fullscreen_flag(bool is_fullscreen) { m_fullscreen_flag = is_fullscreen; }
+    bool is_fullscreen_element() const { return m_fullscreen_flag; }
+
+    GC::Ptr<WebIDL::CallbackType> onfullscreenchange();
+    void set_onfullscreenchange(GC::Ptr<WebIDL::CallbackType>);
+
+    GC::Ptr<WebIDL::CallbackType> onfullscreenerror();
+    void set_onfullscreenerror(GC::Ptr<WebIDL::CallbackType>);
+
     WebIDL::ExceptionOr<TrustedTypes::TrustedHTMLOrString> outer_html() const;
     WebIDL::ExceptionOr<void> set_outer_html(TrustedTypes::TrustedHTMLOrString const&);
 
@@ -269,8 +293,8 @@ public:
     GC::Ptr<ShadowRoot const> shadow_root() const { return m_shadow_root; }
     void set_shadow_root(GC::Ptr<ShadowRoot>);
 
-    void set_custom_properties(Optional<CSS::PseudoElement>, OrderedHashMap<FlyString, CSS::StyleProperty> custom_properties);
-    [[nodiscard]] OrderedHashMap<FlyString, CSS::StyleProperty> const& custom_properties(Optional<CSS::PseudoElement>) const;
+    void set_custom_property_data(Optional<CSS::PseudoElement>, RefPtr<CSS::CustomPropertyData const>);
+    [[nodiscard]] RefPtr<CSS::CustomPropertyData const> custom_property_data(Optional<CSS::PseudoElement>) const;
 
     // FIXME: None of these flags ever get unset should this element's style change so that it no longer relies on these
     //        things - doing so would potentially improve performance by avoiding unnecessary style invalidations.
@@ -326,7 +350,12 @@ public:
     i32 tab_index() const;
     void set_tab_index(i32 tab_index);
 
-    bool is_potentially_scrollable() const;
+    enum class TreatOverflowClipOnBodyParentAsOverflowHidden {
+        No,
+        Yes,
+    };
+    bool is_potentially_scrollable(TreatOverflowClipOnBodyParentAsOverflowHidden) const;
+    bool is_scroll_container() const;
 
     double scroll_top() const;
     double scroll_left() const;
@@ -543,7 +572,7 @@ protected:
     virtual i32 default_tab_index_value() const;
 
     // https://dom.spec.whatwg.org/#concept-element-attributes-change-ext
-    virtual void attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_);
+    MUST_UPCALL virtual void attribute_changed(FlyString const& local_name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_);
 
     virtual void computed_properties_changed() { }
 
@@ -559,6 +588,19 @@ private:
     FlyString make_html_uppercased_qualified_name() const;
 
     void invalidate_style_after_attribute_change(FlyString const& attribute_name, Optional<String> const& old_value, Optional<String> const& new_value);
+
+    enum class RequestFullscreenError : u8 {
+        False,
+        ElementReadyCheckFailed,
+        UnsupportedElement,
+        NoTransientUserActivation,
+        ElementNodeDocIsNotPendingDoc
+    };
+    static Utf16String request_fullscreen_error_to_string(RequestFullscreenError);
+
+    void exit_fullscreen_on_element_removal();
+    RequestFullscreenError is_element_allowed_to_enter_fullscreen(FullscreenRequester) const;
+    bool is_element_ready_for_fullscreen() const;
 
     WebIDL::ExceptionOr<GC::Ptr<Node>> insert_adjacent(StringView where, GC::Ref<Node> node);
 
@@ -589,7 +631,7 @@ private:
 
     GC::Ptr<CSS::CascadedProperties> m_cascaded_properties;
     GC::Ptr<CSS::ComputedProperties> m_computed_properties;
-    OrderedHashMap<FlyString, CSS::StyleProperty> m_custom_properties;
+    RefPtr<CSS::CustomPropertyData const> m_custom_property_data;
 
     using PseudoElementData = HashMap<CSS::PseudoElement, GC::Ref<PseudoElement>>;
     mutable OwnPtr<PseudoElementData> m_pseudo_element_data;
@@ -642,6 +684,7 @@ private:
     bool m_affected_by_sibling_position_or_count_pseudo_class : 1 { false };
     bool m_affected_by_nth_child_pseudo_class : 1 { false };
     bool m_affected_by_has_pseudo_class_with_relative_selector_that_has_sibling_combinator : 1 { false };
+    bool m_fullscreen_flag : 1 { false };
 
     size_t m_sibling_invalidation_distance { 0 };
 

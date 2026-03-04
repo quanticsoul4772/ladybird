@@ -140,8 +140,11 @@ PrimitiveString::PrimitiveString(String string)
 {
 }
 
-PrimitiveString::~PrimitiveString()
+PrimitiveString::~PrimitiveString() = default;
+
+void PrimitiveString::finalize()
 {
+    Base::finalize();
     if (has_utf16_string()) {
         auto const& string = *m_utf16_string;
         if (string.length_in_code_units() <= MAX_LENGTH_FOR_STRING_CACHE)
@@ -182,8 +185,13 @@ String PrimitiveString::utf8_string() const
 
 StringView PrimitiveString::utf8_string_view() const
 {
-    if (!has_utf8_string())
+    if (!has_utf8_string()) {
+        if (has_utf16_string() && m_utf16_string->has_ascii_storage())
+            return m_utf16_string->ascii_view();
+
         (void)utf8_string();
+    }
+
     return m_utf8_string->bytes_as_string_view();
 }
 

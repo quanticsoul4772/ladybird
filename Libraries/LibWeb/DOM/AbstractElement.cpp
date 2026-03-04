@@ -5,7 +5,9 @@
  */
 
 #include <LibWeb/DOM/AbstractElement.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
+#include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/Layout/Node.h>
 
 namespace Web::DOM {
@@ -70,6 +72,13 @@ GC::Ptr<Layout::NodeWithStyle> AbstractElement::layout_node()
     return m_element->layout_node();
 }
 
+GC::Ptr<Layout::NodeWithStyle> AbstractElement::unsafe_layout_node()
+{
+    if (m_pseudo_element.has_value())
+        return m_element->get_pseudo_element_node(*m_pseudo_element);
+    return m_element->unsafe_layout_node();
+}
+
 GC::Ptr<Element const> AbstractElement::parent_element() const
 {
     if (m_pseudo_element.has_value())
@@ -92,7 +101,8 @@ Optional<AbstractElement> AbstractElement::element_to_inherit_style_from() const
 
 Optional<AbstractElement> AbstractElement::walk_layout_tree(WalkMethod walk_method)
 {
-    GC::Ptr<Layout::Node> node = layout_node();
+    // NB: Called during style recalculation.
+    GC::Ptr<Layout::Node> node = unsafe_layout_node();
     if (!node)
         return OptionalNone {};
 
@@ -118,8 +128,9 @@ Optional<AbstractElement> AbstractElement::walk_layout_tree(WalkMethod walk_meth
 
 bool AbstractElement::is_before(AbstractElement const& other) const
 {
-    auto this_node = layout_node();
-    auto other_node = other.layout_node();
+    // NB: Called during style recalculation.
+    auto this_node = unsafe_layout_node();
+    auto other_node = other.unsafe_layout_node();
     return this_node && other_node && this_node->is_before(*other_node);
 }
 
@@ -128,32 +139,23 @@ GC::Ptr<CSS::ComputedProperties const> AbstractElement::computed_properties() co
     return m_element->computed_properties(m_pseudo_element);
 }
 
-OrderedHashMap<FlyString, CSS::StyleProperty> const& AbstractElement::custom_properties() const
+RefPtr<CSS::CustomPropertyData const> AbstractElement::custom_property_data() const
 {
-    return m_element->custom_properties(m_pseudo_element);
+    return m_element->custom_property_data(m_pseudo_element);
 }
 
-void AbstractElement::set_custom_properties(OrderedHashMap<FlyString, CSS::StyleProperty>&& custom_properties)
+void AbstractElement::set_custom_property_data(RefPtr<CSS::CustomPropertyData const> data)
 {
-    m_element->set_custom_properties(m_pseudo_element, move(custom_properties));
+    m_element->set_custom_property_data(m_pseudo_element, move(data));
 }
 
 RefPtr<CSS::StyleValue const> AbstractElement::get_custom_property(FlyString const& name) const
 {
-    // FIXME: We should be producing computed values for custom properties, just like regular properties.
-    if (m_pseudo_element.has_value()) {
-        auto const& custom_properties = m_element->custom_properties(*m_pseudo_element);
-        if (auto it = custom_properties.find(name); it != custom_properties.end()) {
-            return it->value.value;
-        }
-    }
-
-    for (auto const* current_element = m_element.ptr(); current_element; current_element = current_element->parent_or_shadow_host_element()) {
-        auto const& custom_properties = current_element->custom_properties({});
-        if (auto it = custom_properties.find(name); it != custom_properties.end()) {
-            return it->value.value;
-        }
-    }
+    auto data = custom_property_data();
+    if (!data)
+        return nullptr;
+    if (auto const* property = data->get(name))
+        return property->value;
     return nullptr;
 }
 
@@ -212,12 +214,16 @@ String AbstractElement::debug_description() const
 CSS::StyleScope const& AbstractElement::style_scope() const
 {
     auto& root = m_element->root();
-    if (root.is_shadow_root())
-        return as<DOM::ShadowRoot>(root).style_scope();
+    if (root.is_shadow_root()) {
+        auto& shadow_root = as<DOM::ShadowRoot>(root);
+        if (shadow_root.uses_document_style_sheets())
+            return root.document().style_scope();
+        return shadow_root.style_scope();
+    }
     return root.document().style_scope();
 }
 
-HashMap<FlyString, GC::Ref<Animations::Animation>>* AbstractElement::css_defined_animations() const
+HashMap<FlyString, GC::Ref<CSS::CSSAnimation>>* AbstractElement::css_defined_animations() const
 {
     return m_element->css_defined_animations(m_pseudo_element);
 }

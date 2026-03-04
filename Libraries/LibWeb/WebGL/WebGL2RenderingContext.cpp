@@ -89,10 +89,6 @@ void WebGL2RenderingContext::visit_edges(Cell::Visitor& visitor)
 
 void WebGL2RenderingContext::present()
 {
-    if (!m_should_present)
-        return;
-
-    m_should_present = false;
     context().present(m_context_creation_parameters.preserve_drawing_buffer);
 }
 
@@ -103,11 +99,9 @@ GC::Ref<HTML::HTMLCanvasElement> WebGL2RenderingContext::canvas_for_binding() co
 
 void WebGL2RenderingContext::needs_to_present()
 {
-    m_should_present = true;
+    m_canvas_element->set_canvas_content_dirty();
 
-    if (!m_canvas_element->paintable())
-        return;
-    m_canvas_element->paintable()->set_needs_display();
+    m_canvas_element->set_needs_display();
 }
 
 bool WebGL2RenderingContext::is_context_lost() const

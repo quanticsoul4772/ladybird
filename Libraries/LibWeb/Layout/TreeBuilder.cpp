@@ -33,6 +33,7 @@
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/SVGClipBox.h>
 #include <LibWeb/Layout/SVGMaskBox.h>
+#include <LibWeb/Layout/SVGPatternBox.h>
 #include <LibWeb/Layout/TableGrid.h>
 #include <LibWeb/Layout/TableWrapper.h>
 #include <LibWeb/Layout/TextNode.h>
@@ -272,13 +273,13 @@ private:
 
 GC_DEFINE_ALLOCATOR(GeneratedContentImageProvider);
 
-void TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element, CSS::PseudoElement pseudo_element, AppendOrPrepend mode)
+GC::Ptr<NodeWithStyle> TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element, CSS::PseudoElement pseudo_element, Optional<AppendOrPrepend> insertion_mode)
 {
     auto& document = element.document();
 
     auto pseudo_element_style = element.computed_properties(pseudo_element);
     if (!pseudo_element_style)
-        return;
+        return {};
 
     auto initial_quote_nesting_level = m_quote_nesting_level;
     DOM::AbstractElement element_reference { element, pseudo_element };
@@ -293,23 +294,31 @@ void TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element, CSS::Ps
         && (pseudo_element_display.is_none()
             || pseudo_element_content.type == CSS::ContentData::Type::Normal
             || pseudo_element_content.type == CSS::ContentData::Type::None))
-        return;
+        return {};
 
     // For ::marker with content or display 'none' -- do nothing.
     if (pseudo_element == CSS::PseudoElement::Marker
         && (pseudo_element_display.is_none() || pseudo_element_content.type == CSS::ContentData::Type::None))
-        return;
+        return {};
 
     // For ::marker with content 'normal', create the marker pseudo-element from a ListItemMarkerBox
     // FIXME: This + ListItemBox + ListItemMarkerBox will disappear once ::marker pseudo-elements with 'normal' content
     //        are rendered using the special list-item counter.
     //        See: https://github.com/LadybirdBrowser/ladybird/issues/4782
+    // NB: Called during layout tree construction.
     if (pseudo_element == CSS::PseudoElement::Marker && pseudo_element_content.type == CSS::ContentData::Type::Normal)
-        if (auto* list_box = as_if<ListItemBox>(*element.layout_node())) {
+        if (auto* list_box = as_if<ListItemBox>(*element.unsafe_layout_node())) {
+            // https://www.w3.org/TR/css-lists-3/#content-property
+            // "::marker does not generate a box" when list-style-type is 'none' and there's no marker image. Custom
+            // ::marker content is already excluded by the outer condition checking for Type::Normal.
+            auto const& list_style_type = list_box->computed_values().list_style_type();
+            if (list_style_type.has<Empty>() && !list_box->list_style_image()) {
+                return {};
+            }
 
             auto list_item_marker = document.heap().allocate<ListItemMarkerBox>(
                 document,
-                list_box->computed_values().list_style_type(),
+                list_style_type,
                 list_box->computed_values().list_style_position(),
                 element,
                 *pseudo_element_style);
@@ -317,12 +326,12 @@ void TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element, CSS::Ps
             element.set_computed_properties(CSS::PseudoElement::Marker, pseudo_element_style);
             element.set_pseudo_element_node({}, CSS::PseudoElement::Marker, list_item_marker);
             list_box->prepend_child(*list_item_marker);
-            return;
+            return list_item_marker;
         }
 
     auto pseudo_element_node = DOM::Element::create_layout_node_for_display_type(document, pseudo_element_display, *pseudo_element_style, nullptr);
     if (!pseudo_element_node)
-        return;
+        return {};
 
     // FIXME: This code actually computes style for element::marker, and shouldn't for element::pseudo::marker
     if (is<ListItemBox>(*pseudo_element_node)) {
@@ -346,11 +355,11 @@ void TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element, CSS::Ps
     pseudo_element_node->set_initial_quote_nesting_level(initial_quote_nesting_level);
 
     element.set_pseudo_element_node({}, pseudo_element, pseudo_element_node);
-    insert_node_into_inline_or_block_ancestor(*pseudo_element_node, pseudo_element_display, mode);
+    if (insertion_mode.has_value())
+        insert_node_into_inline_or_block_ancestor(*pseudo_element_node, pseudo_element_display, insertion_mode.value());
     pseudo_element_node->mutable_computed_values().set_content(pseudo_element_content);
 
-    DOM::AbstractElement pseudo_element_reference { element, pseudo_element };
-    CSS::resolve_counters(pseudo_element_reference);
+    CSS::resolve_counters(element_reference);
     // Now that we have counters, we can compute the content for real. Which is silly.
     if (pseudo_element_content.type == CSS::ContentData::Type::List) {
         auto [new_content, _] = pseudo_element_style->content(element_reference, initial_quote_nesting_level);
@@ -379,6 +388,8 @@ void TreeBuilder::create_pseudo_element_if_needed(DOM::Element& element, CSS::Ps
             TODO();
         }
     }
+
+    return pseudo_element_node;
 }
 
 // Block nodes inside inline nodes are allowed, but to maintain the invariant that either all layout children are
@@ -544,7 +555,7 @@ static bool is_ignorable_whitespace(Layout::Node const& node)
                     contains_only_white_space = false;
                     return TraversalDecision::Break;
                 }
-            } else if (descendant.is_out_of_flow()) {
+            } else if (descendant.is_out_of_flow() || !descendant.is_anonymous()) {
                 contains_only_white_space = false;
                 return TraversalDecision::Break;
             }
@@ -559,10 +570,11 @@ static bool is_ignorable_whitespace(Layout::Node const& node)
 
 void TreeBuilder::update_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& context, MustCreateSubtree must_create_subtree)
 {
+    // NB: Called during layout tree construction.
     bool should_create_layout_node = must_create_subtree == MustCreateSubtree::Yes
         || dom_node.needs_layout_tree_update()
         || dom_node.document().needs_full_layout_tree_update()
-        || (dom_node.is_document() && !dom_node.layout_node());
+        || (dom_node.is_document() && !dom_node.unsafe_layout_node());
 
     if (dom_node.is_element()) {
         auto& element = static_cast<DOM::Element&>(dom_node);
@@ -577,7 +589,8 @@ void TreeBuilder::update_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& 
             dom_node.document().style_computer().pop_ancestor(static_cast<DOM::Element const&>(dom_node));
     };
 
-    GC::Ptr<Layout::Node> old_layout_node = dom_node.layout_node();
+    // NB: Called during layout tree construction.
+    GC::Ptr<Layout::Node> old_layout_node = dom_node.unsafe_layout_node();
     GC::Ptr<Layout::Node> layout_node;
     Optional<TemporaryChange<bool>> has_svg_root_change;
 
@@ -588,7 +601,13 @@ void TreeBuilder::update_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& 
             dom_node.for_each_in_inclusive_subtree([&](auto& node) {
                 node.set_needs_layout_tree_update(false, DOM::SetNeedsLayoutTreeUpdateReason::None);
                 node.set_child_needs_layout_tree_update(false);
-                auto layout_node = node.layout_node();
+                // NB: Called during layout tree construction.
+                auto layout_node = node.unsafe_layout_node();
+                // SVGPatternBox, SVGMaskBox, and SVGClipBox are created on behalf of a referencing
+                // element and attached to that element's layout subtree. Skip them so they survive cleanup of their
+                // DOM ancestor.
+                if (layout_node && (is<SVGPatternBox>(*layout_node) || is<SVGMaskBox>(*layout_node) || is<SVGClipBox>(*layout_node)))
+                    return TraversalDecision::SkipChildrenAndContinue;
                 if (layout_node && layout_node->parent()) {
                     layout_node->remove();
                 }
@@ -618,10 +637,15 @@ void TreeBuilder::update_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& 
             style = element.computed_properties();
             display = style->display();
         }
-        layout_node = dom_node.layout_node();
+        // NB: Called during layout tree construction.
+        layout_node = dom_node.unsafe_layout_node();
     } else {
         if (is<DOM::Element>(dom_node)) {
             auto& element = static_cast<DOM::Element&>(dom_node);
+            // ::backdrop is a sibling of the element, not a child, so unlike other pseudo-elements, it's not
+            // automatically discarded when element's layout is recomputed. We must remove it manually.
+            if (auto old_backdrop_node = element.get_pseudo_element_node(CSS::PseudoElement::Backdrop))
+                old_backdrop_node->remove();
             element.clear_pseudo_element_nodes({});
             VERIFY(!element.needs_style_update());
             style = element.computed_properties();
@@ -638,6 +662,9 @@ void TreeBuilder::update_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& 
                     VERIFY_NOT_REACHED();
                 // Only layout direct uses of SVG masks/clipPaths.
                 context.layout_svg_mask_or_clip_path = false;
+            } else if (context.layout_svg_pattern) {
+                layout_node = document.heap().allocate<Layout::SVGPatternBox>(document, as<SVG::SVGPatternElement>(dom_node), *style);
+                context.layout_svg_pattern = false;
             } else {
                 layout_node = element.create_layout_node(*style);
             }
@@ -654,14 +681,31 @@ void TreeBuilder::update_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& 
     if (!layout_node)
         return;
 
+    // Decide whether to replace an existing node (partial tree update) or insert a new one appropriately.
+    bool const may_replace_existing_layout_node = must_create_subtree == MustCreateSubtree::No
+        && old_layout_node
+        && old_layout_node->parent()
+        && old_layout_node != layout_node;
+
+    if (dom_node.is_element() && should_create_layout_node) {
+        auto& element = static_cast<DOM::Element&>(dom_node);
+        // Each element rendered in the top layer has a ::backdrop pseudo-element, for which it is the originating element.
+        if (element.rendered_in_top_layer() && context.layout_top_layer) {
+            // If we're inserting a new element, we can append the ::backdrop node now, before layout_node is appended.
+            // Otherwise, we need to insert the ::backdrop before old_layout_node so it's behind the layout_node.
+            if (may_replace_existing_layout_node) {
+                if (auto backdrop_node = create_pseudo_element_if_needed(element, CSS::PseudoElement::Backdrop, {})) {
+                    old_layout_node->parent()->insert_before(*backdrop_node, old_layout_node);
+                }
+            } else {
+                create_pseudo_element_if_needed(element, CSS::PseudoElement::Backdrop, AppendOrPrepend::Append);
+            }
+        }
+    }
+
     if (dom_node.is_document()) {
         m_layout_root = layout_node;
     } else if (should_create_layout_node) {
-        // Decide whether to replace an existing node (partial tree update) or insert a new one appropriately.
-        bool const may_replace_existing_layout_node = must_create_subtree == MustCreateSubtree::No
-            && old_layout_node
-            && old_layout_node->parent()
-            && old_layout_node != layout_node;
         if (may_replace_existing_layout_node) {
             old_layout_node->parent()->replace_child(*layout_node, *old_layout_node);
         } else if (layout_node->is_svg_box()) {
@@ -697,9 +741,20 @@ void TreeBuilder::update_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& 
         if ((dom_node.has_children() || shadow_root) && layout_node->can_have_children() && !element_has_content_visibility_hidden) {
             push_parent(as<NodeWithStyle>(*layout_node));
             if (shadow_root) {
+                // For replaced elements with shadow DOM children, wrap the children in an
+                // anonymous BlockContainer so that a BFC handles their layout.
+                if (layout_node->is_replaced_box_with_children()) {
+                    if (!layout_node->first_child() || !layout_node->first_child()->is_anonymous()) {
+                        auto wrapper = as<NodeWithStyle>(*layout_node).create_anonymous_wrapper();
+                        m_ancestor_stack.last()->append_child(wrapper);
+                    }
+                    push_parent(as<NodeWithStyle>(*layout_node->first_child()));
+                }
                 for (auto* node = shadow_root->first_child(); node; node = node->next_sibling()) {
                     update_layout_tree(*node, context, should_create_layout_node ? MustCreateSubtree::Yes : MustCreateSubtree::No);
                 }
+                if (layout_node->is_replaced_box_with_children())
+                    pop_parent();
                 shadow_root->set_child_needs_layout_tree_update(false);
                 shadow_root->set_needs_layout_tree_update(false, DOM::SetNeedsLayoutTreeUpdateReason::None);
             } else {
@@ -713,14 +768,8 @@ void TreeBuilder::update_layout_tree(DOM::Node& dom_node, TreeBuilder::Context& 
                 // generate boxes as if they were siblings of the root element.
                 TemporaryChange<bool> layout_mask(context.layout_top_layer, true);
                 for (auto const& top_layer_element : document.top_layer_elements()) {
-                    if (top_layer_element->rendered_in_top_layer()) {
-                        // Each element rendered in the top layer has a ::backdrop pseudo-element, for which it is the originating element.
-                        if ((should_create_layout_node || top_layer_element->needs_layout_tree_update())
-                            && !top_layer_element->has_inclusive_ancestor_with_display_none()) {
-                            create_pseudo_element_if_needed(top_layer_element, CSS::PseudoElement::Backdrop, AppendOrPrepend::Append);
-                        }
+                    if (top_layer_element->rendered_in_top_layer())
                         update_layout_tree(top_layer_element, context, should_create_layout_node ? MustCreateSubtree::Yes : MustCreateSubtree::No);
-                    }
                 }
             }
             pop_parent();
@@ -852,6 +901,31 @@ void TreeBuilder::update_layout_tree_after_children(DOM::Node& dom_node, GC::Ref
             layout_mask_or_clip_path(mask);
         if (auto clip_path = graphics_element.clip_path())
             layout_mask_or_clip_path(clip_path);
+
+        HashTable<SVG::SVGPatternElement const*> seen_content_elements;
+        auto layout_pattern = [&](GC::Ptr<SVG::SVGPatternElement const> pattern) {
+            if (!pattern)
+                return;
+            auto content_element = pattern->pattern_content_element();
+            if (!content_element)
+                return;
+            if (seen_content_elements.set(content_element.ptr()) != AK::HashSetResult::InsertedNewEntry)
+                return;
+            TemporaryChange<bool> layout_flag(context.layout_svg_pattern, true);
+            push_parent(as<NodeWithStyle>(*layout_node));
+            for (GC::Ref<NodeWithStyle> ancestor : m_ancestor_stack) {
+                if (ancestor->dom_node() == content_element.ptr()) {
+                    pop_parent();
+                    return;
+                }
+            }
+            update_layout_tree(const_cast<SVG::SVGPatternElement&>(*content_element), context, MustCreateSubtree::Yes);
+            pop_parent();
+        };
+        if (auto fill = graphics_element.fill_pattern())
+            layout_pattern(fill);
+        if (auto stroke = graphics_element.stroke_pattern())
+            layout_pattern(stroke);
     }
 
     // Add nodes for the ::after pseudo-element.
@@ -883,7 +957,8 @@ GC::Ptr<Layout::Node> TreeBuilder::build(DOM::Node& dom_node)
     m_quote_nesting_level = 0;
     update_layout_tree(dom_node, context, MustCreateSubtree::No);
 
-    if (auto* root = dom_node.document().layout_node())
+    // NB: Called during layout tree construction.
+    if (auto* root = dom_node.document().unsafe_layout_node())
         fixup_tables(*root);
 
     return m_layout_root;
@@ -1107,7 +1182,7 @@ void TreeBuilder::generate_missing_child_wrappers(NodeWithStyle& root)
 Vector<GC::Root<Box>> TreeBuilder::generate_missing_parents(NodeWithStyle& root)
 {
     Vector<GC::Root<Box>> table_roots_to_wrap;
-    root.for_each_in_inclusive_subtree_of_type<Box>([&](auto& parent) {
+    root.for_each_in_inclusive_subtree_of_type<NodeWithStyle>([&](auto& parent) {
         // 1. An anonymous table-row box must be generated around each sequence of consecutive table-cell boxes whose
         //    parent is not a table-row.
         if (is_not_table_row(parent)) {
@@ -1147,13 +1222,14 @@ Vector<GC::Root<Box>> TreeBuilder::generate_missing_parents(NodeWithStyle& root)
         }
 
         // 3. An anonymous table-wrapper box must be generated around each table-root.
-        if (parent.display().is_table_inside()) {
-            if (parent.has_been_wrapped_in_table_wrapper()) {
+        if (auto* box = as_if<Box>(parent); box && box->display().is_table_inside()) {
+            if (box->has_been_wrapped_in_table_wrapper()) {
                 VERIFY(parent.parent());
                 VERIFY(parent.parent()->is_table_wrapper());
                 return TraversalDecision::Continue;
             }
-            table_roots_to_wrap.append(parent);
+
+            table_roots_to_wrap.append(*box);
         }
 
         return TraversalDecision::Continue;

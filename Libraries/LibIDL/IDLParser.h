@@ -9,7 +9,6 @@
 
 #pragma once
 
-#include <AK/CharacterTypes.h>
 #include <AK/GenericLexer.h>
 #include <LibIDL/Types.h>
 
@@ -52,6 +51,7 @@ private:
     void parse_enumeration(HashMap<ByteString, ByteString>, Interface&);
     void parse_typedef(Interface&);
     void parse_interface_mixin(Interface&);
+    void parse_partial_interface_mixin(Interface&);
     void parse_dictionary(HashMap<ByteString, ByteString> extended_attributes, Interface&);
     void parse_callback_function(HashMap<ByteString, ByteString>& extended_attributes, Interface&);
     void parse_constructor(HashMap<ByteString, ByteString>& extended_attributes, Interface&);
@@ -62,6 +62,7 @@ private:
     void parse_iterable(Interface&);
     void parse_async_iterable(Interface&);
     void parse_setlike(Interface&, bool is_readonly);
+    void parse_maplike(Interface&, bool is_readonly);
     Function parse_function(HashMap<ByteString, ByteString>& extended_attributes, Interface&, IsStatic is_static = IsStatic::No, IsSpecialOperation is_special_operation = IsSpecialOperation::No);
     Vector<Parameter> parse_parameters();
     NonnullRefPtr<Type const> parse_type();

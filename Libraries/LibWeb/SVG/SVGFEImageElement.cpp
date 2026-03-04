@@ -8,6 +8,7 @@
 #include <LibCore/Timer.h>
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibWeb/Bindings/SVGFEImageElementPrototype.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/DecodedImageData.h>
 #include <LibWeb/HTML/PotentialCORSRequest.h>
 #include <LibWeb/HTML/SharedResourceRequest.h>
@@ -68,8 +69,7 @@ void SVGFEImageElement::process_href(Optional<String> const& href)
     m_resource_request->add_callbacks(
         [this, resource_request = GC::Root { m_resource_request }] {
             set_needs_style_update(true);
-            if (auto layout_node = this->layout_node())
-                layout_node->set_needs_layout_update(DOM::SetNeedsLayoutReason::SVGImageFilterFetch);
+            set_needs_layout_update(DOM::SetNeedsLayoutReason::SVGImageFilterFetch);
         },
         nullptr);
 
@@ -94,7 +94,8 @@ Optional<Gfx::IntRect> SVGFEImageElement::content_rect() const
     auto bitmap = current_image_bitmap();
     if (!bitmap)
         return {};
-    auto layout_node = this->layout_node();
+    // NB: Called during painting.
+    auto layout_node = this->unsafe_layout_node();
     if (!layout_node)
         return {};
     auto width = layout_node->computed_values().width().to_px(*layout_node, 0);

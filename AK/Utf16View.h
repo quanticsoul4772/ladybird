@@ -11,7 +11,6 @@
 #include <AK/Format.h>
 #include <AK/Forward.h>
 #include <AK/IterationDecision.h>
-#include <AK/MemMem.h>
 #include <AK/Optional.h>
 #include <AK/Span.h>
 #include <AK/String.h>
@@ -387,6 +386,16 @@ public:
         return UnicodeUtils::decode_utf16_surrogate_pair(code_point, second);
     }
 
+    [[nodiscard]] constexpr u32 previous_code_point_at(size_t& index) const
+    {
+        VERIFY(index > 0);
+        VERIFY(index <= length_in_code_units());
+        --index;
+        if (index > 0 && UnicodeUtils::is_utf16_low_surrogate(code_unit_at(index)) && UnicodeUtils::is_utf16_high_surrogate(code_unit_at(index - 1)))
+            --index;
+        return code_point_at(index);
+    }
+
     [[nodiscard]] size_t code_unit_offset_of(size_t code_point_offset) const;
     [[nodiscard]] size_t code_point_offset_of(size_t code_unit_offset) const;
 
@@ -485,7 +494,7 @@ public:
     }
 
     Optional<size_t> find_code_unit_offset(char16_t needle, size_t start_offset = 0) const;
-    Optional<size_t> find_last_code_unit_offset(char16_t needle, size_t end_offset = NumericLimits<size_t>::max()) const;
+    Optional<size_t> find_last_code_point_offset(u32 needle, size_t end_offset = NumericLimits<size_t>::max()) const;
 
     constexpr Optional<size_t> find_code_unit_offset(Utf16View const& needle, size_t start_offset = 0) const
     {

@@ -14,6 +14,8 @@
 
 namespace Web::Painting {
 
+GC_DEFINE_ALLOCATOR(SVGGraphicsPaintable);
+
 GC::Ref<SVGGraphicsPaintable> SVGGraphicsPaintable::create(Layout::SVGGraphicsBox const& layout_box)
 {
     return layout_box.heap().allocate<SVGGraphicsPaintable>(layout_box);
@@ -22,6 +24,12 @@ GC::Ref<SVGGraphicsPaintable> SVGGraphicsPaintable::create(Layout::SVGGraphicsBo
 SVGGraphicsPaintable::SVGGraphicsPaintable(Layout::SVGGraphicsBox const& layout_box)
     : SVGPaintable(layout_box)
 {
+}
+
+void SVGGraphicsPaintable::reset_for_relayout()
+{
+    PaintableBox::reset_for_relayout();
+    m_computed_transforms = {};
 }
 
 }

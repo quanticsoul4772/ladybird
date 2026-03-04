@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018-2022, Andreas Kling <andreas@ladybird.org>
  * Copyright (c) 2021, the SerenityOS developers.
- * Copyright (c) 2025, Shannon Booth <shannon@serenityos.org>
+ * Copyright (c) 2025-2026, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -770,7 +770,7 @@ TEST_CASE(same_origin_domain)
     auto file2 = URL::Parser::basic_parse("file:///tmp/b.txt"sv).value().origin();
 
     // File scheme
-    EXPECT(file1.is_same_origin_domain(file2));
+    EXPECT(!file1.is_same_origin_domain(file2));
 
     auto a_relaxed = URL::Origin { "https"_string, "a.ladybird.org"_string, 443, "ladybird.org"_string };
     auto b_relaxed = URL::Origin { "https"_string, "b.ladybird.org"_string, 443, "ladybird.org"_string };
@@ -784,4 +784,11 @@ TEST_CASE(same_origin_domain)
     EXPECT(!a_relaxed.is_same_origin_domain(c_relaxed));
     EXPECT(!a_relaxed.is_same_origin_domain(http_relaxed));
     EXPECT(!opaque1.is_same_origin_domain(a_relaxed));
+}
+
+TEST_CASE(authority_state_lots_of_at_symbols)
+{
+    auto many_at_symbols = MUST(String::repeated('@', 500'000));
+    auto horror_url = MUST(String::formatted("ws::{}", many_at_symbols));
+    EXPECT(!URL::Parser::basic_parse(horror_url).has_value());
 }

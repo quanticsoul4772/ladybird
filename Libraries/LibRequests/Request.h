@@ -10,6 +10,7 @@
 #include <AK/ByteString.h>
 #include <AK/Function.h>
 #include <AK/MemoryStream.h>
+#include <AK/OwnPtr.h>
 #include <AK/RefCounted.h>
 #include <AK/WeakPtr.h>
 #include <LibCore/Notifier.h>
@@ -42,7 +43,8 @@ private:
     NonnullRefPtr<Core::Notifier> m_notifier;
 };
 
-class Request : public RefCounted<Request> {
+class Request : public RefCounted<Request>
+    , public Weakable<Request> {
 public:
     struct CertificateAndKey {
         ByteString certificate;

@@ -3,18 +3,15 @@
  * Copyright (c) 2021-2022, Kenneth Myhra <kennethmyhra@serenityos.org>
  * Copyright (c) 2021-2024, Sam Atkins <atkinssj@serenityos.org>
  * Copyright (c) 2022, Matthias Zimmerman <matthias291999@gmail.com>
+ * Copyright (c) 2026, Gregory Bertilson <gregory@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/ByteString.h>
-#include <AK/FixedArray.h>
 #include <AK/ScopeGuard.h>
-#include <AK/ScopedValueRollback.h>
 #include <AK/StdLibExtras.h>
-#include <AK/String.h>
 #include <AK/Vector.h>
-#include <LibCore/Environment.h>
 #include <LibCore/System.h>
 #include <limits.h>
 #include <stdarg.h>
@@ -34,6 +31,10 @@ static int memfd_create(char const* name, unsigned int flags)
 {
     return syscall(SYS_memfd_create, name, flags);
 }
+#endif
+
+#if defined(AK_OS_LINUX)
+#    include <sys/sendfile.h>
 #endif
 
 #if defined(AK_OS_MACOS) || defined(AK_OS_IOS)
@@ -148,22 +149,8 @@ ErrorOr<int> anon_create([[maybe_unused]] size_t size, [[maybe_unused]] int opti
     // FIXME: Support more options on Linux.
     auto linux_options = ((options & O_CLOEXEC) > 0) ? MFD_CLOEXEC : 0;
     fd = memfd_create("", linux_options);
-    if (fd < 0)
-        return Error::from_errno(errno);
-    if (::ftruncate(fd, size) < 0) {
-        auto saved_errno = errno;
-        TRY(close(fd));
-        return Error::from_errno(saved_errno);
-    }
 #elif defined(SHM_ANON)
     fd = shm_open(SHM_ANON, O_RDWR | O_CREAT | options, 0600);
-    if (fd < 0)
-        return Error::from_errno(errno);
-    if (::ftruncate(fd, size) < 0) {
-        auto saved_errno = errno;
-        TRY(close(fd));
-        return Error::from_errno(saved_errno);
-    }
 #elif defined(AK_OS_BSD_GENERIC) || defined(AK_OS_HAIKU)
     static size_t shared_memory_id = 0;
 
@@ -175,7 +162,7 @@ ErrorOr<int> anon_create([[maybe_unused]] size_t size, [[maybe_unused]] int opti
         TRY(close(fd));
         return Error::from_errno(saved_errno);
     }
-
+#endif
     if (fd < 0)
         return Error::from_errno(errno);
 
@@ -185,15 +172,6 @@ ErrorOr<int> anon_create([[maybe_unused]] size_t size, [[maybe_unused]] int opti
         return Error::from_errno(saved_errno);
     }
 
-    void* addr = ::mmap(NULL, size, PROT_WRITE, MAP_SHARED, fd, 0);
-    if (addr == MAP_FAILED) {
-        auto saved_errno = errno;
-        TRY(close(fd));
-        return Error::from_errno(saved_errno);
-    }
-#endif
-    if (fd < 0)
-        return Error::from_errno(errno);
     return fd;
 }
 
@@ -309,11 +287,7 @@ ErrorOr<void> ioctl(int fd, unsigned request, ...)
 {
     va_list ap;
     va_start(ap, request);
-#ifdef AK_OS_HAIKU
     void* arg = va_arg(ap, void*);
-#else
-    FlatPtr arg = va_arg(ap, FlatPtr);
-#endif
     va_end(ap);
     if (::ioctl(fd, request, arg) < 0)
         return Error::from_syscall("ioctl"sv, errno);
@@ -470,16 +444,6 @@ ErrorOr<int> mkstemp(Span<char> pattern)
     if (fd < 0)
         return Error::from_syscall("mkstemp"sv, errno);
     return fd;
-}
-
-ErrorOr<String> mkdtemp(Span<char> pattern)
-{
-    auto* path = ::mkdtemp(pattern.data());
-    if (path == nullptr) {
-        return Error::from_errno(errno);
-    }
-
-    return String::from_utf8(StringView { path, strlen(path) });
 }
 
 ErrorOr<void> rename(StringView old_path, StringView new_path)
@@ -860,13 +824,23 @@ ErrorOr<void> set_close_on_exec(int fd, bool enabled)
     return {};
 }
 
-ErrorOr<size_t> transfer_file_through_pipe(int source_fd, int target_fd, size_t source_offset, size_t source_length)
+ErrorOr<size_t> transfer_file_through_socket(int source_fd, int target_fd, size_t source_offset, size_t source_length)
 {
 #if defined(AK_OS_LINUX)
-    auto sent = ::splice(source_fd, reinterpret_cast<off_t*>(&source_offset), target_fd, nullptr, source_length, SPLICE_F_MOVE | SPLICE_F_NONBLOCK);
+    auto sent = ::sendfile(target_fd, source_fd, reinterpret_cast<off_t*>(&source_offset), source_length);
     if (sent < 0)
-        return Error::from_syscall("send_file_to_pipe"sv, errno);
+        return Error::from_syscall("sendfile"sv, errno);
     return sent;
+#elif defined(AK_OS_MACOS)
+    auto sent_length = static_cast<off_t>(source_length);
+    if (sent_length == 0)
+        return 0;
+    auto result = ::sendfile(source_fd, target_fd, static_cast<off_t>(source_offset), &sent_length, nullptr, 0);
+    if (result != 0) {
+        if ((errno != EAGAIN && errno != EINTR) || sent_length == 0)
+            return Error::from_syscall("sendfile"sv, errno);
+    }
+    return sent_length;
 #else
     static auto page_size = PAGE_SIZE;
 

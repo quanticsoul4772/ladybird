@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
- * Copyright (c) 2024-2025, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2024-2026, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -323,8 +323,8 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::hours_in_day_getter)
     // 5. Let today be isoDateTime.[[ISODate]].
     auto today = iso_date_time.iso_date;
 
-    // 6. Let tomorrow be BalanceISODate(today.[[Year]], today.[[Month]], today.[[Day]] + 1).
-    auto tomorrow = balance_iso_date(today.year, today.month, today.day + 1);
+    // 6. Let tomorrow be AddDaysToISODate(today, 1).
+    auto tomorrow = add_days_to_iso_date(today, 1);
 
     // 7. Let todayNs be ? GetStartOfDay(timeZone, today).
     auto today_nanoseconds = TRY(get_start_of_day(vm, time_zone, today));
@@ -590,11 +590,9 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::round)
     // 2. Perform ? RequireInternalSlot(zonedDateTime, [[InitializedTemporalZonedDateTime]]).
     auto zoned_date_time = TRY(typed_this_object(vm));
 
-    // 3. If roundTo is undefined, then
-    if (round_to_value.is_undefined()) {
-        // a. Throw a TypeError exception.
+    // 3. If roundTo is undefined, throw a TypeError exception.
+    if (round_to_value.is_undefined())
         return vm.throw_completion<TypeError>(ErrorType::TemporalMissingOptionsObject);
-    }
 
     GC::Ptr<Object> round_to;
 
@@ -682,8 +680,8 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::round)
         // a. Let dateStart be isoDateTime.[[ISODate]].
         auto date_start = iso_date_time.iso_date;
 
-        // b. Let dateEnd be BalanceISODate(dateStart.[[Year]], dateStart.[[Month]], dateStart.[[Day]] + 1).
-        auto date_end = balance_iso_date(date_start.year, date_start.month, static_cast<double>(date_start.day) + 1);
+        // b. Let dateEnd be AddDaysToISODate(dateStart, 1).
+        auto date_end = add_days_to_iso_date(date_start, 1);
 
         // c. Let startNs be ? GetStartOfDay(timeZone, dateStart).
         auto start_nanoseconds = TRY(get_start_of_day(vm, time_zone, date_start));
@@ -794,7 +792,7 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_string)
 }
 
 // 6.3.42 Temporal.ZonedDateTime.prototype.toLocaleString ( [ locales [ , options ] ] ), https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.tolocalestring
-// 15.12.8.1 Temporal.ZonedDateTime.prototype.toLocaleString ( [ locales [ , options ] ] ), https://tc39.es/proposal-temporal/#sup-properties-of-the-temporal-zoneddatetime-prototype-object
+// 15.11.8.1 Temporal.ZonedDateTime.prototype.toLocaleString ( [ locales [ , options ] ] ), https://tc39.es/proposal-temporal/#sup-temporal.zoneddatetime.prototype.tolocalestring
 JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_locale_string)
 {
     auto& realm = *vm.current_realm();
@@ -809,11 +807,9 @@ JS_DEFINE_NATIVE_FUNCTION(ZonedDateTimePrototype::to_locale_string)
     // 3. Let dateTimeFormat be ? CreateDateTimeFormat(%Intl.DateTimeFormat%, locales, options, ANY, ALL, zonedDateTime.[[TimeZone]]).
     auto date_time_format = TRY(Intl::create_date_time_format(vm, realm.intrinsics().intl_date_time_format_constructor(), locales, options, Intl::OptionRequired::Any, Intl::OptionDefaults::All, zoned_date_time->time_zone()));
 
-    // 4. If zonedDateTime.[[Calendar]] is not "iso8601" and CalendarEquals(zonedDateTime.[[Calendar]], dateTimeFormat.[[Calendar]]) is false, then
-    if (zoned_date_time->calendar() != "iso8601"sv && !calendar_equals(zoned_date_time->calendar(), date_time_format->calendar())) {
-        // a. Throw a RangeError exception.
+    // 4. If zonedDateTime.[[Calendar]] is not "iso8601" and CalendarEquals(zonedDateTime.[[Calendar]], dateTimeFormat.[[Calendar]]) is false, throw a RangeError exception.
+    if (zoned_date_time->calendar() != "iso8601"sv && !calendar_equals(zoned_date_time->calendar(), date_time_format->calendar()))
         return vm.throw_completion<RangeError>(ErrorType::IntlTemporalInvalidCalendar, "Temporal.ZonedDateTime"sv, zoned_date_time->calendar(), date_time_format->calendar());
-    }
 
     // 5. Let instant be ! CreateTemporalInstant(zonedDateTime.[[EpochNanoseconds]]).
     auto instant = MUST(create_temporal_instant(vm, zoned_date_time->epoch_nanoseconds()));

@@ -175,8 +175,9 @@ Length::ResolutionContext Length::ResolutionContext::for_layout_node(Layout::Nod
     } else {
         auto const* root_element = node.document().document_element();
         VERIFY(root_element);
-        VERIFY(root_element->layout_node());
-        root_layout_node = root_element->layout_node();
+        // NB: Called during CSS length resolution, which may happen during style recalculation.
+        VERIFY(root_element->unsafe_layout_node());
+        root_layout_node = root_element->unsafe_layout_node();
     }
 
     return Length::ResolutionContext {
@@ -198,7 +199,8 @@ CSSPixels Length::to_px_slow_case(Layout::Node const& layout_node) const
 
     if (is_font_relative()) {
         auto* root_element = layout_node.document().document_element();
-        if (!root_element || !root_element->layout_node())
+        // NB: Called during CSS length resolution, which may happen during style recalculation.
+        if (!root_element || !root_element->unsafe_layout_node())
             return 0;
 
         FontMetrics font_metrics {
@@ -207,8 +209,8 @@ CSSPixels Length::to_px_slow_case(Layout::Node const& layout_node) const
             layout_node.computed_values().line_height()
         };
         FontMetrics root_font_metrics {
-            root_element->layout_node()->computed_values().font_size(),
-            root_element->layout_node()->first_available_font().pixel_metrics(),
+            root_element->unsafe_layout_node()->computed_values().font_size(),
+            root_element->unsafe_layout_node()->first_available_font().pixel_metrics(),
             layout_node.computed_values().line_height()
         };
 
@@ -251,6 +253,30 @@ Optional<Length> Length::absolutize(ResolutionContext const& context) const
         return {};
 
     return CSS::Length::make_px(to_px_without_rounding(context));
+}
+
+Length Length::from_style_value(NonnullRefPtr<StyleValue const> const& style_value, Optional<Length> percentage_basis)
+{
+    if (style_value->is_length())
+        return style_value->as_length().length();
+
+    if (style_value->is_calculated()) {
+        CalculationResolutionContext::PercentageBasis resolved_percentage_basis;
+
+        if (percentage_basis.has_value()) {
+            resolved_percentage_basis = percentage_basis.value();
+        }
+
+        return style_value->as_calculated().resolve_length({ .percentage_basis = resolved_percentage_basis }).value();
+    }
+
+    if (style_value->is_percentage()) {
+        VERIFY(percentage_basis.has_value());
+
+        return percentage_basis.value().percentage_of(style_value->as_percentage().percentage());
+    }
+
+    VERIFY_NOT_REACHED();
 }
 
 Length Length::resolve_calculated(NonnullRefPtr<CalculatedStyleValue const> const& calculated, Layout::Node const& layout_node, Length const& reference_value)

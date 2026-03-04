@@ -3,7 +3,6 @@ set(SOURCES
     Cell.cpp
     CellAllocator.cpp
     ConservativeVector.cpp
-    ForeignCell.cpp
     Root.cpp
     RootHashMap.cpp
     RootVector.cpp
@@ -16,13 +15,10 @@ set(SOURCES
 ladybird_lib(LibGC gc EXPLICIT_SYMBOL_EXPORT)
 target_link_libraries(LibGC PRIVATE LibCore)
 
-if (ENABLE_SWIFT)
-    generate_clang_module_map(LibGC)
-    target_sources(LibGC PRIVATE
-        Heap+Swift.swift
-    )
-    target_link_libraries(LibGC PRIVATE AK)
-    add_swift_target_properties(LibGC LAGOM_LIBRARIES AK)
+find_package(cpptrace CONFIG)
+if(cpptrace_FOUND AND LADYBIRD_ENABLE_CPPTRACE)
+    target_link_libraries(LibGC PRIVATE cpptrace::cpptrace)
+    target_compile_definitions(LibGC PRIVATE LIBGC_HAS_CPPTRACE=1)
 endif()
 
 # TODO: Use lagom_generate_export_header and annotate entire LibGC with export macros

@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
- * Copyright (c) 2025, Gregory Bertilson <gregory@ladybird.org>
+ * Copyright (c) 2023-2026, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2025-2026, Gregory Bertilson <gregory@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,14 +19,14 @@
 #include <LibWeb/HTML/CORSSettingAttribute.h>
 #include <LibWeb/HTML/EventLoop/Task.h>
 #include <LibWeb/HTML/HTMLElement.h>
+#include <LibWeb/HTML/MediaControls.h>
+#include <LibWeb/Painting/ExternalContentSource.h>
 #include <LibWeb/PixelUnits.h>
-#include <LibWeb/UIEvents/KeyCode.h>
 #include <LibWeb/WebIDL/DOMException.h>
-#include <math.h>
 
 namespace Web::HTML {
 
-enum class MediaSeekMode {
+enum class MediaSeekMode : u8 {
     Accurate,
     ApproximateForSpeed,
 };
@@ -43,8 +43,12 @@ public:
 
     virtual bool is_focusable() const override { return true; }
 
+    virtual void adjust_computed_style(CSS::ComputedProperties& style) override;
+
     // NOTE: The function is wrapped in a GC::HeapFunction immediately.
     void queue_a_media_element_task(Function<void()>);
+
+    void cancel_the_fetching_process();
 
     GC::Ptr<MediaError> error() const { return m_error; }
     void set_decoder_error(String error_message);
@@ -52,7 +56,7 @@ public:
     String const& current_src() const { return m_current_src; }
     void select_resource();
 
-    enum class NetworkState : u16 {
+    enum class NetworkState : u8 {
         Empty,
         Idle,
         Loading,
@@ -64,13 +68,13 @@ public:
     [[nodiscard]] GC::Ref<TimeRanges> played() const;
     [[nodiscard]] GC::Ref<TimeRanges> seekable() const;
 
-    static inline constexpr auto supported_video_subtypes = Array {
+    static constexpr auto supported_video_subtypes = Array {
         "webm"sv,
         "mp4"sv,
         "mpeg"sv,
         "ogg"sv,
     };
-    static inline constexpr auto supported_audio_subtypes = Array {
+    static constexpr auto supported_audio_subtypes = Array {
         "flac"sv,
         "mp3"sv,
         "mpeg"sv,
@@ -80,7 +84,7 @@ public:
     };
     Bindings::CanPlayTypeResult can_play_type(StringView type) const;
 
-    enum class ReadyState : u16 {
+    enum class ReadyState : u8 {
         HaveNothing,
         HaveMetadata,
         HaveCurrentData,
@@ -124,6 +128,8 @@ public:
     bool muted() const { return m_muted; }
     void set_muted(bool);
 
+    void toggle_fullscreen();
+
     void page_mute_state_changed(Badge<Page>);
 
     double effective_media_volume() const;
@@ -140,40 +146,14 @@ public:
 
     GC::Ref<TextTrack> add_text_track(Bindings::TextTrackKind kind, String const& label, String const& language);
 
-    bool handle_keydown(Badge<Web::EventHandler>, UIEvents::KeyCode, u32 modifiers);
-
-    enum class MediaComponent {
-        PlaybackButton,
-        SpeakerButton,
-        Timeline,
-        Volume,
-    };
-
-    void set_layout_mouse_tracking_component(Badge<Painting::MediaPaintable>, Optional<MediaComponent> mouse_tracking_component) { m_mouse_tracking_component = move(mouse_tracking_component); }
-    Optional<MediaComponent> const& layout_mouse_tracking_component(Badge<Painting::MediaPaintable>) const { return m_mouse_tracking_component; }
-
-    void set_layout_hovered_component(Badge<Painting::MediaPaintable>, Optional<MediaComponent> hovered_component) { m_hovered_component = hovered_component; }
-    Optional<MediaComponent> const& layout_hovered_component(Badge<Painting::MediaPaintable>) const { return m_hovered_component; }
-
-    void set_layout_mouse_position(Badge<Painting::MediaPaintable>, Optional<CSSPixelPoint> mouse_position) { m_mouse_position = move(mouse_position); }
-    Optional<CSSPixelPoint> const& layout_mouse_position(Badge<Painting::MediaPaintable>) const { return m_mouse_position; }
-
-    void set_layout_display_time(Badge<Painting::MediaPaintable>, Optional<double> display_time);
-    double layout_display_time(Badge<Painting::MediaPaintable>) const;
-
-    struct CachedLayoutBoxes {
-        Optional<CSSPixelRect> control_box_rect;
-        Optional<CSSPixelRect> playback_button_rect;
-        Optional<CSSPixelRect> timeline_rect;
-        Optional<CSSPixelRect> speaker_button_rect;
-        Optional<CSSPixelRect> volume_rect;
-        Optional<CSSPixelRect> volume_scrub_rect;
-    };
-    CachedLayoutBoxes& cached_layout_boxes(Badge<Painting::MediaPaintable>) const { return m_layout_boxes; }
+    void create_controls();
+    void destroy_controls();
 
     CORSSettingAttribute crossorigin() const { return m_crossorigin; }
 
     RefPtr<Media::DisplayingVideoSink> const& selected_video_track_sink() const { return m_selected_video_track_sink; }
+
+    Painting::ExternalContentSource& ensure_external_content_source();
 
 protected:
     HTMLMediaElement(DOM::Document&, DOM::QualifiedName);
@@ -189,25 +169,36 @@ protected:
 private:
     friend SourceElementSelector;
 
+    struct FetchData;
+
     virtual bool is_html_media_element() const final { return true; }
 
     struct EntireResource { };
-    using ByteRange = Variant<EntireResource>; // FIXME: This will need to include "until end" and an actual byte range.
+    struct UntilEnd {
+        u64 first;
+    };
+    using ByteRange = Variant<EntireResource, UntilEnd>;
 
     Task::Source media_element_event_task_source() const { return m_media_element_event_task_source.source; }
 
     WebIDL::ExceptionOr<void> load_element();
-    WebIDL::ExceptionOr<void> fetch_resource(URL::URL const&, ESCAPING Function<void(String)> failure_callback);
-    static bool verify_response(GC::Ref<Fetch::Infrastructure::Response>, ByteRange const&);
 
-    WebIDL::ExceptionOr<void> setup_playback_manager(Function<void(String)> failure_callback);
-    enum class FetchingStatus {
+    void fetch_resource(URL::URL const&, ESCAPING Function<void(String)> failure_callback);
+    void fetch_resource(ByteRange const&);
+
+    Optional<String> verify_response_or_get_failure_reason(GC::Ref<Fetch::Infrastructure::Response>, ByteRange const&);
+
+    void restart_fetch_at_offset(u64 offset);
+
+    void set_up_playback_manager();
+    enum class FetchingStatus : u8 {
         Ongoing,
         Complete,
+        Interrupted,
     };
-    WebIDL::ExceptionOr<void> process_media_data(FetchingStatus);
+    void process_media_data(FetchingStatus);
 
-    WebIDL::ExceptionOr<void> handle_media_source_failure(Span<GC::Ref<WebIDL::Promise>> promises, String error_message);
+    void handle_media_source_failure(Span<GC::Ref<WebIDL::Promise>> promises, String error_message);
     void forget_media_resource_specific_tracks();
     void set_ready_state(ReadyState);
 
@@ -242,7 +233,7 @@ private:
 
     void dispatch_time_update_event();
 
-    enum class TimeMarchesOnReason {
+    enum class TimeMarchesOnReason : u8 {
         NormalPlayback,
         Other,
     };
@@ -263,7 +254,7 @@ private:
     }
 
     // https://html.spec.whatwg.org/multipage/media.html#media-element-event-task-source
-    UniqueTaskSource m_media_element_event_task_source {};
+    UniqueTaskSource m_media_element_event_task_source;
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-media-error
     GC::Ptr<MediaError> m_error;
@@ -329,9 +320,6 @@ private:
     // https://html.spec.whatwg.org/multipage/media.html#dom-media-texttracks
     GC::Ptr<TextTrackList> m_text_tracks;
 
-    // https://html.spec.whatwg.org/multipage/media.html#media-data
-    RefPtr<Media::IncrementallyPopulatedStream> m_media_data;
-
     // https://html.spec.whatwg.org/multipage/media.html#can-autoplay-flag
     bool m_can_autoplay { true };
 
@@ -345,24 +333,21 @@ private:
 
     GC::Ptr<SourceElementSelector> m_source_element_selector;
 
-    GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
+    OwnPtr<FetchData> m_fetch_data;
+    u32 m_current_fetch_generation { 0 };
 
-    RefPtr<Media::PlaybackManager> m_playback_manager;
+    OwnPtr<Media::PlaybackManager> m_playback_manager;
     GC::Ptr<VideoTrack> m_selected_video_track;
     RefPtr<Media::DisplayingVideoSink> m_selected_video_track_sink;
 
     bool m_loop_was_specified_when_reaching_end_of_media_resource { false };
 
-    // Cached state for layout.
-    Optional<MediaComponent> m_mouse_tracking_component;
-    Optional<MediaComponent> m_hovered_component;
-    bool m_tracking_mouse_position_while_playing { false };
-    Optional<CSSPixelPoint> m_mouse_position;
-    Optional<double> m_display_time;
-    mutable CachedLayoutBoxes m_layout_boxes;
+    Optional<MediaControls> m_controls;
 
     bool m_has_enabled_preferred_audio_track { false };
     bool m_has_selected_preferred_video_track { false };
+
+    RefPtr<Painting::ExternalContentSource> m_external_content_source;
 };
 
 }

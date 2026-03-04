@@ -2,7 +2,7 @@
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
  * Copyright (c) 2023, Shannon Booth <shannon@serenityos.org>
- * Copyright (c) 2024, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2024-2026, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -64,14 +64,8 @@ Crypto::UnsignedBigInteger const HOURS_PER_DAY = 24_bigint;
 // 8.5.1 IsValidEpochNanoseconds ( epochNanoseconds ), https://tc39.es/proposal-temporal/#sec-temporal-isvalidepochnanoseconds
 bool is_valid_epoch_nanoseconds(Crypto::SignedBigInteger const& epoch_nanoseconds)
 {
-    // 1. If ℝ(epochNanoseconds) < nsMinInstant or ℝ(epochNanoseconds) > nsMaxInstant, then
-    if (epoch_nanoseconds < NANOSECONDS_MIN_INSTANT || epoch_nanoseconds > NANOSECONDS_MAX_INSTANT) {
-        // a. Return false.
-        return false;
-    }
-
-    // 2. Return true.
-    return true;
+    // 1. If ℝ(epochNanoseconds) < nsMinInstant or ℝ(epochNanoseconds) > nsMaxInstant, return false; else return true.
+    return epoch_nanoseconds >= NANOSECONDS_MIN_INSTANT && epoch_nanoseconds <= NANOSECONDS_MAX_INSTANT;
 }
 
 // 8.5.2 CreateTemporalInstant ( epochNanoseconds [ , newTarget ] ), https://tc39.es/proposal-temporal/#sec-temporal-isvalidepochnanoseconds
@@ -98,15 +92,13 @@ ThrowCompletionOr<GC::Ref<Instant>> create_temporal_instant(VM& vm, BigInt const
 ThrowCompletionOr<GC::Ref<Instant>> to_temporal_instant(VM& vm, Value item)
 {
     // 1. If item is an Object, then
-    if (item.is_object()) {
-        auto const& object = item.as_object();
-
+    if (auto object = item.as_if<Object>()) {
         // a. If item has an [[InitializedTemporalInstant]] or [[InitializedTemporalZonedDateTime]] internal slot, then
         //     i. Return ! CreateTemporalInstant(item.[[EpochNanoseconds]]).
-        if (is<Instant>(object))
-            return MUST(create_temporal_instant(vm, static_cast<Instant const&>(object).epoch_nanoseconds()));
-        if (is<ZonedDateTime>(object))
-            return MUST(create_temporal_instant(vm, static_cast<ZonedDateTime const&>(object).epoch_nanoseconds()));
+        if (auto const* instant = as_if<Instant>(*object))
+            return MUST(create_temporal_instant(vm, instant->epoch_nanoseconds()));
+        if (auto const* zoned_date_time = as_if<ZonedDateTime>(*object))
+            return MUST(create_temporal_instant(vm, zoned_date_time->epoch_nanoseconds()));
 
         // b. NOTE: This use of ToPrimitive allows Instant-like objects to be converted.
         // c. Set item to ? ToPrimitive(item, STRING).
@@ -127,7 +119,7 @@ ThrowCompletionOr<GC::Ref<Instant>> to_temporal_instant(VM& vm, Value item)
     VERIFY(offset_string.has_value() || z_designator);
     VERIFY(!offset_string.has_value() || !z_designator);
 
-    // 5. If parsed.[[TimeZone]].[[Z]] is true, let offsetNanoseconds be 0; otherwise, let offsetNanoseconds be
+    // 5. If parsed.[[TimeZone]].[[Z]] is true, let offsetNanoseconds be 0; else, let offsetNanoseconds be
     //    ! ParseDateTimeUTCOffset(parsed.[[TimeZone]].[[OffsetString]]).
     auto offset_nanoseconds = z_designator ? 0.0 : parse_date_time_utc_offset(*offset_string);
 
@@ -207,11 +199,11 @@ Crypto::SignedBigInteger round_temporal_instant(Crypto::SignedBigInteger const& 
 }
 
 // 8.5.8 TemporalInstantToString ( instant, timeZone, precision ), https://tc39.es/proposal-temporal/#sec-temporal-temporalinstanttostring
-String temporal_instant_to_string(Instant const& instant, Optional<StringView> time_zone, SecondsStringPrecision::Precision precision)
+String temporal_instant_to_string(Instant const& instant, Optional<String const&> time_zone, SecondsStringPrecision::Precision precision)
 {
     // 1. Let outputTimeZone be timeZone.
     // 2. If outputTimeZone is undefined, set outputTimeZone to "UTC".
-    auto output_time_zone = time_zone.value_or("UTC"sv);
+    auto const& output_time_zone = time_zone.value_or(UTC_TIME_ZONE);
 
     // 3. Let epochNs be instant.[[EpochNanoseconds]].
     auto const& epoch_nanoseconds = instant.epoch_nanoseconds()->big_integer();

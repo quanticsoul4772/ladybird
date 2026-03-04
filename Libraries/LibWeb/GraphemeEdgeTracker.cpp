@@ -5,6 +5,7 @@
  */
 
 #include <AK/Utf16View.h>
+#include <LibGfx/TextLayout.h>
 #include <LibWeb/DOM/Text.h>
 #include <LibWeb/GraphemeEdgeTracker.h>
 #include <LibWeb/Layout/TextNode.h>
@@ -14,14 +15,14 @@ namespace Web {
 // FIXME: Using newline characters to determine line breaks is insufficient. If a line is wrapped due space constraints,
 //        we want to consider each segment of the wrapped line as its own line in the algorithms below.
 
-static constexpr size_t find_line_start(Utf16View const& view, size_t offset)
+size_t find_line_start(Utf16View const& view, size_t offset)
 {
     while (offset != 0 && view.code_unit_at(offset - 1) != '\n')
         --offset;
     return offset;
 }
 
-static constexpr size_t find_line_end(Utf16View const& view, size_t offset)
+size_t find_line_end(Utf16View const& view, size_t offset)
 {
     auto length = view.length_in_code_units();
     while (offset < length && view.code_unit_at(offset) != '\n')
@@ -34,14 +35,18 @@ static float measure_text_width(Layout::TextNode const& text_node, Utf16View con
     if (text.is_empty())
         return 0;
 
-    auto segmenter = text_node.grapheme_segmenter().clone();
-    segmenter->set_segmented_text(text);
+    auto grapheme_segmenter = text_node.grapheme_segmenter().clone();
+    grapheme_segmenter->set_segmented_text(text);
 
-    Layout::TextNode::ChunkIterator iterator { text_node, text, *segmenter, false, false };
+    auto line_segmenter = text_node.line_segmenter().clone();
+    line_segmenter->set_segmented_text(text);
+
+    Layout::TextNode::ChunkIterator iterator { text_node, text, *grapheme_segmenter, *line_segmenter, CSS::WordBreak::Normal, false, false };
+    auto letter_spacing = text_node.computed_values().letter_spacing().to_float();
     float width = 0;
 
     for (auto chunk = iterator.next(); chunk.has_value(); chunk = iterator.next())
-        width += chunk->font->width(chunk->view);
+        width += Gfx::measure_text_width(chunk->view, *chunk->font, letter_spacing);
 
     return width;
 }
@@ -66,7 +71,8 @@ static size_t translate_position_across_lines(Layout::TextNode const& text_node,
 
 Optional<size_t> compute_cursor_position_on_next_line(DOM::Text const& dom_node, size_t current_offset)
 {
-    auto const* layout_node = as_if<Layout::TextNode>(dom_node.layout_node());
+    // NB: Called during text editing, layout may not be current.
+    auto const* layout_node = as_if<Layout::TextNode>(dom_node.unsafe_layout_node());
     if (!layout_node)
         return {};
 
@@ -89,7 +95,8 @@ Optional<size_t> compute_cursor_position_on_next_line(DOM::Text const& dom_node,
 
 Optional<size_t> compute_cursor_position_on_previous_line(DOM::Text const& dom_node, size_t current_offset)
 {
-    auto const* layout_node = as_if<Layout::TextNode>(dom_node.layout_node());
+    // NB: Called during text editing, layout may not be current.
+    auto const* layout_node = as_if<Layout::TextNode>(dom_node.unsafe_layout_node());
     if (!layout_node)
         return {};
 

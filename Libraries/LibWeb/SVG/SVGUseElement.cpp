@@ -1,10 +1,11 @@
 /*
  * Copyright (c) 2023, Preston Taylor <95388976+PrestonLTaylor@users.noreply.github.com>
- * Copyright (c) 2024, Shannon Booth <shannon@serenityos.org>
+ * Copyright (c) 2024-2026, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGC/HeapHashTable.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/SVGUseElementPrototype.h>
 #include <LibWeb/DOM/Document.h>
@@ -41,6 +42,7 @@ void SVGUseElement::initialize(JS::Realm& realm)
     //       This doesn't actually match other browsers, and there's a spec issue to change it.
     //       Spec bug: https://github.com/w3c/svgwg/issues/875
     auto shadow_root = realm.create<DOM::ShadowRoot>(document(), *this, Bindings::ShadowRootMode::Closed);
+    shadow_root->set_user_agent_internal(true);
 
     // The user agent must create a use-element shadow tree whose host is the ‘use’ element itself
     set_shadow_root(shadow_root);
@@ -131,7 +133,7 @@ void SVGUseElement::svg_element_removed(SVGElement& svg_element)
 }
 
 // https://svgwg.org/svg2-draft/linking.html#processingURL-target
-GC::Ptr<DOM::Element> SVGUseElement::referenced_element()
+GC::Ptr<DOM::Element> SVGUseElement::referenced_element() const
 {
     if (!m_href.has_value())
         return nullptr;
@@ -180,6 +182,11 @@ void SVGUseElement::clone_element_tree_as_our_shadow_tree(Element* to_clone)
 {
     shadow_root()->remove_all_children();
 
+    // https://svgwg.org/svg2-draft/struct.html#UseStyleInheritance
+    // When the referenced element is from the same document as the ‘use’ element, the same document stylesheets will
+    // apply in both the original document and the shadow tree document fragment.
+    shadow_root()->set_uses_document_style_sheets(to_clone && is_referenced_element_same_document());
+
     if (to_clone && is_valid_reference_element(*to_clone)) {
         // The ‘use’ element references another element, a copy of which is rendered in place of the ‘use’ in the document.
         auto cloned_reference_node = MUST(to_clone->clone_node(nullptr, true));
@@ -204,8 +211,51 @@ void SVGUseElement::clone_element_tree_as_our_shadow_tree(Element* to_clone)
 bool SVGUseElement::is_valid_reference_element(Element const& reference_element) const
 {
     // If the referenced element that results from resolving the URL is not an SVG element, then the reference is invalid and the ‘use’ element is in error.
-    // If the referenced element is a (shadow-including) ancestor of the ‘use’ element, then this is an invalid circular reference and the ‘use’ element is in error.
-    return reference_element.is_svg_element() && !reference_element.is_ancestor_of(*this);
+    if (!reference_element.is_svg_element())
+        return false;
+
+    // https://svgwg.org/svg2-draft/struct.html#UseShadowTree
+    // When a ‘use’ references another element which is another ‘use’ or whose content contains a ‘use’ element, then
+    // the shadow DOM cloning approach described above is recursive. However, a set of references that directly or
+    // indirectly reference a element to create a circular dependency is an invalid circular reference. The ‘use’
+    // element or element instance whose shadow tree would create the circular reference is in error and must not be
+    // rendered by the user agent.
+    return !would_create_circular_reference(reference_element);
+}
+
+bool SVGUseElement::would_create_circular_reference(Element const& target) const
+{
+    auto visited = heap().allocate<GC::HeapHashTable<GC::Ref<Element const>>>();
+    return would_create_circular_reference_impl(target, visited);
+}
+
+bool SVGUseElement::would_create_circular_reference_impl(
+    Element const& target,
+    GC::HeapHashTable<GC::Ref<Element const>>& visited) const
+{
+    // FIXME: I am certain there is a much more efficient way of keeping track of cycles here!
+    if (visited.table().contains(target))
+        return true;
+
+    visited.table().set(target);
+
+    bool found_circular_reference = false;
+    target.for_each_in_inclusive_subtree_of_type<SVGUseElement>([&](auto& element) {
+        auto referenced = element.referenced_element();
+        if (!referenced)
+            return TraversalDecision::Continue;
+
+        if (would_create_circular_reference_impl(*referenced, visited)) {
+            found_circular_reference = true;
+            return TraversalDecision::Break;
+        }
+
+        return TraversalDecision::Continue;
+    });
+
+    visited.table().remove(target);
+
+    return found_circular_reference;
 }
 
 // https://www.w3.org/TR/SVG11/shapes.html#RectElementXAttribute

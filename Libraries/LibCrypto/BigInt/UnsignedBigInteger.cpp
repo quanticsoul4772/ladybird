@@ -11,8 +11,6 @@
 
 #include <AK/BuiltinWrappers.h>
 #include <AK/FloatingPoint.h>
-#include <AK/NonnullOwnPtr.h>
-#include <AK/StringBuilder.h>
 #include <LibCrypto/BigInt/Tommath.h>
 #include <LibCrypto/BigInt/UnsignedBigInteger.h>
 
@@ -145,6 +143,20 @@ ErrorOr<String> UnsignedBigInteger::to_base(u16 N) const
     MP_MUST(mp_to_radix(&m_mp, reinterpret_cast<char*>(buffer.data()), size, &written, N));
 
     return StringView(buffer.bytes().slice(0, written - 1)).to_ascii_lowercase_string();
+}
+
+size_t UnsignedBigInteger::count_digits_in_base(u16 base) const
+{
+    VERIFY(base <= 36);
+
+    if (is_zero())
+        return 1;
+
+    int size = 0;
+    MP_MUST(mp_radix_size(&m_mp, base, &size));
+
+    // mp_radix_size includes a null byte.
+    return static_cast<size_t>(size) - 1;
 }
 
 u64 UnsignedBigInteger::to_u64() const

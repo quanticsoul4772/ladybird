@@ -21,6 +21,7 @@
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Bindings/WindowExposedInterfaces.h>
 #include <LibWeb/Bindings/WindowPrototype.h>
+#include <LibWeb/CSS/CSSStyleProperties.h>
 #include <LibWeb/CSS/MediaQueryList.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/Screen.h>
@@ -38,6 +39,7 @@
 #include <LibWeb/HTML/DocumentState.h>
 #include <LibWeb/HTML/EventHandler.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
+#include <LibWeb/HTML/External.h>
 #include <LibWeb/HTML/Focus.h>
 #include <LibWeb/HTML/HTMLEmbedElement.h>
 #include <LibWeb/HTML/HTMLFormElement.h>
@@ -67,8 +69,10 @@
 #include <LibWeb/Painting/PaintableBox.h>
 #include <LibWeb/RequestIdleCallback/IdleDeadline.h>
 #include <LibWeb/Selection/Selection.h>
+#include <LibWeb/Speech/SpeechSynthesis.h>
 #include <LibWeb/StorageAPI/StorageBottle.h>
 #include <LibWeb/StorageAPI/StorageEndpoint.h>
+#include <LibWeb/ViewTransition/ViewTransition.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
 
 namespace Web::HTML {
@@ -132,12 +136,14 @@ void Window::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_pdf_viewer_mime_type_objects);
     visitor.visit(m_close_watcher_manager);
     visitor.visit(m_cookie_store);
+    visitor.visit(m_speech_synthesis);
     visitor.visit(m_locationbar);
     visitor.visit(m_menubar);
     visitor.visit(m_personalbar);
     visitor.visit(m_scrollbars);
     visitor.visit(m_statusbar);
     visitor.visit(m_toolbar);
+    visitor.visit(m_external);
     for (auto& descriptor : m_cross_origin_property_descriptor_map)
         descriptor.value.visit_edges(visitor);
 }
@@ -733,11 +739,28 @@ Vector<GC::Ref<MimeType>> Window::pdf_viewer_mime_type_objects()
     return m_pdf_viewer_mime_type_objects;
 }
 
+static bool s_test_mode = false;
+
+bool Window::in_test_mode()
+{
+    return s_test_mode;
+}
+
+void Window::set_enable_test_mode(bool exposed)
+{
+    s_test_mode = exposed;
+}
+
 static bool s_internals_object_exposed = false;
 
 void Window::set_internals_object_exposed(bool exposed)
 {
     s_internals_object_exposed = exposed;
+}
+
+bool Window::is_internals_object_exposed()
+{
+    return s_internals_object_exposed;
 }
 
 WebIDL::ExceptionOr<void> Window::initialize_web_interfaces(Badge<WindowEnvironmentSettingsObject>)
@@ -1137,6 +1160,14 @@ GC::Ref<CookieStore::CookieStore> Window::cookie_store()
     return *m_cookie_store;
 }
 
+// https://wicg.github.io/speech-api/#tts-section
+GC::Ref<Speech::SpeechSynthesis> Window::speech_synthesis()
+{
+    if (!m_speech_synthesis)
+        m_speech_synthesis = Speech::SpeechSynthesis::create(realm());
+    return *m_speech_synthesis;
+}
+
 // https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
 void Window::alert(String const& message)
 {
@@ -1515,25 +1546,29 @@ GC::Ref<WebIDL::Promise> Window::scroll(ScrollToOptions const& options)
     auto const document = navigable->active_document();
     VERIFY(document);
 
-    // NB: Make sure layout is up-to-date before looking at scrollable overflow metrics.
-    document->update_layout(DOM::UpdateLayoutReason::WindowScroll);
+    // OPTIMIZATION: If we're scrolling to (0, 0), we don't need to do any of the overflow calculations.
+    //               This also means we don't need to update layout in that case.
+    if (x != 0 || y != 0) {
+        // NB: Make sure layout is up-to-date before looking at scrollable overflow metrics.
+        document->update_layout(DOM::UpdateLayoutReason::WindowScroll);
 
-    VERIFY(document->paintable_box());
-    auto scrolling_area = document->paintable_box()->scrollable_overflow_rect()->to_type<float>();
+        VERIFY(document->paintable_box());
+        auto scrolling_area = document->paintable_box()->scrollable_overflow_rect()->to_type<float>();
 
-    // 7. FIXME: For now we always assume overflow direction is rightward
-    // -> If the viewport has rightward overflow direction
-    //    Let x be max(0, min(x, viewport scrolling area width - viewport width)).
-    x = max(0.0f, min(x, scrolling_area.width() - viewport_width));
-    // -> If the viewport has leftward overflow direction
-    //    Let x be min(0, max(x, viewport width - viewport scrolling area width)).
+        // 7. FIXME: For now we always assume overflow direction is rightward
+        // -> If the viewport has rightward overflow direction
+        //    Let x be max(0, min(x, viewport scrolling area width - viewport width)).
+        x = max(0.0f, min(x, scrolling_area.width() - viewport_width));
+        // -> If the viewport has leftward overflow direction
+        //    Let x be min(0, max(x, viewport width - viewport scrolling area width)).
 
-    // 8. FIXME: For now we always assume overflow direction is downward
-    // -> If the viewport has downward overflow direction
-    //    Let y be max(0, min(y, viewport scrolling area height - viewport height)).
-    y = max(0.0f, min(y, scrolling_area.height() - viewport_height));
-    // -> If the viewport has upward overflow direction
-    //    Let y be min(0, max(y, viewport height - viewport scrolling area height)).
+        // 8. FIXME: For now we always assume overflow direction is downward
+        // -> If the viewport has downward overflow direction
+        //    Let y be max(0, min(y, viewport scrolling area height - viewport height)).
+        y = max(0.0f, min(y, scrolling_area.height() - viewport_height));
+        // -> If the viewport has upward overflow direction
+        //    Let y be min(0, max(y, viewport height - viewport scrolling area height)).
+    }
 
     // FIXME: 9. Let position be the scroll position the viewport would have by aligning the x-coordinate x of the viewport
     //           scrolling area with the left of the viewport and aligning the y-coordinate y of the viewport scrolling area
@@ -1758,6 +1793,15 @@ void Window::release_events()
     // Do nothing.
 }
 
+// https://html.spec.whatwg.org/multipage/obsolete.html#dom-external
+GC::Ref<External> Window::external()
+{
+    // The external attribute of the Window interface must return an instance of the External interface
+    if (!m_external)
+        m_external = realm().create<External>(realm());
+    return *m_external;
+}
+
 // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-navigation
 GC::Ref<Navigation> Window::navigation()
 {
@@ -1930,8 +1974,8 @@ Window::NamedObjects Window::named_objects(StringView name)
         if (auto element_name = element->name(); element_name.has_value() && *element_name == name)
             objects.elements.append(*element);
     }
-    associated_document().element_by_id().for_each_element_with_id(name, [&](auto element) {
-        objects.elements.append(*element);
+    associated_document().element_by_id().for_each_element_with_id(name, associated_document(), [&](auto& element) {
+        objects.elements.append(element);
     });
 
     return objects;

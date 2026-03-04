@@ -146,8 +146,8 @@
     __JS_ENUMERATE(IgnoreCase, ignoreCase, ignore_case, i)    \
     __JS_ENUMERATE(Multiline, multiline, multiline, m)        \
     __JS_ENUMERATE(DotAll, dotAll, dot_all, s)                \
-    __JS_ENUMERATE(UnicodeSets, unicodeSets, unicode_sets, v) \
     __JS_ENUMERATE(Unicode, unicode, unicode, u)              \
+    __JS_ENUMERATE(UnicodeSets, unicodeSets, unicode_sets, v) \
     __JS_ENUMERATE(Sticky, sticky, sticky, y)
 
 namespace JS {
@@ -176,6 +176,7 @@ class ClassExpression;
 struct ClassFieldDefinition;
 class Completion;
 class Console;
+class ConsoleClient;
 class CyclicModule;
 class DeclarativeEnvironment;
 struct DisposeCapability;

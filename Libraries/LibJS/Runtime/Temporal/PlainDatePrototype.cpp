@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2021, Idan Horowitz <idan.horowitz@serenityos.org>
  * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
- * Copyright (c) 2024-2025, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2024-2026, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -402,9 +402,9 @@ JS_DEFINE_NATIVE_FUNCTION(PlainDatePrototype::to_zoned_date_time)
     Value temporal_time;
 
     // 3. If item is an Object, then
-    if (item.is_object()) {
+    if (auto object = item.as_if<Object>()) {
         // a. Let timeZoneLike be ? Get(item, "timeZone").
-        auto time_zone_like = TRY(item.as_object().get(vm.names.timeZone));
+        auto time_zone_like = TRY(object->get(vm.names.timeZone));
 
         // b. If timeZoneLike is undefined, then
         if (time_zone_like.is_undefined()) {
@@ -420,7 +420,7 @@ JS_DEFINE_NATIVE_FUNCTION(PlainDatePrototype::to_zoned_date_time)
             time_zone = TRY(to_temporal_time_zone_identifier(vm, time_zone_like));
 
             // ii. Let temporalTime be ? Get(item, "plainTime").
-            temporal_time = TRY(item.as_object().get(vm.names.plainTime));
+            temporal_time = TRY(object->get(vm.names.plainTime));
         }
     }
     // 4. Else,
@@ -477,7 +477,7 @@ JS_DEFINE_NATIVE_FUNCTION(PlainDatePrototype::to_string)
 }
 
 // 3.3.31 Temporal.PlainDate.prototype.toLocaleString ( [ locales [ , options ] ] ), https://tc39.es/proposal-temporal/#sec-temporal.plaindate.prototype.tolocalestring
-// 15.12.3.1 Temporal.PlainDate.prototype.toLocaleString ( [ locales [ , options ] ] ), https://tc39.es/proposal-temporal/#sup-temporal.plaindate.prototype.tolocalestring
+// 15.11.3.1 Temporal.PlainDate.prototype.toLocaleString ( [ locales [ , options ] ] ), https://tc39.es/proposal-temporal/#sup-temporal.plaindate.prototype.tolocalestring
 JS_DEFINE_NATIVE_FUNCTION(PlainDatePrototype::to_locale_string)
 {
     auto& realm = *vm.current_realm();

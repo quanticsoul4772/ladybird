@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2025-2026, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -179,6 +179,9 @@ static void initialize_native_control(WebView::Action& action, id control)
     case WebView::ActionID::OpenImage:
         set_control_image(control, @"photo");
         break;
+    case WebView::ActionID::SaveImage:
+        set_control_image(control, @"square.and.arrow.down");
+        break;
     case WebView::ActionID::CopyImage:
         set_control_image(control, @"document.on.document");
         break;
@@ -209,6 +212,12 @@ static void initialize_native_control(WebView::Action& action, id control)
         break;
     case WebView::ActionID::ToggleMediaLoopState:
         set_control_image(control, @"arrow.clockwise");
+        break;
+    case WebView::ActionID::EnterFullscreen:
+        set_control_image(control, @"arrow.up.left.and.arrow.down.right");
+        break;
+    case WebView::ActionID::ExitFullscreen:
+        set_control_image(control, @"arrow.down.right.and.arrow.up.left");
         break;
 
     case WebView::ActionID::ZoomIn:

@@ -7,7 +7,6 @@
  */
 
 #include <AK/Vector.h>
-#include <LibCore/Socket.h>
 #include <LibIPC/Connection.h>
 #include <LibIPC/Message.h>
 #include <LibIPC/Stub.h>
@@ -35,17 +34,18 @@ bool ConnectionBase::is_open() const
 
 ErrorOr<void> ConnectionBase::post_message(Message const& message)
 {
-    return post_message(TRY(message.encode()));
+    auto buffer = TRY(message.encode());
+    return post_message(buffer);
 }
 
-ErrorOr<void> ConnectionBase::post_message(MessageBuffer buffer)
+ErrorOr<void> ConnectionBase::post_message(MessageBuffer& buffer)
 {
     // NOTE: If this connection is being shut down, but has not yet been destroyed,
     //       the socket will be closed. Don't try to send more messages.
     if (!m_transport->is_open())
         return Error::from_string_literal("Trying to post_message during IPC shutdown");
 
-    MUST(buffer.transfer_message(*m_transport));
+    TRY(buffer.transfer_message(*m_transport));
 
     return {};
 }
@@ -95,14 +95,20 @@ void ConnectionBase::wait_for_transport_to_become_readable()
 
 ConnectionBase::PeerEOF ConnectionBase::drain_messages_from_peer()
 {
+    bool parse_error = false;
     auto schedule_shutdown = m_transport->read_as_many_messages_as_possible_without_blocking([&](auto&& raw_message) {
         if (auto message = try_parse_message(raw_message.bytes, raw_message.fds)) {
             m_unprocessed_messages.append(message.release_nonnull());
         } else {
             dbgln("Failed to parse IPC message {:hex-dump}", raw_message.bytes);
-            VERIFY_NOT_REACHED();
+            parse_error = true;
         }
     });
+
+    if (parse_error) {
+        dbgln("IPC::ConnectionBase ({:p}): Disconnecting misbehaving peer due to malformed message", this);
+        schedule_shutdown = Transport::ShouldShutdown::Yes;
+    }
 
     if (!m_unprocessed_messages.is_empty()) {
         deferred_invoke([this] {

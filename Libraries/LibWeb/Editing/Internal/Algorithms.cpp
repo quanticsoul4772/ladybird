@@ -5,6 +5,7 @@
  */
 
 #include <LibGfx/Color.h>
+#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyNameAndID.h>
 #include <LibWeb/CSS/StyleComputer.h>
@@ -13,6 +14,7 @@
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/DOM/Attr.h>
 #include <LibWeb/DOM/CharacterData.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentFragment.h>
 #include <LibWeb/DOM/DocumentType.h>
 #include <LibWeb/DOM/Element.h>
@@ -624,7 +626,7 @@ Vector<GC::Ref<DOM::Node>> clear_the_value(FlyString const& command, GC::Ref<DOM
         auto& old_values = value_list.values();
 
         auto new_values = old_values;
-        auto was_removed = new_values.remove_all_matching([&](CSS::ValueComparingNonnullRefPtr<CSS::StyleValue const> const& value) {
+        auto was_removed = new_values.remove_all_matching([&](ValueComparingNonnullRefPtr<CSS::StyleValue const> const& value) {
             return value->is_keyword() && value->as_keyword().keyword() == keyword_to_delete;
         });
         if (!was_removed)
@@ -1861,8 +1863,7 @@ bool is_block_boundary_point(DOM::BoundaryPoint boundary_point)
 // https://w3c.github.io/editing/docs/execCommand/#block-end-point
 bool is_block_end_point(DOM::BoundaryPoint boundary_point)
 {
-    // A boundary point (node, offset) is a block end point if either node's parent is null and
-    // offset is node's length;
+    // A boundary point (node, offset) is a block end point if either node's parent is null and offset is node's length;
     if (!boundary_point.node->parent() && boundary_point.offset == boundary_point.node->length())
         return true;
 
@@ -1892,13 +1893,11 @@ bool is_block_node(GC::Ref<DOM::Node> node)
 // https://w3c.github.io/editing/docs/execCommand/#block-start-point
 bool is_block_start_point(DOM::BoundaryPoint boundary_point)
 {
-    // A boundary point (node, offset) is a block start point if either node's parent is null and
-    // offset is zero;
+    // A boundary point (node, offset) is a block start point if either node's parent is null and offset is zero;
     if (!boundary_point.node->parent() && boundary_point.offset == 0)
         return true;
 
-    // or node has a child with index offset − 1, and that child is either a visible block node or a
-    // visible br.
+    // or node has a child with index offset − 1, and that child is either a visible block node or a visible br.
     auto offset_minus_one_child = boundary_point.node->child_at_index(boundary_point.offset - 1);
     return offset_minus_one_child && is_visible_node(*offset_minus_one_child)
         && (is_block_node(*offset_minus_one_child) || is<HTML::HTMLBRElement>(*offset_minus_one_child));

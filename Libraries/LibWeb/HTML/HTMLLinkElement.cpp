@@ -14,7 +14,9 @@
 #include <LibTextCodec/Decoder.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Bindings/HTMLLinkElementPrototype.h>
+#include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/Parser/Parser.h>
+#include <LibWeb/CSS/StyleSheetList.h>
 #include <LibWeb/DOM/DOMTokenList.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
@@ -26,6 +28,7 @@
 #include <LibWeb/Fetch/Infrastructure/HTTP/MIME.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
+#include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/HTMLLinkElement.h>
 #include <LibWeb/HTML/PotentialCORSRequest.h>
@@ -128,6 +131,11 @@ String HTMLLinkElement::media() const
 GC::Ptr<CSS::CSSStyleSheet> HTMLLinkElement::sheet() const
 {
     return m_loaded_style_sheet;
+}
+
+void HTMLLinkElement::finished_loading_critical_style_subresources(AnyFailed)
+{
+    m_document_load_event_delayer.clear();
 }
 
 bool HTMLLinkElement::has_loaded_icon() const
@@ -693,11 +701,11 @@ void HTMLLinkElement::preload(LinkProcessingOptions& options, GC::Ptr<GC::Functi
         request->set_initiator_type(Fetch::Infrastructure::Request::InitiatorType::EarlyHint);
 
     // 9. Let controller be null.
-    m_fetch_controller = nullptr;
+    auto controller_holder = Fetch::Infrastructure::FetchControllerHolder::create(vm);
 
     // 10. Let reportTiming given a Document document be to report timing for controller given document's relevant global object.
-    auto report_timing = GC::Function<void(DOM::Document const&)>::create(realm.heap(), [this](DOM::Document const& document) {
-        m_fetch_controller->report_timing(relevant_global_object(document));
+    auto report_timing = GC::Function<void(DOM::Document const&)>::create(realm.heap(), [controller_holder](DOM::Document const& document) {
+        controller_holder->controller()->report_timing(relevant_global_object(document));
     });
 
     // 11. Set controller to the result of fetching request, with processResponseConsumeBody set to the following steps
@@ -734,6 +742,7 @@ void HTMLLinkElement::preload(LinkProcessingOptions& options, GC::Ptr<GC::Functi
     };
 
     m_fetch_controller = Fetch::Fetching::fetch(realm, *request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
+    controller_holder->set_controller(*m_fetch_controller);
 
     // 12. Let commit be the following steps given a Document document:
     auto commit = GC::Function<void(DOM::Document&)>::create(realm.heap(), [entry, report_timing](DOM::Document& document) {
@@ -830,10 +839,9 @@ void HTMLLinkElement::process_stylesheet_resource(bool success, Fetch::Infrastru
         //     1. If the element has a charset attribute, get an encoding from that attribute's value. If that succeeds, return the resulting encoding. [ENCODING]
         //     2. Otherwise, return the document's character encoding. [DOM]
         Optional<StringView> environment_encoding;
-        if (auto charset = attribute(HTML::AttributeNames::charset); charset.has_value()) {
-            if (auto environment_encoding = TextCodec::get_standardized_encoding(charset.release_value()); environment_encoding.has_value())
-                environment_encoding = environment_encoding.value();
-        }
+        if (auto charset = attribute(HTML::AttributeNames::charset); charset.has_value())
+            environment_encoding = TextCodec::get_standardized_encoding(charset.release_value());
+
         if (!environment_encoding.has_value() && document().encoding().has_value())
             environment_encoding = document().encoding().value();
 
@@ -876,7 +884,14 @@ void HTMLLinkElement::process_stylesheet_resource(bool success, Fetch::Infrastru
     // 7. Unblock rendering on el.
     unblock_rendering();
 
-    m_document_load_event_delayer.clear();
+    if (m_loaded_style_sheet) {
+        auto style_sheet_loading_state = m_loaded_style_sheet->loading_state();
+        if (style_sheet_loading_state == CSS::CSSStyleSheet::LoadingState::Loaded || style_sheet_loading_state == CSS::CSSStyleSheet::LoadingState::Error) {
+            finished_loading_critical_style_subresources(style_sheet_loading_state == CSS::CSSStyleSheet::LoadingState::Error ? AnyFailed::Yes : AnyFailed::No);
+        }
+    } else {
+        m_document_load_event_delayer.clear();
+    }
 }
 
 static NonnullRefPtr<Core::Promise<bool>> decode_favicon(ReadonlyBytes favicon_data, URL::URL const& favicon_url, GC::Ref<DOM::Document> document)
@@ -951,12 +966,25 @@ void HTMLLinkElement::load_fallback_favicon_if_needed(GC::Ref<DOM::Document> doc
     if (!document->url().scheme().is_one_of("http"sv, "https"sv))
         return;
 
+    // AD-HOC: Don't load fallback favicon for auxiliary browsing contexts (popup windows).
+    // This matches the behavior observed in Chrome and Firefox, and avoids unnecessary network requests
+    // that can interfere with Content Security Policy violation reporting.
+    // See: https://github.com/whatwg/html/issues/12082
+    if (auto browsing_context = document->browsing_context(); browsing_context->is_auxiliary())
+        return;
+
     // 1. Let request be a new request whose URL is the URL record obtained by resolving the URL "/favicon.ico" against
     //    the Document object's URL, client is the Document object's relevant settings object, destination is "image",
     //    synchronous flag is set, credentials mode is "include", and whose use-URL-credentials flag is set.
     // NOTE: Fetch requests no longer have a synchronous flag, see https://github.com/whatwg/fetch/pull/1165
+    auto favicon_url = document->encoding_parse_url("/favicon.ico"sv);
+
+    // It is possible for the URL parser to fail if the document's base URL is invalid.
+    if (!favicon_url.has_value())
+        return;
+
     auto request = Fetch::Infrastructure::Request::create(vm);
-    request->set_url(*document->encoding_parse_url("/favicon.ico"sv));
+    request->set_url(favicon_url.release_value());
     request->set_client(&document->relevant_settings_object());
     request->set_destination(Fetch::Infrastructure::Request::Destination::Image);
     request->set_credentials_mode(Fetch::Infrastructure::Request::CredentialsMode::Include);

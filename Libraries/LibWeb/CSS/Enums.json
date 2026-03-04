@@ -127,6 +127,16 @@
     "padding-box",
     "text"
   ],
+  "baseline-metric": [
+    "text-bottom",
+    "alphabetic",
+    "ideographic",
+    "middle",
+    "central",
+    "mathematical",
+    "hanging",
+    "text-top"
+  ],
   "border-collapse": [
     "separate",
     "collapse"
@@ -162,6 +172,10 @@
     "none",
     "all"
   ],
+  "common-lig-value": [
+    "common-ligatures",
+    "no-common-ligatures"
+  ],
   "compositing-operator": [
     "add",
     "subtract",
@@ -183,6 +197,10 @@
     "auto",
     "hidden"
   ],
+  "contextual-alt-value": [
+    "contextual",
+    "no-contextual"
+  ],
   "coord-box": [
     "content-box",
     "padding-box",
@@ -192,21 +210,201 @@
     "view-box"
   ],
   "counter-style-name-keyword": [
+    "adlam",
+    "afar",
+    "agaw",
+    "ancient-tamil",
+    "arabic-abjad",
+    "arabic-indic",
+    "ari",
+    "armenian",
+    "balinese",
+    "bamum",
+    "bangla",
+    "bengali",
+    "binary",
+    "blin",
+    "bodo",
+    "cambodian",
     "circle",
+    "circled-decimal",
+    "circled-ideograph",
+    "circled-katakana",
+    "circled-korean-consonant",
+    "circled-korean-syllable",
+    "circled-lower-latin",
+    "circled-upper-latin",
+    "cjk-decimal",
+    "cjk-earthly-branch",
+    "cjk-heavenly-stem",
+    "cjk-ideographic",
+    "cjk-stem-branch",
+    "cjk-tally-mark",
     "decimal",
     "decimal-leading-zero",
+    "devanagari",
     "disc",
     "disclosure-closed",
     "disclosure-open",
+    "dizi",
+    "dogri",
+    "dotted-decimal",
+    "double-circled-decimal",
+    "ethiopic-halehame-am",
+    "ethiopic-halehame-ti-er",
+    "ethiopic-halehame-ti-et",
+    "ethiopic-halehame",
+    "ethiopic-numeric",
+    "filled-circled-decimal",
+    "fullwidth-decimal",
+    "fullwidth-lower-alpha",
+    "fullwidth-upper-alpha",
+    "fullwidth-upper-roman",
+    "gedeo",
+    "georgian",
+    "greek-lower-ancient",
+    "greek-lower-modern",
+    "greek-upper-ancient",
+    "greek-upper-modern",
+    "gujarati-alpha",
+    "gujarati",
+    "gumuz",
+    "gurmukhi",
+    "hadiyaa",
+    "hangul-consonant",
+    "hangul",
+    "hanifi-rohingya",
+    "harari",
+    "hebrew",
+    "hindi",
+    "hiragana-iroha",
+    "hiragana",
+    "japanese-formal",
+    "japanese-informal",
+    "javanese",
+    "kaffa",
+    "kannada-alpha",
+    "kannada",
+    "kashmiri",
+    "katakana-iroha",
+    "katakana",
+    "kayah-li",
+    "kebena",
+    "kembata",
+    "khmer-consonant",
+    "khmer",
+    "konkani",
+    "konso",
+    "korean-consonant",
+    "korean-hangul-formal",
+    "korean-hanja-formal",
+    "korean-hanja-informal",
+    "korean-syllable",
+    "kunama",
+    "lanna-hora",
+    "lanna-tham",
+    "lao",
+    "lepcha",
+    "limbu",
+    "lower-alpha-symbolic",
     "lower-alpha",
+    "lower-armenian",
+    "lower-belorussian",
+    "lower-bulgarian",
     "lower-greek",
+    "lower-hexadecimal",
     "lower-latin",
+    "lower-macedonian",
+    "lower-oromo-qubee",
     "lower-roman",
-    "none",
+    "lower-russian-full",
+    "lower-russian",
+    "lower-serbian",
+    "lower-ukrainian-full",
+    "lower-ukrainian",
+    "maghrebi-abjad",
+    "maithili",
+    "malayalam-alpha",
+    "malayalam",
+    "manipuri",
+    "marathi",
+    "meen",
+    "meetei",
+    "mongolian",
+    "mro",
+    "myanmar",
+    "nag-mundari",
+    "new-base-60",
+    "newa",
+    "nko-cardinal",
+    "octal",
+    "odia",
+    "ol-chiki",
+    "oriya",
+    "oromo",
+    "parenthesized-decimal",
+    "parenthesized-hangul-consonant",
+    "parenthesized-hangul-syllable",
+    "parenthesized-ideograph",
+    "parenthesized-lower-latin",
+    "persian-abjad",
+    "persian-alphabetic",
+    "persian",
+    "punjabi",
+    "saho",
+    "sanskrit",
+    "santali",
+    "shan",
+    "sidama",
+    "silti",
+    "simp-chinese-formal",
+    "simp-chinese-informal",
+    "simple-lower-roman",
+    "simple-upper-roman",
+    "sindhi",
     "square",
+    "sundanese",
+    "super-decimal",
+    "tai-lue",
+    "tally-mark",
+    "tamil",
+    "telugu-alpha",
+    "telugu",
+    "thai-alpha",
+    "thai",
+    "tibetan",
+    "tigre",
+    "trad-chinese-formal",
+    "trad-chinese-informal",
+    "upper-alpha-symbolic",
     "upper-alpha",
+    "upper-armenian",
+    "upper-belorussian",
+    "upper-bulgarian",
+    "upper-hexadecimal",
     "upper-latin",
-    "upper-roman"
+    "upper-macedonian",
+    "upper-oromo-qubee",
+    "upper-roman",
+    "upper-russian-full",
+    "upper-russian",
+    "upper-serbian",
+    "upper-ukrainian-full",
+    "upper-ukrainian",
+    "urdu-abjad",
+    "urdu-alphabetic",
+    "urdu",
+    "warang-citi",
+    "wolaita",
+    "yemsa",
+    "zhuyin"
+  ],
+  "counter-style-system": [
+    "cyclic",
+    "numeric",
+    "alphabetic",
+    "symbolic",
+    "additive"
   ],
   "cross-origin-modifier-value": [
     "anonymous",
@@ -254,6 +452,10 @@
     "ltr",
     "rtl"
   ],
+  "discretionary-lig-value": [
+    "discretionary-ligatures",
+    "no-discretionary-ligatures"
+  ],
   "display-box": [
     "contents",
     "none"
@@ -299,6 +501,18 @@
     "ease-out",
     "ease-in-out"
   ],
+  "east-asian-variant": [
+    "jis78",
+    "jis83",
+    "jis90",
+    "jis04",
+    "simplified",
+    "traditional"
+  ],
+  "east-asian-width": [
+    "full-width",
+    "proportional-width"
+  ],
   "empty-cells": [
     "show",
     "hide"
@@ -337,7 +551,11 @@
     "normal",
     "none"
   ],
-  "font-style": [
+  "font-optical-sizing": [
+    "auto",
+    "none"
+  ],
+  "font-style-keyword": [
     "normal",
     "italic",
     "left",
@@ -358,10 +576,6 @@
     "palettes",
     "variations"
   ],
-  "font-variant-alternates": [
-    "normal",
-    "historical-forms"
-  ],
   "font-variant-caps": [
     "normal",
     "small-caps",
@@ -371,46 +585,11 @@
     "unicase",
     "titling-caps"
   ],
-  "font-variant-east-asian": [
-    "normal",
-    "ruby",
-    "jis78",
-    "jis83",
-    "jis90",
-    "jis04",
-    "simplified",
-    "traditional",
-    "full-width",
-    "proportional-width"
-  ],
   "font-variant-emoji": [
     "normal",
     "text",
     "emoji",
     "unicode"
-  ],
-  "font-variant-ligatures": [
-    "normal",
-    "none",
-    "common-ligatures",
-    "no-common-ligatures",
-    "discretionary-ligatures",
-    "no-discretionary-ligatures",
-    "historical-ligatures",
-    "no-historical-ligatures",
-    "contextual",
-    "no-contextual"
-  ],
-  "font-variant-numeric": [
-    "normal",
-    "ordinal",
-    "slashed-zero",
-    "lining-nums",
-    "oldstyle-nums",
-    "proportional-nums",
-    "tabular-nums",
-    "diagonal-fractions",
-    "stacked-fractions"
   ],
   "font-variant-position": [
     "normal",
@@ -439,6 +618,10 @@
     "ui-sans-serif",
     "ui-monospace",
     "ui-rounded"
+  ],
+  "historical-lig-value": [
+    "historical-ligatures",
+    "no-historical-ligatures"
   ],
   "hue-interpolation-method": [
     "shorter",
@@ -564,6 +747,18 @@
     "luminosity",
     "plus-darker",
     "plus-lighter"
+  ],
+  "numeric-figure-value": [
+    "lining-nums",
+    "oldstyle-nums"
+  ],
+  "numeric-fraction-value": [
+    "diagonal-fractions",
+    "stacked-fractions"
+  ],
+  "numeric-spacing-value": [
+    "proportional-nums",
+    "tabular-nums"
   ],
   "object-fit": [
     "fill",
@@ -769,6 +964,13 @@
     "miter",
     "round",
     "bevel"
+  ],
+  "symbols-type": [
+    "cyclic",
+    "numeric",
+    "alphabetic",
+    "symbolic",
+    "fixed"
   ],
   "table-layout": [
     "auto",

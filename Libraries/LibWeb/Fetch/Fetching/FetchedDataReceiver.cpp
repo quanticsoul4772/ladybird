@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2024-2026, Tim Flynn <trflynn89@ladybird.org>
  * Copyright (c) 2025, Aliaksandr Kalenik <kalenik.aliaksandr@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -10,6 +10,8 @@
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Fetch/Fetching/FetchedDataReceiver.h>
 #include <LibWeb/Fetch/Infrastructure/FetchParams.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Bodies.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/Fetch/Infrastructure/Task.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
@@ -29,10 +31,20 @@ FetchedDataReceiver::FetchedDataReceiver(GC::Ref<Infrastructure::FetchParams con
 
 FetchedDataReceiver::~FetchedDataReceiver() = default;
 
+void FetchedDataReceiver::set_body(GC::Ref<Fetch::Infrastructure::Body> body)
+{
+    m_body = body;
+    // Flush any bytes that were buffered before the body was set
+    if (!m_buffer.is_empty())
+        m_body->append_sniff_bytes(m_buffer);
+}
+
 void FetchedDataReceiver::visit_edges(Visitor& visitor)
 {
     Base::visit_edges(visitor);
     visitor.visit(m_fetch_params);
+    visitor.visit(m_response);
+    visitor.visit(m_body);
     visitor.visit(m_stream);
     visitor.visit(m_pending_promise);
 }
@@ -59,10 +71,17 @@ void FetchedDataReceiver::handle_network_bytes(ReadonlyBytes bytes, NetworkState
     if (state == NetworkState::Complete) {
         VERIFY(bytes.is_empty());
         m_lifecycle_state = LifecycleState::CompletePending;
+        // Mark sniff bytes as complete when the stream ends
+        if (m_body)
+            m_body->set_sniff_bytes_complete();
     }
 
-    if (state == NetworkState::Ongoing)
+    if (state == NetworkState::Ongoing) {
         m_buffer.append(bytes);
+        // Capture bytes for MIME sniffing
+        if (m_body)
+            m_body->append_sniff_bytes(bytes);
+    }
 
     if (!m_pending_promise) {
         if (m_lifecycle_state == LifecycleState::CompletePending && buffer_is_eof() && !m_has_unfulfilled_promise)
@@ -158,7 +177,11 @@ void FetchedDataReceiver::close_stream()
     m_stream->close();
 
     if (m_http_cache) {
-        m_http_cache->finalize_entry(m_fetch_params->request()->current_url(), m_fetch_params->request()->method(), move(m_buffer));
+        auto request = m_fetch_params->request();
+
+        if (m_response && request->cache_mode() != HTTP::CacheMode::NoStore)
+            m_http_cache->finalize_entry(request->current_url(), request->method(), request->header_list(), m_response->status(), m_response->header_list(), move(m_buffer));
+
         m_http_cache.clear();
     }
 }

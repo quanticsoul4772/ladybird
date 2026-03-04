@@ -7,6 +7,7 @@
 
 #include <LibWeb/Bindings/HTMLTableSectionElementPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ImageStyleValue.h>
@@ -114,6 +115,7 @@ bool HTMLTableSectionElement::is_presentational_hint(FlyString const& name) cons
 
 void HTMLTableSectionElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
 {
+    Base::apply_presentational_hints(cascaded_properties);
     for_each_attribute([&](auto& name, auto& value) {
         // https://html.spec.whatwg.org/multipage/rendering.html#tables-2:encoding-parsing-and-serializing-a-url
         if (name == HTML::AttributeNames::background) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2025-2026, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -142,6 +142,9 @@ static void initialize_native_control(WebView::Action& action, QAction& qaction,
     case WebView::ActionID::OpenImage:
         qaction.setIcon(load_icon_from_uri("resource://icons/16x16/filetype-image.png"sv));
         break;
+    case WebView::ActionID::SaveImage:
+        qaction.setIcon(load_icon_from_uri("resource://icons/16x16/download.png"sv));
+        break;
     case WebView::ActionID::CopyImage:
         qaction.setIcon(load_icon_from_uri("resource://icons/16x16/edit-copy.png"sv));
         break;
@@ -163,6 +166,10 @@ static void initialize_native_control(WebView::Action& action, QAction& qaction,
         break;
     case WebView::ActionID::UnmuteMedia:
         qaction.setIcon(load_icon_from_uri("resource://icons/16x16/audio-volume-high.png"sv));
+        break;
+    case WebView::ActionID::EnterFullscreen:
+    case WebView::ActionID::ExitFullscreen: // FIXME: Create a separate icon for exiting fullscreen.
+        qaction.setIcon(load_icon_from_uri("resource://icons/16x16/fullscreen.png"sv));
         break;
 
     case WebView::ActionID::ZoomIn: {

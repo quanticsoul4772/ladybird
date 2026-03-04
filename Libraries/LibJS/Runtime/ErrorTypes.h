@@ -268,6 +268,7 @@
     M(TemporalInvalidPlainMonthDay, "Invalid plain month day")                                                                      \
     M(TemporalInvalidPlainTime, "Invalid plain time")                                                                               \
     M(TemporalInvalidPlainYearMonth, "Invalid plain year month")                                                                    \
+    M(TemporalInvalidPlainYearMonthAddition, "Only years and months may be {} Temporal.PlainYearMonth")                             \
     M(TemporalInvalidTime, "Invalid time")                                                                                          \
     M(TemporalInvalidTimeLikeField, "Invalid value {} for time field '{}'")                                                         \
     M(TemporalInvalidTimeZoneName, "Invalid time zone name '{}'")                                                                   \
@@ -304,7 +305,8 @@
     M(URIMalformed, "URI malformed") /* LibWeb bindings */                                                                          \
     M(WrappedFunctionCallThrowCompletion, "Call of wrapped target function did not complete normally")                              \
     M(WrappedFunctionCopyNameAndLengthThrowCompletion, "Trying to copy target name and length did not complete normally")           \
-    M(YieldFromIteratorMissingThrowMethod, "yield* protocol violation: iterator must have a throw method")
+    M(YieldFromIteratorMissingThrowMethod, "yield* protocol violation: iterator must have a throw method")                          \
+    M(ZipIteratorNotEnoughResults, "Not enough iterator results in 'strict' mode")
 
 namespace JS {
 

@@ -8,11 +8,11 @@ set(SOURCES
     ConsoleOutput.cpp
     CookieJar.cpp
     DOMNodeProperties.cpp
+    FileDownloader.cpp
     HeadlessWebView.cpp
     HelperProcess.cpp
     Menu.cpp
     Mutation.cpp
-    Plugins/FontPlugin.cpp
     Plugins/ImageCodecPlugin.cpp
     Process.cpp
     ProcessHandle.cpp

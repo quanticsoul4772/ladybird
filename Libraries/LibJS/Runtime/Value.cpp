@@ -11,7 +11,7 @@
 #include <AK/ByteString.h>
 #include <AK/CharacterTypes.h>
 #include <AK/StringBuilder.h>
-#include <AK/StringFloatingPointConversions.h>
+#include <AK/StringConversions.h>
 #include <AK/Utf16String.h>
 #include <AK/Utf8View.h>
 #include <LibCrypto/BigInt/SignedBigInteger.h>
@@ -72,7 +72,7 @@ static ALWAYS_INLINE bool both_bigint(Value const& lhs, Value const& rhs)
 
 // 6.1.6.1.20 Number::toString ( x ), https://tc39.es/ecma262/#sec-numeric-types-number-tostring
 // Implementation for radix = 10
-static void number_to_string_impl(StringBuilder& builder, double d, NumberToStringMode mode)
+void number_to_string(StringBuilder& builder, double d, NumberToStringMode mode)
 {
     auto convert_to_decimal_digits_array = [](auto x, auto& digits, auto& length) {
         for (; x; x /= 10)
@@ -104,14 +104,13 @@ static void number_to_string_impl(StringBuilder& builder, double d, NumberToStri
         return;
     }
 
-    // 5. Let n, k, and s be integers such that k ≥ 1, radix ^ (k - 1) ≤ s < radix ^ k,
-    // 𝔽(s × radix ^ (n - k)) is x, and k is as small as possible. Note that k is the number of
-    // digits in the representation of s using radix radix, that s is not divisible by radix, and
-    // that the least significant digit of s is not necessarily uniquely determined by these criteria.
+    // 5. Let n, k, and s be integers such that k ≥ 1, radix ^ (k - 1) ≤ s < radix ^ k, 𝔽(s × radix ^ (n - k)) is x, and
+    //    k is as small as possible. Note that k is the number of digits in the representation of s using radix radix,
+    //    that s is not divisible by radix, and that the least significant digit of s is not necessarily uniquely
+    //    determined by these criteria.
     //
-    // Note: guarantees provided by convert_floating_point_to_decimal_exponential_form satisfy
-    //       requirements of NOTE 2.
-    auto [sign, mantissa, exponent] = convert_floating_point_to_decimal_exponential_form(d);
+    // NB: guarantees provided by convert_to_decimal_exponential_form satisfy requirements of NOTE 2.
+    auto [sign, mantissa, exponent] = AK::convert_to_decimal_exponential_form(d);
     i32 k = 0;
     AK::Array<char, 20> mantissa_digits;
     convert_to_decimal_digits_array(mantissa, mantissa_digits, k);
@@ -207,21 +206,21 @@ static void number_to_string_impl(StringBuilder& builder, double d, NumberToStri
 String number_to_string(double d, NumberToStringMode mode)
 {
     StringBuilder builder;
-    number_to_string_impl(builder, d, mode);
+    number_to_string(builder, d, mode);
     return MUST(builder.to_string());
 }
 
 Utf16String number_to_utf16_string(double d, NumberToStringMode mode)
 {
     StringBuilder builder(StringBuilder::Mode::UTF16);
-    number_to_string_impl(builder, d, mode);
+    number_to_string(builder, d, mode);
     return builder.to_utf16_string();
 }
 
 ByteString number_to_byte_string(double d, NumberToStringMode mode)
 {
     StringBuilder builder;
-    number_to_string_impl(builder, d, mode);
+    number_to_string(builder, d, mode);
     return builder.to_byte_string();
 }
 
@@ -235,17 +234,16 @@ ThrowCompletionOr<bool> Value::is_array(VM& vm) const
     auto const& object = as_object();
 
     // 2. If argument is an Array exotic object, return true.
-    if (is<Array>(object))
+    if (::is<Array>(object))
         return true;
 
     // 3. If argument is a Proxy exotic object, then
     if (auto const* proxy = ::as_if<ProxyObject>(object)) {
-
         // a. Perform ? ValidateNonRevokedProxy(argument).
         TRY(proxy->validate_non_revoked_proxy());
 
         // b. Let proxyTarget be argument.[[ProxyTarget]].
-        auto& proxy_target = proxy->target();
+        auto const& proxy_target = proxy->target();
 
         // c. Return ? IsArray(proxyTarget).
         return Value(&proxy_target).is_array(vm);
@@ -257,8 +255,7 @@ ThrowCompletionOr<bool> Value::is_array(VM& vm) const
 
 Array& Value::as_array()
 {
-    ASSERT(is_object() && is<Array>(as_object()));
-    return static_cast<Array&>(as_object());
+    return *as_if<Array>();
 }
 
 // 7.2.3 IsCallable ( argument ), https://tc39.es/ecma262/#sec-iscallable
@@ -272,14 +269,12 @@ bool Value::is_function() const
 
 FunctionObject& Value::as_function()
 {
-    ASSERT(is_function());
-    return static_cast<FunctionObject&>(as_object());
+    return *as_if<FunctionObject>();
 }
 
 FunctionObject const& Value::as_function() const
 {
-    ASSERT(is_function());
-    return static_cast<FunctionObject const&>(as_object());
+    return *as_if<FunctionObject>();
 }
 
 // 7.2.4 IsConstructor ( argument ), https://tc39.es/ecma262/#sec-isconstructor
@@ -314,7 +309,7 @@ ThrowCompletionOr<bool> Value::is_regexp(VM& vm) const
 
     // 4. If argument has a [[RegExpMatcher]] internal slot, return true.
     // 5. Return false.
-    return is<RegExpObject>(as_object());
+    return ::is<RegExpObject>(as_object());
 }
 
 // 13.5.3 The typeof Operator, https://tc39.es/ecma262/#sec-typeof-operator
@@ -2185,12 +2180,10 @@ ThrowCompletionOr<Value> ordinary_has_instance(VM& vm, Value lhs, Value rhs)
     auto& rhs_function = rhs.as_function();
 
     // 2. If C has a [[BoundTargetFunction]] internal slot, then
-    if (is<BoundFunction>(rhs_function)) {
-        auto const& bound_target = static_cast<BoundFunction const&>(rhs_function);
-
+    if (auto const* bound_target = as_if<BoundFunction>(rhs_function)) {
         // a. Let BC be C.[[BoundTargetFunction]].
         // b. Return ? InstanceofOperator(O, BC).
-        return instance_of(vm, lhs, Value(&bound_target.bound_target_function()));
+        return instance_of(vm, lhs, Value(&bound_target->bound_target_function()));
     }
 
     // 3. If O is not an Object, return false.

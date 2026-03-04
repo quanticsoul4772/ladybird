@@ -85,9 +85,15 @@ void AudioMixingSink::create_playback_stream()
         return self->write_audio_data_to_playback_stream(buffer);
     };
     constexpr u32 target_latency_ms = 100;
-    m_playback_stream = MUST(Audio::PlaybackStream::create(Audio::OutputState::Suspended, target_latency_ms, move(sample_specification_callback), move(data_callback)));
 
-    set_volume(m_volume);
+    auto stream_or_error = Audio::PlaybackStream::create(Audio::OutputState::Suspended, target_latency_ms, move(sample_specification_callback), move(data_callback));
+
+    if (!stream_or_error.is_error()) {
+        m_playback_stream = stream_or_error.value();
+        set_volume(m_volume);
+    } else {
+        dbgln("Failed to create playback stream: {}", stream_or_error.error());
+    }
 }
 
 ReadonlySpan<float> AudioMixingSink::write_audio_data_to_playback_stream(Span<float> buffer)
@@ -200,6 +206,10 @@ void AudioMixingSink::resume()
 {
     m_playing = true;
 
+    // If we're in the middle of the set_time() callbacks, let those take care of resuming.
+    if (m_temporary_time.has_value())
+        return;
+
     if (!m_playback_stream)
         return;
     m_playback_stream->resume()
@@ -248,9 +258,17 @@ void AudioMixingSink::pause()
 
 void AudioMixingSink::set_time(AK::Duration time)
 {
+    // If we've already started setting the time, we only need to let the last callback complete
+    // and set the media time to the temporary time. The callbacks run synchronously, so this will
+    // never drop a set_time() call.
+    if (m_temporary_time.has_value()) {
+        m_temporary_time = time;
+        return;
+    }
+
     m_temporary_time = time;
     m_playback_stream->drain_buffer_and_suspend()
-        ->when_resolved([weak_self = m_weak_self, &playback_stream = *m_playback_stream, time]() {
+        ->when_resolved([weak_self = m_weak_self, &playback_stream = *m_playback_stream]() {
             auto self = weak_self->take_strong();
             if (!self)
                 return;
@@ -259,15 +277,14 @@ void AudioMixingSink::set_time(AK::Duration time)
 
             auto new_stream_time = self->m_playback_stream->total_time_played();
 
-            self->m_main_thread_event_loop.deferred_invoke([self, new_stream_time, time]() {
+            self->m_main_thread_event_loop.deferred_invoke([self, new_stream_time]() {
                 {
                     self->m_last_stream_time = new_stream_time;
-                    self->m_last_media_time = time;
-                    self->m_temporary_time = {};
+                    self->m_last_media_time = self->m_temporary_time.release_value();
 
                     {
                         Threading::MutexLocker mixing_locker { self->m_mutex };
-                        self->m_next_sample_to_write = time.to_time_units(1, self->m_sample_specification.sample_rate());
+                        self->m_next_sample_to_write = self->m_last_media_time.to_time_units(1, self->m_sample_specification.sample_rate());
                     }
 
                     for (auto& [track, track_data] : self->m_track_mixing_datas)

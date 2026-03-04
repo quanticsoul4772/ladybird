@@ -7,6 +7,7 @@
 
 #include <LibWeb/Bindings/HTMLHRElementPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
@@ -42,6 +43,7 @@ bool HTMLHRElement::is_presentational_hint(FlyString const& name) const
 
 void HTMLHRElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
 {
+    Base::apply_presentational_hints(cascaded_properties);
     for_each_attribute([&](auto& name, auto& value) {
         // https://html.spec.whatwg.org/multipage/rendering.html#the-hr-element-2
         if (name == HTML::AttributeNames::color || name == HTML::AttributeNames::noshade) {

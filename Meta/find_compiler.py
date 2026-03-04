@@ -25,7 +25,7 @@ XCODE_MINIMUM_VERSION = ("16.3", 17000013)
 COMPILER_VERSION_REGEX = re.compile(r"(\d+)(\.\d+)*")
 
 
-def major_compiler_version_if_supported(platform: Platform, compiler: str) -> Optional[int]:
+def major_compiler_version_if_supported(platform: Platform, compiler: str, clang_only: bool = False) -> Optional[int]:
     if not shutil.which(compiler):
         return None
 
@@ -65,10 +65,20 @@ def major_compiler_version_if_supported(platform: Platform, compiler: str) -> Op
             return apple_build_version
 
     elif version.find("clang") != -1:
+        # LLVM 21 on macOS interacts poorly with the system libc++. We encounter linker errors referring to a function
+        # that is present in LLVM's libc++, but not in the system libc++ (std::__1::__hash_memory). We would need to set
+        # both LDFLAGS and RPATH flags to link against and run with the LLVM libc++. Attempts to do so work for some
+        # vcpkg ports, but for some reason, skia does not pick up these flags. See:
+        #
+        # https://github.com/llvm/llvm-project/issues/77653
+        # https://github.com/llvm/llvm-project/issues/155531
+        if platform.host_system == HostSystem.macOS and major_version == 21:
+            return None
+
         if major_version >= CLANG_MINIMUM_VERSION:
             return major_version
 
-    else:
+    elif not clang_only:
         if major_version >= GCC_MINIMUM_VERSION:
             return major_version
 
@@ -91,7 +101,7 @@ def find_newest_compiler(platform: Platform, compilers: list[str]) -> Optional[s
     return best_compiler
 
 
-def pick_host_compiler(platform: Platform, cc: str, cxx: str) -> tuple[str, str]:
+def pick_host_compiler(platform: Platform, cc: str, cxx: str, clang_only: bool = False) -> tuple[str, str]:
     if platform.host_system == HostSystem.Windows and ("clang-cl" not in cc or "clang-cl" not in cxx):
         print(
             f"clang-cl {CLANG_MINIMUM_VERSION} or higher is required on Windows",
@@ -100,8 +110,11 @@ def pick_host_compiler(platform: Platform, cc: str, cxx: str) -> tuple[str, str]
 
         sys.exit(1)
 
+    cc_supported = major_compiler_version_if_supported(platform, cc, clang_only=clang_only)
+    cxx_supported = major_compiler_version_if_supported(platform, cxx, clang_only=clang_only)
+
     # FIXME: Validate that the cc/cxx combination is compatible (e.g. don't allow CC=gcc and CXX=clang++)
-    if major_compiler_version_if_supported(platform, cc) and major_compiler_version_if_supported(platform, cxx):
+    if cc_supported and cxx_supported:
         return (cc, cxx)
 
     if platform.host_system == HostSystem.Windows:
@@ -112,6 +125,7 @@ def pick_host_compiler(platform: Platform, cc: str, cxx: str) -> tuple[str, str]
             "clang",
             "clang-19",
             "clang-20",
+            "clang-21",
         ]
 
         gcc_candidates = [
@@ -142,9 +156,10 @@ def pick_host_compiler(platform: Platform, cc: str, cxx: str) -> tuple[str, str]
             return (clang, clang)
         return clang, clang.replace("clang", "clang++")
 
-    gcc = find_newest_compiler(platform, gcc_candidates)
-    if gcc:
-        return gcc, gcc.replace("gcc", "g++")
+    if not clang_only:
+        gcc = find_newest_compiler(platform, gcc_candidates)
+        if gcc:
+            return gcc, gcc.replace("gcc", "g++")
 
     if platform.host_system == HostSystem.macOS:
         print(
@@ -156,6 +171,11 @@ def pick_host_compiler(platform: Platform, cc: str, cxx: str) -> tuple[str, str]
             f"Please ensure that clang-cl {CLANG_MINIMUM_VERSION} or higher is installed",
             file=sys.stderr,
         )
+    elif clang_only:
+        print(
+            f"Please ensure that clang {CLANG_MINIMUM_VERSION} or higher is installed",
+            file=sys.stderr,
+        )
     else:
         print(
             f"Please ensure that clang {CLANG_MINIMUM_VERSION}, gcc {GCC_MINIMUM_VERSION}, or higher is installed",
@@ -163,34 +183,6 @@ def pick_host_compiler(platform: Platform, cc: str, cxx: str) -> tuple[str, str]
         )
 
     sys.exit(1)
-
-
-def pick_swift_compilers(platform: Platform, project_root: Path) -> tuple[Path, Path, Path]:
-    if platform.host_system == HostSystem.Windows:
-        print("Swift builds are not supported on Windows", file=sys.stderr)
-        sys.exit(1)
-
-    if not shutil.which("swiftly"):
-        print("swiftly is required to manage Swift toolchains", file=sys.stderr)
-        sys.exit(1)
-
-    swiftly_toolchain_path = run_command(["swiftly", "use", "--print-location"], return_output=True, cwd=project_root)
-    if not swiftly_toolchain_path:
-        run_command(["swiftly", "install"], exit_on_failure=True, cwd=project_root)
-
-        swiftly_toolchain_path = run_command(
-            ["swiftly", "use", "--print-location"], return_output=True, exit_on_failure=True, cwd=project_root
-        )
-        assert swiftly_toolchain_path
-
-    swiftly_toolchain_path = Path(swiftly_toolchain_path.strip())
-    swiftly_bin_dir = swiftly_toolchain_path.joinpath("usr", "bin")
-
-    if not swiftly_toolchain_path.exists() or not swiftly_bin_dir.exists():
-        print(f"swiftly toolchain path {swiftly_toolchain_path} does not exist", file=sys.stderr)
-        sys.exit(1)
-
-    return swiftly_bin_dir / "clang", swiftly_bin_dir / "clang++", swiftly_bin_dir / "swiftc"
 
 
 def main():
@@ -201,11 +193,12 @@ def main():
 
     parser.add_argument("--cc", required=False, default=default_cc)
     parser.add_argument("--cxx", required=False, default=default_cxx)
+    parser.add_argument("--clang-only", required=False, action="store_true")
 
     args = parser.parse_args()
 
     # The default action when this script is invoked is to provide the caller with content that may be evaluated by bash.
-    (cc, cxx) = pick_host_compiler(platform, args.cc, args.cxx)
+    (cc, cxx) = pick_host_compiler(platform, args.cc, args.cxx, args.clang_only)
     print(f'export CC="{cc}"')
     print(f'export CXX="{cxx}"')
 

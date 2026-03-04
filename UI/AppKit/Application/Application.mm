@@ -1,10 +1,11 @@
 /*
- * Copyright (c) 2023-2025, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2023-2026, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <Application/EventLoopImplementationMacOS.h>
+#include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/ThreadEventQueue.h>
 #include <Utilities/Conversions.h>
@@ -22,6 +23,17 @@
 namespace Ladybird {
 
 Application::Application() = default;
+
+void Application::create_platform_arguments(Core::ArgsParser& args_parser)
+{
+    args_parser.add_option(m_file_scheme_urls_have_tuple_origins, "Treat file:// URLs as having tuple origins", "tuple-file-origins");
+}
+
+void Application::create_platform_options(WebView::BrowserOptions&, WebView::RequestServerOptions&, WebView::WebContentOptions&)
+{
+    if (m_file_scheme_urls_have_tuple_origins)
+        URL::set_file_scheme_urls_have_tuple_origins();
+}
 
 NonnullOwnPtr<Core::EventLoop> Application::create_platform_event_loop()
 {
@@ -52,13 +64,11 @@ Optional<WebView::ViewImplementation&> Application::open_blank_new_tab(Web::HTML
     return [[tab web_view] view];
 }
 
-Optional<ByteString> Application::ask_user_for_download_folder() const
+Optional<ByteString> Application::ask_user_for_download_path(StringView file) const
 {
-    auto* panel = [NSOpenPanel openPanel];
-    [panel setAllowsMultipleSelection:NO];
-    [panel setCanChooseDirectories:YES];
-    [panel setCanChooseFiles:NO];
-    [panel setMessage:@"Select download directory"];
+    auto* panel = [NSSavePanel savePanel];
+    [panel setNameFieldStringValue:Ladybird::string_to_ns_string(file)];
+    [panel setTitle:@"Select save location"];
 
     if ([panel runModal] != NSModalResponseOK)
         return {};

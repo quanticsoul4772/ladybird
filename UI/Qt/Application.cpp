@@ -20,6 +20,7 @@
 #include <QFileOpenEvent>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QStandardPaths>
 
 #if defined(AK_OS_WINDOWS)
 #    include <AK/Windows.h>
@@ -97,9 +98,16 @@ public:
 Application::Application() = default;
 Application::~Application() = default;
 
+void Application::create_platform_arguments(Core::ArgsParser& args_parser)
+{
+    args_parser.add_option(m_file_scheme_urls_have_tuple_origins, "Treat file:// URLs as having tuple origins", "tuple-file-origins");
+}
+
 void Application::create_platform_options(WebView::BrowserOptions&, WebView::RequestServerOptions&, WebView::WebContentOptions& web_content_options)
 {
     web_content_options.config_path = Settings::the()->directory();
+    if (m_file_scheme_urls_have_tuple_origins)
+        URL::set_file_scheme_urls_have_tuple_origins();
 }
 
 NonnullOwnPtr<Core::EventLoop> Application::create_platform_event_loop()
@@ -147,9 +155,16 @@ Optional<WebView::ViewImplementation&> Application::open_blank_new_tab(Web::HTML
     return tab.view();
 }
 
-Optional<ByteString> Application::ask_user_for_download_folder() const
+Optional<ByteString> Application::ask_user_for_download_path(StringView file) const
 {
-    auto path = QFileDialog::getExistingDirectory(nullptr, "Select download directory", QDir::homePath());
+    auto default_path = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+
+    if (default_path.isNull() || default_path.isEmpty())
+        default_path = qstring_from_ak_string(file);
+    else
+        default_path = QDir { default_path }.filePath(qstring_from_ak_string(file));
+
+    auto path = QFileDialog::getSaveFileName(nullptr, "Select save location", default_path);
     if (path.isNull())
         return {};
 

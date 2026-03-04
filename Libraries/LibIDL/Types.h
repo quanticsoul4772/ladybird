@@ -14,9 +14,7 @@
 #include <AK/HashMap.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/SourceGenerator.h>
-#include <AK/StringBuilder.h>
 #include <AK/Tuple.h>
-#include <AK/TypeCasts.h>
 
 namespace IDL {
 
@@ -297,6 +295,10 @@ public:
     Optional<NonnullRefPtr<Type const>> set_entry_type;
     bool is_set_readonly { false };
 
+    Optional<NonnullRefPtr<Type const>> map_key_type;
+    Optional<NonnullRefPtr<Type const>> map_value_type;
+    bool is_map_readonly { false };
+
     Optional<Function> named_property_getter;
     Optional<Function> named_property_setter;
 
@@ -323,6 +325,7 @@ public:
 
     ByteString module_own_path;
     Vector<NonnullOwnPtr<Interface>> partial_interfaces;
+    Vector<NonnullOwnPtr<Interface>> partial_mixins;
     Vector<NonnullOwnPtr<Interface>> partial_namespaces;
     Vector<Interface&> imported_modules;
 

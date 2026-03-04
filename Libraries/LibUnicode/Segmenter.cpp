@@ -21,6 +21,8 @@ SegmenterGranularity segmenter_granularity_from_string(StringView segmenter_gran
 {
     if (segmenter_granularity == "grapheme"sv)
         return SegmenterGranularity::Grapheme;
+    if (segmenter_granularity == "line"sv)
+        return SegmenterGranularity::Line;
     if (segmenter_granularity == "sentence"sv)
         return SegmenterGranularity::Sentence;
     if (segmenter_granularity == "word"sv)
@@ -33,6 +35,8 @@ StringView segmenter_granularity_to_string(SegmenterGranularity segmenter_granul
     switch (segmenter_granularity) {
     case SegmenterGranularity::Grapheme:
         return "grapheme"sv;
+    case SegmenterGranularity::Line:
+        return "line"sv;
     case SegmenterGranularity::Sentence:
         return "sentence"sv;
     case SegmenterGranularity::Word:
@@ -151,10 +155,10 @@ public:
 
         UText utext = UTEXT_INITIALIZER;
         utext_openUTF8(&utext, view.characters_without_null_termination(), static_cast<i64>(view.length()), &status);
-        VERIFY(icu_success(status));
+        verify_icu_success(status);
 
         m_segmenter->setText(&utext, status);
-        VERIFY(icu_success(status));
+        verify_icu_success(status);
 
         utext_close(&utext);
     }
@@ -320,6 +324,8 @@ NonnullOwnPtr<Segmenter> Segmenter::create(StringView locale, SegmenterGranulari
         switch (segmenter_granularity) {
         case SegmenterGranularity::Grapheme:
             return icu::BreakIterator::createCharacterInstance(locale_data->locale(), status);
+        case SegmenterGranularity::Line:
+            return icu::BreakIterator::createLineInstance(locale_data->locale(), status);
         case SegmenterGranularity::Sentence:
             return icu::BreakIterator::createSentenceInstance(locale_data->locale(), status);
         case SegmenterGranularity::Word:
@@ -328,7 +334,7 @@ NonnullOwnPtr<Segmenter> Segmenter::create(StringView locale, SegmenterGranulari
         VERIFY_NOT_REACHED();
     }());
 
-    VERIFY(icu_success(status));
+    verify_icu_success(status);
 
     return make<SegmenterImpl>(segmenter.release_nonnull(), segmenter_granularity);
 }

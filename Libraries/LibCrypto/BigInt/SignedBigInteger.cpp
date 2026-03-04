@@ -9,7 +9,6 @@
 #include <math.h>
 #include <tommath.h>
 
-#include <AK/StringBuilder.h>
 #include <LibCrypto/BigInt/SignedBigInteger.h>
 #include <LibCrypto/BigInt/Tommath.h>
 
@@ -142,6 +141,11 @@ ErrorOr<String> SignedBigInteger::to_base(u16 N) const
     MP_MUST(mp_to_radix(&m_mp, reinterpret_cast<char*>(buffer.data()), size, &written, N));
 
     return StringView(buffer.bytes().slice(0, written - 1)).to_ascii_lowercase_string();
+}
+
+i64 SignedBigInteger::to_i64() const
+{
+    return mp_get_i64(&m_mp);
 }
 
 u64 SignedBigInteger::to_u64() const

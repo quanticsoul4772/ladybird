@@ -10,7 +10,6 @@
 #include <AK/ByteBuffer.h>
 #include <AK/ByteString.h>
 #include <AK/Noncopyable.h>
-#include <LibCore/Forward.h>
 #include <LibHTTP/HeaderList.h>
 #include <LibURL/URL.h>
 
@@ -37,9 +36,10 @@ public:
             return "Out of memory"sv;
         case ParseError::UnsupportedMethod:
             return "Unsupported method"sv;
-        default:
-            VERIFY_NOT_REACHED();
+        case ParseError::InvalidURL:
+            return "Invalid URL"sv;
         }
+        VERIFY_NOT_REACHED();
     }
 
     enum Method {

@@ -28,6 +28,7 @@ class WEB_API Body final : public JS::Cell {
 
 public:
     using SourceType = Variant<Empty, ByteBuffer, GC::Root<FileAPI::Blob>>;
+    using SourceTypeInternal = Variant<Empty, ByteBuffer, GC::Ref<FileAPI::Blob>>;
     // processBody must be an algorithm accepting a byte sequence.
     using ProcessBodyCallback = GC::Ref<GC::Function<void(ByteBuffer)>>;
     // processBodyError must be an algorithm optionally accepting an exception.
@@ -39,11 +40,26 @@ public:
 
     [[nodiscard]] static GC::Ref<Body> create(JS::VM&, GC::Ref<Streams::ReadableStream>);
     [[nodiscard]] static GC::Ref<Body> create(JS::VM&, GC::Ref<Streams::ReadableStream>, SourceType, Optional<u64>);
+    [[nodiscard]] static GC::Ref<Body> create(JS::VM&, GC::Ref<Streams::ReadableStream>, SourceTypeInternal, Optional<u64>);
 
     [[nodiscard]] GC::Ref<Streams::ReadableStream> stream() const { return *m_stream; }
     void set_stream(GC::Ref<Streams::ReadableStream> value) { m_stream = value; }
-    [[nodiscard]] SourceType const& source() const { return m_source; }
+    [[nodiscard]] SourceTypeInternal const& source() const { return m_source; }
     [[nodiscard]] Optional<u64> const& length() const { return m_length; }
+
+    // https://mimesniff.spec.whatwg.org/#reading-the-resource-header
+    // Non-standard infrastructure to obtain the "resource header" for MIME type sniffing.
+    // The spec defines resource header as the byte sequence to sniff, obtained by reading
+    // "until [...] 1445 or more bytes have been read" or end of resource is reached.
+    // For non-streaming bodies (ByteBuffer/Blob source), bytes are available immediately.
+    // For streaming bodies, bytes are captured during fetch and delivered via callback.
+    using SniffBytesCallback = GC::Ref<GC::Function<void(ReadonlyBytes)>>;
+    Optional<ReadonlyBytes> sniff_bytes_if_available() const;
+    void wait_for_sniff_bytes(SniffBytesCallback on_ready);
+
+    // Called by FetchedDataReceiver to provide sniff bytes during streaming fetch.
+    void append_sniff_bytes(ReadonlyBytes bytes);
+    void set_sniff_bytes_complete();
 
     [[nodiscard]] GC::Ref<Body> clone(JS::Realm&);
 
@@ -55,7 +71,7 @@ public:
 
 private:
     explicit Body(GC::Ref<Streams::ReadableStream>);
-    Body(GC::Ref<Streams::ReadableStream>, SourceType, Optional<u64>);
+    Body(GC::Ref<Streams::ReadableStream>, SourceTypeInternal, Optional<u64>);
 
     // https://fetch.spec.whatwg.org/#concept-body-stream
     // A stream (a ReadableStream object).
@@ -63,11 +79,17 @@ private:
 
     // https://fetch.spec.whatwg.org/#concept-body-source
     // A source (null, a byte sequence, a Blob object, or a FormData object), initially null.
-    SourceType m_source;
+    SourceTypeInternal m_source;
 
     // https://fetch.spec.whatwg.org/#concept-body-total-bytes
     // A length (null or an integer), initially null.
     Optional<u64> m_length;
+
+    // https://mimesniff.spec.whatwg.org/#reading-the-resource-header
+    // Non-standard: Captured "resource header" bytes for MIME type sniffing.
+    ByteBuffer m_sniff_bytes;
+    bool m_sniff_bytes_complete { false };
+    GC::Ptr<GC::Function<void(ReadonlyBytes)>> m_sniff_bytes_callback;
 };
 
 // https://fetch.spec.whatwg.org/#body-with-type

@@ -26,7 +26,7 @@ public:
 
     [[nodiscard]] bool is_open() const;
     ErrorOr<void> post_message(Message const&);
-    ErrorOr<void> post_message(MessageBuffer);
+    ErrorOr<void> post_message(MessageBuffer&);
 
     void shutdown();
     virtual void die() { }
@@ -101,6 +101,10 @@ protected:
         auto peer_message = PeerEndpoint::decode_message(bytes, fds);
         if (!peer_message.is_error())
             return peer_message.release_value();
+
+        dbgln("Failed to parse IPC message:");
+        dbgln("  Local endpoint error: {}", local_message.error());
+        dbgln("  Peer endpoint error: {}", peer_message.error());
 
         return nullptr;
     }

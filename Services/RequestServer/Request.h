@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2025-2026, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,7 +13,9 @@
 #include <AK/Time.h>
 #include <LibCore/Proxy.h>
 #include <LibDNS/Resolver.h>
+#include <LibHTTP/Cache/CacheMode.h>
 #include <LibHTTP/Cache/CacheRequest.h>
+#include <LibHTTP/Cookie/IncludeCredentials.h>
 #include <LibHTTP/HeaderList.h>
 #include <LibIPC/NetworkIdentity.h>
 #include <LibRequests/NetworkError.h>
@@ -33,6 +35,7 @@ public:
     static NonnullOwnPtr<Request> fetch(
         u64 request_id,
         Optional<HTTP::DiskCache&> disk_cache,
+        HTTP::CacheMode cache_mode,
         ConnectionFromClient& client,
         void* curl_multi,
         Resolver& resolver,
@@ -40,6 +43,7 @@ public:
         ByteString method,
         NonnullRefPtr<HTTP::HeaderList> request_headers,
         ByteBuffer request_body,
+        HTTP::Cookie::IncludeCredentials include_credentials,
         ByteString alt_svc_cache_path,
         Core::ProxyData proxy_data,
         RefPtr<IPC::NetworkIdentity> network_identity = nullptr);
@@ -62,6 +66,7 @@ public:
         ByteString method,
         NonnullRefPtr<HTTP::HeaderList> request_headers,
         ByteBuffer request_body,
+        HTTP::Cookie::IncludeCredentials include_credentials,
         ByteString alt_svc_cache_path,
         Core::ProxyData proxy_data);
 
@@ -75,8 +80,10 @@ public:
 
     u64 request_id() const { return m_request_id; }
     Type type() const { return m_type; }
+    URL::URL const& url() const { return m_url; }
 
     virtual void notify_request_unblocked(Badge<HTTP::DiskCache>) override;
+    void notify_retrieved_http_cookie(Badge<ConnectionFromClient>, StringView cookie);
     void notify_fetch_complete(Badge<ConnectionFromClient>, int result_code);
 
     // Sentinel integration
@@ -114,7 +121,10 @@ private:
         Init,              // Decide whether to service this request from cache or the network.
         ReadCache,         // Read the cached response from disk.
         WaitForCache,      // Wait for an existing cache entry to complete before proceeding.
+        FailedCacheOnly,   // An only-if-cached request failed to find a cache entry.
+        ServeSubstitution, // Serve content from a local file substitution.
         DNSLookup,         // Resolve the URL's host.
+        RetrieveCookie,    // Retrieve cookies from the UI process.
         Connect,           // Issue a network request to connect to the URL.
         Fetch,             // Issue a network request to fetch the URL.
         WaitingForPolicy,  // Download paused, waiting for user security decision.
@@ -133,8 +143,14 @@ private:
             return "ReadCache"sv;
         case State::WaitForCache:
             return "WaitForCache"sv;
+        case State::FailedCacheOnly:
+            return "FailedCacheOnly"sv;
+        case State::ServeSubstitution:
+            return "ServeSubstitution"sv;
         case State::DNSLookup:
             return "DNSLookup"sv;
+        case State::RetrieveCookie:
+            return "RetrieveCookie"sv;
         case State::Connect:
             return "Connect"sv;
         case State::Fetch:
@@ -157,6 +173,7 @@ private:
         u64 request_id,
         Type type,
         Optional<HTTP::DiskCache&> disk_cache,
+        HTTP::CacheMode cache_mode,
         ConnectionFromClient& client,
         void* curl_multi,
         Resolver& resolver,
@@ -164,6 +181,7 @@ private:
         ByteString method,
         NonnullRefPtr<HTTP::HeaderList> request_headers,
         ByteBuffer request_body,
+        HTTP::Cookie::IncludeCredentials include_credentials,
         ByteString alt_svc_cache_path,
         Core::ProxyData proxy_data);
 
@@ -179,7 +197,10 @@ private:
 
     void handle_initial_state();
     void handle_read_cache_state();
+    void handle_failed_cache_only_state();
+    void handle_serve_substitution_state();
     void handle_dns_lookup_state();
+    void handle_retrieve_cookie_state();
     void handle_connect_state();
     void handle_fetch_state();
     void handle_waiting_for_policy_state();
@@ -196,6 +217,8 @@ private:
     virtual bool is_revalidation_request() const override;
     ErrorOr<void> revalidation_failed();
 
+    bool is_cache_only_request() const;
+
     u32 acquire_status_code() const;
     Requests::RequestTimingInfo acquire_timing_info() const;
 
@@ -204,6 +227,7 @@ private:
     State m_state { State::Init };
 
     Optional<HTTP::DiskCache&> m_disk_cache;
+    HTTP::CacheMode m_cache_mode { HTTP::CacheMode::Default };
     ConnectionFromClient& m_client;
 
     void* m_curl_multi_handle { nullptr };
@@ -221,11 +245,13 @@ private:
     NonnullRefPtr<HTTP::HeaderList> m_request_headers;
     ByteBuffer m_request_body;
 
+    HTTP::Cookie::IncludeCredentials m_include_credentials { HTTP::Cookie::IncludeCredentials::Yes };
+
     ByteString m_alt_svc_cache_path;
     Core::ProxyData m_proxy_data;
     RefPtr<IPC::NetworkIdentity> m_network_identity;
 
-    u32 m_status_code { 0 };
+    Optional<u32> m_status_code;
     Optional<String> m_reason_phrase;
 
     NonnullRefPtr<HTTP::HeaderList> m_response_headers;

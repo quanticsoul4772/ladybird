@@ -148,6 +148,17 @@ private:
     NonnullRefPtr<WeakImpl> m_impl { WeakImpl::the_null_weak_impl };
 };
 
+// NOTE: Unlike GC::Function, captures in this callback are not visited by the garbage collector.
+//       Do not capture GC-managed objects without ensuring they are kept alive through other means.
+template<typename T, typename Callback>
+auto weak_callback(T& obj, Callback&& callback)
+{
+    return [weak = Weak<T> { obj }, cb = forward<Callback>(callback)](auto&&... args) mutable {
+        if (weak)
+            cb(*weak, forward<decltype(args)>(args)...);
+    };
+}
+
 template<typename T, typename U>
 inline bool operator==(Weak<T> const& a, Ptr<U> const& b)
 {
@@ -163,14 +174,6 @@ inline bool operator==(Weak<T> const& a, Ref<U> const& b)
 }
 
 namespace AK {
-
-template<typename T>
-struct Traits<GC::Weak<T>> : public DefaultTraits<GC::Weak<T>> {
-    static unsigned hash(GC::Weak<T> const& value)
-    {
-        return Traits<T*>::hash(value.ptr());
-    }
-};
 
 template<typename T>
 struct Formatter<GC::Weak<T>> : Formatter<T const*> {

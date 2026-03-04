@@ -24,6 +24,7 @@ enum class TestMode {
     Layout,
     Text,
     Ref,
+    Screenshot,
     Crash,
 };
 
@@ -33,6 +34,7 @@ enum class TestResult {
     Skipped,
     Timeout,
     Crashed,
+    Expanded,
 };
 
 enum class RefTestExpectationType {
@@ -46,14 +48,19 @@ struct Test {
     ByteString input_path {};
     ByteString expectation_path {};
     ByteString relative_path {};
+    ByteString safe_relative_path {};
+    Optional<String> variant {};
 
     UnixDateTime start_time {};
     UnixDateTime end_time {};
     size_t index { 0 };
+    size_t run_index { 1 };
+    size_t total_runs { 1 };
 
     String text {};
     bool did_finish_test { false };
     bool did_finish_loading { false };
+    bool did_check_variants { false };
 
     Optional<RefTestExpectationType> ref_test_expectation_type {};
     Vector<FuzzyMatch> fuzzy_matches {};
@@ -61,14 +68,21 @@ struct Test {
     RefPtr<Gfx::Bitmap const> actual_screenshot {};
     RefPtr<Gfx::Bitmap const> expectation_screenshot {};
 
+    u64 diff_pixel_error_count { 0 };
+    u8 diff_maximum_error { 0 };
+
     RefPtr<Core::Timer> timeout_timer {};
 };
 
 struct TestCompletion {
-    Test& test;
+    size_t test_index;
     TestResult result;
 };
 
 using TestPromise = Core::Promise<TestCompletion>;
+
+// Deferred warning system - buffers warnings during live display mode
+void add_deferred_warning(ByteString message);
+void print_deferred_warnings();
 
 }

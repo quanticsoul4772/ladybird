@@ -52,10 +52,17 @@ else
     ((FAILURES+=1))
 fi
 
-if Meta/lint-swift.sh "$@" && git diff --exit-code -- ':*.swift'; then
-    echo -e "[${GREEN}OK${NC}]: Meta/lint-swift.sh"
+if cargo fmt --check && git diff --exit-code -- ':*.rs'; then
+    echo -e "[${GREEN}OK${NC}]: cargo fmt --check"
 else
-    echo -e "[${BOLD_RED}FAIL${NC}]: Meta/lint-swift.sh"
+    echo -e "[${BOLD_RED}FAIL${NC}]: cargo fmt --check"
+    ((FAILURES+=1))
+fi
+
+if cargo clippy -- -D clippy::all && git diff --exit-code -- ':*.rs'; then
+    echo -e "[${GREEN}OK${NC}]: cargo clippy -- -D clippy::all"
+else
+    echo -e "[${BOLD_RED}FAIL${NC}]: cargo clippy -- -D clippy::all"
     ((FAILURES+=1))
 fi
 

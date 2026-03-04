@@ -46,7 +46,8 @@ static ErrorOr<NonnullRefPtr<ClientType>> launch_server_process(
             options.executable = path;
         }
 
-        auto result = WebView::Process::spawn<ClientType>(process_type, move(options), forward<ClientArguments>(client_arguments)...);
+        bool capture_output = WebView::Application::the().should_capture_web_content_output();
+        auto result = WebView::Process::spawn<ClientType>(process_type, move(options), capture_output, forward<ClientArguments>(client_arguments)...);
 
         if (!result.is_error()) {
             auto&& [process, client] = result.release_value();
@@ -103,8 +104,8 @@ static ErrorOr<NonnullRefPtr<WebView::WebContentClient>> launch_web_content_proc
         arguments.append("--config-path"sv);
         arguments.append(web_content_options.config_path.value());
     }
-    if (web_content_options.is_layout_test_mode == WebView::IsLayoutTestMode::Yes)
-        arguments.append("--layout-test-mode"sv);
+    if (web_content_options.is_test_mode == WebView::IsTestMode::Yes)
+        arguments.append("--test-mode"sv);
     if (web_content_options.log_all_js_exceptions == WebView::LogAllJSExceptions::Yes)
         arguments.append("--log-all-js-exceptions"sv);
     if (web_content_options.disable_site_isolation == WebView::DisableSiteIsolation::Yes)
@@ -113,6 +114,8 @@ static ErrorOr<NonnullRefPtr<WebView::WebContentClient>> launch_web_content_proc
         arguments.append("--enable-idl-tracing"sv);
     if (web_content_options.enable_http_memory_cache == WebView::EnableMemoryHTTPCache::Yes)
         arguments.append("--enable-http-memory-cache"sv);
+    if (web_content_options.expose_experimental_interfaces == WebView::ExposeExperimentalInterfaces::Yes)
+        arguments.append("--expose-experimental-interfaces"sv);
     if (web_content_options.expose_internals_object == WebView::ExposeInternalsObject::Yes)
         arguments.append("--expose-internals-object"sv);
     if (web_content_options.force_cpu_painting == WebView::ForceCPUPainting::Yes)
@@ -123,6 +126,10 @@ static ErrorOr<NonnullRefPtr<WebView::WebContentClient>> launch_web_content_proc
         arguments.append("--collect-garbage-on-every-allocation"sv);
     if (web_content_options.paint_viewport_scrollbars == PaintViewportScrollbars::No)
         arguments.append("--disable-scrollbar-painting"sv);
+
+    // Propogate this process-wide setting to the child process also.
+    if (URL::file_scheme_urls_have_tuple_origins())
+        arguments.append("--tuple-file-origins"sv);
 
     if (auto const maybe_echo_server_port = web_content_options.echo_server_port; maybe_echo_server_port.has_value()) {
         arguments.append("--echo-server-port"sv);
@@ -177,7 +184,14 @@ ErrorOr<NonnullRefPtr<ImageDecoderClient::Client>> launch_image_decoder_process(
 
 ErrorOr<NonnullRefPtr<Web::HTML::WebWorkerClient>> launch_web_worker_process(Web::Bindings::AgentType type)
 {
+    auto const& web_content_options = WebView::Application::web_content_options();
+
     Vector<ByteString> arguments;
+
+    if (web_content_options.expose_experimental_interfaces == WebView::ExposeExperimentalInterfaces::Yes)
+        arguments.append("--expose-experimental-interfaces"sv);
+    if (web_content_options.enable_http_memory_cache == WebView::EnableMemoryHTTPCache::Yes)
+        arguments.append("--enable-http-memory-cache"sv);
 
     auto request_server_socket = TRY(connect_new_request_server_client());
     arguments.append("--request-server-socket"sv);
@@ -202,6 +216,10 @@ ErrorOr<NonnullRefPtr<Web::HTML::WebWorkerClient>> launch_web_worker_process(Web
         VERIFY_NOT_REACHED();
     }
 
+    // Propogate this process-wide setting to the child process also.
+    if (URL::file_scheme_urls_have_tuple_origins())
+        arguments.append("--tuple-file-origins"sv);
+
     return launch_server_process<Web::HTML::WebWorkerClient>("WebWorker"sv, move(arguments));
 }
 
@@ -223,6 +241,9 @@ ErrorOr<NonnullRefPtr<Requests::RequestClient>> launch_request_server_process()
     case HTTPDiskCacheMode::Enabled:
         arguments.append("enabled"sv);
         break;
+    case HTTPDiskCacheMode::Partitioned:
+        arguments.append("partitioned"sv);
+        break;
     case HTTPDiskCacheMode::Testing:
         arguments.append("testing"sv);
         break;
@@ -233,15 +254,21 @@ ErrorOr<NonnullRefPtr<Requests::RequestClient>> launch_request_server_process()
         arguments.append(server.value());
     }
 
+    if (request_server_options.resource_substitution_map_path.has_value())
+        arguments.append(ByteString::formatted("--resource-map={}", *request_server_options.resource_substitution_map_path));
+
     auto client = TRY(launch_server_process<Requests::RequestClient>("RequestServer"sv, move(arguments)));
 
-    WebView::Application::settings().dns_settings().visit(
-        [](WebView::SystemDNS) {},
-        [&](WebView::DNSOverTLS const& dns_over_tls) {
+    auto const& browsing_data_settings = Application::settings().browsing_data_settings();
+    client->async_set_disk_cache_settings(browsing_data_settings.disk_cache_settings);
+
+    Application::settings().dns_settings().visit(
+        [](SystemDNS) {},
+        [&](DNSOverTLS const& dns_over_tls) {
             dbgln("Setting DNS server to {}:{} with TLS ({} local dnssec)", dns_over_tls.server_address, dns_over_tls.port, dns_over_tls.validate_dnssec_locally ? "with" : "without");
             client->async_set_dns_server(dns_over_tls.server_address, dns_over_tls.port, true, dns_over_tls.validate_dnssec_locally);
         },
-        [&](WebView::DNSOverUDP const& dns_over_udp) {
+        [&](DNSOverUDP const& dns_over_udp) {
             dbgln("Setting DNS server to {}:{} ({} local dnssec)", dns_over_udp.server_address, dns_over_udp.port, dns_over_udp.validate_dnssec_locally ? "with" : "without");
             client->async_set_dns_server(dns_over_udp.server_address, dns_over_udp.port, false, dns_over_udp.validate_dnssec_locally);
         });

@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2022, Andreas Kling <andreas@ladybird.org>
  * Copyright (c) 2023, Luke Wilde <lukew@serenityos.org>
- * Copyright (c) 2024-2025, Shannon Booth <shannon@serenityos.org>
+ * Copyright (c) 2024-2026, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -10,6 +10,7 @@
 #include <LibGC/RootVector.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/StoragePrototype.h>
+#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/Storage.h>
 #include <LibWeb/HTML/StorageEvent.h>
@@ -38,12 +39,12 @@ Storage::Storage(JS::Realm& realm, Type type, GC::Ref<StorageAPI::StorageBottle>
     , m_storage_bottle(move(storage_bottle))
 {
     m_legacy_platform_object_flags = LegacyPlatformObjectFlags {
-        .supports_indexed_properties = true,
+        .supports_indexed_properties = false,
         .supports_named_properties = true,
-        .has_indexed_property_setter = true,
+        .has_indexed_property_setter = false,
         .has_named_property_setter = true,
         .has_named_property_deleter = true,
-        .indexed_property_setter_has_identifier = true,
+        .indexed_property_setter_has_identifier = false,
         .named_property_setter_has_identifier = true,
         .named_property_deleter_has_identifier = true,
     };
@@ -61,6 +62,7 @@ void Storage::initialize(JS::Realm& realm)
 
 void Storage::finalize()
 {
+    Base::finalize();
     all_storages().remove(*this);
 }
 
@@ -103,17 +105,33 @@ Optional<String> Storage::get_item(String const& key) const
 WebIDL::ExceptionOr<void> Storage::set_item(String const& key, String const& value)
 {
     // 1. Let oldValue be null.
-    Optional<String> old_value;
-
     // 2. Let reorder be true.
-    // 3. If this's map[key] exists:
+    bool reorder = true;
 
+    // 3. If this's map[key] exists:
+    //     1. Set oldValue to this's map[key].
+    //     2. If oldValue is value, then return.
+    //     3. Set reorder to false.
     // 4. If value cannot be stored, then throw a "QuotaExceededError" DOMException.
     // 5. Set this's map[key] to value.
-    auto error = m_storage_bottle->set(key, value);
-    if (error == WebView::StorageOperationError::QuotaExceededError) {
+
+    auto result = m_storage_bottle->set(key, value);
+
+    if (result.has<WebView::StorageOperationError>())
         return WebIDL::QuotaExceededError::create(realm(), Utf16String::formatted("Unable to store more than {} bytes in storage", *m_storage_bottle->quota()));
+
+    auto old_value = result.get<Optional<String>>();
+
+    if (old_value.has_value()) {
+        if (old_value.value() == value)
+            return {};
+
+        reorder = false;
     }
+
+    // 6. If reorder is true, then reorder this.
+    if (reorder)
+        this->reorder();
 
     // 7. Broadcast this with key, oldValue, and value.
     broadcast(key, old_value, value);
@@ -143,10 +161,14 @@ void Storage::remove_item(String const& key)
 // https://html.spec.whatwg.org/multipage/webstorage.html#dom-storage-clear
 void Storage::clear()
 {
-    // 1. Clear this's map.
+    // 1. If this's map is empty, then return.
+    if (m_storage_bottle->size() == 0)
+        return;
+
+    // 2. Clear this's map.
     m_storage_bottle->clear();
 
-    // 2. Broadcast this with null, null, and null.
+    // 3. Broadcast this with null, null, and null.
     broadcast({}, {}, {});
 }
 
@@ -188,10 +210,15 @@ void Storage::broadcast(Optional<String> const& key, Optional<String> const& old
         if (type() == Type::Session) {
             auto& storage_document = *relevant_settings_object(storage).responsible_document();
 
-            // NOTE: It is possible the remote storage may have not been fully teared down immediately at the point it's document is made inactive.
+            // NB: It is possible the remote storage may have not been fully teared down immediately at the point it's
+            //     document is made inactive.
             if (!storage_document.navigable())
                 continue;
-            VERIFY(this_document.navigable());
+
+            // NB: It is possible for this storage's document to have lost its navigable if script holds a reference to
+            //     the Storage object after its browsing context has navigated to a new document.
+            if (!this_document.navigable())
+                continue;
 
             if (storage_document.navigable()->traversable_navigable() != this_document.navigable()->traversable_navigable())
                 continue;
@@ -228,16 +255,6 @@ Vector<FlyString> Storage::supported_property_names() const
     return names;
 }
 
-Optional<JS::Value> Storage::item_value(size_t index) const
-{
-    // Handle index as a string since that's our key type
-    auto key = String::number(index);
-    auto value = get_item(key);
-    if (!value.has_value())
-        return {};
-    return JS::PrimitiveString::create(vm(), value.release_value());
-}
-
 JS::Value Storage::named_item_value(FlyString const& name) const
 {
     auto value = get_item(String(name));
@@ -252,13 +269,6 @@ WebIDL::ExceptionOr<Bindings::PlatformObject::DidDeletionFail> Storage::delete_v
 {
     remove_item(name);
     return DidDeletionFail::NotRelevant;
-}
-
-WebIDL::ExceptionOr<void> Storage::set_value_of_indexed_property(u32 index, JS::Value unconverted_value)
-{
-    // Handle index as a string since that's our key type
-    auto key = String::number(index);
-    return set_value_of_named_property(key, unconverted_value);
 }
 
 WebIDL::ExceptionOr<void> Storage::set_value_of_named_property(String const& key, JS::Value unconverted_value)

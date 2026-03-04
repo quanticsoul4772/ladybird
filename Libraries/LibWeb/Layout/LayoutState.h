@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/HashMap.h>
+#include <AK/HashTable.h>
 #include <LibGfx/Path.h>
 #include <LibGfx/Point.h>
 #include <LibWeb/Layout/Box.h>
@@ -54,6 +54,71 @@ struct StaticPositionRect {
     }
 };
 
+// Sparse, index-based container using two-level page tables.
+// Layout state is throwaway — rebuilt on every layout pass — so a
+// flat vector pre-allocated for the entire tree wastes memory, while
+// a hash map pays hashing overhead on every access. Page tables give
+// O(1) lookup without hashing, allocating pages only on first write.
+template<typename T>
+class PagedStore {
+    static constexpr u32 PageBits = 4;
+    static constexpr u32 PageSize = 1u << PageBits;
+    static constexpr u32 PageMask = PageSize - 1;
+
+    struct Page {
+        Optional<T> entries[PageSize] {};
+    };
+
+public:
+    void ensure_capacity(u32 count)
+    {
+        m_pages.resize((count + PageSize - 1) >> PageBits);
+    }
+
+    T* get(u32 index) const
+    {
+        auto page_index = index >> PageBits;
+        if (page_index >= m_pages.size())
+            return nullptr;
+        auto const& page = m_pages[page_index];
+        if (!page)
+            return nullptr;
+        auto& entry = page->entries[index & PageMask];
+        if (!entry.has_value())
+            return nullptr;
+        return &entry.value();
+    }
+
+    T& allocate(u32 index)
+    {
+        auto page_index = index >> PageBits;
+        if (page_index >= m_pages.size())
+            m_pages.resize(page_index + 1);
+        auto& page = m_pages[page_index];
+        if (!page)
+            page = make<Page>();
+        auto& entry = page->entries[index & PageMask];
+        entry = T {};
+        return entry.value();
+    }
+
+    template<typename Callback>
+    void for_each(Callback callback)
+    {
+        for (auto const& page : m_pages) {
+            if (!page)
+                continue;
+            for (auto& entry : page->entries) {
+                if (entry.has_value())
+                    callback(entry.value());
+            }
+        }
+    }
+
+private:
+    Vector<OwnPtr<Page>> m_pages;
+};
+
 struct LayoutState {
     struct UsedValues {
         NodeWithStyle const& node() const { return *m_node; }
@@ -83,9 +148,23 @@ struct LayoutState {
         // the constraint is used in that axis instead.
         AvailableSpace available_inner_space_or_constraints_from(AvailableSpace const& outer_space) const;
 
+        void materialize_from_paintable(Painting::PaintableBox const&);
+
         void set_content_offset(CSSPixelPoint new_offset) { offset = new_offset; }
         void set_content_x(CSSPixels x) { offset.set_x(x); }
         void set_content_y(CSSPixels y) { offset.set_y(y); }
+
+        // Offset from ICB (viewport) content edge to this box's content edge.
+        // Computed lazily by walking the containing block chain.
+        // For pre-populated nodes (partial relayout), returns the cached value from paintable absolute position.
+        CSSPixelPoint cumulative_offset() const
+        {
+            if (m_cumulative_offset.has_value())
+                return *m_cumulative_offset;
+            if (m_containing_block_used_values)
+                return m_containing_block_used_values->cumulative_offset() + offset;
+            return offset;
+        }
 
         // offset from top-left corner of content area of box's containing block to top-left corner of box's content area
         CSSPixelPoint offset;
@@ -163,6 +242,8 @@ struct LayoutState {
         }
 
     private:
+        friend struct LayoutState;
+
         AvailableSize available_width_inside() const;
         AvailableSize available_height_inside() const;
 
@@ -175,6 +256,7 @@ struct LayoutState {
 
         GC::Ptr<Layout::NodeWithStyle const> m_node { nullptr };
         UsedValues const* m_containing_block_used_values { nullptr };
+        Optional<CSSPixelPoint> m_cumulative_offset;
 
         CSSPixels m_content_width { 0 };
         CSSPixels m_content_height { 0 };
@@ -196,18 +278,31 @@ struct LayoutState {
         Optional<StaticPositionRect> m_static_position_rect;
     };
 
+    LayoutState() = default;
+    explicit LayoutState(NodeWithStyle const& subtree_root);
     ~LayoutState();
 
     // Commits the used values produced by layout and builds a paintable tree.
     void commit(Box& root);
 
+    void ensure_capacity(u32 node_count);
+
     UsedValues& get_mutable(NodeWithStyle const&);
     UsedValues const& get(NodeWithStyle const&) const;
 
-    OrderedHashMap<GC::Ref<Layout::Node const>, NonnullOwnPtr<UsedValues>> used_values_per_layout_node;
+    UsedValues& populate_from_paintable(NodeWithStyle const&, Painting::PaintableBox const&);
+    UsedValues& populate_node_from(LayoutState const& source, NodeWithStyle const& node);
+
+    UsedValues const* try_get(NodeWithStyle const&) const;
+    UsedValues* try_get_mutable(NodeWithStyle const&);
+    UsedValues const* try_get(Node const&) const;
 
 private:
+    UsedValues& ensure_used_values_for(NodeWithStyle const&);
     void resolve_relative_positions();
+
+    PagedStore<UsedValues> m_used_values_store;
+    GC::Ptr<Layout::NodeWithStyle const> m_subtree_root;
 };
 
 inline CSSPixels clamp_to_max_dimension_value(CSSPixels value)

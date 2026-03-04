@@ -27,6 +27,7 @@ set(AK_TEST_SOURCES
     TestFind.cpp
     TestFixedArray.cpp
     TestFixedPoint.cpp
+    TestFunction.cpp
     TestFlyString.cpp
     TestFormat.cpp
     TestGenericLexer.cpp
@@ -55,6 +56,7 @@ set(AK_TEST_SOURCES
     TestOwnPtr.cpp
     TestQueue.cpp
     TestQuickSort.cpp
+    TestRandom.cpp
     TestRedBlackTree.cpp
     TestRefPtr.cpp
     TestSegmentedVector.cpp
@@ -66,7 +68,6 @@ set(AK_TEST_SOURCES
     TestStdLibExtras.cpp
     TestString.cpp
     TestStringConversions.cpp
-    TestStringFloatingPointConversions.cpp
     TestStringUtils.cpp
     TestStringView.cpp
     TestTime.cpp
@@ -102,23 +103,14 @@ if (WIN32)
 endif()
 
 if (CXX_COMPILER_SUPPORTS_BLOCKS)
-    ladybird_test(TestFunction.mm AK NAME TestFunction)
-    target_link_libraries(TestFunction PRIVATE ${BLOCKS_REQUIRED_LIBRARIES})
+    ladybird_test(TestFunctionObjC.mm AK NAME TestFunctionObjC)
+    target_link_libraries(TestFunctionObjC PRIVATE ${BLOCKS_REQUIRED_LIBRARIES})
 endif()
 if (CXX_COMPILER_SUPPORTS_OBJC_ARC)
-    ladybird_test(TestFunction.mm AK NAME TestFunctionArc)
-    target_compile_options(TestFunctionArc PRIVATE -fobjc-arc)
-    target_link_libraries(TestFunction PRIVATE ${BLOCKS_REQUIRED_LIBRARIES})
+    ladybird_test(TestFunctionObjC.mm AK NAME TestFunctionObjCArc)
+    target_compile_options(TestFunctionObjCArc PRIVATE -fobjc-arc)
+    target_link_libraries(TestFunctionObjCArc PRIVATE ${BLOCKS_REQUIRED_LIBRARIES})
 endif()
 
 target_link_libraries(TestString PRIVATE LibUnicode)
 target_link_libraries(TestUtf16String PRIVATE LibUnicode)
-
-if (ENABLE_SWIFT)
-
-    # FIXME: Convert to use swift-testing after resolving https://github.com/LadybirdBrowser/ladybird/issues/1201
-    add_executable(TestAKBindings TestAKBindings.swift)
-    target_link_libraries(TestAKBindings PRIVATE AK)
-    target_compile_options(TestAKBindings PRIVATE -parse-as-library)
-    add_test(NAME TestAKBindings COMMAND TestAKBindings)
-endif()

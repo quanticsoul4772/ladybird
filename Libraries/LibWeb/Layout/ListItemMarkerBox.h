@@ -17,6 +17,8 @@ class ListItemMarkerBox final : public Box {
     GC_DECLARE_ALLOCATOR(ListItemMarkerBox);
 
 public:
+    static bool counter_style_is_rendered_with_custom_image(RefPtr<CSS::CounterStyle const> const& counter_style);
+
     explicit ListItemMarkerBox(DOM::Document&, CSS::ListStyleType, CSS::ListStylePosition, GC::Ref<DOM::Element>, GC::Ref<CSS::ComputedProperties>);
     virtual ~ListItemMarkerBox() override;
 
@@ -35,7 +37,7 @@ private:
     virtual bool is_list_item_marker_box() const final { return true; }
     virtual bool can_have_children() const override { return false; }
 
-    CSS::ListStyleType m_list_style_type { CSS::CounterStyleNameKeyword::None };
+    CSS::ListStyleType m_list_style_type;
     CSS::ListStylePosition m_list_style_position { CSS::ListStylePosition::Outside };
     GC::Ref<DOM::Element> m_list_item_element;
 };

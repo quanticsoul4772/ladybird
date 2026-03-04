@@ -15,6 +15,7 @@
 #include <AK/Debug.h>
 #include <LibGfx/ImmutableBitmap.h>
 #include <LibURL/Parser.h>
+#include <LibWeb/CSS/CSSFontFeatureValuesRule.h>
 #include <LibWeb/CSS/CSSMarginRule.h>
 #include <LibWeb/CSS/CSSStyleDeclaration.h>
 #include <LibWeb/CSS/CSSStyleProperties.h>
@@ -49,6 +50,12 @@ ParsingParams::ParsingParams(JS::Realm& realm, ParsingMode mode)
 {
 }
 
+ParsingParams::ParsingParams(JS::Realm& realm, IsUAStyleSheet is_ua_style_sheet)
+    : realm(realm)
+    , is_ua_style_sheet(is_ua_style_sheet)
+{
+}
+
 ParsingParams::ParsingParams(DOM::Document const& document, ParsingMode mode)
     : realm(const_cast<JS::Realm&>(document.realm()))
     , document(&document)
@@ -66,6 +73,7 @@ Parser::Parser(ParsingParams const& context, Vector<Token> tokens)
     : m_document(context.document)
     , m_realm(context.realm)
     , m_parsing_mode(context.mode)
+    , m_is_ua_style_sheet(context.is_ua_style_sheet)
     , m_tokens(move(tokens))
     , m_token_stream(m_tokens)
     , m_value_context(move(context.value_context))
@@ -1453,6 +1461,10 @@ Vector<Descriptor> Parser::parse_as_descriptor_declaration_block(AtRuleID at_rul
             return RuleContext::AtPage;
         case AtRuleID::Property:
             return RuleContext::AtProperty;
+        case AtRuleID::CounterStyle:
+            // NB: We don't actually have a `CSSDescriptors` for `@counter-style` so this function shouldn't ever be
+            //     called with `AtRuleID::CounterStyle`.
+            VERIFY_NOT_REACHED();
         }
         VERIFY_NOT_REACHED();
     }();
@@ -1509,7 +1521,13 @@ bool Parser::is_valid_in_the_current_context(Declaration const&) const
         // Grouping rules can contain declarations if they are themselves inside a style rule
         return m_rule_context.contains_slow(RuleContext::Style);
 
+    case RuleContext::FontFeatureValue:
+        // Each feature value block accepts a list of declarations
+        return true;
+
+    case RuleContext::AtCounterStyle:
     case RuleContext::AtFontFace:
+    case RuleContext::AtFontFeatureValues:
     case RuleContext::AtPage:
     case RuleContext::AtProperty:
     case RuleContext::Margin:
@@ -1561,13 +1579,17 @@ bool Parser::is_valid_in_the_current_context(AtRule const& at_rule) const
         // @page rules can contain margin rules
         return is_margin_rule_name(at_rule.name);
 
+    case RuleContext::AtCounterStyle:
     case RuleContext::AtFontFace:
+    case RuleContext::FontFeatureValue:
     case RuleContext::AtKeyframes:
     case RuleContext::Keyframe:
     case RuleContext::AtProperty:
     case RuleContext::Margin:
         // These can't contain any at-rules
         return false;
+    case RuleContext::AtFontFeatureValues:
+        return CSSFontFeatureValuesRule::is_font_feature_value_type_at_keyword(at_rule.name);
     }
 
     VERIFY_NOT_REACHED();
@@ -1604,7 +1626,10 @@ bool Parser::is_valid_in_the_current_context(QualifiedRule const&) const
         // @supports cannot check qualified rules
         return false;
 
+    case RuleContext::AtCounterStyle:
     case RuleContext::AtFontFace:
+    case RuleContext::AtFontFeatureValues:
+    case RuleContext::FontFeatureValue:
     case RuleContext::AtPage:
     case RuleContext::AtProperty:
     case RuleContext::Keyframe:
@@ -1850,7 +1875,7 @@ LengthOrCalculated Parser::parse_as_sizes_attribute(DOM::Element const& element,
             //        Should this use some of the methods from FormattingContext?
             auto concrete_size = run_default_sizing_algorithm(
                 img->width(), img->height(),
-                img->natural_width(), img->natural_height(), img->intrinsic_aspect_ratio(),
+                { img->natural_width(), img->natural_height(), img->intrinsic_aspect_ratio() },
                 // NOTE: https://html.spec.whatwg.org/multipage/rendering.html#img-contain-size
                 CSSPixelSize { 300, 150 });
             size = Length::make_px(concrete_size.width());

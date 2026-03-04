@@ -7,11 +7,13 @@
 #pragma once
 
 #include <AK/HashMap.h>
+#include <AK/OwnPtr.h>
 #include <AK/QuickSort.h>
 #include <AK/RefCounted.h>
 #include <LibGfx/Font/FontData.h>
 #include <LibGfx/Font/FontVariationSettings.h>
 #include <LibGfx/Forward.h>
+#include <LibGfx/ShapeFeature.h>
 
 #define POINTS_PER_INCH 72.0f
 #define DEFAULT_DPI 96
@@ -39,17 +41,19 @@ struct ScaledFontMetrics {
 struct FontCacheKey {
     float point_size;
     Vector<FontVariationAxis> axes;
+    Gfx::ShapeFeatures shape_features;
 
     bool operator==(FontCacheKey const& other) const
     {
-        return point_size == other.point_size && axes == other.axes;
+        return point_size == other.point_size && axes == other.axes && shape_features == other.shape_features;
     }
 
     unsigned hash() const
     {
-        auto h = pair_int_hash(int_hash(bit_cast<u32>(point_size)), axes.size());
+        auto h = pair_int_hash(bit_cast<u32>(point_size), axes.size());
         for (auto const& axis : axes)
-            h = pair_int_hash(h, pair_int_hash(axis.tag.to_u32(), int_hash(bit_cast<u32>(axis.value))));
+            h = pair_int_hash(h, pair_int_hash(axis.tag.to_u32(), bit_cast<u32>(axis.value)));
+        h = pair_int_hash(h, Traits<Gfx::ShapeFeatures>::hash(shape_features));
         return h;
     }
 };
@@ -71,7 +75,7 @@ public:
     virtual u16 width() const = 0;
     virtual u8 slope() const = 0;
 
-    [[nodiscard]] NonnullRefPtr<Font> font(float point_size, FontVariationSettings const& variations = {}) const;
+    [[nodiscard]] NonnullRefPtr<Font> font(float point_size, FontVariationSettings const& variations = {}, Gfx::ShapeFeatures const& shape_features = {}) const;
 
     hb_face_t* harfbuzz_typeface() const;
 

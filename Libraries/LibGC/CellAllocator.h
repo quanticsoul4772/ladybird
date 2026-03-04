@@ -8,25 +8,33 @@
 
 #include <AK/IntrusiveList.h>
 #include <AK/NeverDestroyed.h>
-#include <AK/NonnullOwnPtr.h>
 #include <LibGC/BlockAllocator.h>
 #include <LibGC/Forward.h>
 #include <LibGC/HeapBlock.h>
 
-#define GC_DECLARE_ALLOCATOR(ClassName) \
+// The default allocator, which isolates different Cell types from being allocated in the same blocks.
+#define GC_DECLARE_ALLOCATOR(ClassName)    \
+    using gc_allocator_marker = ClassName; \
     static GC::TypeIsolatingCellAllocator<ClassName> cell_allocator
 
 #define GC_DEFINE_ALLOCATOR(ClassName) \
     GC::TypeIsolatingCellAllocator<ClassName> ClassName::cell_allocator { #ClassName##sv, ClassName::OVERRIDES_MUST_SURVIVE_GARBAGE_COLLECTION, ClassName::OVERRIDES_FINALIZE }
 
+// The size-based allocator, which isolates different Cell types based on their size instead of their concrete type.
+// This should only be used if it's not possible or undesirable to use a type-isolated cell allocator.
+// Different Cell types can use the same blocks if they happen to have the same size, which allows type confusion
+// to occur if a Cell is used after it's freed.
+#define GC_DECLARE_SIZE_BASED_ALLOCATOR(ClassName) \
+    using gc_allocator_marker = ClassName
+
 namespace GC {
 
 class GC_API CellAllocator {
 public:
-    CellAllocator(size_t cell_size, StringView = {}, bool overrides_must_survive_garbage_collection = false, bool overrides_finalize = false);
+    CellAllocator(size_t cell_size, Optional<StringView> = {}, bool overrides_must_survive_garbage_collection = false, bool overrides_finalize = false);
     ~CellAllocator() = default;
 
-    StringView class_name() const { return m_class_name; }
+    Optional<StringView> class_name() const { return m_class_name; }
     size_t cell_size() const { return m_cell_size; }
 
     Cell* allocate_cell(Heap&);
@@ -56,7 +64,7 @@ public:
     FlatPtr max_block_address() const { return m_max_block_address; }
 
 private:
-    StringView m_class_name;
+    Optional<StringView> m_class_name;
     size_t const m_cell_size;
 
     BlockAllocator m_block_allocator;

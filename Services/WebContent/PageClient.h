@@ -17,7 +17,7 @@
 #include <LibWeb/PixelUnits.h>
 #include <LibWeb/StorageAPI/StorageEndpoint.h>
 #include <LibWebView/Forward.h>
-#include <LibWebView/StorageOperationError.h>
+#include <LibWebView/StorageSetResult.h>
 #include <Services/Sentinel/FingerprintingDetector.h>
 #include <WebContent/FormMonitor.h>
 #include <WebContent/Forward.h>
@@ -60,10 +60,13 @@ public:
     virtual void report_finished_handling_input_event(u64 page_id, Web::EventResult event_was_handled) override;
 
     void set_palette_impl(Gfx::PaletteImpl&);
-    void set_viewport_size(Web::DevicePixelSize const&);
-    void set_screen_rects(Vector<Web::DevicePixelRect, 4> const& rects, size_t main_screen_index) { m_screen_rect = rects[main_screen_index]; }
-    void set_device_pixel_ratio(double device_pixel_ratio) { m_device_pixel_ratio = device_pixel_ratio; }
-    void set_zoom_level(double zoom_level) { m_zoom_level = zoom_level; }
+    void set_viewport(Web::DevicePixelSize const&, double device_pixel_ratio);
+    void set_screen_rects(Vector<Web::DevicePixelRect> const& rects, size_t main_screen_index)
+    {
+        m_all_screen_rects = rects;
+        m_main_screen_index = main_screen_index;
+    }
+    void set_zoom_level(double zoom_level);
     void set_maximum_frames_per_second(u64 maximum_frames_per_second);
     void set_preferred_color_scheme(Web::CSS::PreferredColorScheme);
     void set_preferred_contrast(Web::CSS::PreferredContrast);
@@ -85,6 +88,9 @@ public:
     void select_dropdown_closed(Optional<u32> const& selected_item_id);
 
     void set_user_style(String source);
+    void did_connect_devtools_client();
+    void did_disconnect_devtools_client();
+    bool has_devtools_client() const { return m_devtools_client_count > 0; }
 
     void ready_to_paint();
 
@@ -92,10 +98,8 @@ public:
     void js_console_input(StringView js_source);
     void did_execute_js_console_input(JsonValue const&);
     void run_javascript(StringView js_source);
-    void js_console_request_messages(i32 start_index);
-    void did_output_js_console_message(i32 message_index);
+    void did_output_js_console_message(WebView::ConsoleOutput);
     void console_peer_did_misbehave(char const* reason);
-    void did_get_js_console_messages(i32 start_index, ReadonlySpan<WebView::ConsoleOutput> console_output);
 
     Vector<Web::CSS::StyleSheetIdentifier> list_style_sheets() const;
 
@@ -117,7 +121,8 @@ private:
     virtual bool is_url_suitable_for_same_process_navigation(URL::URL const& current_url, URL::URL const& target_url) const override;
     virtual void request_new_process_for_navigation(URL::URL const&) override;
     virtual Gfx::Palette palette() const override;
-    virtual Web::DevicePixelRect screen_rect() const override { return m_screen_rect; }
+    virtual Web::DevicePixelRect screen_rect() const override { return m_all_screen_rects[m_main_screen_index]; }
+    virtual size_t screen_count() const override { return m_all_screen_rects.size(); }
     virtual Web::CSS::PreferredColorScheme preferred_color_scheme() const override { return m_preferred_color_scheme; }
     virtual Web::CSS::PreferredContrast preferred_contrast() const override { return m_preferred_contrast; }
     virtual Web::CSS::PreferredMotion preferred_motion() const override { return m_preferred_motion; }
@@ -131,6 +136,7 @@ private:
     virtual void page_did_request_maximize_window() override;
     virtual void page_did_request_minimize_window() override;
     virtual void page_did_request_fullscreen_window() override;
+    virtual void page_did_request_exit_fullscreen() override;
     virtual void page_did_request_tooltip_override(Web::CSSPixelPoint, ByteString const&) override;
     virtual void page_did_stop_tooltip_override() override;
     virtual void page_did_enter_tooltip_area(ByteString const&) override;
@@ -159,15 +165,19 @@ private:
     virtual void page_did_submit_form(Web::HTML::HTMLFormElement& form, String const& method, URL::URL const& action) override;
     virtual bool should_block_autofill(URL::URL const& form_url, URL::URL const& action_url) const override;
     virtual void page_did_change_favicon(Gfx::Bitmap const&) override;
-    virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_webdriver(URL::URL const&) override;
-    virtual Vector<Web::Cookie::Cookie> page_did_request_all_cookies_cookiestore(URL::URL const&) override;
-    virtual Optional<Web::Cookie::Cookie> page_did_request_named_cookie(URL::URL const&, String const&) override;
-    virtual String page_did_request_cookie(URL::URL const&, Web::Cookie::Source) override;
-    virtual void page_did_set_cookie(URL::URL const&, Web::Cookie::ParsedCookie const&, Web::Cookie::Source) override;
-    virtual void page_did_update_cookie(Web::Cookie::Cookie const&) override;
+    virtual Optional<Core::SharedVersion> page_did_request_document_cookie_version(Core::SharedVersionIndex document_index) override;
+    virtual void page_did_receive_document_cookie_version_buffer(Core::AnonymousBuffer document_cookie_version_buffer) override;
+    virtual void page_did_request_document_cookie_version_index(Web::UniqueNodeID document_id, String const& domain) override;
+    virtual void page_did_receive_document_cookie_version_index(Web::UniqueNodeID document_id, Core::SharedVersionIndex document_index) override;
+    virtual Vector<HTTP::Cookie::Cookie> page_did_request_all_cookies_webdriver(URL::URL const&) override;
+    virtual Vector<HTTP::Cookie::Cookie> page_did_request_all_cookies_cookiestore(URL::URL const&) override;
+    virtual Optional<HTTP::Cookie::Cookie> page_did_request_named_cookie(URL::URL const&, String const&) override;
+    virtual HTTP::Cookie::VersionedCookie page_did_request_cookie(URL::URL const&, HTTP::Cookie::Source) override;
+    virtual void page_did_set_cookie(URL::URL const&, HTTP::Cookie::ParsedCookie const&, HTTP::Cookie::Source) override;
+    virtual void page_did_update_cookie(HTTP::Cookie::Cookie const&) override;
     virtual void page_did_expire_cookies_with_time_offset(AK::Duration) override;
     virtual Optional<String> page_did_request_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key) override;
-    virtual WebView::StorageOperationError page_did_set_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, String const& value) override;
+    virtual WebView::StorageSetResult page_did_set_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key, String const& value) override;
     virtual void page_did_remove_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key, String const& bottle_key) override;
     virtual Vector<String> page_did_request_storage_keys(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key) override;
     virtual void page_did_clear_storage(Web::StorageAPI::StorageEndpointType storage_endpoint, String const& storage_key) override;
@@ -183,7 +193,9 @@ private:
     virtual void page_did_finish_test(String const& text) override;
     virtual void page_did_set_test_timeout(double milliseconds) override;
     virtual void page_did_receive_reference_test_metadata(JsonValue) override;
+    virtual void page_did_receive_test_variant_metadata(JsonValue) override;
     virtual void page_did_set_browser_zoom(double factor) override;
+    virtual void page_did_set_device_pixel_ratio_for_testing(double ratio) override;
     virtual void page_did_change_theme_color(Gfx::Color color) override;
     virtual void page_did_insert_clipboard_entry(Web::Clipboard::SystemClipboardRepresentation const&, StringView presentation_style) override;
     virtual void page_did_request_clipboard_entries(u64 request_id) override;
@@ -194,6 +206,10 @@ private:
     virtual void page_did_paint(Gfx::IntRect const& content_rect, i32 bitmap_id) override;
     virtual void page_did_take_screenshot(Gfx::ShareableBitmap const& screenshot) override;
     virtual void received_message_from_web_ui(String const& name, JS::Value data) override;
+    virtual void page_did_start_network_request(u64 request_id, URL::URL const&, ByteString const&, Vector<HTTP::Header> const&, ReadonlyBytes, Optional<String>) override;
+    virtual void page_did_receive_network_response_headers(u64 request_id, u32 status_code, Optional<String>, Vector<HTTP::Header> const&) override;
+    virtual void page_did_receive_network_response_body(u64 request_id, ReadonlyBytes) override;
+    virtual void page_did_finish_network_request(u64 request_id, u64 body_size, Requests::RequestTimingInfo const&, Optional<Requests::NetworkError> const&) override;
 
     void setup_palette();
     ConnectionFromClient& client() const;
@@ -201,7 +217,9 @@ private:
     PageHost& m_owner;
     GC::Ref<Web::Page> m_page;
     RefPtr<Gfx::PaletteImpl> m_palette_impl;
-    Web::DevicePixelRect m_screen_rect;
+    Vector<Web::DevicePixelRect> m_all_screen_rects { Web::DevicePixelRect {} };
+    size_t m_main_screen_index { 0 };
+    Web::DevicePixelSize m_viewport_size;
     double m_device_pixel_ratio { 1.0 };
     double m_zoom_level { 1.0 };
     double m_maximum_frames_per_second { 60.0 };
@@ -212,14 +230,16 @@ private:
     Web::CSS::PreferredContrast m_preferred_contrast { Web::CSS::PreferredContrast::NoPreference };
     Web::CSS::PreferredMotion m_preferred_motion { Web::CSS::PreferredMotion::NoPreference };
 
+    Core::AnonymousBuffer m_document_cookie_version_buffer;
+
     RefPtr<WebDriverConnection> m_webdriver;
     RefPtr<WebUIConnection> m_web_ui;
 
-    WeakPtr<WebContentConsoleClient> m_top_level_document_console_client;
-
-    GC::Root<JS::GlobalObject> m_console_global_object;
+    GC::Ptr<WebContentConsoleClient> m_top_level_document_console_client;
 
     RefPtr<Core::Timer> m_paint_refresh_timer;
+
+    u64 m_devtools_client_count { 0 };
 
     OwnPtr<FormMonitor> m_form_monitor;
     mutable OwnPtr<Sentinel::FingerprintingDetector> m_fingerprinting_detector;

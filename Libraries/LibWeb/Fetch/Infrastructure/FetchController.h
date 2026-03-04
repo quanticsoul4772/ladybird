@@ -8,11 +8,13 @@
 
 #include <AK/Badge.h>
 #include <AK/HashMap.h>
+#include <AK/WeakPtr.h>
 #include <LibGC/Function.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Cell.h>
 #include <LibJS/Runtime/VM.h>
+#include <LibRequests/Forward.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Fetch/Infrastructure/FetchTimingInfo.h>
 #include <LibWeb/Forward.h>
@@ -27,10 +29,11 @@ class WEB_API FetchController : public JS::Cell {
     GC_DECLARE_ALLOCATOR(FetchController);
 
 public:
-    enum class State {
+    enum class State : u8 {
         Ongoing,
         Terminated,
         Aborted,
+        Stopped,
     };
 
     [[nodiscard]] static GC::Ref<FetchController> create(JS::VM&);
@@ -50,7 +53,11 @@ public:
 
     void set_fetch_params(Badge<FetchParams>, GC::Ref<FetchParams> fetch_params) { m_fetch_params = fetch_params; }
 
+    void set_pending_request(RefPtr<Requests::Request> const&);
+    void set_inner_fetch_controller(GC::Ref<FetchController>);
+
     void stop_fetch();
+    void stop_request();
 
     u64 next_fetch_task_id() { return m_next_fetch_task_id++; }
     void fetch_task_queued(u64 fetch_task_id, HTML::TaskID event_id);
@@ -87,6 +94,8 @@ private:
     GC::Ptr<GC::Function<void()>> m_next_manual_redirect_steps;
 
     GC::Ptr<FetchParams> m_fetch_params;
+
+    WeakPtr<Requests::Request> m_pending_request;
 
     HashMap<u64, HTML::TaskID> m_ongoing_fetch_tasks;
     u64 m_next_fetch_task_id { 0 };

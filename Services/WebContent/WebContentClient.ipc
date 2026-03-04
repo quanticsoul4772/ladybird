@@ -2,11 +2,14 @@
 #include <LibGfx/Color.h>
 #include <LibGfx/Cursor.h>
 #include <LibGfx/ShareableBitmap.h>
+#include <LibHTTP/Cookie/Cookie.h>
+#include <LibHTTP/Cookie/ParsedCookie.h>
+#include <LibHTTP/Header.h>
+#include <LibRequests/NetworkError.h>
+#include <LibRequests/RequestTimingInfo.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/Clipboard/SystemClipboard.h>
-#include <LibWeb/Cookie/Cookie.h>
-#include <LibWeb/Cookie/ParsedCookie.h>
 #include <LibWeb/CSS/Selector.h>
 #include <LibWeb/CSS/StyleSheetIdentifier.h>
 #include <LibWeb/HTML/ActivateTab.h>
@@ -21,7 +24,7 @@
 #include <LibWebView/ConsoleOutput.h>
 #include <LibWebView/DOMNodeProperties.h>
 #include <LibWeb/StorageAPI/StorageEndpoint.h>
-#include <LibWebView/StorageOperationError.h>
+#include <LibWebView/StorageSetResult.h>
 #include <LibWebView/Mutation.h>
 #include <LibWebView/PageInfo.h>
 #include <LibWebView/ProcessHandle.h>
@@ -73,21 +76,25 @@ endpoint WebContentClient
 
     did_take_screenshot(u64 page_id, Gfx::ShareableBitmap screenshot) =|
 
-    did_get_internal_page_info(u64 page_id, WebView::PageInfoType type, String info) =|
+    did_get_internal_page_info(u64 page_id, WebView::PageInfoType type, Optional<Core::AnonymousBuffer> info) =|
 
     did_change_favicon(u64 page_id, Gfx::ShareableBitmap favicon) =|
-    did_request_all_cookies_webdriver(URL::URL url) => (Vector<Web::Cookie::Cookie> cookies)
-    did_request_all_cookies_cookiestore(URL::URL url) => (Vector<Web::Cookie::Cookie> cookies)
-    did_request_named_cookie(URL::URL url, String name) => (Optional<Web::Cookie::Cookie> cookie)
-    did_request_cookie(URL::URL url, Web::Cookie::Source source) => (String cookie)
-    did_set_cookie(URL::URL url, Web::Cookie::ParsedCookie cookie, Web::Cookie::Source source) => ()
-    did_update_cookie(Web::Cookie::Cookie cookie) =|
+
+    did_request_document_cookie_version_index(u64 page_id, i64 document_id, String domain) =|
+    did_request_all_cookies_webdriver(URL::URL url) => (Vector<HTTP::Cookie::Cookie> cookies)
+    did_request_all_cookies_cookiestore(URL::URL url) => (Vector<HTTP::Cookie::Cookie> cookies)
+    did_request_named_cookie(URL::URL url, String name) => (Optional<HTTP::Cookie::Cookie> cookie)
+    did_request_cookie(u64 page_id, URL::URL url, HTTP::Cookie::Source source) => (HTTP::Cookie::VersionedCookie cookie)
+    did_set_cookie(URL::URL url, HTTP::Cookie::ParsedCookie cookie, HTTP::Cookie::Source source) => ()
+    did_update_cookie(HTTP::Cookie::Cookie cookie) =|
     did_expire_cookies_with_time_offset(AK::Duration offset) =|
+
     did_request_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key) => (Optional<String> value)
-    did_set_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, String value) => (WebView::StorageOperationError error)
+    did_set_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key, String value) => (WebView::StorageSetResult result)
     did_remove_storage_item(Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key, String bottle_key) => ()
     did_request_storage_keys(Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key) => (Vector<String> keys)
     did_clear_storage(Web::StorageAPI::StorageEndpointType storage_endpoint, String storage_key) => ()
+
     did_update_resource_count(u64 page_id, i32 count_waiting) =|
     did_request_new_web_view(u64 page_id, Web::HTML::ActivateTab activate_tab, Web::HTML::WebViewHints hints, Optional<u64> page_index) => (String handle)
     did_request_activate_tab(u64 page_id) =|
@@ -97,7 +104,8 @@ endpoint WebContentClient
     did_request_resize_window(u64 page_id, Gfx::IntSize size) =|
     did_request_maximize_window(u64 page_id) =|
     did_request_minimize_window(u64 page_id) =|
-    did_request_fullscreen_window(u64 page_id) =|
+    did_request_fullscreen_window(u64 page_id) => (bool success)
+    did_request_exit_fullscreen(u64 page_id) =|
     did_request_file(u64 page_id, ByteString path, i32 request_id) =|
     did_request_color_picker(u64 page_id, Color current_color) =|
     did_request_file_picker(u64 page_id, Web::HTML::FileFilter accepted_file_types, Web::HTML::AllowMultipleFiles allow_multiple_files) =|
@@ -114,12 +122,17 @@ endpoint WebContentClient
     did_change_audio_play_state(u64 page_id, Web::HTML::AudioPlayState play_state) =|
 
     did_execute_js_console_input(u64 page_id, JsonValue result) =|
-    did_output_js_console_message(u64 page_id, i32 message_index) =|
-    did_get_js_console_messages(u64 page_id, i32 start_index, Vector<WebView::ConsoleOutput> console_output) =|
+    did_output_js_console_message(u64 page_id, WebView::ConsoleOutput console_output) =|
+
+    did_start_network_request(u64 page_id, u64 request_id, URL::URL url, ByteString method, Vector<HTTP::Header> request_headers, ByteBuffer request_body, Optional<String> initiator_type) =|
+    did_receive_network_response_headers(u64 page_id, u64 request_id, u32 status_code, Optional<String> reason_phrase, Vector<HTTP::Header> response_headers) =|
+    did_receive_network_response_body(u64 page_id, u64 request_id, ByteBuffer data) =|
+    did_finish_network_request(u64 page_id, u64 request_id, u64 body_size, Requests::RequestTimingInfo timing_info, Optional<Requests::NetworkError> network_error) =|
 
     did_finish_test(u64 page_id, String text) =|
     did_set_test_timeout(u64 page_id, double milliseconds) =|
     did_receive_reference_test_metadata(u64 page_id, JsonValue result) =|
+    did_receive_test_variant_metadata(u64 page_id, JsonValue result) =|
 
     did_set_browser_zoom(u64 page_id, double factor) =|
 

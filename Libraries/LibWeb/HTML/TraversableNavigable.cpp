@@ -12,8 +12,11 @@
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/Geolocation/GeolocationCoordinates.h>
+#include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/BrowsingContextGroup.h>
 #include <LibWeb/HTML/DocumentState.h>
+#include <LibWeb/HTML/History.h>
+#include <LibWeb/HTML/NavigableContainer.h>
 #include <LibWeb/HTML/Navigation.h>
 #include <LibWeb/HTML/NavigationParams.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
@@ -510,8 +513,14 @@ TraversableNavigable::HistoryStepResult TraversableNavigable::apply_the_history_
 
     // 12. For each navigable of changingNavigables, queue a global task on the navigation and traversal task source of navigable's active window to run the steps:
     for (auto& navigable : changing_navigables) {
-        if (!navigable->active_window())
+        // AD-HOC: If the navigable has been destroyed, or has no active window, skip it.
+        //         We must increment completed_change_jobs here rather than relying on the queued
+        //         task, because Document::destroy() removes tasks associated with a document from
+        //         the task queue, which can cause those tasks to never run.
+        if (navigable->has_been_destroyed() || !navigable->active_window()) {
+            completed_change_jobs++;
             continue;
+        }
         queue_global_task(Task::Source::NavigationAndTraversal, *navigable->active_window(), GC::create_function(heap(), [&] {
             // NOTE: This check is not in the spec but we should not continue navigation if navigable has been destroyed.
             if (navigable->has_been_destroyed()) {
@@ -921,7 +930,7 @@ TraversableNavigable::CheckIfUnloadingIsCanceledResult TraversableNavigable::che
             IGNORE_USE_IN_ESCAPING_LAMBDA auto events_fired = false;
 
             // 2. Let needsBeforeunload be true if navigablesThatNeedBeforeUnload contains traversable; otherwise false.
-            auto it = navigables_that_need_before_unload.find_if([&traversable](GC::Root<Navigable> navigable) {
+            auto it = navigables_that_need_before_unload.find_if([&traversable](auto const& navigable) {
                 return navigable.ptr() == traversable.ptr();
             });
             auto needs_beforeunload = it != navigables_that_need_before_unload.end();
@@ -1442,6 +1451,8 @@ void TraversableNavigable::process_screenshot_requests()
         auto task = m_screenshot_tasks.dequeue();
         if (task.node_id.has_value()) {
             auto* dom_node = DOM::Node::from_unique_id(*task.node_id);
+            if (dom_node)
+                dom_node->document().update_layout(DOM::UpdateLayoutReason::ProcessScreenshot);
             if (!dom_node || !dom_node->paintable_box()) {
                 client.page_did_take_screenshot({});
                 continue;
@@ -1455,10 +1466,11 @@ void TraversableNavigable::process_screenshot_requests()
             auto bitmap = bitmap_or_error.release_value();
             auto painting_surface = Gfx::PaintingSurface::wrap_bitmap(*bitmap);
             PaintConfig paint_config { .canvas_fill_rect = rect.to_type<int>() };
-            start_display_list_rendering(painting_surface, paint_config, [bitmap, &client] {
+            render_screenshot(painting_surface, paint_config, [bitmap, &client] {
                 client.page_did_take_screenshot(bitmap->to_shareable_bitmap());
             });
         } else {
+            active_document()->update_layout(DOM::UpdateLayoutReason::ProcessScreenshot);
             auto scrollable_overflow_rect = active_document()->layout_node()->paintable_box()->scrollable_overflow_rect();
             auto rect = page().enclosing_device_rect(scrollable_overflow_rect.value());
             auto bitmap_or_error = Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, rect.size().to_type<int>());
@@ -1469,7 +1481,7 @@ void TraversableNavigable::process_screenshot_requests()
             auto bitmap = bitmap_or_error.release_value();
             auto painting_surface = Gfx::PaintingSurface::wrap_bitmap(*bitmap);
             PaintConfig paint_config { .paint_overlay = true, .canvas_fill_rect = rect.to_type<int>() };
-            start_display_list_rendering(painting_surface, paint_config, [bitmap, &client] {
+            render_screenshot(painting_surface, paint_config, [bitmap, &client] {
                 client.page_did_take_screenshot(bitmap->to_shareable_bitmap());
             });
         }

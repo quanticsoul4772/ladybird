@@ -9,7 +9,7 @@
 #include <AK/BitCast.h>
 #include <AK/ByteBuffer.h>
 #include <AK/ByteString.h>
-#include <AK/JsonObject.h>
+#include <AK/Checked.h>
 #include <AK/JsonValue.h>
 #include <AK/NumericLimits.h>
 #include <AK/String.h>
@@ -18,7 +18,6 @@
 #include <AK/Utf16View.h>
 #include <LibCore/AnonymousBuffer.h>
 #include <LibCore/Proxy.h>
-#include <LibCore/System.h>
 #include <LibIPC/Encoder.h>
 #include <LibIPC/File.h>
 #include <LibURL/Origin.h>
@@ -28,8 +27,7 @@ namespace IPC {
 
 ErrorOr<void> Encoder::encode_size(size_t size)
 {
-    if (static_cast<u64>(size) > static_cast<u64>(NumericLimits<u32>::max()))
-        return Error::from_string_literal("Container exceeds the maximum allowed size");
+    VERIFY(size <= NumericLimits<u32>::max());
     return encode(static_cast<u32>(size));
 }
 
@@ -71,10 +69,12 @@ ErrorOr<void> encode(Encoder& encoder, Utf16View const& value)
     TRY(encoder.encode(value.has_ascii_storage()));
     TRY(encoder.encode_size(value.length_in_code_units()));
 
-    if (value.has_ascii_storage())
+    if (value.has_ascii_storage()) {
         TRY(encoder.append(value.bytes().data(), value.length_in_code_units()));
-    else
+    } else {
+        VERIFY(!Checked<size_t>::multiplication_would_overflow(value.length_in_code_units(), sizeof(char16_t)));
         TRY(encoder.append(reinterpret_cast<u8 const*>(value.utf16_span().data()), value.length_in_code_units() * sizeof(char16_t)));
+    }
 
     return {};
 }
@@ -147,7 +147,8 @@ ErrorOr<void> encode(Encoder& encoder, URL::Origin const& origin)
 {
     if (origin.is_opaque()) {
         TRY(encoder.encode(true));
-        TRY(encoder.encode(origin.nonce()));
+        TRY(encoder.encode(origin.opaque_data().nonce));
+        TRY(encoder.encode(origin.opaque_data().type));
     } else {
         TRY(encoder.encode(false));
         TRY(encoder.encode(origin.scheme()));
@@ -170,6 +171,7 @@ template<>
 ErrorOr<void> encode(Encoder& encoder, File const& file)
 {
     int fd = file.take_fd();
+    VERIFY(fd >= 0);
 
     TRY(encoder.append_file_descriptor(fd));
     return {};

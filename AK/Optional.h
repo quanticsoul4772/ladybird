@@ -363,23 +363,36 @@ public:
         return released_value;
     }
 
-private:
-    ALWAYS_INLINE constexpr void construct_null_if_necessary(bool should_construct = is_constant_evaluated())
+    [[nodiscard]] ALWAYS_INLINE constexpr T& unchecked_value() &
     {
-        // OPTIMIZATION: Only construct the `m_null` member when we are constant-evaluating.
-        // Otherwise, this generates an unnecessary zero-fill.
+        ASSERT(m_has_value);
+        return m_storage;
+    }
+
+    [[nodiscard]] ALWAYS_INLINE constexpr T const& unchecked_value() const&
+    {
+        ASSERT(m_has_value);
+        return m_storage;
+    }
+
+private:
+    ALWAYS_INLINE constexpr void construct_null_if_necessary()
+    {
+        // OPTIMIZATION: Only construct the `m_null` member when we are constant-evaluating. Otherwise, this generates
+        //               an unnecessary zero-fill.
 #if defined(AK_COMPILER_GCC)
-        // NOTE: GCCs -Wuninitialized warning ends up checking this as well.
-        should_construct = true;
-#endif
-        if (should_construct)
+        // GCC's -Wuninitialized warning ends up checking this as well.
+        construct_at(&m_null);
+#else
+        if consteval {
             construct_at(&m_null);
+        }
+#endif
     }
 
     union {
-        // FIXME: GCC seems to have an issue with uninitialized unions and non trivial types,
-        //        which forces us to have an equally sized trivial null member in the union
-        //        to pseudo-initialize the union.
+        // FIXME: GCC seems to have an issue with uninitialized unions and non trivial types, which forces us to have an
+        //        equally sized trivial null member in the union to pseudo-initialize the union.
         struct {
             u8 _[sizeof(T)];
         } m_null;

@@ -48,8 +48,10 @@ void HTMLScriptElement::initialize(JS::Realm& realm)
 void HTMLScriptElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    if (auto* script = m_result.get_pointer<GC::Ref<Script>>())
-        visitor.visit(*script);
+    m_result.visit(
+        [](ResultState::Uninitialized) {},
+        [](ResultState::Null) {},
+        [&]<typename T>(GC::Ref<T> result) { visitor.visit(result); });
     visitor.visit(m_parser_document);
     visitor.visit(m_preparation_time_document);
 }
@@ -477,6 +479,19 @@ void HTMLScriptElement::prepare_script()
             // If el does not have an integrity attribute, then set options's integrity metadata to the result of resolving a module integrity metadata with url and settings object.
             if (!has_attribute(HTML::AttributeNames::integrity))
                 options.integrity_metadata = resolve_a_module_integrity_metadata(*url, settings_object);
+
+            // AD-HOC: Queue an element task on the networking task source to run the onComplete steps
+            // This resolves an edge case where mark_as_ready() can execute before we set
+            // m_steps_to_run_when_the_result_is_ready
+            // See https://github.com/whatwg/html/issues/12073
+            auto on_complete = create_on_fetch_script_complete(heap(), [this](auto result) {
+                queue_an_element_task(Task::Source::Networking, [this, result = move(result)] {
+                    if (!result)
+                        mark_as_ready(ResultState::Null {});
+                    else
+                        mark_as_ready(Result(*result));
+                });
+            });
 
             // Fetch an external module script graph given url, settings object, options, and onComplete.
             fetch_external_module_script_graph(realm(), *url, settings_object, options, on_complete);

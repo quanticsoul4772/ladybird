@@ -17,7 +17,7 @@
 #include <LibRequests/RequestTimingInfo.h>
 #include <LibURL/URL.h>
 #include <LibWeb/Forward.h>
-#include <LibWeb/Loader/UserAgent.h>
+#include <LibWeb/Loader/NavigatorCompatibilityMode.h>
 
 namespace Web {
 
@@ -34,7 +34,7 @@ public:
     using OnDataReceived = GC::Function<void(ReadonlyBytes data)>;
     using OnComplete = GC::Function<void(bool success, Requests::RequestTimingInfo const& timing_info, Optional<StringView> error_message)>;
 
-    void load(LoadRequest&, GC::Root<OnHeadersReceived>, GC::Root<OnDataReceived>, GC::Root<OnComplete>);
+    RefPtr<Requests::Request> load(LoadRequest&, GC::Root<OnHeadersReceived>, GC::Root<OnDataReceived>, GC::Root<OnComplete>);
 
     RefPtr<Requests::RequestClient>& request_client() { return m_request_client; }
 

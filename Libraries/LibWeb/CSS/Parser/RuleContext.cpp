@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/CSS/CSSFontFeatureValuesRule.h>
 #include <LibWeb/CSS/CSSMarginRule.h>
 #include <LibWeb/CSS/Parser/RuleContext.h>
 
@@ -12,12 +13,16 @@ namespace Web::CSS::Parser {
 RuleContext rule_context_type_for_rule(CSSRule::Type rule_type)
 {
     switch (rule_type) {
+    case CSSRule::Type::CounterStyle:
+        return RuleContext::AtCounterStyle;
     case CSSRule::Type::Style:
         return RuleContext::Style;
     case CSSRule::Type::Media:
         return RuleContext::AtMedia;
     case CSSRule::Type::FontFace:
         return RuleContext::AtFontFace;
+    case CSSRule::Type::FontFeatureValues:
+        return RuleContext::AtFontFeatureValues;
     case CSSRule::Type::Keyframes:
         return RuleContext::AtKeyframes;
     case CSSRule::Type::Keyframe:
@@ -47,10 +52,16 @@ RuleContext rule_context_type_for_at_rule(FlyString const& name)
 {
     if (name.equals_ignoring_ascii_case("media"sv))
         return RuleContext::AtMedia;
+    if (name.equals_ignoring_ascii_case("counter-style"sv))
+        return RuleContext::AtCounterStyle;
     if (name.equals_ignoring_ascii_case("font-face"sv))
         return RuleContext::AtFontFace;
-    if (name.equals_ignoring_ascii_case("keyframes"sv))
+    if (name.equals_ignoring_ascii_case("keyframes"sv) || name.equals_ignoring_ascii_case("-webkit-keyframes"sv))
         return RuleContext::AtKeyframes;
+    if (name.equals_ignoring_ascii_case("font-feature-values"sv))
+        return RuleContext::AtFontFeatureValues;
+    if (CSSFontFeatureValuesRule::is_font_feature_value_type_at_keyword(name))
+        return RuleContext::FontFeatureValue;
     if (name.equals_ignoring_ascii_case("supports"sv))
         return RuleContext::AtSupports;
     if (name.equals_ignoring_ascii_case("layer"sv))

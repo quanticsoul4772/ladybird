@@ -6,6 +6,7 @@
 
 #include "EasingFunction.h"
 #include <AK/BinarySearch.h>
+#include <LibWeb/CSS/Enums.h>
 #include <LibWeb/CSS/StyleValues/EasingStyleValue.h>
 #include <LibWeb/CSS/StyleValues/IntegerStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
@@ -306,16 +307,6 @@ EasingFunction EasingFunction::ease()
 
 EasingFunction EasingFunction::from_style_value(StyleValue const& style_value)
 {
-    auto const resolve_number = [](StyleValue const& style_value) {
-        if (style_value.is_number())
-            return style_value.as_number().number();
-
-        if (style_value.is_calculated())
-            return style_value.as_calculated().resolve_number({}).value();
-
-        VERIFY_NOT_REACHED();
-    };
-
     auto const resolve_percentage = [](StyleValue const& style_value) {
         if (style_value.is_percentage())
             return style_value.as_percentage().percentage().as_fraction();
@@ -326,23 +317,13 @@ EasingFunction EasingFunction::from_style_value(StyleValue const& style_value)
         VERIFY_NOT_REACHED();
     };
 
-    auto const resolve_integer = [](StyleValue const& style_value) {
-        if (style_value.is_integer())
-            return style_value.as_integer().integer();
-
-        if (style_value.is_calculated())
-            return style_value.as_calculated().resolve_integer({}).value();
-
-        VERIFY_NOT_REACHED();
-    };
-
     if (style_value.is_easing()) {
         return style_value.as_easing().function().visit(
             [&](EasingStyleValue::Linear const& linear) -> EasingFunction {
                 Vector<LinearEasingFunction::ControlPoint> resolved_control_points;
 
                 for (auto const& control_point : linear.stops) {
-                    double output = resolve_number(control_point.output);
+                    double output = number_from_style_value(control_point.output, {});
 
                     Optional<double> input;
                     if (control_point.input)
@@ -359,15 +340,15 @@ EasingFunction EasingFunction::from_style_value(StyleValue const& style_value)
                 return LinearEasingFunction { resolved_control_points, linear.to_string(SerializationMode::ResolvedValue) };
             },
             [&](EasingStyleValue::CubicBezier const& cubic_bezier) -> EasingFunction {
-                auto resolved_x1 = resolve_number(cubic_bezier.x1);
-                auto resolved_y1 = resolve_number(cubic_bezier.y1);
-                auto resolved_x2 = resolve_number(cubic_bezier.x2);
-                auto resolved_y2 = resolve_number(cubic_bezier.y2);
+                auto resolved_x1 = number_from_style_value(cubic_bezier.x1, {});
+                auto resolved_y1 = number_from_style_value(cubic_bezier.y1, {});
+                auto resolved_x2 = number_from_style_value(cubic_bezier.x2, {});
+                auto resolved_y2 = number_from_style_value(cubic_bezier.y2, {});
 
                 return CubicBezierEasingFunction { resolved_x1, resolved_y1, resolved_x2, resolved_y2, cubic_bezier.to_string(SerializationMode::Normal) };
             },
             [&](EasingStyleValue::Steps const& steps) -> EasingFunction {
-                return StepsEasingFunction { resolve_integer(steps.number_of_intervals), steps.position, steps.to_string(SerializationMode::ResolvedValue) };
+                return StepsEasingFunction { int_from_style_value(steps.number_of_intervals), steps.position, steps.to_string(SerializationMode::ResolvedValue) };
             });
     }
 
