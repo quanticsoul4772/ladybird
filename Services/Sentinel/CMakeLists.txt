@@ -160,8 +160,8 @@ find_library(YARA_LIBRARY NAMES yara libyara PATHS /usr/lib /usr/lib/x86_64-linu
 find_path(YARA_INCLUDE_DIR yara.h PATHS /usr/include /usr/local/include)
 
 if(NOT YARA_LIBRARY)
-    message(WARNING "YARA library not found. Sentinel will not build.")
-    message(WARNING "Install YARA with: sudo apt-get install libyara-dev yara")
+    message(FATAL_ERROR "YARA library not found. Sentinel requires YARA.\n"
+        "Install YARA with: sudo apt-get install libyara-dev yara")
 else()
     message(STATUS "Found YARA library: ${YARA_LIBRARY}")
     message(STATUS "Found YARA include: ${YARA_INCLUDE_DIR}")
@@ -204,5 +204,9 @@ ladybird_test(TestQuarantineManager.cpp Sentinel LIBS sentinelservice LibCore Li
 ladybird_test(TestVirusTotalClient.cpp Sentinel LIBS sentinelservice LibCore)
 
 # Install targets
+install(TARGETS sentinelservice EXPORT LagomTargets
+    ARCHIVE COMPONENT Lagom_Development
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
 install(TARGETS Sentinel sentinel-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/Base/res/ladybird/sentinel/rules DESTINATION ${CMAKE_INSTALL_DATADIR}/ladybird/sentinel)
