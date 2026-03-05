@@ -15,6 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Lean matrix for personal fork: Sanitizer with both compilers
+        # Fuzzers, All_Debug, and Windows removed to save CI minutes
+        # (Sentinel requires Linux-only dependencies: YARA, iptables, nftables)
         os_name: ['Linux']
         arch: ['x86_64']
         build_preset: ['Sanitizer']
@@ -29,27 +32,6 @@ jobs:
             toolchain: 'Clang'
             clang_plugins: true
             runner_labels: '["ubuntu-24.04"]'
-
-          - os_name: 'Linux'
-            arch: 'x86_64'
-            build_preset: 'Fuzzers'
-            toolchain: 'Clang'
-            clang_plugins: false
-            runner_labels: '["ubuntu-24.04"]'
-
-          - os_name: 'Linux'
-            arch: 'x86_64'
-            build_preset: 'All_Debug'
-            toolchain: 'Clang'
-            clang_plugins: false
-            runner_labels: '["ubuntu-24.04"]'
-
-          - os_name: 'Windows'
-            arch: 'x86_64'
-            build_preset: 'Sanitizer'
-            toolchain: 'ClangCL'
-            clang_plugins: false
-            runner_labels: '["windows-latest"]'
 
     secrets: inherit
     uses: ./.github/workflows/lagom-template.yml

@@ -7,12 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a **personal learning fork** of Ladybird Browser with experimental privacy and security features. Not production-ready or intended for upstream contribution.
 
 Fork-specific features:
-- **Sentinel Service** (`Services/Sentinel/`): Multi-layered security system
-  - YARA-based malware detection with ML enhancement (TensorFlow Lite)
-  - Real-time credential exfiltration detection (FormMonitor)
-  - Browser fingerprinting detection and scoring
-  - Phishing URL analysis (URLSecurityAnalyzer)
-  - PolicyGraph database for security policies and trusted relationships
+- **Sentinel Service** (`Services/Sentinel/`): Multi-layered security system (YARA malware detection, ML via TensorFlow Lite, credential exfiltration detection, fingerprinting detection, phishing URL analysis, PolicyGraph database)
 - **Network Privacy**: Tor integration, IPFS/IPNS support, ENS resolution
 - **Enhanced IPC Security**: Rate limiting, SafeMath, ValidatedDecoder (experimental)
 
@@ -20,145 +15,74 @@ Fork-specific features:
 
 ### Build and Run
 ```bash
-# Primary build script (recommended)
 ./Meta/ladybird.py build              # Build all targets
 ./Meta/ladybird.py run                # Build and run Ladybird
-./Meta/ladybird.py run test-web       # Run test-web runner
 ./Meta/ladybird.py test               # Run all tests
 ./Meta/ladybird.py test LibWeb        # Run LibWeb tests only
+./Meta/ladybird.py test ".*CSS.*"     # Run tests matching regex
 
-# Direct CMake (alternative)
-cmake --preset Release                # Configure (or Debug, Sanitizers)
-cmake --build Build/release           # Build
-./Build/release/bin/Ladybird          # Run
-
-# Environment variable for preset
-BUILD_PRESET=Debug ./Meta/ladybird.py run
+# Direct CMake alternative
+cmake --preset Release && cmake --build Build/release
+BUILD_PRESET=Debug ./Meta/ladybird.py run   # Use Debug preset
 ```
 
 ### Testing
 ```bash
-# Run all tests
-./Meta/ladybird.py test
-
-# Run specific test suite
-./Meta/ladybird.py test LibWeb
-./Meta/ladybird.py test AK
-
-# Run specific test pattern (regex)
-./Meta/ladybird.py test ".*CSS.*"
-
-# LibWeb test types (Text, Layout, Ref, Screenshot)
+# LibWeb test runner (Text, Layout, Ref, Screenshot tests)
 ./Meta/ladybird.py run test-web
-./Meta/ladybird.py run test-web -- -f Text/input/your-test.html
+./Meta/ladybird.py run test-web -- -f Text/input/your-test.html        # Single test
+./Meta/ladybird.py run test-web -- --rebaseline -f Text/input/test.html # Regenerate expectations
 
-# Rebaseline tests (regenerate expectations)
-./Meta/ladybird.py run test-web -- --rebaseline -f Text/input/your-test.html
+# Create new LibWeb tests
+./Tests/LibWeb/add_libweb_test.py my-test Text      # Text|Layout|Ref|Screenshot
+
+# CTest directly
+cd Build/release && ctest -R LibWeb
+CTEST_OUTPUT_ON_FAILURE=1 ctest   # Show output on failure
+
+# Sanitizer build (reproduces CI failures)
+cmake --preset Sanitizer && cmake --build --preset Sanitizer && ctest --preset Sanitizer
 
 # Web Platform Tests
-./Meta/WPT.sh run --log results.log
+./Meta/WPT.sh run --log results.log css
 ./Meta/WPT.sh compare --log results.log expectations.log css
-
-# Using CTest directly
-cd Build/release && ctest
-cd Build/release && ctest -R LibWeb  # Run tests matching pattern
-CTEST_OUTPUT_ON_FAILURE=1 ctest      # Show output on failure
-```
-
-### Debugging
-```bash
-# GDB/LLDB debugging
-./Meta/ladybird.py debug ladybird                    # Launch with default debugger
-./Meta/ladybird.py debug ladybird --debugger=lldb    # Specify debugger
-./Meta/ladybird.py debug ladybird -cmd "break main"  # Pass debugger commands
-
-# Attach to running process (WebContent, RequestServer, etc.)
-ps aux | grep WebContent   # Find PID
-gdb -p <PID>
-
-# Performance profiling
-./Meta/ladybird.py profile ladybird  # Launch with callgrind
+./Meta/WPT.sh import html/dom/aria-attribute-reflection.html  # Import WPT test
 ```
 
 ### Code Quality
 ```bash
-# Format check (requires clang-format)
-ninja -C Build/release check-style
-
-# Shell script linting
-ninja -C Build/release lint-shell-scripts
+ninja -C Build/release check-style        # clang-format check
+ninja -C Build/release lint-shell-scripts  # Shell script linting
 ```
 
-### Adding LibWeb Tests
+### Debugging
 ```bash
-# Helper script to create new tests
-./Tests/LibWeb/add_libweb_test.py my-test Text      # Text test
-./Tests/LibWeb/add_libweb_test.py my-test Layout    # Layout test
-./Tests/LibWeb/add_libweb_test.py my-test Ref        # Ref test
-./Tests/LibWeb/add_libweb_test.py my-test Screenshot # Screenshot test
+./Meta/ladybird.py debug ladybird                    # GDB/LLDB
+./Meta/ladybird.py debug ladybird --debugger=lldb    # Specific debugger
+./Meta/ladybird.py profile ladybird                  # callgrind profiling
+WEBCONTENT_DEBUG=1 LIBWEB_DEBUG=1 ./Build/release/bin/Ladybird  # Debug logging
 ```
 
-### Testing Fork Features
-```bash
-# Sentinel component tests
-./Build/release/bin/TestFingerprintingDetector  # Fingerprinting detection
-./Build/release/bin/TestPolicyGraph              # Policy database
-
-# Test fingerprinting detection in browser
-# 1. Run Ladybird
-./Build/release/bin/Ladybird
-# 2. Load test page
-file:///home/rbsmith4/ladybird/test_canvas_fingerprinting.html
-
-# Test with real fingerprinting sites
-# - https://browserleaks.com/canvas
-# - https://amiunique.org/fingerprint
-# - https://coveryourtracks.eff.org/
-
-# Credential protection tests
-./Meta/ladybird.py run test-web -- -f Text/input/credential-protection-*.html
-
-# Enable debug logging
-WEBCONTENT_DEBUG=1 LIBWEB_DEBUG=1 ./Build/release/bin/Ladybird
-```
-
-## Code Architecture
+## Architecture
 
 ### Multi-Process Design
 
-Ladybird uses a **sandboxed multi-process architecture**:
-
 ```
-UI Process (Browser)
-├── WebContent Process (per tab, sandboxed)
-│   ├── LibWeb (HTML/CSS rendering)
-│   ├── LibJS (JavaScript execution)
-│   ├── FormMonitor (credential exfiltration detection) [Fork]
-│   └── FingerprintingDetector (browser fingerprinting detection) [Fork]
-├── RequestServer Process (per WebContent)
-│   ├── HTTP/HTTPS requests
-│   ├── Fork: Tor/IPFS/VPN support
-│   ├── Fork: SecurityTap (YARA malware scanning)
-│   └── Fork: URLSecurityAnalyzer (phishing detection)
+UI Process (Browser chrome: UI/Qt/ or UI/AppKit/)
+├── WebContent Process (per tab, sandboxed) — LibWeb + LibJS rendering
+├── RequestServer Process (per WebContent) — network isolation
 ├── ImageDecoder Process (per image, sandboxed)
-├── Sentinel Service (standalone daemon) [Fork]
-│   ├── YARA rule engine + ML (TensorFlow Lite)
-│   ├── PolicyGraph SQLite database
-│   ├── PhishingURLAnalyzer
-│   ├── FormAnomalyDetector
-│   └── Unix socket IPC (/tmp/sentinel.sock)
 ├── WebDriver Process (browser automation)
-└── WebWorker Process (Web Workers)
+├── WebWorker Process (Web Workers)
+└── Sentinel Service (standalone daemon) [Fork]
 ```
+
+All entry points use `ladybird_main(Main::Arguments)` instead of standard `main()`.
 
 ### IPC Communication
 
-- **Definition Files**: `.ipc` files define message interfaces (e.g., `Services/RequestServer/RequestServer.ipc`)
-- **Code Generation**: IPC compiler generates endpoint code from `.ipc` files
-- **Message Types**: Synchronous (`=>`) and asynchronous (`=|`)
-- **Transport**: Unix sockets and platform-specific mechanisms
+`.ipc` files define message interfaces; the IPC compiler generates endpoint code. Message types: synchronous (`=>`) and asynchronous (`=|`).
 
-Example IPC definition:
 ```cpp
 endpoint RequestServer {
     start_request(i32 request_id, ByteString method, URL::URL url, ...) =|
@@ -166,343 +90,141 @@ endpoint RequestServer {
 }
 ```
 
-### Core Libraries
+Key IPC files: `Services/*/{}Client,Server}.ipc`, `Libraries/LibWebView/UIProcess{Client,Server}.ipc`
 
-Located in `Libraries/`:
+### Core Libraries (`Libraries/`)
 
-**Web Engine**:
-- `LibWeb/` - HTML/CSS/DOM rendering engine (75+ subdirectories)
-- `LibJS/` - JavaScript engine (ECMAScript implementation)
-- `LibWasm/` - WebAssembly support
+- **LibWeb/** — HTML/CSS/DOM rendering engine. Subdirectories map to specs (e.g., `XHR/` → `Web::XHR` namespace). 75+ subdirectories.
+- **LibJS/** — JavaScript engine (ECMAScript). Uses completions for error propagation.
+- **LibWasm/** — WebAssembly support
+- **AK/** (root dir) — Application Kit: containers (Vector, String, HashMap), error handling (ErrorOr/TRY/MUST), smart pointers
+- **LibCore/** — Event loop, file I/O, OS abstraction
+- **LibIPC/** — Inter-process communication framework
+- **LibGfx/** — 2D graphics, image decoding, font rendering
+- **LibWebView/** — Bridge between UI process and WebContent
 
-**Infrastructure**:
-- `AK/` (root directory) - Application Kit: data structures (Vector, String, HashMap), error handling (ErrorOr, Try/Must)
-- `LibCore/` - Event loop, file I/O, OS abstraction
-- `LibIPC/` - Inter-process communication
-- `LibGfx/` - 2D graphics, image decoding, font rendering
-- `LibHTTP/` - HTTP/1.1 client
-- `LibCrypto/LibTLS/` - Cryptography and TLS/SSL
-- `LibWebView/` - Bridge between UI and WebContent
+### GC-Managed Objects
 
-**Fork Enhancements**:
-- `Services/Sentinel/` - Security detection components:
-  - `PolicyGraph.{h,cpp}` - Security policy database (SQLite)
-  - `FingerprintingDetector.{h,cpp}` - Browser fingerprinting detection
-  - `PhishingURLAnalyzer.{h,cpp}` - Phishing URL analysis
-  - `FormAnomalyDetector.{h,cpp}` - Anomalous form behavior detection
-  - `MalwareML.{h,cpp}` - ML-based malware detection (TensorFlow Lite)
-- `Services/RequestServer/SecurityTap.{h,cpp}` - YARA integration for downloads
-- `Services/RequestServer/URLSecurityAnalyzer.{h,cpp}` - Real-time phishing detection
-- `Services/WebContent/FormMonitor.{h,cpp}` - Credential exfiltration detection
-- `Services/WebContent/PageClient.{h,cpp}` - Fingerprinting detector integration
-- `Libraries/LibWeb/HTML/HTMLCanvasElement.cpp` - Canvas fingerprinting hooks
-- `Libraries/LibWeb/HTML/CanvasRenderingContext2D.cpp` - Canvas API monitoring
-- `LibWebView/SentinelConfig.h` - Sentinel configuration
+LibWeb objects participating in garbage collection must:
+1. Use `GC_CELL(ClassName, BaseClass)` macro in the class declaration
+2. Override `visit_edges(Cell::Visitor&)` to trace GC references
+3. Use `GC::Ref<T>` / `GC::Ptr<T>` for pointers to other GC objects
+4. Use static factory methods returning `GC::Ref<T>` instead of public constructors
+
+### LibWeb Error Handling Hierarchy
+
+- `AK::ErrorOr<T>` — Only for OOM propagation. Use `TRY_OR_THROW_OOM` to convert to JS error.
+- `WebIDL::ExceptionOr<T>` — Primary error type for anything touching JS bindings. Wraps SimpleException, DOMException, or JS::Completion.
+- `JS::ThrowCompletionOr<T>` — Only when overriding LibJS virtual methods. Wrap in ExceptionOr ASAP.
 
 ## Coding Style
 
-Follow the style in `Documentation/CodingStyle.md` and `.clang-format`:
+Follow `Documentation/CodingStyle.md` and `.clang-format`. C++23 required (gcc-14 or clang-20).
 
-### Naming Conventions
-- **Classes/Structs/Namespaces**: CamelCase (e.g., `FileDescriptor`, `HTMLElement`)
-- **Functions/Variables**: snake_case (e.g., `buffer_size`, `absolute_path()`)
-- **Constants**: SCREAMING_CASE (e.g., `MAX_BUFFER_SIZE`)
-- **Member Variables**: Prefix with `m_` (e.g., `m_document`, `m_length`)
-- **Static Members**: Prefix with `s_` (e.g., `s_instance_count`)
-- **Global Variables**: Prefix with `g_` (e.g., `g_config`)
+### Naming
+- **Classes/Structs/Namespaces**: CamelCase (`FileDescriptor`, `HTMLElement`)
+- **Functions/Variables**: snake_case (`buffer_size`, `absolute_path()`)
+- **Constants**: SCREAMING_CASE
+- **Members**: `m_` prefix, **Static**: `s_` prefix, **Global**: `g_` prefix
+- **Getters**: bare word (`count()`), **Setters**: `set_` prefix (`set_count()`)
+- **Singletons**: static `the()` method
 
 ### Key Patterns
 ```cpp
-// Error handling - use TRY for error propagation (like Rust's ?)
+// Error propagation (like Rust's ?)
 ErrorOr<void> do_something() {
     auto result = TRY(fallible_operation());
     return {};
 }
 
-// MUST for operations that should never fail
+// MUST for infallible operations
 MUST(vector.try_append(item));
 
-// String literals - use "text"sv for zero-cost StringView
+// Zero-cost StringView literals
 auto str = "Hello"sv;
 
-// Fallible constructors - use static create() methods
-class MyClass {
-public:
-    static ErrorOr<NonnullOwnPtr<MyClass>> create() {
-        return adopt_nonnull_own(new MyClass());
-    }
-private:
-    MyClass() = default;
-};
+// East const style (const on the right)
+Salt const& m_salt;   // Right
+const Salt& m_salt;   // Wrong
 
-// Entry points - use ladybird_main, not main
-ErrorOr<int> ladybird_main(Main::Arguments arguments) {
-    return 0;
-}
+// Virtual overrides: always use BOTH 'virtual' and 'override'/'final'
+virtual String description() override { ... }
 
-// East const style
-Salt const& m_salt;  // Right
-const Salt& m_salt;  // Wrong
-
-// Virtual methods - use both 'virtual' and 'override'/'final'
-class Base {
-    virtual String description() { ... }
-};
-class Derived : public Base {
-    virtual String description() override { ... }  // Right
-};
+// Fallible constructors
+static ErrorOr<NonnullOwnPtr<MyClass>> create() { ... }
 ```
 
-### Code Organization
-- **Classes**: Use `class` for types with methods, keep members private with `m_` prefix
-- **Structs**: Use `struct` for POD types, public members without `m_` prefix
-- **Constructors**: Initialize members with C++ initializer syntax, prefer member initialization at definition
-- **Getters/Setters**: Bare words for getters (e.g., `count()`), prefix setters with `set_` (e.g., `set_count()`)
-- **Singletons**: Use static `the()` method to access instance
+### Spec Implementation Rules
+- **Match spec naming exactly** (e.g., `suffering_from_being_missing()` not `has_missing_constraint()`)
+- **Add spec URL** above every function implementing a spec algorithm
+- **Comment every numbered step** from the spec
+- **Use `FIXME:`** for unimplemented steps, **`NOTE:`** for spec notes, **`NB:`** for our own notes
+- **`OPTIMIZATION:`** prefix for non-spec fast paths
+- Copy IDL verbatim (4-space indent), don't reorder functions or rename params
 
-### Comments
-- Use `//` for comments (not `/* */` except for copyright)
-- Write as proper sentences with capitalization and punctuation
-- Use `FIXME:` or `TODO:` without attribution for items to address
-- Explain **why**, not **what** (the code should be self-explanatory)
+### Code Rules
+- No C-style casts (exception: `(void)param;`), use `static_cast`/`reinterpret_cast`/`bit_cast`
+- No `using namespace std;` in .cpp files — fully qualify `std::` names
+- `#pragma once` for header guards
+- `class` for types with methods (private members with `m_`), `struct` for POD (public, no prefix)
+- Prefer enums over bool parameters at call sites: `AllowFooBar::Yes` not `true`
+- Curly braces may be omitted only for single-line bodies; if any branch needs braces, all branches get them
+
+### Adding New Web IDL Interfaces
+1. Create `.idl` file in appropriate `LibWeb/` subdirectory
+2. Add `#import` for referenced IDL types
+3. Add `libweb_js_bindings()` call in `Libraries/LibWeb/idl_files.cmake`
+4. Forward declare in `Libraries/LibWeb/Forward.h`
+5. Non-Event/Element types: add to `is_platform_object()` in `Meta/Lagom/Tools/CodeGenerators/LibWeb/BindingsGenerator/IDLGenerators.cpp`
 
 ## Testing
 
-### Test Organization
-
-```
-Tests/
-├── LibWeb/
-│   ├── Text/            # JavaScript API tests with text output
-│   ├── Layout/          # Layout tree comparison tests
-│   ├── Ref/             # Screenshot comparison against reference HTML
-│   └── Screenshot/      # Screenshot comparison against reference image
-├── LibJS/               # JavaScript engine tests
-├── AK/                  # AK container tests
-├── Sentinel/            # Sentinel security tests [Fork]
-└── Lib*/Test*.cpp       # C++ unit tests
-```
-
 ### Test Types
+1. **Text** — Test Web APIs via `println()` output comparison. Sync or async (use `done` callback).
+2. **Layout** — Compare layout tree dumps. No JS needed.
+3. **Ref** — Screenshot comparison against reference HTML via `<link rel="match" href="...">`.
+4. **Screenshot** — Screenshot comparison against reference image. Avoid if Ref test suffices.
+5. **C++ Unit Tests** — `Tests/Lib*/Test*.cpp` using LibTest framework.
 
-1. **Text Tests** - Test Web APIs without visual representation, compare `println()` output
-2. **Layout Tests** - Compare layout tree structure
-3. **Ref Tests** - Compare screenshot against reference HTML page using `<link rel="match" href="...">`
-4. **Screenshot Tests** - Compare against reference screenshot image
-5. **Unit Tests** - C++ unit tests using LibTest framework
+Every LibWeb feature/bugfix should have a corresponding test.
 
-### Sanitizer Testing
-
-CI runs with ASAN and UBSAN:
-```bash
-cmake --preset Sanitizers
-cmake --build Build/sanitizers
-ctest --preset Sanitizers
-```
+### LADYBIRD_SOURCE_DIR
+Some tests require `export LADYBIRD_SOURCE_DIR=${PWD}` pointing to the repo root.
 
 ## Commit Message Format
 
-Use strict imperative format:
 ```
 Category: Brief imperative description
 
 Detailed explanation if needed.
 ```
 
-Examples:
-- `LibWeb: Add CSS grid support`
-- `RequestServer: Fix memory leak in connection handling`
-- `Sentinel: Improve YARA rule matching performance`
+Examples: `LibWeb: Add CSS grid support`, `RequestServer: Fix memory leak in connection handling`
 
-Write in imperative mood: "Add feature" not "Added feature" or "Adds feature".
+Use imperative mood: "Add feature" not "Added feature".
 
-## Fork-Specific Architecture Patterns
+## Fork-Specific Patterns
 
 ### Security Detection Pattern
+1. Core detection logic in `Services/Sentinel/` (no LibWeb dependencies)
+2. Integration in `Services/WebContent/PageClient` (owns detector instance)
+3. Minimal hooks in `LibWeb/` (just call into PageClient)
+4. All features must gracefully degrade if initialization fails
+5. Unit tests in `Services/Sentinel/Test*.cpp`, browser tests in `Tests/LibWeb/Text/input/`
 
-All fork security features follow a consistent pattern:
-
+### PolicyGraph Integration
 ```cpp
-// 1. Detector in Services/Sentinel/ (core logic, no LibWeb dependencies)
-class FingerprintingDetector {
-    static ErrorOr<NonnullOwnPtr<FingerprintingDetector>> create();
-    void record_api_call(FingerprintingTechnique, StringView api_name, bool had_user_interaction);
-    FingerprintingScore calculate_score() const;
-};
-
-// 2. Integration in WebContent/PageClient (owns detector instance)
-class PageClient {
-    OwnPtr<Sentinel::FingerprintingDetector> m_fingerprinting_detector;
-    void notify_fingerprinting_api_call(/* params */);
-};
-
-// 3. Hooks in LibWeb (call into detector)
-// Libraries/LibWeb/HTML/HTMLCanvasElement.cpp
-ErrorOr<String> HTMLCanvasElement::to_data_url(/* params */) {
-    // ... existing implementation ...
-
-    // Hook: Record fingerprinting API call
-    if (auto* page = document().page())
-        page->notify_fingerprinting_api_call(/* params */);
-
-    return result;
-}
-```
-
-### PolicyGraph Integration Pattern
-
-Security decisions use PolicyGraph for persistent storage:
-
-```cpp
-// 1. Check existing policy
+// 1. Check cached policy → 2. Run detection → 3. Alert user via IPC → 4. Store decision in PolicyGraph
 auto result = m_policy_graph->evaluate_policy(domain, resource);
-if (result.has_value()) {
-    // Use cached decision
-    return result.value();
-}
-
-// 2. Detect threat
-auto score = detector->calculate_score();
-if (score.is_aggressive()) {
-    // 3. Alert user (via IPC to UI)
-    send_security_alert(/* params */);
-
-    // 4. User decision stored in PolicyGraph
-    m_policy_graph->create_policy(domain, resource, user_choice);
-}
 ```
-
-### Graceful Degradation
-
-All fork features implement graceful degradation:
-
-```cpp
-// Always use TRY and handle failures
-auto detector = TRY(FingerprintingDetector::create());
-
-// Check for null before use
-if (m_fingerprinting_detector) {
-    m_fingerprinting_detector->record_api_call(/* params */);
-}
-
-// Never fail core browser functionality
-// If security feature fails, log and continue
-if (auto result = detector->analyze(); result.is_error()) {
-    dbgln("Warning: Fingerprinting detection failed: {}", result.error());
-    // Continue normal page operation
-}
-```
-
-## Important Development Notes
-
-### Web Standards Implementation
-
-When implementing spec algorithms, **match spec naming exactly**:
-
-```cpp
-// Right - matches https://html.spec.whatwg.org/
-bool HTMLInputElement::suffering_from_being_missing();
-
-// Wrong - arbitrarily differs from spec
-bool HTMLInputElement::has_missing_constraint();
-```
-
-### C++23 Features
-
-This codebase uses **C++23** (requires gcc-14 or clang-20). Modern features are encouraged.
-
-### No C-Style Casts
-
-Use appropriate C++ cast operators: `static_cast`, `reinterpret_cast`, `bit_cast`, `dynamic_cast`.
-Exception: `(void)parameter;` to mark parameters as used.
-
-### Build Presets
-
-Available CMake presets (see `CMakePresets.json`):
-- **Release**: Default optimized build
-- **Debug**: Debug build with symbols
-- **Sanitizers**: ASAN/UBSAN for memory safety testing
-- **Windows_Experimental**: Windows build with Clang-CL
-- **All_Debug**: Debug with all debug macros enabled
 
 ## Key Documentation
 
-Located in `Documentation/`:
-- `BuildInstructionsLadybird.md` - Platform-specific build setup
-- `ProcessArchitecture.md` - Multi-process architecture details
-- `Testing.md` - Comprehensive testing guide
-- `CodingStyle.md` - Complete coding style rules
-- `LibWebFromLoadingToPainting.md` - LibWeb rendering pipeline
-- `LibWebPatterns.md` - LibWeb code patterns
-- `CSSProperties.md` - Adding new CSS properties
-- `AddNewIDLFile.md` - Adding Web IDL files
-- `GettingStartedContributing.md` - Contributing to upstream
-
-Fork-specific docs in `docs/`:
-- `FORK.md` - Fork overview
-- `FEATURES.md` - Detailed feature documentation
-- `CHANGELOG.md` - Sentinel development changelog
-- **Sentinel System**:
-  - `SENTINEL_ARCHITECTURE.md` - System architecture
-  - `SENTINEL_SETUP_GUIDE.md` - Installation guide
-  - `SENTINEL_USER_GUIDE.md` - End-user documentation
-  - `SENTINEL_POLICY_GUIDE.md` - Policy management
-  - `SENTINEL_YARA_RULES.md` - Rule documentation
-- **Security Features**:
-  - `USER_GUIDE_CREDENTIAL_PROTECTION.md` - Credential protection guide
-  - `FINGERPRINTING_DETECTION_ARCHITECTURE.md` - Fingerprinting detection docs
-  - `PHISHING_DETECTION_ARCHITECTURE.md` - Phishing detection docs
-  - `TENSORFLOW_LITE_INTEGRATION.md` - ML malware detection docs
-- **Development**:
-  - `MILESTONE_0.3_PLAN.md` - Credential protection milestone
-  - `MILESTONE_0.4_PLAN.md` - Advanced detection milestone
-  - `MILESTONE_0.4_TECHNICAL_SPECS.md` - Technical specifications
-
-## Entry Points
-
-Key entry point files:
-- UI Process: `UI/Qt/main.cpp`, `UI/AppKit/main.mm`
-- WebContent: `Services/WebContent/main.cpp`
-- RequestServer: `Services/RequestServer/main.cpp`
-- ImageDecoder: `Services/ImageDecoder/main.cpp`
-- Sentinel: `Services/Sentinel/main.cpp` [Fork]
-- WebDriver: `Services/WebDriver/main.cpp`
-
-All use `ladybird_main(Main::Arguments arguments)` instead of standard `main()`.
-
-## Sentinel Development Milestones
-
-This fork follows a structured development plan:
-
-### Milestone 0.1 - Malware Scanning (Complete)
-- YARA-based malware detection for downloads
-- SecurityTap integration with RequestServer
-- PolicyGraph SQLite database
-- Quarantine system and security alerts
-
-### Milestone 0.2 - Credential Protection (Complete)
-- FormMonitor for cross-origin credential submissions
-- Trusted form relationship management
-- Password autofill protection
-- User education and security tips
-
-### Milestone 0.3 - Enhanced Credential Protection (Complete)
-- Phase 1-6: Database schema, API, FormMonitor integration
-- Import/export UI for credential relationships
-- Policy template system
-- Form anomaly detection
-
-### Milestone 0.4 - Advanced Detection (In Progress)
-- **Phase 1**: ML-based malware detection (TensorFlow Lite) ✅
-- **Phase 4**: Browser fingerprinting detection ✅
-- **Phase 5**: Phishing URL analysis ✅
-- Pending: WebGL/Audio/Navigator fingerprinting hooks
-- Pending: User alerts and policy UI integration
-
-When working on Sentinel features:
-1. Core detection logic goes in `Services/Sentinel/` (no LibWeb dependencies)
-2. Integration hooks go in `Services/WebContent/` or `Services/RequestServer/`
-3. LibWeb hooks are minimal - just call into PageClient
-4. All features must gracefully degrade if initialization fails
-5. Unit tests in `Services/Sentinel/Test*.cpp`
-6. Browser tests in `Tests/LibWeb/Text/input/`
+- `Documentation/CodingStyle.md` — Complete style rules
+- `Documentation/Testing.md` — Testing guide
+- `Documentation/ProcessArchitecture.md` — Multi-process design
+- `Documentation/LibWebPatterns.md` — LibWeb code patterns and error handling
+- `Documentation/LibWebFromLoadingToPainting.md` — Rendering pipeline
+- `Documentation/AddNewIDLFile.md` — Adding Web IDL files
+- `Documentation/CSSProperties.md` — Adding new CSS properties
+- `Documentation/BuildInstructionsLadybird.md` — Platform-specific build setup
