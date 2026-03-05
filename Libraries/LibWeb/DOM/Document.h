@@ -369,6 +369,7 @@ public:
     void update_style_if_needed_for_element(AbstractElement const&);
     [[nodiscard]] bool element_needs_style_update(AbstractElement const&) const;
     void update_layout(UpdateLayoutReason);
+    void update_layout_if_needed_for_node(Node const&, UpdateLayoutReason);
     [[nodiscard]] bool layout_is_up_to_date() const;
     void update_paint_and_hit_testing_properties_if_needed();
     void update_animated_style_if_needed();
@@ -812,7 +813,6 @@ public:
     GC::RootVector<GC::Ref<Element>> elements_from_point(double x, double y);
     GC::Ptr<Element const> scrolling_element() const;
 
-    void set_needs_to_resolve_paint_only_properties() { m_needs_to_resolve_paint_only_properties = true; }
     void set_needs_animated_style_update() { m_needs_animated_style_update = true; }
 
     void set_needs_invalidation_of_elements_affected_by_has() { m_needs_invalidation_of_elements_affected_by_has = true; }
@@ -895,8 +895,13 @@ public:
     GC::Ptr<HTML::Navigable> cached_navigable();
     void set_cached_navigable(GC::Ptr<HTML::Navigable>);
 
-    void set_needs_display(InvalidateDisplayList = InvalidateDisplayList::Yes);
-    void set_needs_display(CSSPixelRect const&, InvalidateDisplayList = InvalidateDisplayList::Yes);
+    template<OneOf<Painting::Paintable, HTML::Navigable, CSS::VisualViewport, Web::EventHandler> T>
+    void set_needs_repaint(Badge<T>, InvalidateDisplayList should_invalidate_display_list = InvalidateDisplayList::Yes)
+    {
+        set_needs_repaint(should_invalidate_display_list);
+    }
+
+    void notify_css_background_image_loaded();
 
     RefPtr<Painting::DisplayList> cached_display_list() const;
     RefPtr<Painting::DisplayList> record_display_list(HTML::PaintConfig);
@@ -1031,6 +1036,8 @@ protected:
     Document(JS::Realm&, URL::URL const&, TemporaryDocumentForFragmentParsing = TemporaryDocumentForFragmentParsing::No);
 
 private:
+    void set_needs_repaint(InvalidateDisplayList = InvalidateDisplayList::Yes);
+
     // ^JS::Object
     virtual bool is_dom_document() const final { return true; }
 
@@ -1343,7 +1350,6 @@ private:
 
     bool m_design_mode_enabled { false };
 
-    bool m_needs_to_resolve_paint_only_properties { true };
     bool m_needs_accumulated_visual_contexts_update { false };
     bool m_needs_invalidation_of_elements_affected_by_has { false };
 

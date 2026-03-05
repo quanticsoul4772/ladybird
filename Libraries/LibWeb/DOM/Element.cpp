@@ -930,18 +930,11 @@ CSS::RequiredInvalidationAfterStyleChange Element::recompute_style(bool& did_cha
     if (invalidation.is_none())
         return invalidation;
 
-    // NB: We use unsafe accessors here because we're in the middle of style recalculation.
-    //     Layout is inherently stale while we're applying new styles to existing layout nodes.
-    if (invalidation.repaint)
-        set_needs_paint_only_properties_update();
-
     if (!invalidation.rebuild_layout_tree && unsafe_layout_node()) {
         // If we're keeping the layout tree, we can just apply the new style to the existing layout tree.
         unsafe_layout_node()->apply_style(*m_computed_properties);
-        if (invalidation.repaint) {
-            set_needs_paint_only_properties_update();
-            set_needs_display();
-        }
+        if (invalidation.repaint)
+            set_needs_repaint();
 
         // Do the same for pseudo-elements.
         for (auto i = 0; i < to_underlying(CSS::PseudoElement::KnownPseudoElementCount); i++) {
@@ -956,10 +949,8 @@ CSS::RequiredInvalidationAfterStyleChange Element::recompute_style(bool& did_cha
 
             if (auto node_with_style = pseudo_element->unsafe_layout_node()) {
                 node_with_style->apply_style(*pseudo_element_style);
-                if (invalidation.repaint && node_with_style->first_paintable()) {
-                    node_with_style->first_paintable()->set_needs_paint_only_properties_update(true);
-                    node_with_style->first_paintable()->set_needs_display();
-                }
+                if (invalidation.repaint && node_with_style->first_paintable())
+                    node_with_style->first_paintable()->set_needs_repaint();
             }
         }
     }
@@ -1035,6 +1026,8 @@ CSS::RequiredInvalidationAfterStyleChange Element::recompute_inherited_style()
     // NB: unsafe_layout_node() because we're applying recomputed inherited styles during
     //     style recalculation, before layout has been updated.
     unsafe_layout_node()->apply_style(*computed_properties);
+    if (invalidation.repaint)
+        set_needs_repaint();
     return invalidation;
 }
 
@@ -1413,7 +1406,7 @@ Vector<CSSPixelRect> Element::get_client_rects() const
         return {};
 
     // NOTE: Ensure that layout is up-to-date before looking at metrics.
-    const_cast<Document&>(document()).update_layout(UpdateLayoutReason::ElementGetClientRects);
+    const_cast<Document&>(document()).update_layout_if_needed_for_node(*this, UpdateLayoutReason::ElementGetClientRects);
 
     // 1. If the element on which it was invoked does not have an associated layout box return an empty DOMRectList
     //    object and stop this algorithm.
@@ -1515,7 +1508,7 @@ int Element::client_width() const
     }
 
     // NOTE: Ensure that layout is up-to-date before looking at metrics.
-    const_cast<Document&>(document()).update_layout(UpdateLayoutReason::ElementClientWidth);
+    const_cast<Document&>(document()).update_layout_if_needed_for_node(*this, UpdateLayoutReason::ElementClientWidth);
 
     // 1. If the element has no associated CSS layout box or if the CSS layout box is inline, return zero.
     if (!paintable_box())
@@ -1540,7 +1533,7 @@ int Element::client_height() const
     }
 
     // NOTE: Ensure that layout is up-to-date before looking at metrics.
-    const_cast<Document&>(document()).update_layout(UpdateLayoutReason::ElementClientHeight);
+    const_cast<Document&>(document()).update_layout_if_needed_for_node(*this, UpdateLayoutReason::ElementClientHeight);
 
     // 1. If the element has no associated CSS layout box or if the CSS layout box is inline, return zero.
     if (!paintable_box())
@@ -3768,7 +3761,7 @@ GC::Ref<WebIDL::Promise> Element::scroll_by(HTML::ScrollToOptions options)
 bool Element::check_visibility(Optional<CheckVisibilityOptions> options)
 {
     // NOTE: Ensure that layout is up-to-date before looking at metrics.
-    document().update_layout(UpdateLayoutReason::ElementCheckVisibility);
+    document().update_layout_if_needed_for_node(*this, UpdateLayoutReason::ElementCheckVisibility);
 
     // 1. If this does not have an associated box, return false.
     if (!paintable_box())

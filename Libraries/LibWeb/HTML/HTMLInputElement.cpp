@@ -212,7 +212,7 @@ void HTMLInputElement::set_checked(bool checked)
         },
         {});
 
-    set_needs_display();
+    set_needs_repaint();
 }
 
 void HTMLInputElement::set_checked_binding(bool checked)
@@ -2352,7 +2352,7 @@ WebIDL::ExceptionOr<void> HTMLInputElement::set_size(WebIDL::UnsignedLong value)
 // https://html.spec.whatwg.org/multipage/input.html#dom-input-height
 WebIDL::UnsignedLong HTMLInputElement::height() const
 {
-    const_cast<DOM::Document&>(document()).update_layout(DOM::UpdateLayoutReason::HTMLInputElementHeight);
+    const_cast<DOM::Document&>(document()).update_layout_if_needed_for_node(*this, DOM::UpdateLayoutReason::HTMLInputElementHeight);
 
     // When the input element's type attribute is not in the Image Button state, then no image is available.
     if (type_state() != TypeAttributeState::ImageButton)
@@ -2387,7 +2387,7 @@ void HTMLInputElement::set_height(WebIDL::UnsignedLong value)
 // https://html.spec.whatwg.org/multipage/input.html#dom-input-width
 WebIDL::UnsignedLong HTMLInputElement::width() const
 {
-    const_cast<DOM::Document&>(document()).update_layout(DOM::UpdateLayoutReason::HTMLInputElementWidth);
+    const_cast<DOM::Document&>(document()).update_layout_if_needed_for_node(*this, DOM::UpdateLayoutReason::HTMLInputElementWidth);
 
     // When the input element's type attribute is not in the Image Button state, then no image is available.
     if (type_state() != TypeAttributeState::ImageButton)
