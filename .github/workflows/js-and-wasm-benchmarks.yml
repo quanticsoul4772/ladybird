@@ -9,7 +9,7 @@ on:
 jobs:
   js-benchmarks:
     runs-on: ${{ fromJSON(matrix.runner_labels) }}
-    if: ${{ github.repository == 'quanticsoul4772/ladybird' && github.event.workflow_run.conclusion == 'success' }}
+    if: false # Disabled on fork: requires self-hosted runners and webhook secrets
     name: ${{ matrix.os_name }}, ${{ matrix.arch }}
 
     strategy:

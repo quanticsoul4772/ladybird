@@ -12,7 +12,7 @@ concurrency:
 jobs:
   build:
     if: github.repository == 'quanticsoul4772/ladybird'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6.0.2
         with:

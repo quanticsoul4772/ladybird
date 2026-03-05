@@ -1,15 +1,10 @@
 name: 'Close stale PRs'
 on:
-  # Run daily at 01:30.
-  schedule:
-    - cron: '30 1 * * *'
-
-  # Allows you to run this workflow manually from the Actions tab on GitHub.
   workflow_dispatch:
 
 jobs:
   stale:
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     if: github.repository == 'quanticsoul4772/ladybird'
     permissions:
       actions: write  # required for cache management (see https://github.com/actions/stale/issues/1133)

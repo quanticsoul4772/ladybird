@@ -1,9 +1,7 @@
 name: Nightly Lagom
 
 on:
-  # Automatically run at the end of every day.
-  schedule:
-    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -23,7 +21,7 @@ jobs:
         build_preset: ['Sanitizer']
         toolchain: ['Clang']
         clang_plugins: [false]
-        runner_labels: ['["blacksmith-8vcpu-ubuntu-2404-arm"]']
+        runner_labels: ['["ubuntu-24.04"]']
 
         include:
           - os_name: 'Linux'
@@ -31,28 +29,21 @@ jobs:
             build_preset: 'Distribution'
             toolchain: 'GNU'
             clang_plugins: false
-            runner_labels: '["blacksmith-8vcpu-ubuntu-2404"]'
-
-          - os_name: 'macOS'
-            arch: 'arm64'
-            build_preset: 'Distribution'
-            toolchain: 'Clang'
-            clang_plugins: false
-            runner_labels: '["macos-15", "self-hosted"]'
+            runner_labels: '["ubuntu-24.04"]'
 
           - os_name: 'Linux'
             arch: 'arm64'
             build_preset: 'Distribution'
             toolchain: 'Clang'
             clang_plugins: false
-            runner_labels: '["blacksmith-8vcpu-ubuntu-2404-arm"]'
+            runner_labels: '["ubuntu-24.04"]'
 
           - os_name: 'Windows'
             arch: 'x86_64'
             build_preset: 'Sanitizer'
             toolchain: 'ClangCL'
             clang_plugins: false
-            runner_labels: '["blacksmith-8vcpu-windows-2025"]'
+            runner_labels: '["windows-latest"]'
 
     secrets: inherit
     uses: ./.github/workflows/lagom-template.yml
@@ -72,11 +63,11 @@ jobs:
       fail-fast: false
       matrix:
         arch: ['x86_64']
-        runner_labels: ['["blacksmith-8vcpu-ubuntu-2404"]']
+        runner_labels: ['["ubuntu-24.04"]']
 
         include:
           - arch: 'aarch64'
-            runner_labels: '["blacksmith-8vcpu-ubuntu-2404-arm"]'
+            runner_labels: '["ubuntu-24.04"]'
 
     secrets: inherit
     uses: ./.github/workflows/flatpak-template.yml
