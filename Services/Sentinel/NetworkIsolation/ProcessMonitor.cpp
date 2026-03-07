@@ -33,7 +33,7 @@ ErrorOr<NonnullOwnPtr<ProcessMonitor>> ProcessMonitor::create(ExitCallback callb
 
 ErrorOr<void> ProcessMonitor::start_monitoring_thread()
 {
-    m_monitoring_thread = TRY(Threading::Thread::try_create([this] {
+    m_monitoring_thread = TRY(Threading::Thread::try_create("Sentinel ProcessMonitor"sv, [this] {
         monitoring_loop();
         return 0;
     }));
