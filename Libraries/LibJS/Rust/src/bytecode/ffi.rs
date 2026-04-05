@@ -19,9 +19,7 @@
 //!
 //! ## FFI types
 //!
-//! All `FFI*` structs are `#[repr(C)]` and must match their counterparts
-//! in `BytecodeFactory.h`. Changes to field order or types here require
-//! corresponding changes on the C++ side.
+//! All `FFI*` structs are `#[repr(C)]`.
 
 use std::ffi::c_void;
 
@@ -31,8 +29,6 @@ use crate::u32_from_usize;
 
 /// Opaque pointer returned from rust_create_executable.
 pub type ExecutableHandle = *mut c_void;
-
-// FFI types matching BytecodeFactory.h.
 
 /// Exception handler range (C++ `BytecodeFactory::ExceptionHandlerData`).
 #[repr(C)]
@@ -109,6 +105,25 @@ impl From<Option<u32>> for FFIOptionalU32 {
     }
 }
 
+/// Literal value kind for class field initializers
+#[repr(u8)]
+pub enum LiteralValueKind {
+    None = 0,
+    Number = 1,
+    BooleanTrue = 2,
+    BooleanFalse = 3,
+    Null = 4,
+    String = 5,
+}
+
+/// Well-known symbol IDs for get_well_known_symbol()
+/// Used to retrieve well known symbols as opaque Values from C++.
+#[repr(u8)]
+pub enum WellKnownSymbolKind {
+    SymbolIterator = 0,
+    SymbolAsyncIterator = 1,
+}
+
 /// Class element descriptor for ClassBlueprint creation
 /// (C++ `BytecodeFactory::ClassElementData`).
 #[repr(C)]
@@ -120,7 +135,7 @@ pub struct FFIClassElement {
     pub private_identifier_len: usize,
     pub shared_function_data_index: FFIOptionalU32,
     pub has_initializer: bool,
-    pub literal_value_kind: u8, // LiteralValueKind
+    pub literal_value_kind: LiteralValueKind,
     pub literal_value_number: f64,
     pub literal_value_string: *const u16,
     pub literal_value_string_len: usize,
@@ -263,8 +278,7 @@ unsafe extern "C" {
     pub fn rust_number_to_utf16(value: f64, buffer: *mut u16, buffer_len: usize) -> usize;
 
     // Get a well-known symbol as an opaque Value.
-    // symbol_id: 0 = Symbol.iterator, 1 = Symbol.asyncIterator
-    pub fn get_well_known_symbol(vm_ptr: *mut c_void, symbol_id: u32) -> u64;
+    pub fn get_well_known_symbol(vm_ptr: *mut c_void, symbol_id: WellKnownSymbolKind) -> u64;
 
     // Get an intrinsic abstract operation function as an opaque Value.
     // name/name_len is the function name (e.g. "GetMethod").
@@ -367,7 +381,7 @@ pub unsafe fn create_shared_function_data(
             uses_this_from_environment,
         };
 
-        let sfd_ptr = rust_create_sfd(vm_ptr, source_code_ptr, &ffi_data);
+        let sfd_ptr = rust_create_sfd(vm_ptr, source_code_ptr, &raw const ffi_data);
 
         assert!(
             !sfd_ptr.is_null(),
@@ -400,9 +414,9 @@ pub unsafe fn create_sfd_for_gdi(
     }
 }
 
-/// Constant tags for the FFI constant buffer (ABI-compatible with BytecodeFactory).
+/// Constant tags for the FFI constant buffer (ABI-compatible).
 #[repr(u8)]
-enum ConstantTag {
+pub enum ConstantTag {
     Number = 0,
     BooleanTrue = 1,
     BooleanFalse = 2,
@@ -561,7 +575,7 @@ pub unsafe fn create_executable(
             regex_count: generator.compiled_regexes.len(),
         };
 
-        rust_create_executable(vm_ptr, source_code_ptr, &ffi_data)
+        rust_create_executable(vm_ptr, source_code_ptr, &raw const ffi_data)
     }
 }
 
@@ -585,7 +599,7 @@ pub fn compile_regex(pattern: &[u16], flags: &[u16]) -> Result<*mut c_void, Stri
             pattern.len(),
             flags.as_ptr(),
             flags.len(),
-            &mut error,
+            &raw mut error,
         );
         if error.is_null() {
             Ok(handle)

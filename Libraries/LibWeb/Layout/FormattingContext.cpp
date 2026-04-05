@@ -4,7 +4,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/CSS/ComputedProperties.h>
+#include <LibWeb/CSS/StyleValues/AnchorStyleValue.h>
+#include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
+#include <LibWeb/CSS/StyleValues/PercentageStyleValue.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
@@ -107,6 +112,12 @@ bool FormattingContext::creates_block_formatting_context(Box const& box)
     // 1. The layout containment box establishes an independent formatting context.
     // 4. The paint containment box establishes an independent formatting context.
     if (box.has_layout_containment() || box.has_paint_containment())
+        return true;
+
+    // https://drafts.csswg.org/css-conditional-5/#valdef-container-type-size
+    // Applies style containment and size containment to the principal box, and establishes an independent formatting
+    // context.
+    if (box.computed_values().container_type().is_size_container || box.computed_values().container_type().is_inline_size_container)
         return true;
 
     if (box.parent()) {
@@ -285,9 +296,8 @@ CSSPixels FormattingContext::greatest_child_width(Box const& box) const
 {
     CSSPixels max_width = 0;
     if (box.children_are_inline()) {
-        for (auto& line_box : m_state.get(box).line_boxes) {
-            max_width = max(max_width, line_box.width());
-        }
+        for (auto& line_box : m_state.get(box).line_boxes)
+            max_width = max(max_width, line_box_physical_width(box, line_box));
     } else {
         box.for_each_child_of_type<Box>([&](Box const& child) {
             if (!child.is_absolutely_positioned())
@@ -296,6 +306,28 @@ CSSPixels FormattingContext::greatest_child_width(Box const& box) const
         });
     }
     return max_width;
+}
+
+CSSPixels FormattingContext::line_box_physical_width(Box const& box, LineBox const& line_box)
+{
+    if (box.computed_values().writing_mode() == CSS::WritingMode::HorizontalTb)
+        return line_box.width();
+
+    CSSPixels leftmost_fragment_x = 0;
+    CSSPixels rightmost_fragment_x = 0;
+    bool saw_fragment = false;
+    for (auto const& fragment : line_box.fragments()) {
+        auto fragment_left = fragment.offset().x();
+        auto fragment_right = fragment_left + fragment.width();
+        leftmost_fragment_x = saw_fragment ? min(leftmost_fragment_x, fragment_left) : fragment_left;
+        rightmost_fragment_x = saw_fragment ? max(rightmost_fragment_x, fragment_right) : fragment_right;
+        saw_fragment = true;
+    }
+
+    if (!saw_fragment)
+        return 0;
+
+    return rightmost_fragment_x - leftmost_fragment_x;
 }
 
 FormattingContext::ShrinkToFitResult FormattingContext::calculate_shrink_to_fit_widths(Box const& box)
@@ -311,10 +343,12 @@ CSSPixelSize FormattingContext::solve_replaced_size_constraint(CSSPixels input_w
     // 10.4 Minimum and maximum widths: 'min-width' and 'max-width'
     // https://www.w3.org/TR/CSS22/visudet.html#min-max-widths
 
-    auto const& containing_block = *box.non_anonymous_containing_block();
+    auto containing_block = box.containing_block();
+    while (containing_block && containing_block->is_anonymous() && !containing_block->display().is_table_cell())
+        containing_block = containing_block->containing_block();
     CSSPixels width_of_containing_block = 0;
     CSSPixels height_of_containing_block = 0;
-    if (auto const* containing_block_used_values = m_state.try_get(containing_block)) {
+    if (auto const* containing_block_used_values = containing_block ? m_state.try_get(*containing_block) : nullptr) {
         width_of_containing_block = containing_block_used_values->content_width();
         height_of_containing_block = containing_block_used_values->content_height();
     }
@@ -663,8 +697,11 @@ CSSPixels FormattingContext::compute_height_for_replaced_element(Box const& box,
     // 10.6.6 Floating replaced elements
     // 10.6.10 'inline-block' replaced elements in normal flow
 
+    auto containing_block = box.containing_block();
+    while (containing_block && containing_block->is_anonymous() && !containing_block->display().is_table_cell())
+        containing_block = containing_block->containing_block();
     CSSPixels height_of_containing_block = 0;
-    if (auto const* containing_block_used_values = m_state.try_get(*box.non_anonymous_containing_block()))
+    if (auto const* containing_block_used_values = containing_block ? m_state.try_get(*containing_block) : nullptr)
         height_of_containing_block = containing_block_used_values->content_height();
     auto computed_width = should_treat_width_as_auto(box, available_space) ? CSS::Size::make_auto() : box.computed_values().width();
     auto computed_height = should_treat_height_as_auto(box, available_space) ? CSS::Size::make_auto() : box.computed_values().height();
@@ -886,6 +923,7 @@ void FormattingContext::compute_width_for_absolutely_positioned_non_replaced_ele
     box_state.margin_right = margin_right.to_px_or_zero(box);
 }
 
+// https://drafts.csswg.org/css2/#abs-replaced-width
 void FormattingContext::compute_width_for_absolutely_positioned_replaced_element(Box const& box, AvailableSpace const& available_space)
 {
     // 10.3.8 Absolutely positioned, replaced elements
@@ -1355,25 +1393,227 @@ AbsposContainingBlockInfo FormattingContext::resolve_abspos_containing_block_inf
     return { rect, horizontal_axis_mode, vertical_axis_mode, {}, {} };
 }
 
+// https://drafts.csswg.org/css-anchor-position-1/#anchor-pos
+void FormattingContext::resolve_anchor_insets(Box& box) const
+{
+    // https://drafts.csswg.org/css-anchor-position-1/#resolving-anchor
+    // An anchor() function is a resolvable anchor function only if all the following conditions are true:
+    //   - It's applied to an absolutely positioned box.
+    //   - If its <anchor-side> specifies a physical keyword, it's specified in an inset property applicable to that
+    //     axis.
+    //   - There is a target anchor element for the box it's used on, and the <anchor-name> value specified in the
+    //     function.
+    // NB: The first two conditions are guaranteed: this function is called from layout_absolutely_positioned_element(),
+    //     and we only resolve anchor() values in inset properties.
+    // FIXME: Support anchor-scope, position-try-fallbacks, anchor-size(), and other anchor positioning features.
+
+    auto const* element = as_if<DOM::Element>(box.dom_node());
+    if (!element)
+        return;
+
+    auto computed = element->computed_properties();
+    if (!computed)
+        return;
+    auto const& top = computed->property(CSS::PropertyID::Top);
+    auto const& right = computed->property(CSS::PropertyID::Right);
+    auto const& bottom = computed->property(CSS::PropertyID::Bottom);
+    auto const& left = computed->property(CSS::PropertyID::Left);
+    if (!top.is_anchor() && !right.is_anchor() && !bottom.is_anchor() && !left.is_anchor())
+        return;
+
+    auto containing_block = box.containing_block();
+    if (!containing_block)
+        return;
+
+    auto const& default_anchor_name = box.computed_values().position_anchor();
+    auto const& containing_block_state = m_state.get(*containing_block);
+
+    // https://drafts.csswg.org/css-anchor-position-1/#determining
+    // Several features of this specification refer to the position and size of an anchor box. Unless otherwise
+    // specified, this refers to the border box edge of the principal box of relevant anchor element.
+    // https://drafts.csswg.org/css-anchor-position-1/#acceptable-anchor-element
+    // FIXME: An element possible anchor is an acceptable anchor element for an absolutely positioned element positioned
+    //        el if all of the following are true:
+    //        - possible anchor is laid out strictly before positioned el [...]
+    auto resolve_anchor_rect = [&](CSS::AnchorStyleValue const& anchor) -> Optional<CSSPixelRect> {
+        auto const& name = anchor.anchor_name().has_value() ? anchor.anchor_name() : default_anchor_name;
+        if (!name.has_value())
+            return {};
+
+        auto anchor_element = element->document().element_by_anchor_name(name.value(), *element);
+        if (!anchor_element)
+            return {};
+
+        // NB: We use unsafe_layout_node() because we are in the middle of layout.
+        auto anchor_layout_node = anchor_element->unsafe_layout_node();
+        if (!anchor_layout_node || !is<Box>(*anchor_layout_node))
+            return {};
+
+        auto const& anchor_box = as<Box>(*anchor_layout_node);
+        auto const& anchor_state = m_state.get(anchor_box);
+        auto anchor_border_box_origin = anchor_state.cumulative_offset()
+            - CSSPixelPoint { anchor_state.border_box_left(), anchor_state.border_box_top() };
+        auto containing_block_padding_box_origin = containing_block_state.cumulative_offset()
+            - CSSPixelPoint { containing_block_state.padding_left, containing_block_state.padding_top };
+        return CSSPixelRect {
+            anchor_border_box_origin - containing_block_padding_box_origin,
+            { anchor_state.border_box_width(), anchor_state.border_box_height() },
+        };
+    };
+
+    // https://drafts.csswg.org/css-anchor-position-1/#anchor-pos
+    // An anchor() function representing a resolvable anchor function resolves at computed value time (using style &
+    // layout interleaving) to the <length> that would align the edge of the positioned boxes' inset-modified containing
+    // block corresponding to the property the function appears in with the specified edge of the target anchor
+    // element's anchor box.
+    auto containing_block_direction = containing_block->computed_values().direction();
+    auto box_direction = box.computed_values().direction();
+    auto resolve_anchor_side = [&](CSS::AnchorStyleValue const& anchor, bool is_from_end, bool is_horizontal_axis)
+        -> Optional<CSSPixels> {
+        auto maybe_rect = resolve_anchor_rect(anchor);
+        if (!maybe_rect.has_value())
+            return {};
+        auto const& rect = maybe_rect.value();
+        auto const& side = *anchor.anchor_side();
+        if (side.is_keyword()) {
+            switch (side.to_keyword()) {
+            // https://drafts.csswg.org/css-anchor-position-1/#typedef-anchor-side
+            // top | right | bottom | left
+            //     Refers to the specified side of the anchor box.
+            // If its <anchor-side> specifies a physical keyword, it's specified in an inset property applicable to that
+            // axis.
+            case CSS::Keyword::Top:
+                return is_horizontal_axis ? Optional<CSSPixels> {} : rect.top();
+            case CSS::Keyword::Bottom:
+                return is_horizontal_axis ? Optional<CSSPixels> {} : rect.bottom();
+            case CSS::Keyword::Left:
+                return is_horizontal_axis ? rect.left() : Optional<CSSPixels> {};
+            case CSS::Keyword::Right:
+                return is_horizontal_axis ? rect.right() : Optional<CSSPixels> {};
+
+            // center
+            //     Equivalent to 50%.
+            case CSS::Keyword::Center:
+                if (is_horizontal_axis)
+                    return rect.left() + rect.width() / 2;
+                return rect.top() + rect.height() / 2;
+
+            // start | end
+            //     Refers to one of the sides of the anchor box in the same axis as the inset property it's used in,
+            //     by resolving the keyword against the writing mode of the positioned box's containing block.
+            case CSS::Keyword::Start:
+            case CSS::Keyword::End: {
+                bool is_start = side.to_keyword() == CSS::Keyword::Start;
+                if (is_horizontal_axis) {
+                    bool use_left = (containing_block_direction == CSS::Direction::Ltr) == is_start;
+                    return use_left ? rect.left() : rect.right();
+                }
+                return is_start ? rect.top() : rect.bottom();
+            }
+
+            // self-start | self-end
+            //     Refers to one of the sides of the anchor box in the same axis as the inset property it's used in,
+            //     by resolving the keyword against the writing mode of the positioned box.
+            case CSS::Keyword::SelfStart:
+            case CSS::Keyword::SelfEnd: {
+                bool is_start = side.to_keyword() == CSS::Keyword::SelfStart;
+                if (is_horizontal_axis) {
+                    bool use_left = (box_direction == CSS::Direction::Ltr) == is_start;
+                    return use_left ? rect.left() : rect.right();
+                }
+                return is_start ? rect.top() : rect.bottom();
+            }
+
+            // inside | outside
+            //     Resolves to one of the anchor box's sides, depending on which inset property it's used in. inside
+            //     refers to the same side as the inset property, while outside refers to the opposite.
+            case CSS::Keyword::Inside:
+            case CSS::Keyword::Outside: {
+                bool same_side = side.to_keyword() == CSS::Keyword::Inside;
+                if (is_horizontal_axis) {
+                    return (is_from_end == same_side) ? rect.right() : rect.left();
+                }
+                return (is_from_end == same_side) ? rect.bottom() : rect.top();
+            }
+
+            default:
+                VERIFY_NOT_REACHED();
+            }
+        }
+        if (side.is_percentage()) {
+            // <percentage>
+            //     Refers to a position a corresponding percentage between the start and end sides, with 0% being
+            //     equivalent to start and 100% being equivalent to end.
+            auto percentage = side.as_percentage().percentage().as_fraction();
+            if (is_horizontal_axis) {
+                auto start = containing_block_direction == CSS::Direction::Ltr ? rect.left() : rect.right();
+                auto end = containing_block_direction == CSS::Direction::Ltr ? rect.right() : rect.left();
+                return start + CSSPixels::nearest_value_for((end - start).to_double() * percentage);
+            }
+            return rect.top() + CSSPixels::nearest_value_for(rect.height().to_double() * percentage);
+        }
+        return {};
+    };
+
+    auto resolve_anchor_for_inset = [&](CSS::AnchorStyleValue const& anchor, bool is_from_end, bool is_horizontal_axis)
+        -> CSS::LengthPercentageOrAuto {
+        auto maybe_side_px = resolve_anchor_side(anchor, is_from_end, is_horizontal_axis);
+
+        // If any of these conditions are false, the anchor() function computes to its specified fallback value. If no
+        // fallback value is specified, it makes the declaration referencing it invalid at computed-value time.
+        // NB: The fallback value can itself be an anchor(), so we walk the chain.
+        auto const* current = &anchor;
+        while (!maybe_side_px.has_value()) {
+            auto const& fallback = current->fallback_value();
+            if (!fallback)
+                return CSS::LengthPercentageOrAuto::make_auto();
+            if (!fallback->is_anchor())
+                return CSS::LengthPercentageOrAuto::from_style_value(*fallback);
+            current = &fallback->as_anchor();
+            maybe_side_px = resolve_anchor_side(*current, is_from_end, is_horizontal_axis);
+        }
+
+        // For inset properties measuring from the end edge (right, bottom), the resolved length is the distance from
+        // the anchor side to the corresponding edge of the containing block's padding box.
+        auto side_px = maybe_side_px.release_value();
+        if (is_from_end) {
+            auto containing_block_extent = is_horizontal_axis
+                ? containing_block_state.padding_box_width()
+                : containing_block_state.padding_box_height();
+            return { CSS::LengthPercentage { CSS::Length::make_px(containing_block_extent - side_px) } };
+        }
+        return { CSS::LengthPercentage { CSS::Length::make_px(side_px) } };
+    };
+
+    auto const& existing_inset = box.computed_values().inset();
+    box.mutable_computed_values().set_inset({
+        top.is_anchor() ? resolve_anchor_for_inset(top.as_anchor(), false, false) : existing_inset.top(),
+        right.is_anchor() ? resolve_anchor_for_inset(right.as_anchor(), true, true) : existing_inset.right(),
+        bottom.is_anchor() ? resolve_anchor_for_inset(bottom.as_anchor(), true, false) : existing_inset.bottom(),
+        left.is_anchor() ? resolve_anchor_for_inset(left.as_anchor(), false, true) : existing_inset.left(),
+    });
+}
+
 void FormattingContext::layout_absolutely_positioned_children()
 {
     if (m_layout_mode != LayoutMode::Normal)
         return;
     for (auto& child : context_box().contained_abspos_children()) {
         auto& box = as<Box>(*child);
-        auto containing_block_info = resolve_abspos_containing_block_info(box);
-        layout_absolutely_positioned_element(box, containing_block_info);
+        layout_absolutely_positioned_element(box);
     }
 }
 
-void FormattingContext::layout_absolutely_positioned_element(Box const& box, AbsposContainingBlockInfo const& containing_block_info)
+void FormattingContext::layout_absolutely_positioned_element(Box& box)
 {
-    if (box.is_svg_box()) {
-        // SVG elements cannot be absolutely positioned.
-        VERIFY_NOT_REACHED();
-    }
+    // SVG elements cannot be absolutely positioned.
+    VERIFY(!box.is_svg_box());
 
-    auto const available_space = AvailableSpace(AvailableSize::make_definite(containing_block_info.rect.width()), AvailableSize::make_definite(containing_block_info.rect.height()));
+    resolve_anchor_insets(box);
+
+    auto containing_block_info = resolve_abspos_containing_block_info(box);
+
+    auto const available_space = AvailableSpace(AvailableSize::make_definite(clamp_to_max_dimension_value(containing_block_info.rect.width())), AvailableSize::make_definite(clamp_to_max_dimension_value(containing_block_info.rect.height())));
 
     auto& containing_block_state = m_state.get_mutable(*box.containing_block());
 
@@ -1407,13 +1647,13 @@ void FormattingContext::layout_absolutely_positioned_element(Box const& box, Abs
 
     // If the box width and/or height is fixed and/or or resolved from inset properties,
     // mark the size as being definite (since layout was not required to resolve it, per CSS-SIZING-3).
-    auto is_length_but_not_auto = [](auto& length_percentage) {
-        return length_percentage.is_length() && !length_percentage.is_auto();
+    auto is_non_auto = [](auto const& length_percentage) {
+        return !length_percentage.is_auto();
     };
-    if (is_length_but_not_auto(computed_values.inset().left()) && is_length_but_not_auto(computed_values.inset().right())) {
+    if (is_non_auto(computed_values.inset().left()) && is_non_auto(computed_values.inset().right())) {
         box_state.set_has_definite_width(true);
     }
-    if (is_length_but_not_auto(computed_values.inset().top()) && is_length_but_not_auto(computed_values.inset().bottom())) {
+    if (is_non_auto(computed_values.inset().top()) && is_non_auto(computed_values.inset().bottom())) {
         box_state.set_has_definite_height(true);
     }
 
@@ -1422,8 +1662,12 @@ void FormattingContext::layout_absolutely_positioned_element(Box const& box, Abs
     //       See FormattingContext::compute_auto_height_for_absolutely_positioned_element()
     //       for the special-casing of BFC roots.
     if (!creates_block_formatting_context(box)) {
+        auto height_resolved_from_aspect_ratio = computed_values.height().is_auto()
+            && box.has_preferred_aspect_ratio()
+            && box_state.has_definite_width();
         box_state.set_has_definite_width(true);
-        box_state.set_has_definite_height(true);
+        if (!computed_values.height().is_auto() || height_resolved_from_aspect_ratio)
+            box_state.set_has_definite_height(true);
     }
 
     auto independent_formatting_context = layout_inside(box, LayoutMode::Normal, box_state.available_inner_space_or_constraints_from(available_space));
@@ -1617,9 +1861,22 @@ void FormattingContext::compute_inset(NodeWithStyleAndBoxModelMetrics const& box
     auto& box_state = m_state.get_mutable(box);
     auto const& computed_values = box.computed_values();
 
+    // NOTE: Percentage heights resolve against the containing block's used height. If the containing block's height is
+    //       indefinite, percentage insets behave as auto.
+    auto treat_percentage_as_auto = [&](CSS::LengthPercentageOrAuto const& value) -> CSS::LengthPercentageOrAuto {
+        if (value.contains_percentage()) {
+            auto containing_block = box.containing_block();
+            while (containing_block && containing_block->is_anonymous() && !containing_block->display().is_table_cell())
+                containing_block = containing_block->containing_block();
+            if (containing_block && !m_state.get(*containing_block).has_definite_height())
+                return CSS::LengthPercentageOrAuto::make_auto();
+        }
+        return value;
+    };
+
     // FIXME: Respect the containing block's writing-mode.
     resolve_two_opposing_insets(computed_values.inset().left(), computed_values.inset().right(), box_state.inset_left, box_state.inset_right, containing_block_size.width());
-    resolve_two_opposing_insets(computed_values.inset().top(), computed_values.inset().bottom(), box_state.inset_top, box_state.inset_bottom, containing_block_size.height());
+    resolve_two_opposing_insets(treat_percentage_as_auto(computed_values.inset().top()), treat_percentage_as_auto(computed_values.inset().bottom()), box_state.inset_top, box_state.inset_bottom, containing_block_size.height());
 }
 
 // https://drafts.csswg.org/css-sizing-3/#fit-content-size
@@ -1881,7 +2138,7 @@ CSSPixels FormattingContext::calculate_inner_height(Box const& box, AvailableSpa
     //       their cell/area size as available space).
     if (height.contains_percentage() && available_space.height.is_indefinite()) {
         auto containing_block = box.containing_block();
-        while (containing_block && containing_block->is_anonymous())
+        while (containing_block && containing_block->is_anonymous() && !containing_block->display().is_table_cell())
             containing_block = containing_block->containing_block();
 
         // https://quirks.spec.whatwg.org/#the-percentage-height-calculation-quirk
@@ -2037,8 +2294,10 @@ bool FormattingContext::should_treat_height_as_auto(Box const& box, AvailableSpa
             }();
             if (!percentage_height_quirk_applies) {
                 // NOTE: Anonymous blocks inherit height definiteness from their containing block.
+                //       However, anonymous table cells are proper containing blocks with their own
+                //       height semantics, so we must not walk past them.
                 auto containing_block = box.containing_block();
-                while (containing_block && containing_block->is_anonymous())
+                while (containing_block && containing_block->is_anonymous() && !containing_block->display().is_table_cell())
                     containing_block = containing_block->containing_block();
                 if (!containing_block)
                     return true;
@@ -2272,7 +2531,10 @@ bool FormattingContext::should_treat_max_width_as_none(Box const& box, Available
                 return true;
             return false;
         }
-        auto const* containing_block_used_values = m_state.try_get(*box.non_anonymous_containing_block());
+        auto containing_block = box.containing_block();
+        while (containing_block && containing_block->is_anonymous() && !containing_block->display().is_table_cell())
+            containing_block = containing_block->containing_block();
+        auto const* containing_block_used_values = containing_block ? m_state.try_get(*containing_block) : nullptr;
         if (!containing_block_used_values)
             return true;
         if (!containing_block_used_values->has_definite_width())
@@ -2299,7 +2561,10 @@ bool FormattingContext::should_treat_max_height_as_none(Box const& box, Availabl
     if (max_height.contains_percentage()) {
         if (available_height.is_min_content())
             return false;
-        auto const* containing_block_used_values = m_state.try_get(*box.non_anonymous_containing_block());
+        auto containing_block = box.containing_block();
+        while (containing_block && containing_block->is_anonymous() && !containing_block->display().is_table_cell())
+            containing_block = containing_block->containing_block();
+        auto const* containing_block_used_values = containing_block ? m_state.try_get(*containing_block) : nullptr;
         if (!containing_block_used_values)
             return true;
         if (!containing_block_used_values->has_definite_height())

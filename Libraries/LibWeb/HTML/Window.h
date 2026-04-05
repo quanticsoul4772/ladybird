@@ -8,6 +8,8 @@
 #pragma once
 
 #include <AK/Badge.h>
+#include <AK/Function.h>
+#include <AK/IterationDecision.h>
 #include <AK/RefPtr.h>
 #include <LibGC/Heap.h>
 #include <LibWeb/Bindings/Intrinsics.h>
@@ -276,6 +278,8 @@ public:
 
     bool find(String const& string);
 
+    static void for_each_active(Function<IterationDecision(Window&)> callback);
+
 private:
     explicit Window(JS::Realm&);
 
@@ -325,11 +329,6 @@ private:
 
     // https://html.spec.whatwg.org/multipage/nav-history-apis.html#window-navigation-api
     GC::Ptr<Navigation> m_navigation;
-
-    // https://html.spec.whatwg.org/multipage/custom-elements.html#custom-elements-api
-    // Each Window object has an associated custom element registry (a CustomElementRegistry object).
-    // It is set to a new CustomElementRegistry object when the Window object is created.
-    GC::Ptr<CustomElementRegistry> m_custom_element_registry;
 
     GC::Ptr<AnimationFrameCallbackDriver> m_animation_frame_callback_driver;
 

@@ -146,7 +146,7 @@ jobs:
           VCPKG_CACHE_SAS: ${{ github.ref == 'refs/heads/master' && secrets.VCPKG_CACHE_SAS || '' }}
           VCPKG_CACHE_MODE: ${{ github.ref == 'refs/heads/master' && 'write' || '' }}
         run: |
-          cmake --preset=Distribution -S Meta/Lagom -B ${{ github.workspace }}/Build/tools-build \
+          cmake --preset=Distribution -B ${{ github.workspace }}/Build/tools-build \
             -DLAGOM_TOOLS_ONLY=ON \
             -DINSTALL_LAGOM_TOOLS=ON \
             -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/Build/tools-install \
@@ -173,7 +173,7 @@ jobs:
         if: ${{ inputs.os_name == 'macOS' && inputs.build_preset == 'Sanitizer' }}
         working-directory: ${{ github.workspace }}
         run: |
-          cmake --preset ${{ inputs.build_preset }} -B Build -DENABLE_QT=ON
+          cmake --preset ${{ inputs.build_preset }} -B Build -DLADYBIRD_GUI_FRAMEWORK=Qt
           cmake --build Build
 
       - name: Save Caches
@@ -187,6 +187,10 @@ jobs:
           vcpkg_cache_primary_key: ${{ steps.cache-restore.outputs.vcpkg_cache_primary_key }}
 
       # === TEST ===
+
+      - name: Start PulseAudio
+        if: ${{ inputs.os_name == 'Linux' }}
+        run: pulseaudio -D --exit-idle-time=1800 --load="module-null-sink sink_name=virtual_sink"
 
       - name: Test
         if: ${{ inputs.build_preset == 'Sanitizer' }}
@@ -210,7 +214,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: libweb-test-artifacts-${{ inputs.os_name }}-${{ inputs.arch }}-${{ inputs.build_preset }}-${{ inputs.toolchain }}-${{ inputs.clang_plugins }}
-          path: ${{ github.workspace }}/Build/Lagom/Tests/LibWeb/test-web/test-dumps/
+          path: ${{ github.workspace }}/Build/Tests/LibWeb/test-web/test-dumps/
           retention-days: 0
           if-no-files-found: ignore
 

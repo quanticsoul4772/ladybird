@@ -9,6 +9,7 @@
 #include <LibGfx/BitmapExportResult.h>
 #include <LibJS/Runtime/DataView.h>
 #include <LibJS/Runtime/TypedArray.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/WebGL/Types.h>
 #include <LibWeb/WebIDL/Buffers.h>
@@ -46,15 +47,27 @@ public:
 
     virtual OpenGLContext& context() = 0;
 
+    bool is_context_lost() const;
+
+    bool xr_compatible() const { return m_xr_compatible; }
+    void set_xr_compatible(bool xr_compatible) { m_xr_compatible = xr_compatible; }
+
+    // https://immersive-web.github.io/webxr/#dom-webglrenderingcontextbase-makexrcompatible
+    GC::Ref<WebIDL::Promise> make_xr_compatible();
+
+    Optional<Vector<String>> get_supported_extensions();
+    JS::Object* get_extension(String const& name);
+
+    void enable_compressed_texture_format(WebIDL::UnsignedLong format);
+
 protected:
     WebGLRenderingContextBase(JS::Realm&);
 
-    virtual bool ext_texture_filter_anisotropic_extension_enabled() const = 0;
-    virtual bool angle_instanced_arrays_extension_enabled() const = 0;
-    virtual bool oes_standard_derivatives_extension_enabled() const = 0;
-    virtual bool webgl_draw_buffers_extension_enabled() const = 0;
-    virtual ReadonlySpan<WebIDL::UnsignedLong> enabled_compressed_texture_formats() const = 0;
-    virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const = 0;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    // FIXME: Make this and any another instance of extension names a FlyString, similarly to HTML::TagNames
+    bool extension_enabled(StringView extension) const;
+    ReadonlySpan<WebIDL::UnsignedLong> enabled_compressed_texture_formats() const;
 
     template<typename T>
     static ErrorOr<Span<T>> get_offset_span(Span<T> src_span, WebIDL::UnsignedLongLong src_offset, WebIDL::UnsignedLong src_length_override = 0)
@@ -166,6 +179,19 @@ protected:
 
 private:
     GLenum m_error { 0 };
+
+    // https://registry.khronos.org/webgl/specs/latest/2.0/#webgl-context-lost-flag
+    // Each WebGLRenderingContext and WebGL2RenderingContext has a webgl context lost flag, which is initially unset.
+    bool m_context_lost { false };
+
+    // https://immersive-web.github.io/webxr/#xr-compatible
+    bool m_xr_compatible { false };
+
+    Vector<WebIDL::UnsignedLong> m_enabled_compressed_texture_formats;
+
+    // Extensions
+    // "Multiple calls to getExtension with the same extension string, taking into account case-insensitive comparison, must return the same object as long as the extension is enabled."
+    HashMap<String, GC::Ref<JS::Object>, AK::ASCIICaseInsensitiveStringTraits> m_enabled_extensions;
 };
 
 }

@@ -141,6 +141,7 @@ pub struct Generator {
     undefined_constant: Option<ScopedOperand>,
     empty_constant: Option<ScopedOperand>,
     int32_constants: HashMap<i32, ScopedOperand>,
+    double_constants: HashMap<u64, ScopedOperand>,
     string_constants: HashMap<Utf16String, ScopedOperand>,
 
     // --- String/identifier/property tables (with deduplication) ---
@@ -294,6 +295,7 @@ impl Generator {
             undefined_constant: None,
             empty_constant: None,
             int32_constants: HashMap::new(),
+            double_constants: HashMap::new(),
             string_constants: HashMap::new(),
             string_table: Vec::new(),
             string_table_index: HashMap::new(),
@@ -435,12 +437,13 @@ impl Generator {
         &mut self,
         operand: &ScopedOperand,
     ) -> ScopedOperand {
-        if operand.operand().is_local() {
-            let reg = self.allocate_register();
-            self.emit_mov(&reg, operand);
-            reg
-        } else {
-            operand.clone()
+        match operand.operand().operand_type() {
+            OperandType::Register | OperandType::Constant => operand.clone(),
+            OperandType::Local | OperandType::Argument => {
+                let reg = self.allocate_register();
+                self.emit_mov(&reg, operand);
+                reg
+            }
         }
     }
 
@@ -476,7 +479,14 @@ impl Generator {
             self.int32_constants.insert(as_i32, op.clone());
             return op;
         }
-        self.append_constant(ConstantValue::Number(value))
+        // Deduplicate double values by their bit representation
+        let as_bits = value.to_bits();
+        if let Some(op) = self.double_constants.get(&as_bits) {
+            return op.clone();
+        }
+        let op = self.append_constant(ConstantValue::Number(value));
+        self.double_constants.insert(as_bits, op.clone());
+        op
     }
 
     pub fn add_constant_boolean(&mut self, value: bool) -> ScopedOperand {
@@ -679,8 +689,8 @@ impl Generator {
     }
 
     pub fn emit_mov_raw(&mut self, dst: Operand, src: Operand) {
-        // NB: Unlike emit_mov (ScopedOperand version), this does NOT skip self-moves.
-        //     This matches C++ emit_mov(Operand, Operand) which also emits unconditionally.
+        // NB: Unlike emit_mov (ScopedOperand version), this does NOT skip
+        //     self-moves and emits unconditionally.
         self.emit(Instruction::Mov { dst, src });
     }
 
@@ -1287,7 +1297,7 @@ impl Generator {
         // If any block is unterminated, ensure the undefined constant exists
         // for the assembly-time End(undefined) fallthrough. This must happen
         // before computing number_of_constants so operand rewriting accounts
-        // for it (matching C++ compile()).
+        // for it.
         let has_unterminated = self.basic_blocks.iter().any(|b| !b.terminated);
         let undefined_constant_operand = if has_unterminated {
             Some(self.add_constant_undefined().operand())
@@ -1307,7 +1317,7 @@ impl Generator {
                         OperandType::Register => {} // stays as-is
                         OperandType::Local => op.offset_index_by(number_of_registers),
                         OperandType::Constant => {
-                            op.offset_index_by(number_of_registers + number_of_locals)
+                            op.offset_index_by(number_of_registers + number_of_locals);
                         }
                         OperandType::Argument => op.offset_index_by(
                             number_of_registers + number_of_locals + number_of_constants,
@@ -1317,8 +1327,97 @@ impl Generator {
             }
         }
 
-        // Phase 2: Compute block byte offsets, applying assembly-time optimizations.
-        // These match the C++ Generator.cpp:compile() optimizations:
+        // Phase 1b: Peephole optimization - merge consecutive Mov instructions into Mov2/Mov3.
+        for block in &mut self.basic_blocks {
+            let mut i = 0;
+            while i < block.instructions.len() {
+                if !matches!(block.instructions[i].0, Instruction::Mov { .. }) {
+                    i += 1;
+                    continue;
+                }
+                let (dst1, src1) = match &block.instructions[i].0 {
+                    Instruction::Mov { dst, src } => (*dst, *src),
+                    _ => unreachable!(),
+                };
+                // Check for a second consecutive Mov.
+                if i + 1 < block.instructions.len()
+                    && let Instruction::Mov { dst, src } = &block.instructions[i + 1].0
+                {
+                    let (dst2, src2) = (*dst, *src);
+                    // Identical Movs: deduplicate to a single Mov.
+                    if dst1 == dst2 && src1 == src2 {
+                        block.instructions.remove(i + 1);
+                        continue; // Re-check from same position.
+                    }
+                    // Check for a third consecutive Mov.
+                    if i + 2 < block.instructions.len()
+                        && let Instruction::Mov { dst, src } = &block.instructions[i + 2].0
+                    {
+                        let (dst3, src3) = (*dst, *src);
+                        let mov2_is_dup = dst2 == dst1 && src2 == src1;
+                        let mov3_is_dup =
+                            (dst3 == dst1 && src3 == src1) || (dst3 == dst2 && src3 == src2);
+                        if mov2_is_dup && mov3_is_dup {
+                            // All three identical: keep single Mov.
+                            block.instructions.remove(i + 2);
+                            block.instructions.remove(i + 1);
+                            continue;
+                        } else if mov2_is_dup {
+                            // mov1 == mov2, mov3 different: Mov2(mov1, mov3).
+                            block.instructions[i].0 = Instruction::Mov2 {
+                                dst1,
+                                src1,
+                                dst2: dst3,
+                                src2: src3,
+                            };
+                            block.instructions.remove(i + 2);
+                            block.instructions.remove(i + 1);
+                            i += 1;
+                            continue;
+                        } else if mov3_is_dup {
+                            // mov3 is dup: Mov2(mov1, mov2).
+                            block.instructions[i].0 = Instruction::Mov2 {
+                                dst1,
+                                src1,
+                                dst2,
+                                src2,
+                            };
+                            block.instructions.remove(i + 2);
+                            block.instructions.remove(i + 1);
+                            i += 1;
+                            continue;
+                        } else {
+                            // All three unique: Mov3.
+                            block.instructions[i].0 = Instruction::Mov3 {
+                                dst1,
+                                src1,
+                                dst2,
+                                src2,
+                                dst3,
+                                src3,
+                            };
+                            block.instructions.remove(i + 2);
+                            block.instructions.remove(i + 1);
+                            i += 1;
+                            continue;
+                        }
+                    }
+                    // Only two unique Movs: Mov2.
+                    block.instructions[i].0 = Instruction::Mov2 {
+                        dst1,
+                        src1,
+                        dst2,
+                        src2,
+                    };
+                    block.instructions.remove(i + 1);
+                    i += 1;
+                    continue;
+                }
+                i += 1;
+            }
+        }
+
+        // Phase 2: Compute block byte offsets, applying assembly-time optimizations:
         //   - Skip Jump-to-next-block
         //   - Replace Jump-to-Return/End-only-block with inline Return/End
         //   - Replace JumpIf-where-one-target-is-next-block with JumpTrue/JumpFalse
@@ -1341,15 +1440,14 @@ impl Generator {
             block_offsets.push(offset);
             let block = &self.basic_blocks[block_index];
             let mut block_actions = Vec::with_capacity(block.instructions.len());
-            for (instruction, _) in block.instructions.iter() {
+            for (instruction, _) in &block.instructions {
                 match instruction {
                     Instruction::Jump { target } => {
                         let target_block = target.0 as usize;
                         // OPTIMIZATION: Don't emit jumps that just jump to the next block.
                         if target_block == block_index + 1 {
                             // If this block would become empty, we handle it by
-                            // not advancing offset (matching C++ behavior of removing
-                            // the block_start_offset entry and reusing it).
+                            // not advancing offset.
                             block_actions.push(InstAction::Skip);
                             continue;
                         }
@@ -1428,10 +1526,8 @@ impl Generator {
             actions.push(block_actions);
         }
 
-        // Check if any block became empty due to skip, and adjust its offset
-        // to match the next block's offset (C++ pops basic_block_start_offsets.last()).
-        // We handle this by keeping block_offsets as-is since labels referencing
-        // an empty block will resolve to the same byte offset as the next block.
+        // NB: Empty blocks (from skipped jumps) have the same byte offset as
+        // the next block, so labels referencing them resolve correctly.
 
         // Phase 3: Patch labels (block index → byte offset)
         for block in &mut self.basic_blocks {
@@ -1447,8 +1543,7 @@ impl Generator {
         let mut bytecode: Vec<u8> = Vec::with_capacity(offset);
         let mut source_map: Vec<SourceMapEntry> = Vec::new();
         let mut exception_handlers: Vec<ExceptionHandler> = Vec::new();
-        // Track which blocks actually produced instructions (matching C++ behavior
-        // of popping basic_block_start_offsets when a block becomes empty).
+        // Track which blocks actually produced instructions.
         let mut basic_block_start_offsets: Vec<usize> = Vec::with_capacity(num_blocks);
 
         for (block_index, block) in self.basic_blocks.iter().enumerate() {
@@ -1462,7 +1557,7 @@ impl Generator {
                 match action {
                     InstAction::Skip => {
                         // If this skip makes the block empty, remove it from
-                        // basic_block_start_offsets (matching C++ take_last()).
+                        // basic_block_start_offsets.
                         if basic_block_start_offsets.last() == Some(&bytecode.len()) {
                             basic_block_start_offsets.pop();
                         }
@@ -1559,8 +1654,7 @@ impl Generator {
             }
         }
 
-        // Merge adjacent exception handlers with the same handler offset
-        // (matching C++ Generator.cpp behavior).
+        // Merge adjacent exception handlers with the same handler offset.
         let mut merged_handlers: Vec<ExceptionHandler> = Vec::new();
         for handler in &exception_handlers {
             if let Some(last) = merged_handlers.last_mut()

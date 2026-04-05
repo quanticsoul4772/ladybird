@@ -25,6 +25,9 @@
 
 namespace Web::Painting {
 
+class ResizeHandle;
+class Scrollbar;
+
 WEB_API void set_paint_viewport_scrollbars(bool enabled);
 ResolvedCSSFilter resolve_css_filter(CSS::Filter const& computed_filter, PaintableBox const& paintable_box);
 
@@ -45,6 +48,7 @@ public:
     StackingContext const* stacking_context() const { return m_stacking_context; }
     void set_stacking_context(GC::Ref<StackingContext>);
     void invalidate_stacking_context();
+    Optional<int> effective_z_index() const;
 
     virtual Optional<CSSPixelRect> get_mask_area() const { return {}; }
     virtual Optional<Gfx::MaskKind> get_mask_type() const { return {}; }
@@ -154,6 +158,25 @@ public:
 
     virtual bool handle_mousewheel(Badge<EventHandler>, CSSPixelPoint, unsigned buttons, unsigned modifiers, int wheel_delta_x, int wheel_delta_y) override;
 
+    struct ScrollbarData {
+        CSSPixelRect gutter_rect;
+        CSSPixelRect thumb_rect;
+        CSSPixelFraction thumb_travel_to_scroll_ratio { 0 };
+    };
+    enum class ScrollDirection {
+        Horizontal,
+        Vertical,
+    };
+
+    Optional<ScrollbarData> compute_scrollbar_data(
+        ScrollDirection direction,
+        ChromeMetrics const& chrome_metrics,
+        ScrollStateSnapshot const* = nullptr) const;
+    Optional<CSSPixelRect> absolute_scrollbar_rect(ScrollDirection direction, bool with_gutter, ChromeMetrics const& chrome_metrics) const;
+
+    GC::Ptr<Scrollbar> scrollbar(ScrollDirection) const;
+    GC::Ref<Scrollbar> ensure_scrollbar(ScrollDirection);
+
     enum class ConflictingElementKind {
         Cell,
         Row,
@@ -207,11 +230,22 @@ public:
 
     Optional<CSSPixelRect> get_clip_rect() const;
 
-    virtual bool wants_mouse_events() const override;
+    struct PhysicalResizeAxes {
+        bool horizontal;
+        bool vertical;
+    };
+    PhysicalResizeAxes physical_resize_axes() const;
+
+    bool resizer_contains(CSSPixelPoint adjusted_position, ChromeMetrics const& chrome_metrics) const;
+    bool is_chrome_mirrored() const;
+    bool has_resizer() const;
+
+    GC::Ptr<ResizeHandle> resize_handle() const;
+    GC::Ref<ResizeHandle> ensure_resize_handle();
 
     CSSPixelRect transform_reference_box() const;
 
-    RefPtr<ScrollFrame const> nearest_scroll_frame() const;
+    ScrollFrameIndex nearest_scroll_frame_index() const;
 
     PaintableBox const* nearest_scrollable_ancestor() const;
 
@@ -227,13 +261,18 @@ public:
     void set_used_values_for_grid_template_rows(RefPtr<CSS::GridTrackSizeListStyleValue const> style_value) { m_used_values_for_grid_template_rows = move(style_value); }
     RefPtr<CSS::GridTrackSizeListStyleValue const> const& used_values_for_grid_template_rows() const { return m_used_values_for_grid_template_rows; }
 
-    void set_enclosing_scroll_frame(RefPtr<ScrollFrame const> const& scroll_frame) { m_enclosing_scroll_frame = scroll_frame; }
-    void set_own_scroll_frame(RefPtr<ScrollFrame> const& scroll_frame) { m_own_scroll_frame = scroll_frame; }
+    void set_enclosing_scroll_frame_index(ScrollFrameIndex index) { m_enclosing_scroll_frame_index = index; }
+    void set_own_scroll_frame_index(ScrollFrameIndex index) { m_own_scroll_frame_index = index; }
 
-    void set_accumulated_visual_context(auto state) { m_accumulated_visual_context = move(state); }
-    [[nodiscard]] auto accumulated_visual_context() const { return m_accumulated_visual_context; }
-    void set_accumulated_visual_context_for_descendants(auto state) { m_accumulated_visual_context_for_descendants = move(state); }
-    [[nodiscard]] auto accumulated_visual_context_for_descendants() const { return m_accumulated_visual_context_for_descendants; }
+    void set_accumulated_visual_context(VisualContextIndex index) { m_accumulated_visual_context_index = index; }
+    [[nodiscard]] VisualContextIndex accumulated_visual_context_index() const { return m_accumulated_visual_context_index; }
+    void set_accumulated_visual_context_for_descendants(VisualContextIndex index) { m_accumulated_visual_context_for_descendants_index = index; }
+    [[nodiscard]] VisualContextIndex accumulated_visual_context_for_descendants_index() const { return m_accumulated_visual_context_for_descendants_index; }
+
+    Optional<CSSPixelPoint> transform_point_to_local(CSSPixelPoint screen_position) const;
+    Optional<CSSPixelPoint> transform_point_to_local_for_descendants(CSSPixelPoint screen_position) const;
+    CSSPixelRect transform_rect_to_viewport(CSSPixelRect const& rect) const;
+    CSSPixelPoint inverse_transform_point(CSSPixelPoint screen_position) const;
 
     static constexpr size_t paint_phase_count = to_underlying(PaintPhase::Overlay) + 1;
 
@@ -254,11 +293,9 @@ public:
         m_cached_phase_commands[to_underlying(phase)] = move(commands);
     }
 
-    [[nodiscard]] RefPtr<ScrollFrame const> enclosing_scroll_frame() const { return m_enclosing_scroll_frame; }
-    [[nodiscard]] Optional<int> scroll_frame_id() const;
+    [[nodiscard]] ScrollFrameIndex enclosing_scroll_frame_index() const { return m_enclosing_scroll_frame_index; }
 
-    [[nodiscard]] RefPtr<ScrollFrame const> own_scroll_frame() const { return m_own_scroll_frame; }
-    [[nodiscard]] Optional<int> own_scroll_frame_id() const;
+    [[nodiscard]] ScrollFrameIndex own_scroll_frame_index() const { return m_own_scroll_frame_index; }
 
 protected:
     explicit PaintableBox(Layout::Box const&);
@@ -275,41 +312,16 @@ protected:
 
     virtual CSSPixelRect compute_absolute_rect() const;
 
-    struct ScrollbarData {
-        CSSPixelRect gutter_rect;
-        CSSPixelRect thumb_rect;
-        CSSPixelFraction thumb_travel_to_scroll_ratio { 0 };
-    };
-    enum class ScrollDirection {
-        Horizontal,
-        Vertical,
-    };
     [[nodiscard]] TraversalDecision hit_test_children(CSSPixelPoint position, HitTestType type, Function<TraversalDecision(HitTestResult)> const& callback) const;
     [[nodiscard]] TraversalDecision hit_test_continuation(Function<TraversalDecision(HitTestResult)> const& callback) const;
     [[nodiscard]] TraversalDecision hit_test_chrome(CSSPixelPoint adjusted_position, Function<TraversalDecision(HitTestResult)> const& callback) const;
 
-    Optional<ScrollbarData> compute_scrollbar_data(
-        ScrollDirection direction,
-        ChromeMetrics const& chrome_metrics,
-        ScrollStateSnapshot const* = nullptr) const;
     CSSPixels available_scrollbar_length(ScrollDirection direction, ChromeMetrics const& chrome_metrics) const;
-    Optional<CSSPixelRect> absolute_scrollbar_rect(ScrollDirection direction, bool with_gutter, ChromeMetrics const& chrome_metrics) const;
     Optional<CSSPixelRect> absolute_resizer_rect(ChromeMetrics const& chrome_metrics) const;
     bool could_be_scrolled_by_wheel_event(ScrollDirection direction) const;
-    bool resizer_contains(CSSPixelPoint adjusted_position, ChromeMetrics const& chrome_metrics) const;
-    bool is_chrome_mirrored() const;
-    bool has_resizer() const;
 
 private:
     [[nodiscard]] virtual bool is_paintable_box() const final { return true; }
-
-    virtual DispatchEventOfSameName handle_mousedown(Badge<EventHandler>, CSSPixelPoint, unsigned button, unsigned modifiers) override;
-    virtual DispatchEventOfSameName handle_mouseup(Badge<EventHandler>, CSSPixelPoint, unsigned button, unsigned modifiers) override;
-    virtual DispatchEventOfSameName handle_mousemove(Badge<EventHandler>, CSSPixelPoint, unsigned buttons, unsigned modifiers) override;
-    virtual void handle_mouseleave(Badge<EventHandler>) override;
-
-    bool scrollbar_contains(ScrollDirection, CSSPixelPoint adjusted_position, ChromeMetrics const& chrome_metrics) const;
-    void scroll_to_mouse_position(CSSPixelPoint, ChromeMetrics const& chrome_metrics);
 
     GC::Ptr<StackingContext> m_stacking_context;
 
@@ -322,20 +334,19 @@ private:
     Optional<CSSPixelRect> mutable m_absolute_padding_box_rect;
     Optional<CSSPixelRect> mutable m_absolute_border_box_rect;
 
-    RefPtr<ScrollFrame const> m_enclosing_scroll_frame;
-    RefPtr<ScrollFrame const> m_own_scroll_frame;
-    RefPtr<AccumulatedVisualContext const> m_accumulated_visual_context;
-    RefPtr<AccumulatedVisualContext const> m_accumulated_visual_context_for_descendants;
+    ScrollFrameIndex m_enclosing_scroll_frame_index {};
+    ScrollFrameIndex m_own_scroll_frame_index {};
+    VisualContextIndex m_accumulated_visual_context_index {};
+    VisualContextIndex m_accumulated_visual_context_for_descendants_index {};
 
     Optional<BordersDataWithElementKind> m_override_borders_data;
     Optional<TableCellCoordinates> m_table_cell_coordinates;
 
     ResolvedCSSFilter m_filter;
 
-    Optional<CSSPixels> m_scroll_thumb_grab_position;
-    Optional<ScrollDirection> m_scroll_thumb_dragging_direction;
-    mutable bool m_draw_enlarged_horizontal_scrollbar { false };
-    mutable bool m_draw_enlarged_vertical_scrollbar { false };
+    GC::Ptr<Scrollbar> m_horizontal_scrollbar;
+    GC::Ptr<Scrollbar> m_vertical_scrollbar;
+    GC::Ptr<ResizeHandle> m_resize_handle;
     bool m_has_non_invertible_css_transform { false };
 
     OwnPtr<StickyInsets> m_sticky_insets;

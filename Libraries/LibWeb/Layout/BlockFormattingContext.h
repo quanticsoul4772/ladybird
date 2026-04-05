@@ -102,8 +102,6 @@ private:
 
     void compute_width_for_block_level_replaced_element_in_normal_flow(Box const&, AvailableSpace const&);
 
-    void layout_viewport(AvailableSpace const&);
-
     void layout_block_level_children(BlockContainer const&, AvailableSpace const&);
     void layout_inline_children(BlockContainer const&, AvailableSpace const&);
     void layout_fieldset_with_rendered_legend(FieldSetBox const&, AvailableSpace const&);
@@ -120,6 +118,9 @@ private:
     Optional<int> determine_used_value_for_column_count(CSSPixels const& U) const;
     CSSPixels determine_used_value_for_column_width(CSSPixels const& U, int N) const;
 
+    // https://drafts.csswg.org/css-multicol-2/#cw
+    CSSPixels get_column_width_used_value_for_multicol(CSSPixels const& U) const;
+    // https://www.w3.org/TR/css-align-3/#column-row-gap
     CSSPixels get_column_gap_used_value_for_multicol(CSSPixels const& U) const;
 
     enum class FloatSide {

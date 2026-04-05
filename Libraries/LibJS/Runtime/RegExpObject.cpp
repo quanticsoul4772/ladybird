@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/CharacterTypes.h>
 #include <AK/Function.h>
 #include <AK/UnicodeUtils.h>
 #include <LibJS/Runtime/AbstractOperations.h>
@@ -20,74 +21,242 @@ namespace JS {
 
 GC_DEFINE_ALLOCATOR(RegExpObject);
 
-Result<regex::RegexOptions<ECMAScriptFlags>, String> regex_flags_from_string(Utf16View const& flags)
+namespace {
+
+enum class RegExpNameElementKind {
+    CodePoint,
+    HighSurrogate,
+    LowSurrogate,
+};
+
+enum class RegExpNameElementOrigin {
+    Literal,
+    FixedEscape,
+    BracedEscape,
+};
+
+struct RegExpNameElement {
+    RegExpNameElementKind kind;
+    RegExpNameElementOrigin origin;
+    size_t next_index { 0 };
+};
+
+static ParseRegexPatternError invalid_group_name_error()
 {
-    bool d = false, g = false, i = false, m = false, s = false, u = false, y = false, v = false;
-    auto options = RegExpObject::default_flags;
+    return ParseRegexPatternError { "invalid group name"_string };
+}
+
+static ErrorOr<RegExpNameElement, ParseRegexPatternError> parse_regexp_name_element(Utf16View const& pattern, size_t index)
+{
+    auto const length = pattern.length_in_code_units();
+    if (index >= length)
+        return invalid_group_name_error();
+
+    auto code_unit = pattern.code_unit_at(index);
+    if (code_unit != '\\') {
+        if (AK::UnicodeUtils::is_utf16_high_surrogate(code_unit)) {
+            if (index + 1 < length) {
+                auto next_code_unit = pattern.code_unit_at(index + 1);
+                if (AK::UnicodeUtils::is_utf16_low_surrogate(next_code_unit))
+                    return RegExpNameElement { RegExpNameElementKind::CodePoint, RegExpNameElementOrigin::Literal, index + 2 };
+            }
+            return RegExpNameElement { RegExpNameElementKind::HighSurrogate, RegExpNameElementOrigin::Literal, index + 1 };
+        }
+        if (AK::UnicodeUtils::is_utf16_low_surrogate(code_unit))
+            return RegExpNameElement { RegExpNameElementKind::LowSurrogate, RegExpNameElementOrigin::Literal, index + 1 };
+        return RegExpNameElement { RegExpNameElementKind::CodePoint, RegExpNameElementOrigin::Literal, index + 1 };
+    }
+
+    if (index + 1 >= length || pattern.code_unit_at(index + 1) != 'u')
+        return invalid_group_name_error();
+
+    auto escape_index = index + 2;
+    if (escape_index < length && pattern.code_unit_at(escape_index) == '{') {
+        ++escape_index;
+
+        u32 value = 0;
+        size_t digits = 0;
+        while (escape_index < length && pattern.code_unit_at(escape_index) != '}') {
+            auto digit = pattern.code_unit_at(escape_index);
+            if (!is_ascii_hex_digit(digit))
+                return invalid_group_name_error();
+            value = value * 16 + parse_ascii_hex_digit(digit);
+            if (value > 0x10FFFF)
+                return invalid_group_name_error();
+            ++digits;
+            ++escape_index;
+        }
+
+        if (digits == 0 || escape_index >= length || pattern.code_unit_at(escape_index) != '}')
+            return invalid_group_name_error();
+
+        ++escape_index;
+        if (AK::UnicodeUtils::is_utf16_high_surrogate(value))
+            return RegExpNameElement { RegExpNameElementKind::HighSurrogate, RegExpNameElementOrigin::BracedEscape, escape_index };
+        if (AK::UnicodeUtils::is_utf16_low_surrogate(value))
+            return RegExpNameElement { RegExpNameElementKind::LowSurrogate, RegExpNameElementOrigin::BracedEscape, escape_index };
+        return RegExpNameElement { RegExpNameElementKind::CodePoint, RegExpNameElementOrigin::BracedEscape, escape_index };
+    }
+
+    if (escape_index + 4 > length)
+        return invalid_group_name_error();
+
+    u32 value = 0;
+    for (size_t offset = 0; offset < 4; ++offset) {
+        auto digit = pattern.code_unit_at(escape_index + offset);
+        if (!is_ascii_hex_digit(digit))
+            return invalid_group_name_error();
+        value = value * 16 + parse_ascii_hex_digit(digit);
+    }
+
+    auto next_index = escape_index + 4;
+    if (AK::UnicodeUtils::is_utf16_high_surrogate(value))
+        return RegExpNameElement { RegExpNameElementKind::HighSurrogate, RegExpNameElementOrigin::FixedEscape, next_index };
+    if (AK::UnicodeUtils::is_utf16_low_surrogate(value))
+        return RegExpNameElement { RegExpNameElementKind::LowSurrogate, RegExpNameElementOrigin::FixedEscape, next_index };
+    return RegExpNameElement { RegExpNameElementKind::CodePoint, RegExpNameElementOrigin::FixedEscape, next_index };
+}
+
+static ErrorOr<size_t, ParseRegexPatternError> validate_regexp_name_surrogates(Utf16View const& pattern, size_t name_start)
+{
+    auto const length = pattern.length_in_code_units();
+    auto index = name_start;
+
+    while (index < length) {
+        if (pattern.code_unit_at(index) == '>')
+            return index + 1;
+
+        auto element = TRY(parse_regexp_name_element(pattern, index));
+        if (element.kind == RegExpNameElementKind::CodePoint) {
+            index = element.next_index;
+            continue;
+        }
+
+        if (element.kind == RegExpNameElementKind::LowSurrogate)
+            return invalid_group_name_error();
+
+        auto next_element = TRY(parse_regexp_name_element(pattern, element.next_index));
+        if (next_element.kind != RegExpNameElementKind::LowSurrogate)
+            return invalid_group_name_error();
+        if (element.origin != next_element.origin)
+            return invalid_group_name_error();
+        if (element.origin == RegExpNameElementOrigin::BracedEscape)
+            return invalid_group_name_error();
+
+        index = next_element.next_index;
+    }
+
+    return invalid_group_name_error();
+}
+
+static bool pattern_has_named_capture_groups(Utf16View const& pattern)
+{
+    auto const length = pattern.length_in_code_units();
+    bool in_character_class = false;
+
+    for (size_t index = 0; index < length; ++index) {
+        auto code_unit = pattern.code_unit_at(index);
+
+        if (code_unit == '\\') {
+            if (index + 1 < length)
+                ++index;
+            continue;
+        }
+
+        if (code_unit == '[' && !in_character_class) {
+            in_character_class = true;
+            continue;
+        }
+
+        if (code_unit == ']' && in_character_class) {
+            in_character_class = false;
+            continue;
+        }
+
+        if (in_character_class)
+            continue;
+
+        if (code_unit == '(' && index + 2 < length && pattern.code_unit_at(index + 1) == '?' && pattern.code_unit_at(index + 2) == '<') {
+            if (index + 3 >= length || (pattern.code_unit_at(index + 3) != '=' && pattern.code_unit_at(index + 3) != '!'))
+                return true;
+        }
+    }
+
+    return false;
+}
+
+static ErrorOr<void, ParseRegexPatternError> validate_named_group_name_surrogates(Utf16View const& pattern, bool unicode_aware)
+{
+    auto const length = pattern.length_in_code_units();
+    bool in_character_class = false;
+    bool has_named_groups_or_unicode = unicode_aware || pattern_has_named_capture_groups(pattern);
+
+    for (size_t index = 0; index < length; ++index) {
+        auto code_unit = pattern.code_unit_at(index);
+
+        if (code_unit == '\\') {
+            if (has_named_groups_or_unicode && !in_character_class && index + 2 < length && pattern.code_unit_at(index + 1) == 'k' && pattern.code_unit_at(index + 2) == '<') {
+                index = TRY(validate_regexp_name_surrogates(pattern, index + 3)) - 1;
+                continue;
+            }
+
+            if (index + 1 < length)
+                ++index;
+            continue;
+        }
+
+        if (code_unit == '[' && !in_character_class) {
+            in_character_class = true;
+            continue;
+        }
+
+        if (code_unit == ']' && in_character_class) {
+            in_character_class = false;
+            continue;
+        }
+
+        if (in_character_class)
+            continue;
+
+        if (code_unit == '(' && index + 2 < length && pattern.code_unit_at(index + 1) == '?' && pattern.code_unit_at(index + 2) == '<') {
+            if (index + 3 < length && pattern.code_unit_at(index + 3) != '=' && pattern.code_unit_at(index + 3) != '!') {
+                index = TRY(validate_regexp_name_surrogates(pattern, index + 3)) - 1;
+            }
+        }
+    }
+
+    return {};
+}
+
+}
+
+static Result<RegExpObject::Flags, String> validate_flags(Utf16View const& flags)
+{
+    bool seen[128] {};
+    RegExpObject::Flags flag_bits = static_cast<RegExpObject::Flags>(0);
 
     for (size_t index = 0; index < flags.length_in_code_units(); ++index) {
         auto ch = flags.code_unit_at(index);
 
         switch (ch) {
-        case 'd':
-            if (d)
-                return MUST(String::formatted(ErrorType::RegExpObjectRepeatedFlag.format(), ch));
-            d = true;
-            break;
-        case 'g':
-            if (g)
-                return MUST(String::formatted(ErrorType::RegExpObjectRepeatedFlag.format(), ch));
-            g = true;
-            options |= regex::ECMAScriptFlags::Global;
-            break;
-        case 'i':
-            if (i)
-                return MUST(String::formatted(ErrorType::RegExpObjectRepeatedFlag.format(), ch));
-            i = true;
-            options |= regex::ECMAScriptFlags::Insensitive;
-            break;
-        case 'm':
-            if (m)
-                return MUST(String::formatted(ErrorType::RegExpObjectRepeatedFlag.format(), ch));
-            m = true;
-            options |= regex::ECMAScriptFlags::Multiline;
-            break;
-        case 's':
-            if (s)
-                return MUST(String::formatted(ErrorType::RegExpObjectRepeatedFlag.format(), ch));
-            s = true;
-            options |= regex::ECMAScriptFlags::SingleLine;
-            break;
-        case 'u':
-            if (u)
-                return MUST(String::formatted(ErrorType::RegExpObjectRepeatedFlag.format(), ch));
-            u = true;
-            options |= regex::ECMAScriptFlags::Unicode;
-            break;
-        case 'y':
-            if (y)
-                return MUST(String::formatted(ErrorType::RegExpObjectRepeatedFlag.format(), ch));
-            y = true;
-            // Now for the more interesting flag, 'sticky' actually unsets 'global', part of which is the default.
-            options.reset_flag(regex::ECMAScriptFlags::Global);
-            // "What's the difference between sticky and global, then", that's simple.
-            // all the other flags imply 'global', and the "global" flag implies 'stateful';
-            // however, the "sticky" flag does *not* imply 'global', only 'stateful'.
-            options |= (regex::ECMAScriptFlags)regex::AllFlags::Internal_Stateful;
-            options |= regex::ECMAScriptFlags::Sticky;
-            break;
-        case 'v':
-            if (v)
-                return MUST(String::formatted(ErrorType::RegExpObjectRepeatedFlag.format(), ch));
-            v = true;
-            options |= regex::ECMAScriptFlags::UnicodeSets;
-            break;
+#define __JS_ENUMERATE(FlagName, flagName, flag_name, flag_char)                              \
+    case #flag_char[0]:                                                                       \
+        if (seen[ch])                                                                         \
+            return MUST(String::formatted(ErrorType::RegExpObjectRepeatedFlag.format(), ch)); \
+        seen[ch] = true;                                                                      \
+        flag_bits |= RegExpObject::Flags::FlagName;                                           \
+        break;
+            JS_ENUMERATE_REGEXP_FLAGS
+#undef __JS_ENUMERATE
         default:
             return MUST(String::formatted(ErrorType::RegExpObjectBadFlag.format(), ch));
         }
     }
 
-    return options;
+    if (has_flag(flag_bits, RegExpObject::Flags::Unicode) && has_flag(flag_bits, RegExpObject::Flags::UnicodeSets))
+        return MUST(String::formatted(ErrorType::RegExpObjectIncompatibleFlags.format(), 'u', 'v'));
+
+    return flag_bits;
 }
 
 // 22.2.3.4 Static Semantics: ParsePattern ( patternText, u, v ), https://tc39.es/ecma262/#sec-parsepattern
@@ -95,6 +264,8 @@ ErrorOr<String, ParseRegexPatternError> parse_regex_pattern(Utf16View const& pat
 {
     if (unicode && unicode_sets)
         return ParseRegexPatternError { MUST(String::formatted(ErrorType::RegExpObjectIncompatibleFlags.format(), 'u', 'v')) };
+
+    TRY(validate_named_group_name_surrogates(pattern, unicode || unicode_sets));
 
     StringBuilder builder;
 
@@ -153,9 +324,9 @@ GC::Ref<RegExpObject> RegExpObject::create(Realm& realm)
     return realm.create<RegExpObject>(realm.intrinsics().regexp_prototype());
 }
 
-GC::Ref<RegExpObject> RegExpObject::create(Realm& realm, Regex<ECMA262> regex, Utf16String pattern, Utf16String flags)
+GC::Ref<RegExpObject> RegExpObject::create(Realm& realm, Utf16String pattern, Utf16String flags)
 {
-    return realm.create<RegExpObject>(move(regex), move(pattern), move(flags), realm.intrinsics().regexp_prototype());
+    return realm.create<RegExpObject>(move(pattern), move(flags), realm.intrinsics().regexp_prototype());
 }
 
 RegExpObject::RegExpObject(Object& prototype)
@@ -183,14 +354,12 @@ static RegExpObject::Flags to_flag_bits(Utf16View const& flags)
     return flag_bits;
 }
 
-RegExpObject::RegExpObject(Regex<ECMA262> regex, Utf16String pattern, Utf16String flags, Object& prototype)
+RegExpObject::RegExpObject(Utf16String pattern, Utf16String flags, Object& prototype)
     : Object(ConstructWithPrototypeTag::Tag, prototype)
     , m_pattern(move(pattern))
     , m_flags(move(flags))
     , m_flag_bits(to_flag_bits(m_flags))
-    , m_regex(move(regex))
 {
-    VERIFY(m_regex->parser_result.error == regex::Error::NoError);
 }
 
 void RegExpObject::initialize(Realm& realm)
@@ -204,6 +373,9 @@ void RegExpObject::initialize(Realm& realm)
 // 22.2.3.3 RegExpInitialize ( obj, pattern, flags ), https://tc39.es/ecma262/#sec-regexpinitialize
 ThrowCompletionOr<GC::Ref<RegExpObject>> RegExpObject::regexp_initialize(VM& vm, Value pattern_value, Value flags_value)
 {
+    // Invalidate the cached compiled regex since the pattern/flags may change.
+    m_cached_regex = nullptr;
+
     // 1. If pattern is undefined, let P be the empty String.
     // 2. Else, let P be ? ToString(pattern).
     auto pattern = pattern_value.is_undefined()
@@ -222,31 +394,39 @@ ThrowCompletionOr<GC::Ref<RegExpObject>> RegExpObject::regexp_initialize(VM& vm,
     // 8. If F contains "s", let s be true; else let s be false.
     // 9. If F contains "u", let u be true; else let u be false.
     // 10. If F contains "v", let v be true; else let v be false.
-    auto parsed_flags_or_error = regex_flags_from_string(flags);
-    if (parsed_flags_or_error.is_error())
-        return vm.throw_completion<SyntaxError>(parsed_flags_or_error.release_error());
-    auto parsed_flags = parsed_flags_or_error.release_value();
+    auto validated_flags_or_error = validate_flags(flags);
+    if (validated_flags_or_error.is_error())
+        return vm.throw_completion<SyntaxError>(validated_flags_or_error.release_error());
+    auto flag_bits = validated_flags_or_error.release_value();
+    bool unicode = has_flag(flag_bits, Flags::Unicode);
+    bool unicode_sets = has_flag(flag_bits, Flags::UnicodeSets);
 
     auto parsed_pattern = String {};
-    if (!pattern.is_empty()) {
-        bool unicode = parsed_flags.has_flag_set(regex::ECMAScriptFlags::Unicode);
-        bool unicode_sets = parsed_flags.has_flag_set(regex::ECMAScriptFlags::UnicodeSets);
 
-        // 11. If u is true or v is true, then
-        //     a. Let patternText be StringToCodePoints(P).
-        // 12. Else,
-        //     a. Let patternText be the result of interpreting each of P's 16-bit elements as a Unicode BMP code point. UTF-16 decoding is not applied to the elements.
-        // 13. Let parseResult be ParsePattern(patternText, u, v).
-        parsed_pattern = TRY(parse_regex_pattern(vm, pattern, unicode, unicode_sets));
+    // Convert UTF-16 pattern to UTF-8 (with escape normalization for non-ASCII).
+    if (!pattern.is_empty()) {
+        auto result = parse_regex_pattern(pattern, unicode, unicode_sets);
+        if (result.is_error())
+            return vm.throw_completion<SyntaxError>(ErrorType::RegExpCompileError, result.release_error().error);
+        parsed_pattern = result.release_value();
     }
 
-    // 14. If parseResult is a non-empty List of SyntaxError objects, throw a SyntaxError exception.
-    Regex<ECMA262> regex(parsed_pattern.to_byte_string(), parsed_flags);
-    if (regex.parser_result.error != regex::Error::NoError)
-        return vm.throw_completion<SyntaxError>(ErrorType::RegExpCompileError, regex.error_string());
+    // 11. If u is true and v is true, throw a SyntaxError exception.
+    // NB: Already handled by validate_flags above.
 
-    // 15. Assert: parseResult is a Pattern Parse Node.
-    VERIFY(regex.parser_result.error == regex::Error::NoError);
+    // Validate by trial-compiling the pattern.
+    regex::ECMAScriptCompileFlags compile_flags {};
+    compile_flags.global = has_flag(flag_bits, Flags::Global);
+    compile_flags.ignore_case = has_flag(flag_bits, Flags::IgnoreCase);
+    compile_flags.multiline = has_flag(flag_bits, Flags::Multiline);
+    compile_flags.dot_all = has_flag(flag_bits, Flags::DotAll);
+    compile_flags.unicode = unicode;
+    compile_flags.unicode_sets = unicode_sets;
+    compile_flags.sticky = has_flag(flag_bits, Flags::Sticky);
+
+    auto compiled = regex::ECMAScriptRegex::compile(parsed_pattern.bytes_as_string_view(), compile_flags);
+    if (compiled.is_error())
+        return vm.throw_completion<SyntaxError>(ErrorType::RegExpCompileError, compiled.release_error());
 
     // 16. Set obj.[[OriginalSource]] to P.
     m_pattern = move(pattern);
@@ -259,7 +439,6 @@ ThrowCompletionOr<GC::Ref<RegExpObject>> RegExpObject::regexp_initialize(VM& vm,
     // 19. Let rer be the RegExp Record { [[IgnoreCase]]: i, [[Multiline]]: m, [[DotAll]]: s, [[Unicode]]: u, [[CapturingGroupsCount]]: capturingGroupsCount }.
     // 20. Set obj.[[RegExpRecord]] to rer.
     // 21. Set obj.[[RegExpMatcher]] to CompilePattern of parseResult with argument rer.
-    m_regex = move(regex);
 
     // 22. Perform ? Set(obj, "lastIndex", +0𝔽, true).
     TRY(set(vm.names.lastIndex, Value(0), Object::ShouldThrowExceptions::Yes));

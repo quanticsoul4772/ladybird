@@ -45,7 +45,7 @@ public:
 
     bool is_parser_inserted() const { return !!m_parser_document; }
 
-    virtual void children_changed(ChildrenChangedMetadata const*) override;
+    virtual void children_changed(ChildrenChangedMetadata const&) override;
     virtual void post_connection() override;
 
     // https://html.spec.whatwg.org/multipage/scripting.html#dom-script-supports
@@ -66,7 +66,7 @@ public:
     WebIDL::ExceptionOr<void> set_src(TrustedTypes::TrustedScriptURLOrString);
 
     Variant<GC::Root<TrustedTypes::TrustedScript>, Utf16String, Empty> text_content() const;
-    WebIDL::ExceptionOr<void> set_text_content(TrustedTypes::TrustedScriptOrString);
+    WebIDL::ExceptionOr<void> set_text_content(TrustedTypes::NullableTrustedScriptOrString);
 
     TrustedTypes::TrustedScriptOrString inner_text();
     WebIDL::ExceptionOr<void> set_inner_text(TrustedTypes::TrustedScriptOrString);

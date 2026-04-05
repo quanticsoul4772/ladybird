@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Base64.h>
+
 #import <Interface/Event.h>
 #import <Interface/LadybirdWebView.h>
 #import <Interface/Menu.h>
@@ -61,7 +63,68 @@
 
 @end
 
+@interface DeallocGuard : NSObject
+{
+    Function<void()> m_on_deallocation;
+}
+@end
+
+@implementation DeallocGuard
+
+- (instancetype)init:(Function<void()>)on_deallocation
+{
+    if (self = [super init]) {
+        m_on_deallocation = move(on_deallocation);
+    }
+
+    return self;
+}
+
+- (void)dealloc
+{
+    if (m_on_deallocation)
+        m_on_deallocation();
+}
+
+@end
+
 namespace Ladybird {
+
+static char PROPERTIES_KEY = 0;
+
+template<typename T>
+static void set_properties(id control, T const& item)
+{
+    if (item.properties().is_empty())
+        return;
+
+    auto* properties = [[NSMutableDictionary alloc] init];
+
+    for (auto const& [key, value] : item.properties())
+        [properties setObject:string_to_ns_string(value) forKey:string_to_ns_string(key)];
+
+    objc_setAssociatedObject(control, &PROPERTIES_KEY, properties, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+void add_control_properties(id control, WebView::Action const& action)
+{
+    set_properties(control, action);
+}
+
+void add_control_properties(id control, WebView::Menu const& menu)
+{
+    set_properties(control, menu);
+}
+
+NSString* get_control_property(id control, NSString* key)
+{
+    NSDictionary* properties = objc_getAssociatedObject(control, &PROPERTIES_KEY);
+
+    if (properties)
+        return [properties objectForKey:key];
+
+    return nil;
+}
 
 class ActionObserver final : public WebView::Action::Observer {
 public:
@@ -96,6 +159,18 @@ public:
             [m_control setBordered:action.visible()];
     }
 
+    virtual void on_engaged_state_changed(WebView::Action& action) override
+    {
+        switch (action.id()) {
+        case WebView::ActionID::ToggleBookmark:
+        case WebView::ActionID::ToggleBookmarkViaToolbar:
+            set_control_image(m_control, action.engaged() ? @"star.fill" : @"star");
+            break;
+        default:
+            break;
+        }
+    }
+
     virtual void on_checked_state_changed(WebView::Action& action) override
     {
         [m_control setState:action.checked() ? NSControlStateValueOn : NSControlStateValueOff];
@@ -111,7 +186,24 @@ private:
     __weak id m_control { nil };
 };
 
-static void initialize_native_control(WebView::Action& action, id control)
+static NSImage* image_from_base64_png(StringView favicon_base64_png)
+{
+    static constexpr CGFloat const MENU_ICON_SIZE = 16;
+
+    auto decoded = decode_base64(favicon_base64_png);
+    if (decoded.is_error())
+        return nil;
+
+    auto* data = [NSData dataWithBytes:decoded.value().data()
+                                length:decoded.value().size()];
+
+    auto* image = [[NSImage alloc] initWithData:data];
+    [image setSize:NSMakeSize(MENU_ICON_SIZE, MENU_ICON_SIZE)];
+
+    return image;
+}
+
+static void initialize_native_icon(WebView::Action& action, id control)
 {
     switch (action.id()) {
     case WebView::ActionID::NavigateBack:
@@ -142,6 +234,20 @@ static void initialize_native_control(WebView::Action& action, id control)
 
     case WebView::ActionID::SearchSelectedText:
         set_control_image(control, @"magnifyingglass");
+        break;
+
+    case WebView::ActionID::ToggleBookmark:
+        [control setKeyEquivalent:@"d"];
+        break;
+    case WebView::ActionID::ToggleBookmarksBar:
+        set_control_image(control, @"line.horizontal.star.fill.line.horizontal");
+        [control setKeyEquivalent:@"B"];
+        break;
+    case WebView::ActionID::BookmarkItem:
+        if (auto icon = action.base64_png_icon(); icon.has_value())
+            [control setImage:image_from_base64_png(*icon)];
+        else
+            set_control_image(control, @"globe");
         break;
 
     case WebView::ActionID::OpenAboutPage:
@@ -236,8 +342,23 @@ static void initialize_native_control(WebView::Action& action, id control)
     default:
         break;
     }
+}
 
-    action.add_observer(ActionObserver::create(action, control));
+static void initialize_native_control(WebView::Action& action, id control)
+{
+    initialize_native_icon(action, control);
+
+    auto observer = ActionObserver::create(action, control);
+
+    auto* guard = [[DeallocGuard alloc] init:[action = action.make_weak_ptr(), observer = observer.ptr()]() {
+        if (action)
+            action->remove_observer(*observer);
+    }];
+
+    static char guard_key = 0;
+    objc_setAssociatedObject(control, &guard_key, guard, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+
+    action.add_observer(move(observer));
 }
 
 static void add_items_to_menu(NSMenu* menu, Span<WebView::Menu::MenuItem> menu_items)
@@ -249,12 +370,16 @@ static void add_items_to_menu(NSMenu* menu, Span<WebView::Menu::MenuItem> menu_i
             },
             [&](NonnullRefPtr<WebView::Menu> const& submenu) {
                 auto* application_submenu = [[NSMenu alloc] init];
+                set_properties(application_submenu, *submenu);
                 add_items_to_menu(application_submenu, submenu->items());
 
                 auto* item = [[NSMenuItem alloc] initWithTitle:string_to_ns_string(submenu->title())
                                                         action:nil
                                                  keyEquivalent:@""];
                 [item setSubmenu:application_submenu];
+
+                if (submenu->render_group_icon())
+                    set_control_image(item, @"folder");
 
                 [menu addItem:item];
             },
@@ -267,8 +392,15 @@ static void add_items_to_menu(NSMenu* menu, Span<WebView::Menu::MenuItem> menu_i
 NSMenu* create_application_menu(WebView::Menu& menu)
 {
     auto* application_menu = [[NSMenu alloc] initWithTitle:string_to_ns_string(menu.title())];
+    set_properties(application_menu, menu);
     add_items_to_menu(application_menu, menu.items());
     return application_menu;
+}
+
+void repopulate_application_menu(NSMenu* menu, WebView::Menu& source)
+{
+    [menu removeAllItems];
+    add_items_to_menu(menu, source.items());
 }
 
 NSMenu* create_context_menu(LadybirdWebView* view, WebView::Menu& menu)
@@ -295,6 +427,7 @@ NSMenuItem* create_application_menu_item(WebView::Action& action)
 {
     auto* item = [[NSMenuItem alloc] init];
     initialize_native_control(action, item);
+    set_properties(item, action);
     return item;
 }
 
@@ -302,7 +435,15 @@ NSButton* create_application_button(WebView::Action& action)
 {
     auto* button = [[NSButton alloc] init];
     initialize_native_control(action, button);
+    set_properties(button, action);
     return button;
+}
+
+NSImageView* create_application_icon(WebView::Action& action)
+{
+    auto* icon = [[NSImageView alloc] initWithFrame:NSZeroRect];
+    initialize_native_icon(action, icon);
+    return icon;
 }
 
 void set_control_image(id control, NSString* image)

@@ -13,6 +13,7 @@
 #include <LibCore/StandardPaths.h>
 #include <LibCore/System.h>
 #include <LibHTTP/Cache/DiskCache.h>
+#include <LibIPC/TransportHandle.h>
 #include <LibRequests/WebSocket.h>
 #include <LibWebSocket/ConnectionInfo.h>
 #include <LibWebSocket/Message.h>
@@ -113,7 +114,7 @@ Messages::RequestServer::ConnectNewClientResponse ConnectionFromClient::connect_
     auto client_socket = create_client_socket();
     if (client_socket.is_error()) {
         dbgln("Failed to create client socket: {}", client_socket.error());
-        return IPC::File {};
+        return IPC::TransportHandle {};
     }
 
     return client_socket.release_value();
@@ -121,40 +122,31 @@ Messages::RequestServer::ConnectNewClientResponse ConnectionFromClient::connect_
 
 Messages::RequestServer::ConnectNewClientsResponse ConnectionFromClient::connect_new_clients(size_t count)
 {
-    Vector<IPC::File> files;
-    files.ensure_capacity(count);
+    Vector<IPC::TransportHandle> handles;
+    handles.ensure_capacity(count);
 
     for (size_t i = 0; i < count; ++i) {
         auto client_socket = create_client_socket();
         if (client_socket.is_error()) {
             dbgln("Failed to create client socket: {}", client_socket.error());
-            return Vector<IPC::File> {};
+            return Vector<IPC::TransportHandle> {};
         }
 
-        files.unchecked_append(client_socket.release_value());
+        handles.unchecked_append(client_socket.release_value());
     }
 
-    return files;
+    return handles;
 }
 
-ErrorOr<IPC::File> ConnectionFromClient::create_client_socket()
+ErrorOr<IPC::TransportHandle> ConnectionFromClient::create_client_socket()
 {
-    // TODO: Mach IPC
-
-    int socket_fds[2] {};
-    TRY(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, socket_fds));
-
-    auto client_socket = Core::LocalSocket::adopt_fd(socket_fds[0]);
-    if (client_socket.is_error()) {
-        close(socket_fds[0]);
-        close(socket_fds[1]);
-        return client_socket.release_error();
-    }
+    auto paired = TRY(IPC::Transport::create_paired());
+    auto handle = move(paired.remote_handle);
 
     // Note: A ref is stored in the m_connections map
-    auto client = adopt_ref(*new ConnectionFromClient(make<IPC::Transport>(client_socket.release_value()), IsPrimaryConnection::No, m_connections, m_disk_cache));
+    auto client = adopt_ref(*new ConnectionFromClient(move(paired.local), IsPrimaryConnection::No, m_connections, m_disk_cache));
 
-    return IPC::File::adopt_fd(socket_fds[1]);
+    return handle;
 }
 
 void ConnectionFromClient::set_disk_cache_settings(HTTP::DiskCacheSettings disk_cache_settings)
@@ -363,6 +355,7 @@ void ConnectionFromClient::remove_cache_entries_accessed_since(UnixDateTime sinc
 void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, ByteString origin, Vector<ByteString> protocols, Vector<ByteString> extensions, Vector<HTTP::Header> additional_request_headers)
 {
     auto host = url.serialized_host().to_byte_string();
+    m_pending_websockets.set(websocket_id);
 
     m_resolver->dns.lookup(host, DNS::Messages::Class::IN, { DNS::Messages::ResourceType::A, DNS::Messages::ResourceType::AAAA })
         ->when_rejected([this, websocket_id](auto const& error) {
@@ -375,6 +368,10 @@ void ConnectionFromClient::websocket_connect(u64 websocket_id, URL::URL url, Byt
                 async_websocket_errored(websocket_id, static_cast<i32>(Requests::WebSocket::Error::CouldNotEstablishConnection));
                 return;
             }
+
+            // Don't connect the websocket if we already requested to close it before the DNS lookup completed.
+            if (!m_pending_websockets.remove(websocket_id))
+                return;
 
             WebSocket::ConnectionInfo connection_info(move(url));
             connection_info.set_origin(move(origin));
@@ -418,6 +415,7 @@ void ConnectionFromClient::websocket_send(u64 websocket_id, bool is_text, ByteBu
 
 void ConnectionFromClient::websocket_close(u64 websocket_id, u16 code, ByteString reason)
 {
+    m_pending_websockets.remove(websocket_id);
     if (auto* connection = m_websockets.get(websocket_id).value_or({}); connection && connection->ready_state() == WebSocket::ReadyState::Open)
         connection->close(code, reason);
 }

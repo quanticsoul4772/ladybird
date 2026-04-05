@@ -19,12 +19,11 @@ namespace Web::DOM {
     X(CSSStylePropertiesTextChange)                 \
     X(CustomElementStateChange)                     \
     X(CustomStateSetChange)                         \
-    X(DidLoseFocus)                                 \
-    X(DidReceiveFocus)                              \
     X(EditingInsertion)                             \
     X(EditingDeletion)                              \
     X(ElementAttributeChange)                       \
     X(ElementSetShadowRoot)                         \
+    X(ElementSetActive)                             \
     X(Fullscreen)                                   \
     X(HTMLDialogElementSetIsModal)                  \
     X(HTMLDetailsOrDialogOpenAttributeChange)       \
@@ -47,10 +46,12 @@ namespace Web::DOM {
     X(Other)                                        \
     X(SetSelectorText)                              \
     X(SettingsChange)                               \
+    X(StyleSheetDisabledStateChange)                \
     X(StyleSheetDeleteRule)                         \
     X(StyleSheetInsertRule)                         \
     X(StyleSheetListAddSheet)                       \
-    X(StyleSheetListRemoveSheet)
+    X(StyleSheetListRemoveSheet)                    \
+    X(StyleSheetReplace)
 
 enum class StyleInvalidationReason {
 #define __ENUMERATE_STYLE_INVALIDATION_REASON(reason) reason,

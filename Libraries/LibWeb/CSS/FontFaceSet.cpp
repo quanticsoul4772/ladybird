@@ -12,6 +12,7 @@
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Bindings/FontFaceSetPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/FontComputer.h>
 #include <LibWeb/CSS/FontFace.h>
 #include <LibWeb/CSS/FontFaceSet.h>
 #include <LibWeb/CSS/FontFaceSetLoadEvent.h>
@@ -21,7 +22,9 @@
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/EventNames.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/WebIDL/Promise.h>
 
@@ -84,6 +87,12 @@ void FontFaceSet::add_css_connected_font(GC::Ref<FontFace> face)
     m_set_entries->set_add(face);
     face->add_to_set(*this);
 
+    if (face->should_be_registered_with_font_computer()) {
+        auto& global = HTML::relevant_global_object(*this);
+        if (auto* window = as_if<HTML::Window>(global))
+            window->associated_document().font_computer().register_font_face(face);
+    }
+
     // 4. If font’s status attribute is "loading"
     if (face->status() == Bindings::FontFaceLoadStatus::Loading) {
 
@@ -104,6 +113,12 @@ bool FontFaceSet::delete_(GC::Root<FontFace> face)
         return false;
     }
 
+    if (face->should_be_registered_with_font_computer()) {
+        auto& global = HTML::relevant_global_object(*this);
+        if (auto* window = as_if<HTML::Window>(global))
+            window->associated_document().font_computer().unregister_font_face(*face);
+    }
+
     // 2. Let deleted be the result of removing font from the FontFaceSet’s set entries.
     bool deleted = m_set_entries->set_remove(face);
     face->remove_from_set(*this);
@@ -114,8 +129,8 @@ bool FontFaceSet::delete_(GC::Root<FontFace> face)
 
     // 4. If font is present in the FontFaceSet’s [[LoadingFonts]] list, remove it.
     //    If font was the last item in that list (and so the list is now empty), switch the FontFaceSet to loaded.
-    m_loading_fonts.remove_all_matching([face](auto const& entry) { return entry == face; });
-    if (m_loading_fonts.is_empty())
+    bool was_in_loading_fonts = m_loading_fonts.remove_all_matching([face](auto const& entry) { return entry == face; });
+    if (was_in_loading_fonts && m_loading_fonts.is_empty())
         switch_to_loaded();
 
     return deleted;
@@ -126,10 +141,13 @@ void FontFaceSet::clear()
 {
     // 1. Remove all non-CSS-connected items from the FontFaceSet's set entries,
     //    its [[LoadedFonts]] list, and its [[FailedFonts]] list.
+    auto* window = as_if<HTML::Window>(HTML::relevant_global_object(*this));
     Vector<JS::Value> to_remove;
     for (auto font_face_value : *m_set_entries) {
         auto& font_face = as<FontFace>(font_face_value.key.as_object());
         if (!font_face.is_css_connected()) {
+            if (window && font_face.should_be_registered_with_font_computer())
+                window->associated_document().font_computer().unregister_font_face(font_face);
             to_remove.append(font_face_value.key);
             font_face.remove_from_set(*this);
         }
@@ -293,6 +311,35 @@ JS::ThrowCompletionOr<GC::Ref<WebIDL::Promise>> FontFaceSet::load(String const& 
 
     // 2. Return promise. Complete the rest of these steps asynchronously.
     return promise;
+}
+
+// https://drafts.csswg.org/css-font-loading/#dom-fontfaceset-check
+WebIDL::ExceptionOr<bool> FontFaceSet::check(String const& font, String const& text)
+{
+    // 1. Let font face set be the FontFaceSet object this method was called on.
+    GC::Ref font_face_set = *this;
+
+    auto& realm = this->realm();
+
+    // 2. Find the matching font faces from font face set using the font and text arguments passed to the function, and
+    //    including system fonts, and let font face list be the returned list of font faces, and found faces be the
+    //    returned found faces flag. If a syntax error was returned, throw a SyntaxError exception and terminate these
+    //    steps.
+    auto result = TRY(find_matching_font_faces(realm, font_face_set, font, text));
+
+    // 3. If font face list is empty, or all fonts in the font face list either have a status attribute of "loaded" or
+    //    are system fonts, return true. Otherwise, return false.
+    if (result->set_size() == 0)
+        return true;
+
+    for (auto font_face_value : *result) {
+        auto& font_face = as<FontFace>(font_face_value.key.as_object());
+        // FIXME: We should check if the font face is a system font here.
+        if (font_face.status() != Bindings::FontFaceLoadStatus::Loaded)
+            return false;
+    }
+
+    return true;
 }
 
 // https://drafts.csswg.org/css-font-loading/#font-face-set-ready

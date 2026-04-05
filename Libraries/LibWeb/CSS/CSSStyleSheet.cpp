@@ -40,7 +40,7 @@ WebIDL::ExceptionOr<GC::Ref<CSSStyleSheet>> CSSStyleSheet::construct_impl(JS::Re
     auto sheet = create(realm, CSSRuleList::create(realm), CSS::MediaList::create(realm, {}), {});
 
     // 2. Set sheet’s location to the base URL of the associated Document for the current principal global object.
-    auto associated_document = as<HTML::Window>(HTML::current_principal_global_object()).document();
+    auto associated_document = as<HTML::Window>(realm.global_object()).document();
     sheet->set_location(associated_document->base_url());
 
     // 3. Set sheet’s stylesheet base URL to the baseURL attribute value from options.
@@ -132,7 +132,6 @@ void CSSStyleSheet::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_namespace_rules);
     visitor.visit(m_import_rules);
     visitor.visit(m_owning_documents_or_shadow_roots);
-    visitor.visit(m_associated_font_loaders);
     for (auto& subresource : m_critical_subresources)
         subresource.visit_edges(visitor);
 }
@@ -223,8 +222,13 @@ GC::Ref<WebIDL::Promise> CSSStyleSheet::replace(String text)
                 rules_without_import.append(rule);
         }
 
+        // NOTE: The spec doesn't say where to set the parent style sheet, so we'll do it here.
+        for (auto& rule : rules_without_import)
+            rule->set_parent_style_sheet(this);
+
         // 3. Set sheet’s CSS rules to rules.
         m_rules->set_rules({}, rules_without_import);
+        invalidate_owners(DOM::StyleInvalidationReason::StyleSheetReplace);
 
         // 4. Unset sheet’s disallow modification flag.
         set_disallow_modification(false);
@@ -262,6 +266,7 @@ WebIDL::ExceptionOr<void> CSSStyleSheet::replace_sync(StringView text)
 
     // 4. Set sheet’s CSS rules to rules.
     m_rules->set_rules({}, rules_without_import);
+    invalidate_owners(DOM::StyleInvalidationReason::StyleSheetReplace);
 
     return {};
 }
@@ -323,7 +328,7 @@ void CSSStyleSheet::for_each_effective_keyframes_at_rule(Function<void(CSSKeyfra
     });
 }
 
-void CSSStyleSheet::for_each_counter_style_at_rule(Function<void(CSSCounterStyleRule const&)> const& callback) const
+void CSSStyleSheet::for_each_effective_counter_style_at_rule(Function<void(CSSCounterStyleRule const&)> const& callback) const
 {
     for_each_effective_rule(TraversalOrder::Preorder, [&](CSSRule const& rule) {
         if (rule.type() == CSSRule::Type::CounterStyle)
@@ -362,6 +367,15 @@ void CSSStyleSheet::remove_owning_document_or_shadow_root(DOM::Node& document_or
     }
 }
 
+void CSSStyleSheet::set_disabled(bool disabled)
+{
+    if (this->disabled() == disabled)
+        return;
+
+    StyleSheet::set_disabled(disabled);
+    invalidate_owners(DOM::StyleInvalidationReason::StyleSheetDisabledStateChange);
+}
+
 void CSSStyleSheet::invalidate_owners(DOM::StyleInvalidationReason reason)
 {
     m_did_match = {};
@@ -381,6 +395,15 @@ GC::Ptr<DOM::Document> CSSStyleSheet::owning_document() const
         return element->document();
 
     return nullptr;
+}
+
+void CSSStyleSheet::load_pending_image_resources(DOM::Document& document)
+{
+    auto pending = move(m_pending_image_values);
+    for (auto const& weak_image_value : pending) {
+        if (auto* image_value = weak_image_value.ptr())
+            image_value->load_any_resources(document);
+    }
 }
 
 bool CSSStyleSheet::evaluate_media_queries(DOM::Document const& document)
@@ -473,15 +496,6 @@ void CSSStyleSheet::set_source_text(String source)
 Optional<String> CSSStyleSheet::source_text(Badge<DOM::Document>) const
 {
     return m_source_text;
-}
-
-bool CSSStyleSheet::has_associated_font_loader(FontLoader& font_loader) const
-{
-    for (auto& loader : m_associated_font_loaders) {
-        if (loader.ptr() == &font_loader)
-            return true;
-    }
-    return false;
 }
 
 void CSSStyleSheet::add_critical_subresource(Subresource& subresource)

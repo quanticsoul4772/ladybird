@@ -6,6 +6,7 @@
  */
 
 #include <AK/Enumerate.h>
+#include <AK/StringView.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/TypedArray.h>
@@ -19,10 +20,10 @@ TESTJS_PROGRAM_FLAG(test262_parser_tests, "Run test262 parser tests", "test262-p
 
 TESTJS_GLOBAL_FUNCTION(can_parse_source, canParseSource)
 {
-    auto source = TRY(vm.argument(0).to_utf16_string(vm));
-    auto parser = JS::Parser(JS::Lexer(JS::SourceCode::create({}, source)));
-    (void)parser.parse_program();
-    return JS::Value(!parser.has_errors());
+    auto& realm = *vm.current_realm();
+    auto source = TRY(vm.argument(0).to_string(vm));
+    auto script = JS::Script::parse(source, realm);
+    return JS::Value(!script.is_error());
 }
 
 // Based on $262.evalScript
@@ -153,9 +154,9 @@ TESTJS_RUN_FILE_FUNCTION(ByteString const& test_file, JS::Realm& realm, JS::Exec
     else
         return Test::JS::RunFileHookResult::SkipFile;
 
-    auto program_type = path.basename().ends_with(".module.js"sv) ? JS::Program::Type::Module : JS::Program::Type::Script;
+    bool const is_module = path.basename().ends_with(".module.js"sv);
     bool parse_succeeded = false;
-    if (program_type == JS::Program::Type::Module)
+    if (is_module)
         parse_succeeded = !Test::JS::parse_module(test_file, realm).is_error();
     else
         parse_succeeded = !Test::JS::parse_script(test_file, realm).is_error();

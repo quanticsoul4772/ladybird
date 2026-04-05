@@ -34,7 +34,7 @@ ErrorOr<Utf16String> generate_new_blob_url()
     TRY(result.try_append("blob:"sv));
 
     // 3. Let settings be the current settings object
-    auto& settings = HTML::current_principal_settings_object();
+    auto& settings = HTML::current_settings_object();
 
     // 4. Let origin be settings’s origin.
     auto origin = settings.origin();
@@ -53,7 +53,7 @@ ErrorOr<Utf16String> generate_new_blob_url()
     TRY(result.try_append('/'));
 
     // 9. Generate a UUID [RFC4122] as a string and append it to result.
-    auto uuid = TRY(Crypto::generate_random_uuid());
+    auto uuid = Crypto::generate_random_uuid();
     TRY(result.try_append(uuid));
 
     // 10. Return result.
@@ -70,7 +70,7 @@ ErrorOr<Utf16String> add_entry_to_blob_url_store(BlobURLEntry::Object object)
     auto url = TRY(generate_new_blob_url());
 
     // 3. Let entry be a new blob URL entry consisting of object and the current settings object.
-    BlobURLEntry entry { object, HTML::current_principal_settings_object() };
+    BlobURLEntry entry { object, HTML::current_settings_object() };
 
     // 4. Set store[url] to entry.
     TRY(store.try_set(url.to_utf8_but_should_be_ported_to_utf16(), move(entry)));
@@ -97,13 +97,13 @@ bool check_for_same_partition_blob_url_usage(URL::BlobURLEntry const& blob_url_e
 }
 
 // https://www.w3.org/TR/FileAPI/#blob-url-obtain-object
-Optional<URL::BlobURLEntry::Object> obtain_a_blob_object(URL::BlobURLEntry const& blob_url_entry, Variant<GC::Ref<HTML::Environment>, NavigationEnvironment> environment)
+Optional<URL::BlobURLEntry::Object> obtain_a_blob_object(URL::BlobURLEntry const& blob_url_entry, Variant<GC::Ref<HTML::Environment>, TopLevelNavigation, TopLevelSelfFetch> environment)
 {
     // 1. Let isAuthorized be true.
     bool is_authorized = true;
 
-    // 2. If environment is not the string "navigation", then set isAuthorized to the result of checking for same-partition blob URL usage with blobUrlEntry and environment.
-    if (!environment.has<NavigationEnvironment>())
+    // 2. If environment is an environment settings object, then set isAuthorized to the result of checking for same-partition blob URL usage with blobUrlEntry and environment.
+    if (environment.has<GC::Ref<HTML::Environment>>())
         is_authorized = check_for_same_partition_blob_url_usage(blob_url_entry, environment.get<GC::Ref<HTML::Environment>>());
 
     // 3. If isAuthorized is false, then return failure.

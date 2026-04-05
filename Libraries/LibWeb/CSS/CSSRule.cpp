@@ -54,6 +54,7 @@ void CSSRule::set_css_text(StringView)
 
 void CSSRule::set_parent_rule(CSSRule* parent_rule)
 {
+    clear_caches();
     m_parent_rule = parent_rule;
 
     if (parent_rule == nullptr)
@@ -65,6 +66,7 @@ void CSSRule::set_parent_rule(CSSRule* parent_rule)
 
 void CSSRule::set_parent_style_sheet(CSSStyleSheet* parent_style_sheet)
 {
+    clear_caches();
     m_parent_style_sheet = parent_style_sheet;
     clear_caches();
 }
@@ -98,12 +100,15 @@ FlyString CSSRule::parent_layer_internal_qualified_name_slow_case() const
 
             // Ignore everything else
             // Note that LayerStatement cannot have child rules so we still ignore it here.
+        case Type::Container:
         case Type::CounterStyle:
         case Type::LayerStatement:
         case Type::Style:
         case Type::Media:
         case Type::FontFace:
         case Type::FontFeatureValues:
+        case Type::Function:
+        case Type::FunctionDeclarations:
         case Type::Keyframes:
         case Type::Keyframe:
         case Type::Namespace:

@@ -14,6 +14,7 @@
 #include <LibWeb/CSS/CSSRuleList.h>
 #include <LibWeb/CSS/CSSStyleRule.h>
 #include <LibWeb/CSS/StyleSheet.h>
+#include <LibWeb/CSS/StyleValues/ImageStyleValue.h>
 #include <LibWeb/DOM/StyleInvalidationReason.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/WebIDL/Types.h>
@@ -21,7 +22,6 @@
 namespace Web::CSS {
 
 class CSSImportRule;
-class FontLoader;
 
 struct CSSStyleSheetInit {
     Optional<String> base_url {};
@@ -87,13 +87,14 @@ public:
     // Returns whether the match state of any media queries changed after evaluation.
     bool evaluate_media_queries(DOM::Document const&);
     void for_each_effective_keyframes_at_rule(Function<void(CSSKeyframesRule const&)> const& callback) const;
-    void for_each_counter_style_at_rule(Function<void(CSSCounterStyleRule const&)> const& callback) const;
+    void for_each_effective_counter_style_at_rule(Function<void(CSSCounterStyleRule const&)> const& callback) const;
 
     HashTable<GC::Ptr<DOM::Node>> owning_documents_or_shadow_roots() const { return m_owning_documents_or_shadow_roots; }
     void add_owning_document_or_shadow_root(DOM::Node& document_or_shadow_root);
     void remove_owning_document_or_shadow_root(DOM::Node& document_or_shadow_root);
     void invalidate_owners(DOM::StyleInvalidationReason);
     GC::Ptr<DOM::Document> owning_document() const;
+    void set_disabled(bool);
 
     Optional<FlyString> default_namespace() const;
     GC::Ptr<CSSNamespaceRule> default_namespace_rule() const { return m_default_namespace_rule; }
@@ -106,6 +107,9 @@ public:
     Optional<::URL::URL> base_url() const { return m_base_url; }
     void set_base_url(Optional<::URL::URL> base_url) { m_base_url = move(base_url); }
 
+    void register_pending_image_value(ImageStyleValue& value) { m_pending_image_values.append(value); }
+    void load_pending_image_resources(DOM::Document&);
+
     bool constructed() const { return m_constructed; }
 
     GC::Ptr<DOM::Document const> constructor_document() const { return m_constructor_document; }
@@ -115,12 +119,6 @@ public:
 
     void set_source_text(String);
     Optional<String> source_text(Badge<DOM::Document>) const;
-
-    void add_associated_font_loader(GC::Ref<FontLoader const> font_loader)
-    {
-        m_associated_font_loaders.append(font_loader);
-    }
-    bool has_associated_font_loader(FontLoader& font_loader) const;
 
     void add_critical_subresource(Subresource&);
     void remove_critical_subresource(Subresource&);
@@ -156,9 +154,9 @@ private:
     bool m_disallow_modification { false };
     Optional<bool> m_did_match;
 
-    Vector<GC::Ptr<FontLoader const>> m_associated_font_loaders;
-
     Vector<Subresource&> m_critical_subresources;
+
+    IGNORE_GC Vector<WeakPtr<ImageStyleValue>> m_pending_image_values;
 };
 
 }

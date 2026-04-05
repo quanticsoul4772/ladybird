@@ -5,26 +5,15 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGfx/SkiaBackendContext.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/WebGLRenderingContextPrototype.h>
-#include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
-#include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Infra/Strings.h>
-#include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/Paintable.h>
 #include <LibWeb/WebGL/EventNames.h>
-#include <LibWeb/WebGL/Extensions/ANGLEInstancedArrays.h>
-#include <LibWeb/WebGL/Extensions/EXTBlendMinMax.h>
-#include <LibWeb/WebGL/Extensions/EXTTextureFilterAnisotropic.h>
-#include <LibWeb/WebGL/Extensions/OESElementIndexUint.h>
-#include <LibWeb/WebGL/Extensions/OESStandardDerivatives.h>
-#include <LibWeb/WebGL/Extensions/OESVertexArrayObject.h>
-#include <LibWeb/WebGL/Extensions/WebGLCompressedTextureS3tc.h>
-#include <LibWeb/WebGL/Extensions/WebGLCompressedTextureS3tcSrgb.h>
-#include <LibWeb/WebGL/Extensions/WebGLDrawBuffers.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLContextEvent.h>
 #include <LibWeb/WebGL/WebGLRenderingContext.h>
@@ -61,12 +50,17 @@ JS::ThrowCompletionOr<GC::Ptr<WebGLRenderingContext>> WebGLRenderingContext::cre
     // We should be coming here from getContext being called on a wrapped <canvas> element.
     auto context_attributes = TRY(convert_value_to_context_attributes_dictionary(canvas_element.vm(), options));
 
-    auto skia_backend_context = canvas_element.navigable()->traversable_navigable()->skia_backend_context();
+    auto skia_backend_context = Gfx::SkiaBackendContext::the();
     if (!skia_backend_context) {
         fire_webgl_context_creation_error(canvas_element);
         return GC::Ptr<WebGLRenderingContext> { nullptr };
     }
-    auto context = OpenGLContext::create(*skia_backend_context, OpenGLContext::WebGLVersion::WebGL1);
+    OpenGLContext::DrawingBufferOptions context_options {
+        .depth = context_attributes.depth,
+        .stencil = context_attributes.stencil,
+        .antialias = context_attributes.antialias,
+    };
+    auto context = OpenGLContext::create(*skia_backend_context, OpenGLContext::WebGLVersion::WebGL1, context_options);
     if (!context) {
         fire_webgl_context_creation_error(canvas_element);
         return GC::Ptr<WebGLRenderingContext> { nullptr };
@@ -98,15 +92,6 @@ void WebGLRenderingContext::visit_edges(Cell::Visitor& visitor)
     Base::visit_edges(visitor);
     WebGLRenderingContextImpl::visit_edges(visitor);
     visitor.visit(m_canvas_element);
-    visitor.visit(m_angle_instanced_arrays_extension);
-    visitor.visit(m_ext_blend_min_max_extension);
-    visitor.visit(m_ext_texture_filter_anisotropic);
-    visitor.visit(m_oes_element_index_uint_object_extension);
-    visitor.visit(m_oes_standard_derivatives_object_extension);
-    visitor.visit(m_oes_vertex_array_object_extension);
-    visitor.visit(m_webgl_compressed_texture_s3tc_extension);
-    visitor.visit(m_webgl_compressed_texture_s3tc_srgb_extension);
-    visitor.visit(m_webgl_draw_buffers_extension);
 }
 
 void WebGLRenderingContext::present()
@@ -124,12 +109,6 @@ void WebGLRenderingContext::needs_to_present()
     m_canvas_element->set_canvas_content_dirty();
 
     m_canvas_element->set_needs_repaint();
-}
-
-bool WebGLRenderingContext::is_context_lost() const
-{
-    dbgln_if(WEBGL_CONTEXT_DEBUG, "WebGLRenderingContext::is_context_lost()");
-    return m_context_lost;
 }
 
 Optional<WebGLContextAttributes> WebGLRenderingContext::get_context_attributes()
@@ -161,123 +140,6 @@ void WebGLRenderingContext::allocate_painting_surface_if_needed()
     context().allocate_painting_surface_if_needed();
 }
 
-Optional<Vector<String>> WebGLRenderingContext::get_supported_extensions()
-{
-    // Track potential fingerprinting (Milestone 0.4 Phase 4)
-    m_canvas_element->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getSupportedExtensions"sv);
-    return context().get_supported_extensions();
-}
-
-JS::Object* WebGLRenderingContext::get_extension(String const& name)
-{
-    // Track potential fingerprinting (Milestone 0.4 Phase 4)
-    m_canvas_element->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getExtension"sv);
-    // Returns an object if, and only if, name is an ASCII case-insensitive match [HTML] for one of the names returned
-    // from getSupportedExtensions; otherwise, returns null. The object returned from getExtension contains any constants
-    // or functions provided by the extension. A returned object may have no constants or functions if the extension does
-    // not define any, but a unique object must still be returned. That object is used to indicate that the extension has
-    // been enabled.
-    auto supported_extensions = get_supported_extensions();
-    auto supported_extension_iterator = supported_extensions->find_if([&name](String const& supported_extension) {
-        return supported_extension.equals_ignoring_ascii_case(name);
-    });
-    if (supported_extension_iterator == supported_extensions->end())
-        return nullptr;
-
-    if (name.equals_ignoring_ascii_case("ANGLE_instanced_arrays"sv)) {
-        if (!m_angle_instanced_arrays_extension) {
-            m_angle_instanced_arrays_extension = MUST(Extensions::ANGLEInstancedArrays::create(realm(), *this));
-        }
-
-        VERIFY(m_angle_instanced_arrays_extension);
-        return m_angle_instanced_arrays_extension;
-    }
-
-    if (name.equals_ignoring_ascii_case("EXT_blend_minmax"sv)) {
-        if (!m_ext_blend_min_max_extension) {
-            m_ext_blend_min_max_extension = MUST(Extensions::EXTBlendMinMax::create(realm(), *this));
-        }
-
-        VERIFY(m_ext_blend_min_max_extension);
-        return m_ext_blend_min_max_extension;
-    }
-
-    if (name.equals_ignoring_ascii_case("EXT_texture_filter_anisotropic"sv)) {
-        if (!m_ext_texture_filter_anisotropic) {
-            m_ext_texture_filter_anisotropic = MUST(Extensions::EXTTextureFilterAnisotropic::create(realm(), *this));
-        }
-
-        VERIFY(m_ext_texture_filter_anisotropic);
-        return m_ext_texture_filter_anisotropic;
-    }
-
-    if (name.equals_ignoring_ascii_case("OES_element_index_uint"sv)) {
-        if (!m_oes_element_index_uint_object_extension) {
-            m_oes_element_index_uint_object_extension = MUST(Extensions::OESElementIndexUint::create(realm(), *this));
-        }
-
-        VERIFY(m_oes_element_index_uint_object_extension);
-        return m_oes_element_index_uint_object_extension;
-    }
-
-    if (name.equals_ignoring_ascii_case("OES_standard_derivatives"sv)) {
-        if (!m_oes_standard_derivatives_object_extension) {
-            m_oes_standard_derivatives_object_extension = MUST(Extensions::OESStandardDerivatives::create(realm(), *this));
-        }
-
-        VERIFY(m_oes_standard_derivatives_object_extension);
-        return m_oes_standard_derivatives_object_extension;
-    }
-
-    if (name.equals_ignoring_ascii_case("OES_vertex_array_object"sv)) {
-        if (!m_oes_vertex_array_object_extension) {
-            m_oes_vertex_array_object_extension = MUST(Extensions::OESVertexArrayObject::create(realm(), *this));
-        }
-
-        VERIFY(m_oes_vertex_array_object_extension);
-        return m_oes_vertex_array_object_extension;
-    }
-
-    if (name.equals_ignoring_ascii_case("WEBGL_compressed_texture_s3tc"sv)) {
-        if (!m_webgl_compressed_texture_s3tc_extension) {
-            m_webgl_compressed_texture_s3tc_extension = MUST(Extensions::WebGLCompressedTextureS3tc::create(realm(), *this));
-
-            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_RGB_S3TC_DXT1_EXT);
-            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_RGBA_S3TC_DXT1_EXT);
-            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT);
-            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT);
-        }
-
-        VERIFY(m_webgl_compressed_texture_s3tc_extension);
-        return m_webgl_compressed_texture_s3tc_extension;
-    }
-
-    if (name.equals_ignoring_ascii_case("WEBGL_compressed_texture_s3tc_srgb"sv)) {
-        if (!m_webgl_compressed_texture_s3tc_srgb_extension) {
-            m_webgl_compressed_texture_s3tc_srgb_extension = MUST(Extensions::WebGLCompressedTextureS3tcSrgb::create(realm(), *this));
-
-            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_SRGB_S3TC_DXT1_EXT);
-            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT);
-            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT);
-            m_enabled_compressed_texture_formats.append(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT);
-        }
-
-        VERIFY(m_webgl_compressed_texture_s3tc_srgb_extension);
-        return m_webgl_compressed_texture_s3tc_srgb_extension;
-    }
-
-    if (name.equals_ignoring_ascii_case("WEBGL_draw_buffers"sv)) {
-        if (!m_webgl_draw_buffers_extension) {
-            m_webgl_draw_buffers_extension = MUST(Extensions::WebGLDrawBuffers::create(realm(), *this));
-        }
-
-        VERIFY(m_webgl_draw_buffers_extension);
-        return m_webgl_draw_buffers_extension;
-    }
-
-    return nullptr;
-}
-
 WebIDL::Long WebGLRenderingContext::drawing_buffer_width() const
 {
     auto size = canvas_for_binding()->bitmap_size_for_canvas();
@@ -288,31 +150,6 @@ WebIDL::Long WebGLRenderingContext::drawing_buffer_height() const
 {
     auto size = canvas_for_binding()->bitmap_size_for_canvas();
     return size.height();
-}
-
-bool WebGLRenderingContext::ext_texture_filter_anisotropic_extension_enabled() const
-{
-    return !!m_ext_texture_filter_anisotropic;
-}
-
-bool WebGLRenderingContext::angle_instanced_arrays_extension_enabled() const
-{
-    return !!m_angle_instanced_arrays_extension;
-}
-
-bool WebGLRenderingContext::oes_standard_derivatives_extension_enabled() const
-{
-    return !!m_oes_standard_derivatives_object_extension;
-}
-
-bool WebGLRenderingContext::webgl_draw_buffers_extension_enabled() const
-{
-    return !!m_webgl_draw_buffers_extension;
-}
-
-ReadonlySpan<WebIDL::UnsignedLong> WebGLRenderingContext::enabled_compressed_texture_formats() const
-{
-    return m_enabled_compressed_texture_formats;
 }
 
 }

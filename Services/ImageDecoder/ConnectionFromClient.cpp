@@ -12,6 +12,7 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ImageFormats/ImageDecoder.h>
 #include <LibGfx/ImageFormats/TIFFMetadata.h>
+#include <LibIPC/TransportHandle.h>
 
 namespace ImageDecoder {
 
@@ -54,47 +55,38 @@ Messages::ImageDecoderServer::InitTransportResponse ConnectionFromClient::init_t
     VERIFY_NOT_REACHED();
 }
 
-ErrorOr<IPC::File> ConnectionFromClient::connect_new_client()
+ErrorOr<IPC::TransportHandle> ConnectionFromClient::connect_new_client()
 {
-    int socket_fds[2] {};
-    if (auto err = Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, socket_fds); err.is_error())
-        return err.release_error();
+    auto paired = TRY(IPC::Transport::create_paired());
+    auto handle = move(paired.remote_handle);
 
-    auto client_socket_or_error = Core::LocalSocket::adopt_fd(socket_fds[0]);
-    if (client_socket_or_error.is_error()) {
-        (void)Core::System::close(socket_fds[0]);
-        (void)Core::System::close(socket_fds[1]);
-        return client_socket_or_error.release_error();
-    }
-
-    auto client_socket = client_socket_or_error.release_value();
     // Note: A ref is stored in the static s_connections map
-    auto client = adopt_ref(*new ConnectionFromClient(make<IPC::Transport>(move(client_socket))));
+    auto client = adopt_ref(*new ConnectionFromClient(move(paired.local)));
 
-    return IPC::File::adopt_fd(socket_fds[1]);
+    return handle;
 }
 
 Messages::ImageDecoderServer::ConnectNewClientsResponse ConnectionFromClient::connect_new_clients(size_t count)
 {
     // Security: Rate limiting
     if (!check_rate_limit())
-        return Vector<IPC::File> {};
+        return Vector<IPC::TransportHandle> {};
 
     // Security: Count validation (DoS prevention)
     if (!validate_count(count, 100, "client count"sv))
-        return Vector<IPC::File> {};
+        return Vector<IPC::TransportHandle> {};
 
-    Vector<IPC::File> files;
-    files.ensure_capacity(count);
+    Vector<IPC::TransportHandle> handles;
+    handles.ensure_capacity(count);
     for (size_t i = 0; i < count; ++i) {
-        auto file_or_error = connect_new_client();
-        if (file_or_error.is_error()) {
-            dbgln("Failed to connect new client: {}", file_or_error.error());
-            return Vector<IPC::File> {};
+        auto handle_or_error = connect_new_client();
+        if (handle_or_error.is_error()) {
+            dbgln("Failed to connect new client: {}", handle_or_error.error());
+            return Vector<IPC::TransportHandle> {};
         }
-        files.unchecked_append(file_or_error.release_value());
+        handles.unchecked_append(handle_or_error.release_value());
     }
-    return files;
+    return handles;
 }
 
 static void decode_image_to_bitmaps_and_durations_with_decoder(Gfx::ImageDecoder const& decoder, Optional<Gfx::IntSize> ideal_size, Vector<RefPtr<Gfx::Bitmap>>& bitmaps, Vector<u32>& durations)

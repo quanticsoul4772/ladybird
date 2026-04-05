@@ -126,26 +126,17 @@ Length::ResolutionContext Length::ResolutionContext::for_element(DOM::AbstractEl
 {
     auto const* root_element = element.element().document().document_element();
 
-    VERIFY(element.computed_properties());
-    VERIFY(root_element);
-    VERIFY(root_element->computed_properties());
+    if (!element.computed_properties() || !root_element || !root_element->computed_properties())
+        return for_document(element.element().document());
+
+    CSSPixelRect viewport_rect;
+    if (auto navigable = element.element().navigable())
+        viewport_rect = navigable->viewport_rect();
 
     return Length::ResolutionContext {
-        .viewport_rect = element.element().navigable()->viewport_rect(),
+        .viewport_rect = viewport_rect,
         .font_metrics = { element.computed_properties()->font_size(), element.computed_properties()->first_available_computed_font(element.document().font_computer())->pixel_metrics(), element.computed_properties()->line_height() },
         .root_font_metrics = { root_element->computed_properties()->font_size(), root_element->computed_properties()->first_available_computed_font(element.document().font_computer())->pixel_metrics(), element.computed_properties()->line_height() }
-    };
-}
-
-Length::ResolutionContext Length::ResolutionContext::for_window(HTML::Window const& window)
-{
-    auto const& initial_font = window.associated_document().font_computer().initial_font();
-    Gfx::FontPixelMetrics const& initial_font_metrics = initial_font.pixel_metrics();
-    Length::FontMetrics font_metrics { CSSPixels { initial_font.pixel_size() }, initial_font_metrics, InitialValues::line_height() };
-    return Length::ResolutionContext {
-        .viewport_rect = window.page().web_exposed_screen_area(),
-        .font_metrics = font_metrics,
-        .root_font_metrics = font_metrics,
     };
 }
 
@@ -277,6 +268,13 @@ Length Length::from_style_value(NonnullRefPtr<StyleValue const> const& style_val
     }
 
     VERIFY_NOT_REACHED();
+}
+
+LengthOrAuto LengthOrAuto::from_style_value(NonnullRefPtr<StyleValue const> const& style_value, Optional<Length> percentage_basis)
+{
+    if (style_value->has_auto())
+        return make_auto();
+    return LengthOrAuto { Length::from_style_value(style_value, percentage_basis) };
 }
 
 Length Length::resolve_calculated(NonnullRefPtr<CalculatedStyleValue const> const& calculated, Layout::Node const& layout_node, Length const& reference_value)

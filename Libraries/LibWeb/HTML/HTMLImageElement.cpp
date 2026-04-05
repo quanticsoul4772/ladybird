@@ -41,6 +41,7 @@
 #include <LibWeb/Layout/ImageBox.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/Painting/PaintableBox.h>
+#include <LibWeb/Painting/ViewportPaintable.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/Platform/ImageCodecPlugin.h>
 #include <LibWeb/SVG/SVGDecodedImageData.h>
@@ -184,8 +185,8 @@ void HTMLImageElement::form_associated_element_attribute_changed(FlyString const
     }
 
     if (name == HTML::AttributeNames::decoding) {
-        if (value.has_value() && (value->equals_ignoring_ascii_case("sync"sv) || value->equals_ignoring_ascii_case("async"sv)))
-            dbgln("FIXME: HTMLImageElement.decoding = '{}' is not implemented yet", value->to_ascii_lowercase());
+        if (value.has_value() && value->equals_ignoring_ascii_case("sync"sv))
+            dbgln("FIXME: HTMLImageElement.decoding = 'sync' is not implemented yet");
     }
 }
 
@@ -350,8 +351,8 @@ int HTMLImageElement::x() const
         return 0;
 
     CSSPixels scroll_offset_x = 0;
-    if (auto enclosing_scroll = paintable_box->enclosing_scroll_frame(); enclosing_scroll)
-        scroll_offset_x = enclosing_scroll->cumulative_offset().x();
+    if (auto idx = paintable_box->enclosing_scroll_frame_index(); idx.value())
+        scroll_offset_x = paintable_box->document().paintable()->scroll_state().cumulative_offset(idx).x();
 
     return (paintable_box->absolute_border_box_rect().x() - scroll_offset_x).to_int();
 }
@@ -369,8 +370,8 @@ int HTMLImageElement::y() const
         return 0;
 
     CSSPixels scroll_offset_y = 0;
-    if (auto enclosing_scroll = paintable_box->enclosing_scroll_frame(); enclosing_scroll)
-        scroll_offset_y = enclosing_scroll->cumulative_offset().y();
+    if (auto idx = paintable_box->enclosing_scroll_frame_index(); idx.value())
+        scroll_offset_y = paintable_box->document().paintable()->scroll_state().cumulative_offset(idx).y();
 
     return (paintable_box->absolute_border_box_rect().y() - scroll_offset_y).to_int();
 }

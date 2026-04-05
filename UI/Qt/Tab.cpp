@@ -39,6 +39,40 @@
 
 namespace Ladybird {
 
+class HamburgerButton final : public QToolButton {
+public:
+    using QToolButton::QToolButton;
+
+protected:
+    virtual void mousePressEvent(QMouseEvent* event) override
+    {
+        if (event->button() == Qt::LeftButton)
+            show_menu();
+        else
+            QToolButton::mousePressEvent(event);
+    }
+
+    virtual void keyPressEvent(QKeyEvent* event) override
+    {
+        if (first_is_one_of(event->key(), Qt::Key_Select, Qt::Key_Space))
+            show_menu();
+        else
+            QToolButton::keyPressEvent(event);
+    }
+
+private:
+    void show_menu()
+    {
+        auto* menu = this->menu();
+        VERIFY(menu);
+
+        auto bottom_right = mapToGlobal(rect().bottomRight());
+        auto menu_width = menu->sizeHint().width();
+
+        menu->popup(QPoint { bottom_right.x() - menu_width, bottom_right.y() });
+    }
+};
+
 static QIcon default_favicon()
 {
     static QIcon icon = load_icon_from_uri("resource://icons/48x48/app-browser.png"sv);
@@ -62,6 +96,7 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
     m_find_in_page->setVisible(false);
     m_toolbar = new QToolBar(this);
     m_location_edit = new LocationEdit(this);
+    m_bookmarks_bar = new BookmarksBar(this);
 
     m_hover_label = new HyperlinkLabel(this);
     m_hover_label->hide();
@@ -125,16 +160,24 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
 
     m_layout->addWidget(m_toolbar);
     m_layout->addWidget(m_autofill_blocked_banner);
+    m_layout->addWidget(m_bookmarks_bar);
     m_layout->addWidget(m_view);
     m_layout->addWidget(m_find_in_page);
 
-    m_hamburger_button = new QToolButton(m_toolbar);
+    m_hamburger_button = new HamburgerButton(m_toolbar);
     m_hamburger_button->setText("Show &Menu");
     m_hamburger_button->setToolTip("Show Menu");
     m_hamburger_button->setIcon(create_tvg_icon_with_theme_colors("hamburger", palette()));
     m_hamburger_button->setPopupMode(QToolButton::InstantPopup);
     m_hamburger_button->setMenu(&m_window->hamburger_menu());
     m_hamburger_button->setStyleSheet(":menu-indicator {image: none}");
+
+    QObject::connect(&m_window->hamburger_menu(), &QMenu::aboutToShow, m_hamburger_button, [this]() {
+        m_hamburger_button->setDown(true);
+    });
+    QObject::connect(&m_window->hamburger_menu(), &QMenu::aboutToHide, m_hamburger_button, [this]() {
+        m_hamburger_button->setDown(false);
+    });
 
     m_navigate_back_action = create_application_action(*this, view().navigate_back_action());
     m_navigate_forward_action = create_application_action(*this, view().navigate_forward_action());
@@ -281,6 +324,7 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
     m_toolbar->addAction(m_vpn_toggle_action);  // Add VPN toggle button
     m_toolbar->addAction(m_network_audit_action);  // Add Network Audit button
     m_toolbar->addWidget(m_location_edit);
+    m_toolbar->addAction(create_application_action(*m_toolbar, view().toggle_bookmark_action()));
     m_toolbar->addAction(create_application_action(*m_toolbar, view().reset_zoom_action()));
     m_hamburger_button_action = m_toolbar->addWidget(m_hamburger_button);
 
@@ -883,13 +927,11 @@ Tab::Tab(BrowserWindow* window, RefPtr<WebView::WebContentClient> parent_client,
     view().on_fullscreen_window = [this]() {
         m_toolbar->hide();
         m_window->fullscreen_mode().enter(this);
-        view().did_update_window_rect();
     };
 
     view().on_exit_fullscreen_window = [this]() {
-        m_window->fullscreen_mode().exit();
+        m_window->fullscreen_mode().exit(FullscreenMode::ExitInitiatedBy::WebContent);
         m_toolbar->show();
-        view().did_update_window_rect();
     };
 
     view().on_audio_play_state_changed = [this](auto play_state) {

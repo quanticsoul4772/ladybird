@@ -26,6 +26,7 @@
 #include <LibWeb/CSS/StyleValues/FilterValueListStyleValue.h>
 #include <LibWeb/CSS/StyleValues/FitContentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/FontStyleStyleValue.h>
+#include <LibWeb/CSS/StyleValues/FontVariantAlternatesFunctionStyleValue.h>
 #include <LibWeb/CSS/StyleValues/GridAutoFlowStyleValue.h>
 #include <LibWeb/CSS/StyleValues/GridTemplateAreaStyleValue.h>
 #include <LibWeb/CSS/StyleValues/GridTrackPlacementStyleValue.h>
@@ -49,6 +50,7 @@
 #include <LibWeb/CSS/StyleValues/TimeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TransformationStyleValue.h>
 #include <LibWeb/CSS/StyleValues/TupleStyleValue.h>
+#include <LibWeb/CSS/SystemColor.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/Layout/BlockContainer.h>
 #include <LibWeb/Layout/Node.h>
@@ -300,12 +302,22 @@ LengthBox ComputedProperties::length_box(PropertyID left_id, PropertyID top_id, 
     };
 }
 
-Color ComputedProperties::color_or_fallback(PropertyID id, ColorResolutionContext color_resolution_context, Color fallback) const
+void ComputedProperties::for_each_anchor_name(Function<void(FlyString const&)> callback) const
 {
-    auto const& value = property(id);
-    if (!value.has_color())
-        return fallback;
-    return value.to_color(color_resolution_context).value();
+    auto const& value = property(PropertyID::AnchorName);
+    if (value.is_custom_ident()) {
+        callback(value.as_custom_ident().custom_ident());
+    } else if (value.is_value_list()) {
+        for (auto const& item : value.as_value_list().values()) {
+            if (item->is_custom_ident())
+                callback(item->as_custom_ident().custom_ident());
+        }
+    }
+}
+
+Color ComputedProperties::color(PropertyID id, ColorResolutionContext color_resolution_context) const
+{
+    return property(id).to_color(color_resolution_context).value();
 }
 
 Position ComputedProperties::position_value(PropertyID id) const
@@ -436,32 +448,7 @@ Optional<int> ComputedProperties::z_index() const
     if (value.has_auto())
         return {};
 
-    // Clamp z-index to the range of a signed 32-bit integer for consistency with other engines.
-    if (value.is_integer()) {
-        auto number = value.as_integer().integer();
-
-        if (number >= NumericLimits<int>::max())
-            return NumericLimits<int>::max();
-        if (number <= NumericLimits<int>::min())
-            return NumericLimits<int>::min();
-
-        return value.as_integer().integer();
-    }
-
-    if (value.is_calculated()) {
-        auto maybe_double = value.as_calculated().resolve_number({});
-        if (maybe_double.has_value()) {
-            if (*maybe_double >= NumericLimits<int>::max())
-                return NumericLimits<int>::max();
-
-            if (*maybe_double <= NumericLimits<int>::min())
-                return NumericLimits<int>::min();
-
-            // Round up on half
-            return floor(maybe_double.value() + 0.5f);
-        }
-    }
-    return {};
+    return int_from_style_value(value);
 }
 
 float ComputedProperties::opacity() const
@@ -864,12 +851,14 @@ TransformStyle ComputedProperties::transform_style() const
     return keyword_to_transform_style(value.to_keyword()).release_value();
 }
 
-Optional<Color> ComputedProperties::accent_color(Layout::NodeWithStyle const& node) const
+Color ComputedProperties::accent_color(ColorResolutionContext const& color_resolution_context) const
 {
     auto const& value = property(PropertyID::AccentColor);
-    if (value.has_color())
-        return value.to_color(ColorResolutionContext::for_layout_node_with_style(node));
-    return {};
+
+    if (value.to_keyword() == Keyword::Auto)
+        return CSS::SystemColor::accent_color(color_resolution_context.color_scheme.value());
+
+    return value.to_color(color_resolution_context).value();
 }
 
 AlignContent ComputedProperties::align_content() const
@@ -1223,9 +1212,9 @@ ComputedProperties::ContentDataAndQuoteNestingLevel ComputedProperties::content(
         }
         content_data.type = ContentData::Type::List;
 
-        if (content_style_value.has_alt_text()) {
+        if (auto alt_text = content_style_value.alt_text()) {
             StringBuilder alt_text_builder;
-            for (auto const& item : content_style_value.alt_text()->values()) {
+            for (auto const& item : alt_text->values()) {
                 if (item->is_string()) {
                     alt_text_builder.append(item->as_string().string_value());
                 } else if (item->is_counter()) {
@@ -1318,6 +1307,12 @@ Vector<TextDecorationLine> ComputedProperties::text_decoration_line() const
     }
 
     VERIFY_NOT_REACHED();
+}
+
+TextDecorationSkipInk ComputedProperties::text_decoration_skip_ink() const
+{
+    auto const& value = property(PropertyID::TextDecorationSkipInk);
+    return keyword_to_text_decoration_skip_ink(value.to_keyword()).release_value();
 }
 
 TextDecorationStyle ComputedProperties::text_decoration_style() const
@@ -1513,7 +1508,11 @@ Optional<FontVariantAlternates> ComputedProperties::font_variant_alternates() co
         }
 
         if (value->is_font_variant_alternates_function()) {
-            // FIXME: Support this
+            auto const& function = value->as_font_variant_alternates_function();
+
+            for (auto const& name : function.names())
+                alternates.font_feature_value_entries.append({ function.function_type(), string_from_style_value(name) });
+
             continue;
         }
 

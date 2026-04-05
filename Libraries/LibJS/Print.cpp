@@ -43,7 +43,6 @@
 #include <LibJS/Runtime/ProxyObject.h>
 #include <LibJS/Runtime/RegExpObject.h>
 #include <LibJS/Runtime/Set.h>
-#include <LibJS/Runtime/ShadowRealm.h>
 #include <LibJS/Runtime/Shape.h>
 #include <LibJS/Runtime/StringObject.h>
 #include <LibJS/Runtime/StringPrototype.h>
@@ -164,9 +163,11 @@ ErrorOr<void> print_array(JS::PrintContext& print_context, JS::Array const& arra
     TRY(js_out(print_context, "["));
     bool first = true;
     size_t printed_count = 0;
-    for (auto it = array.indexed_properties().begin(false); it != array.indexed_properties().end(); ++it) {
+    for (u32 i = 0; i < array.indexed_array_like_size(); ++i) {
+        if (!array.indexed_has(i))
+            continue;
         TRY(print_separator(print_context, first));
-        auto value_or_error = array.get(it.index());
+        auto value_or_error = array.get(i);
         // The V8 repl doesn't throw an exception here, and instead just
         // prints 'undefined'. We may choose to replicate that behavior in
         // the future, but for now lets just catch the error
@@ -174,7 +175,7 @@ ErrorOr<void> print_array(JS::PrintContext& print_context, JS::Array const& arra
             return {};
         auto value = value_or_error.release_value();
         TRY(print_value(print_context, value, seen_objects));
-        if (++printed_count > 100 && it != array.indexed_properties().end()) {
+        if (++printed_count > 100 && i + 1 < array.indexed_array_like_size()) {
             TRY(js_out(print_context, ", ..."));
             break;
         }
@@ -414,13 +415,6 @@ ErrorOr<void> print_array_buffer(JS::PrintContext& print_context, JS::ArrayBuffe
         }
     }
 
-    return {};
-}
-
-ErrorOr<void> print_shadow_realm(JS::PrintContext& print_context, JS::ShadowRealm const&, HashTable<JS::Object*>&)
-{
-    // Not much we can show here that would be useful. Realm pointer address?!
-    TRY(print_type(print_context, "ShadowRealm"sv));
     return {};
 }
 
@@ -970,8 +964,6 @@ ErrorOr<void> print_value(JS::PrintContext& print_context, JS::Value value, Hash
             return print_promise(print_context, static_cast<JS::Promise&>(object), seen_objects);
         if (is<JS::ArrayBuffer>(object))
             return print_array_buffer(print_context, static_cast<JS::ArrayBuffer&>(object), seen_objects);
-        if (is<JS::ShadowRealm>(object))
-            return print_shadow_realm(print_context, static_cast<JS::ShadowRealm&>(object), seen_objects);
         if (is<JS::GeneratorObject>(object))
             return print_generator(print_context, static_cast<JS::GeneratorObject&>(object), seen_objects);
         if (is<JS::AsyncGenerator>(object))

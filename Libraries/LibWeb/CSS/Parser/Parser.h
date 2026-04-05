@@ -26,7 +26,6 @@
 #include <LibWeb/CSS/Parser/TokenStream.h>
 #include <LibWeb/CSS/Parser/Tokenizer.h>
 #include <LibWeb/CSS/Parser/Types.h>
-#include <LibWeb/CSS/Ratio.h>
 #include <LibWeb/CSS/Selector.h>
 #include <LibWeb/CSS/StyleValues/AbstractImageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ShadowStyleValue.h>
@@ -63,6 +62,9 @@ struct NegateNode {
 
 }
 
+struct SyntaxParsingContext {
+    ValueType type;
+};
 struct FunctionContext {
     StringView name;
 };
@@ -76,16 +78,18 @@ enum SpecialContext : u8 {
     CubicBezierFunctionXCoordinate,
     DOMMatrixInitString,
     FontStyleAngle,
+    GridTrackRepeatCount,
     MediaCondition,
     RadialSizeLengthPercentage,
     RandomValueSharingFixedValue,
+    RatioComponent,
     ShadowBlurRadius,
     StepsIntervalsJumpNone,
     StepsIntervalsNormal,
     TranslateZArgument,
 };
 // FIXME: Use PropertyNameAndID instead of PropertyID as the context, for registered custom properties.
-using ValueParsingContext = Variant<PropertyID, FunctionContext, DescriptorContext, SpecialContext>;
+using ValueParsingContext = Variant<PropertyID, FunctionContext, DescriptorContext, SpecialContext, SyntaxParsingContext>;
 
 enum class ParsingMode {
     Normal,
@@ -157,7 +161,7 @@ public:
     RefPtr<Supports> parse_as_supports();
 
     RefPtr<StyleValue const> parse_as_css_value(PropertyID);
-    RefPtr<StyleValue const> parse_as_descriptor_value(AtRuleID, DescriptorID);
+    RefPtr<StyleValue const> parse_as_descriptor_value(AtRuleID, DescriptorNameAndID const&);
     RefPtr<StyleValue const> parse_as_type(ValueType);
 
     Optional<ComponentValue> parse_as_component_value();
@@ -166,21 +170,20 @@ public:
 
     static NonnullRefPtr<StyleValue const> resolve_unresolved_style_value(ParsingParams const&, DOM::AbstractElement, PropertyNameAndID const&, UnresolvedStyleValue const&, Optional<GuardedSubstitutionContexts&> = {});
 
-    [[nodiscard]] LengthOrCalculated parse_as_sizes_attribute(DOM::Element const& element, HTML::HTMLImageElement const* img = nullptr);
+    [[nodiscard]] NonnullRefPtr<StyleValue const> parse_as_sizes_attribute(DOM::Element const& element, HTML::HTMLImageElement const* img = nullptr);
 
-    enum class StopAtComma : u8 {
-        No,
-        Yes,
-    };
-    static Optional<Vector<ComponentValue>> parse_declaration_value(TokenStream<ComponentValue>&, StopAtComma = StopAtComma::No);
+    static Optional<Vector<ComponentValue>> parse_declaration_value(TokenStream<ComponentValue>&, Optional<Token::Type> end_token_type = {});
 
-    NonnullRefPtr<StyleValue const> parse_with_a_syntax(Vector<ComponentValue> const& input, SyntaxNode const& syntax, Optional<DOM::AbstractElement> const& element = {});
+    NonnullRefPtr<StyleValue const> parse_with_a_syntax(Vector<ComponentValue> const& input, SyntaxNode const& syntax);
 
     RefPtr<CalculatedStyleValue const> parse_calculated_value(ComponentValue const&);
     RefPtr<TreeCountingFunctionStyleValue const> parse_tree_counting_function(TokenStream<ComponentValue>&, TreeCountingFunctionStyleValue::ComputedType);
 
-private:
-    Parser(ParsingParams const&, Vector<Token>);
+    OwnPtr<BooleanExpression> parse_if_condition(TokenStream<ComponentValue>&);
+
+    template<typename Descriptors>
+    GC::Ref<Descriptors> convert_to_descriptors(AtRuleID, Vector<Declaration> const& declarations);
+    GC::Ref<CSSStyleProperties> convert_to_style_declaration(Vector<Declaration> const&);
 
     enum class ParseError : u8 {
         IncludesIgnoredVendorPrefix,
@@ -188,6 +191,12 @@ private:
     };
     template<typename T>
     using ParseErrorOr = ErrorOr<T, ParseError>;
+
+    static ParseErrorOr<void> collect_arbitrary_substitution_function_presence(Vector<ComponentValue> const&, SubstitutionFunctionsPresence&);
+    static ParseErrorOr<void> collect_arbitrary_substitution_function_presence(ComponentValue const&, SubstitutionFunctionsPresence&);
+
+private:
+    Parser(ParsingParams const&, Vector<Token>);
 
     // "Parse a stylesheet" is intended to be the normal parser entry point, for parsing stylesheets.
     struct ParsedStyleSheet {
@@ -287,46 +296,54 @@ private:
     Optional<FlyString> parse_layer_name(TokenStream<ComponentValue>&, AllowBlankLayerName);
     Optional<Vector<FlyString>> parse_comma_separated_family_name_list(TokenStream<ComponentValue>&);
 
+    struct FunctionPrelude {
+        FlyString name;
+        Vector<FunctionParameterInternal> parameters;
+        NonnullOwnPtr<SyntaxNode> return_type;
+    };
+    Optional<FunctionPrelude> parse_function_prelude(TokenStream<ComponentValue>&);
+
     bool is_valid_in_the_current_context(Declaration const&) const;
     bool is_valid_in_the_current_context(AtRule const&) const;
     bool is_valid_in_the_current_context(QualifiedRule const&) const;
+
+    template<typename NestedDeclarationsRule>
     GC::Ptr<CSSRule> convert_to_rule(Rule const&, Nested);
     GC::Ptr<CSSStyleRule> convert_to_style_rule(QualifiedRule const&, Nested);
+    template<typename NestedDeclarationsRule>
+    GC::Ptr<CSSContainerRule> convert_to_container_rule(AtRule const&, Nested);
     GC::Ptr<CSSCounterStyleRule> convert_to_counter_style_rule(AtRule const&);
     GC::Ptr<CSSFontFaceRule> convert_to_font_face_rule(AtRule const&);
     GC::Ptr<CSSFontFeatureValuesRule> convert_to_font_feature_values_rule(AtRule const&);
+    GC::Ptr<CSSFunctionRule> convert_to_function_rule(AtRule const&);
     GC::Ptr<CSSKeyframesRule> convert_to_keyframes_rule(AtRule const&);
     GC::Ptr<CSSImportRule> convert_to_import_rule(AtRule const&);
+
+    template<typename NestedDeclarationsRule>
     GC::Ptr<CSSRule> convert_to_layer_rule(AtRule const&, Nested);
     GC::Ptr<CSSMarginRule> convert_to_margin_rule(AtRule const&);
+
+    template<typename NestedDeclarationsRule>
     GC::Ptr<CSSMediaRule> convert_to_media_rule(AtRule const&, Nested);
     GC::Ptr<CSSNamespaceRule> convert_to_namespace_rule(AtRule const&);
     GC::Ptr<CSSPageRule> convert_to_page_rule(AtRule const& rule);
     GC::Ptr<CSSPropertyRule> convert_to_property_rule(AtRule const& rule);
+
+    template<typename NestedDeclarationsRule>
     GC::Ptr<CSSSupportsRule> convert_to_supports_rule(AtRule const&, Nested);
 
-    GC::Ref<CSSStyleProperties> convert_to_style_declaration(Vector<Declaration> const&);
     Optional<StylePropertyAndName> convert_to_style_property(Declaration const&);
 
     Optional<Descriptor> convert_to_descriptor(AtRuleID, Declaration const&);
 
     Optional<Dimension> parse_dimension(ComponentValue const&);
-    Optional<AngleOrCalculated> parse_angle(TokenStream<ComponentValue>&);
     Optional<AnglePercentage> parse_angle_percentage(TokenStream<ComponentValue>&);
-    Optional<FlexOrCalculated> parse_flex(TokenStream<ComponentValue>&);
-    Optional<FrequencyOrCalculated> parse_frequency(TokenStream<ComponentValue>&);
     Optional<FrequencyPercentage> parse_frequency_percentage(TokenStream<ComponentValue>&);
-    Optional<IntegerOrCalculated> parse_integer(TokenStream<ComponentValue>&);
-    Optional<LengthOrCalculated> parse_length(TokenStream<ComponentValue>&);
     Optional<LengthPercentage> parse_length_percentage(TokenStream<ComponentValue>&);
-    Optional<NumberOrCalculated> parse_number(TokenStream<ComponentValue>&);
     Optional<NumberPercentage> parse_number_percentage(TokenStream<ComponentValue>&);
-    Optional<ResolutionOrCalculated> parse_resolution(TokenStream<ComponentValue>&);
-    Optional<TimeOrCalculated> parse_time(TokenStream<ComponentValue>&);
     Optional<TimePercentage> parse_time_percentage(TokenStream<ComponentValue>&);
 
-    Optional<LengthOrAutoOrCalculated> parse_source_size_value(TokenStream<ComponentValue>&);
-    Optional<Ratio> parse_ratio(TokenStream<ComponentValue>&);
+    RefPtr<StyleValue const> parse_source_size_value(TokenStream<ComponentValue>&);
     Optional<Gfx::UnicodeRange> parse_unicode_range(TokenStream<ComponentValue>&);
     Optional<Gfx::UnicodeRange> parse_unicode_range(StringView);
     Vector<Gfx::UnicodeRange> parse_unicode_ranges(TokenStream<ComponentValue>&);
@@ -375,14 +392,14 @@ private:
     Optional<Vector<ColorStopListElement>> parse_color_stop_list(TokenStream<ComponentValue>& tokens, auto parse_position);
     Optional<Vector<ColorStopListElement>> parse_linear_color_stop_list(TokenStream<ComponentValue>&);
     Optional<Vector<ColorStopListElement>> parse_angular_color_stop_list(TokenStream<ComponentValue>&);
-    Optional<InterpolationMethod> parse_interpolation_method(TokenStream<ComponentValue>&);
+    RefPtr<ColorInterpolationMethodStyleValue const> parse_color_interpolation_method_value(TokenStream<ComponentValue>&);
 
     RefPtr<LinearGradientStyleValue const> parse_linear_gradient_function(TokenStream<ComponentValue>&);
     RefPtr<ConicGradientStyleValue const> parse_conic_gradient_function(TokenStream<ComponentValue>&);
     RefPtr<RadialGradientStyleValue const> parse_radial_gradient_function(TokenStream<ComponentValue>&);
 
     ParseErrorOr<NonnullRefPtr<StyleValue const>> parse_css_value(PropertyID, TokenStream<ComponentValue>&, Optional<String> original_source_text = {});
-    ParseErrorOr<NonnullRefPtr<StyleValue const>> parse_descriptor_value(AtRuleID, DescriptorID, TokenStream<ComponentValue>&);
+    ParseErrorOr<NonnullRefPtr<StyleValue const>> parse_descriptor_value(AtRuleID, DescriptorNameAndID const&, TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_positional_value_list_shorthand(PropertyID, TokenStream<ComponentValue>&);
     RefPtr<StyleValue const> parse_css_value_for_property(PropertyID, TokenStream<ComponentValue>&);
     struct PropertyAndValue {
@@ -586,12 +603,17 @@ private:
     OwnPtr<BooleanExpression> parse_boolean_expression(TokenStream<ComponentValue>&, MatchResult result_for_general_enclosed, ParseTest parse_test);
     OwnPtr<BooleanExpression> parse_boolean_expression_group(TokenStream<ComponentValue>&, MatchResult result_for_general_enclosed, ParseTest parse_test);
 
+    OwnPtr<BooleanExpression> parse_supports_condition(TokenStream<ComponentValue>&);
     OwnPtr<BooleanExpression> parse_supports_feature(TokenStream<ComponentValue>&);
     OwnPtr<Supports::Declaration> parse_supports_declaration(TokenStream<ComponentValue>&);
 
+    OwnPtr<BooleanExpression> parse_container_query_condition(TokenStream<ComponentValue>&);
+    OwnPtr<BooleanExpression> parse_container_query_feature(TokenStream<ComponentValue>&);
+    RefPtr<ContainerQuery> parse_container_query(TokenStream<ComponentValue>&);
+
     NonnullRefPtr<StyleValue const> resolve_unresolved_style_value(DOM::AbstractElement, GuardedSubstitutionContexts&, PropertyNameAndID const&, UnresolvedStyleValue const&);
 
-    RefPtr<StyleValue const> parse_according_to_syntax_node(TokenStream<ComponentValue>& tokens, SyntaxNode const& syntax_node, Optional<DOM::AbstractElement> const& element);
+    RefPtr<StyleValue const> parse_according_to_syntax_node(TokenStream<ComponentValue>& tokens, SyntaxNode const& syntax_node);
 
     static bool has_ignored_vendor_prefix(StringView);
 
@@ -644,7 +666,7 @@ CSS::Parser::Parser::PropertiesAndCustomProperties parse_css_property_declaratio
 Vector<CSS::Descriptor> parse_css_descriptor_declaration_block(CSS::Parser::ParsingParams const&, CSS::AtRuleID, StringView);
 RefPtr<CSS::StyleValue const> parse_css_value(CSS::Parser::ParsingParams const&, StringView, CSS::PropertyID);
 RefPtr<CSS::StyleValue const> parse_css_type(CSS::Parser::ParsingParams const&, StringView, CSS::ValueType);
-RefPtr<CSS::StyleValue const> parse_css_descriptor(CSS::Parser::ParsingParams const&, CSS::AtRuleID, CSS::DescriptorID, StringView);
+RefPtr<CSS::StyleValue const> parse_css_descriptor(CSS::Parser::ParsingParams const&, CSS::AtRuleID, CSS::DescriptorNameAndID const&, StringView);
 Optional<CSS::SelectorList> parse_selector(CSS::Parser::ParsingParams const&, StringView);
 Optional<CSS::SelectorList> parse_selector_for_nested_style_rule(CSS::Parser::ParsingParams const&, StringView);
 Optional<CSS::PageSelectorList> parse_page_selector_list(CSS::Parser::ParsingParams const&, StringView);
@@ -656,5 +678,6 @@ RefPtr<CSS::Supports> parse_css_supports(CSS::Parser::ParsingParams const&, Stri
 Vector<CSS::Parser::ComponentValue> parse_component_values_list(CSS::Parser::ParsingParams const&, StringView);
 GC::Ref<JS::Realm> internal_css_realm();
 ErrorOr<String> css_decode_bytes(Optional<StringView> const& environment_encoding, Optional<String> mime_type_charset, ByteBuffer const& encoded_string);
+bool is_valid_custom_ident(FlyString const&, ReadonlySpan<StringView> const& blacklist);
 
 }

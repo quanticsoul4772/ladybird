@@ -55,9 +55,9 @@ ThrowCompletionOr<Value> BoundFunction::internal_call(ExecutionContext& callee_c
     auto& bound_args = m_bound_arguments;
 
     // 4. Let args be the list-concatenation of boundArgs and argumentsList.
-    auto* argument_values = callee_context.arguments.data();
+    auto* argument_values = callee_context.arguments_data();
 
-    for (ssize_t i = static_cast<ssize_t>(callee_context.arguments.size()) - 1; i >= static_cast<ssize_t>(bound_args.size()); --i)
+    for (ssize_t i = static_cast<ssize_t>(callee_context.argument_count) - 1; i >= static_cast<ssize_t>(bound_args.size()); --i)
         argument_values[i] = argument_values[i - bound_args.size()];
     for (size_t i = 0; i < bound_args.size(); ++i)
         argument_values[i] = bound_args[i];
@@ -81,9 +81,9 @@ ThrowCompletionOr<GC::Ref<Object>> BoundFunction::internal_construct(ExecutionCo
     auto& bound_args = m_bound_arguments;
 
     // 4. Let args be the list-concatenation of boundArgs and argumentsList.
-    auto* argument_values = callee_context.arguments.data();
+    auto* argument_values = callee_context.arguments_data();
 
-    for (ssize_t i = static_cast<ssize_t>(callee_context.arguments.size()) - 1; i >= static_cast<ssize_t>(bound_args.size()); --i)
+    for (ssize_t i = static_cast<ssize_t>(callee_context.argument_count) - 1; i >= static_cast<ssize_t>(bound_args.size()); --i)
         argument_values[i] = argument_values[i - bound_args.size()];
     for (size_t i = 0; i < bound_args.size(); ++i)
         argument_values[i] = bound_args[i];
@@ -108,9 +108,9 @@ void BoundFunction::visit_edges(Visitor& visitor)
     visitor.visit(m_bound_arguments);
 }
 
-void BoundFunction::get_stack_frame_size(size_t& registers_and_locals_count, size_t& constants_count, size_t& argument_count)
+void BoundFunction::get_stack_frame_info(size_t& registers_and_locals_count, ReadonlySpan<Value>& constants, size_t& argument_count)
 {
-    m_bound_target_function->get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    m_bound_target_function->get_stack_frame_info(registers_and_locals_count, constants, argument_count);
     argument_count += m_bound_arguments.size();
 }
 

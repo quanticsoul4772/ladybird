@@ -45,7 +45,8 @@ void ViewportPaintable::reset_for_relayout()
     m_scroll_state_snapshot = {};
     m_needs_to_refresh_scroll_state = true;
     m_paintable_boxes_with_auto_content_visibility.clear();
-    m_next_accumulated_visual_context_id = 1;
+    m_visual_context_tree = nullptr;
+    m_visual_viewport_context_index = {};
 }
 
 void ViewportPaintable::build_stacking_context_tree_if_needed()
@@ -64,7 +65,7 @@ void ViewportPaintable::build_stacking_context_tree()
         paintable_box.invalidate_stacking_context();
         auto* parent_context = paintable_box.enclosing_stacking_context();
         auto establishes_stacking_context = paintable_box.layout_node().establishes_stacking_context();
-        if ((paintable_box.is_positioned() || establishes_stacking_context) && paintable_box.computed_values().z_index().value_or(0) == 0)
+        if ((paintable_box.is_positioned() || establishes_stacking_context) && paintable_box.effective_z_index().value_or(0) == 0)
             parent_context->m_positioned_descendants_and_stacking_contexts_with_stack_level_0.append(paintable_box);
         if (!paintable_box.is_positioned() && paintable_box.is_floating())
             parent_context->m_non_positioned_floating_descendants.append(paintable_box);
@@ -90,12 +91,12 @@ void ViewportPaintable::paint_all_phases(DisplayListRecordingContext& context)
 
 void ViewportPaintable::assign_scroll_frames()
 {
-    auto precompute_sticky_constraints = [](ScrollFrame& sticky_frame, PaintableBox const& paintable_box) {
-        auto nearest_scrolling_ancestor_frame = sticky_frame.nearest_scrolling_ancestor();
-        if (!nearest_scrolling_ancestor_frame)
+    auto precompute_sticky_constraints = [&](ScrollFrameIndex sticky_frame_index, PaintableBox const& paintable_box) {
+        auto nearest_scrolling_ancestor_index = m_scroll_state.nearest_scrolling_ancestor(sticky_frame_index);
+        if (!nearest_scrolling_ancestor_index.value())
             return;
 
-        auto const& scroll_ancestor_paintable = nearest_scrolling_ancestor_frame->paintable_box();
+        auto const& scroll_ancestor_paintable = m_scroll_state.frame_at(nearest_scrolling_ancestor_index).paintable_box();
         auto sticky_border_box_rect = paintable_box.absolute_border_box_rect();
         auto const* containing_block_of_sticky = paintable_box.containing_block();
 
@@ -109,7 +110,7 @@ void ViewportPaintable::assign_scroll_frames()
             needs_parent_offset_adjustment = true;
         }
 
-        sticky_frame.set_sticky_constraints({
+        m_scroll_state.frame_at(sticky_frame_index).set_sticky_constraints({
             .position_relative_to_scroll_ancestor = sticky_border_box_rect.top_left() - scroll_ancestor_paintable.absolute_rect().top_left(),
             .border_box_size = sticky_border_box_rect.size(),
             .scrollport_size = scroll_ancestor_paintable.absolute_rect().size(),
@@ -120,24 +121,24 @@ void ViewportPaintable::assign_scroll_frames()
     };
 
     for_each_in_inclusive_subtree_of_type<PaintableBox>([&](auto& paintable_box) {
-        RefPtr<ScrollFrame> sticky_scroll_frame;
+        ScrollFrameIndex sticky_scroll_frame_index;
         if (paintable_box.is_sticky_position()) {
-            auto parent_scroll_frame = paintable_box.nearest_scroll_frame();
-            sticky_scroll_frame = m_scroll_state.create_sticky_frame_for(paintable_box, parent_scroll_frame);
-            precompute_sticky_constraints(*sticky_scroll_frame, paintable_box);
-            paintable_box.set_enclosing_scroll_frame(sticky_scroll_frame);
-            paintable_box.set_own_scroll_frame(sticky_scroll_frame);
+            auto parent_index = paintable_box.nearest_scroll_frame_index();
+            sticky_scroll_frame_index = m_scroll_state.create_sticky_frame_for(paintable_box, parent_index);
+            precompute_sticky_constraints(sticky_scroll_frame_index, paintable_box);
+            paintable_box.set_enclosing_scroll_frame_index(sticky_scroll_frame_index);
+            paintable_box.set_own_scroll_frame_index(sticky_scroll_frame_index);
         }
 
         if (paintable_box.has_scrollable_overflow() || is<ViewportPaintable>(paintable_box)) {
-            RefPtr<ScrollFrame const> parent_scroll_frame;
-            if (sticky_scroll_frame) {
-                parent_scroll_frame = sticky_scroll_frame;
+            ScrollFrameIndex parent_index;
+            if (sticky_scroll_frame_index.value()) {
+                parent_index = sticky_scroll_frame_index;
             } else {
-                parent_scroll_frame = paintable_box.nearest_scroll_frame();
+                parent_index = paintable_box.nearest_scroll_frame_index();
             }
-            auto scroll_frame = m_scroll_state.create_scroll_frame_for(paintable_box, parent_scroll_frame);
-            paintable_box.set_own_scroll_frame(scroll_frame);
+            auto scroll_frame_index = m_scroll_state.create_scroll_frame_for(paintable_box, parent_index);
+            paintable_box.set_own_scroll_frame_index(scroll_frame_index);
         }
 
         return TraversalDecision::Continue;
@@ -148,9 +149,9 @@ void ViewportPaintable::assign_scroll_frames()
             return TraversalDecision::Continue;
 
         for (auto block = paintable.containing_block(); block; block = block->containing_block()) {
-            if (auto scroll_frame = block->own_scroll_frame(); scroll_frame) {
+            if (auto index = block->own_scroll_frame_index(); index.value()) {
                 if (auto* paintable_box = as_if<PaintableBox>(paintable))
-                    paintable_box->set_enclosing_scroll_frame(*scroll_frame);
+                    paintable_box->set_enclosing_scroll_frame_index(index);
 
                 return TraversalDecision::Continue;
             }
@@ -303,14 +304,14 @@ static Optional<ClipData> compute_clip_data(PaintableBox const& paintable_box, C
 
 void ViewportPaintable::assign_accumulated_visual_contexts()
 {
-    m_next_accumulated_visual_context_id = 1;
+    m_visual_context_tree = AccumulatedVisualContextTree::create();
 
     auto pixel_ratio = document().page().client().device_pixels_per_css_pixel();
     DevicePixelConverter converter { pixel_ratio };
     auto scale = static_cast<float>(pixel_ratio);
 
-    auto append_node = [&](RefPtr<AccumulatedVisualContext const> parent, VisualContextData data) {
-        return AccumulatedVisualContext::create(allocate_accumulated_visual_context_id(), move(data), parent);
+    auto append_node = [&](VisualContextIndex parent_index, VisualContextData data) -> VisualContextIndex {
+        return m_visual_context_tree->append(move(data), parent_index);
     };
 
     auto make_effects_data = [&](PaintableBox const& box) -> Optional<EffectsData> {
@@ -327,17 +328,17 @@ void ViewportPaintable::assign_accumulated_visual_contexts()
     };
 
     // Create visual viewport transform as root (if not identity)
-    m_visual_viewport_context = nullptr;
+    m_visual_viewport_context_index = {};
     auto transform = document().visual_viewport()->transform();
     if (!transform.is_identity()) {
         auto matrix = scale_matrix_for_device_pixels(transform.to_matrix(), scale);
-        m_visual_viewport_context = append_node(nullptr, TransformData { matrix, { 0.f, 0.f } });
+        m_visual_viewport_context_index = append_node({}, TransformData { matrix, { 0.f, 0.f } });
     }
 
-    RefPtr<AccumulatedVisualContext const> viewport_state_for_descendants = m_visual_viewport_context;
-    if (own_scroll_frame())
-        viewport_state_for_descendants = append_node(m_visual_viewport_context, ScrollData { own_scroll_frame()->id(), false });
-    set_accumulated_visual_context(nullptr);
+    VisualContextIndex viewport_state_for_descendants = m_visual_viewport_context_index;
+    if (own_scroll_frame_index().value())
+        viewport_state_for_descendants = append_node(m_visual_viewport_context_index, ScrollData { own_scroll_frame_index(), false });
+    set_accumulated_visual_context({});
     set_accumulated_visual_context_for_descendants(viewport_state_for_descendants);
 
     for_each_in_subtree_of_type<PaintableBox>([&](auto& paintable_box) {
@@ -352,14 +353,14 @@ void ViewportPaintable::assign_accumulated_visual_contexts()
         else
             paintable_box.set_filter({});
 
-        RefPtr<AccumulatedVisualContext const> inherited_state;
+        VisualContextIndex inherited_state;
 
         if (paintable_box.is_fixed_position()) {
-            inherited_state = m_visual_viewport_context;
+            inherited_state = m_visual_viewport_context_index;
         } else if (paintable_box.is_absolutely_positioned()) {
             // For position: absolute, use containing block's state to correctly escape scroll containers.
             auto* containing = paintable_box.containing_block();
-            inherited_state = containing->accumulated_visual_context_for_descendants();
+            inherited_state = containing->accumulated_visual_context_for_descendants_index();
 
             // Abspos elements escape scroll containers and overflow clips of non-positioned
             // ancestors, but cannot escape stacking contexts created by intermediate effects
@@ -381,17 +382,17 @@ void ViewportPaintable::assign_accumulated_visual_contexts()
             // For position: relative/static, use visual parent's state directly.
             // This avoids duplicate transform/perspective allocations that would occur with
             // the containing block + intermediate walk approach.
-            inherited_state = visual_parent->accumulated_visual_context_for_descendants();
+            inherited_state = visual_parent->accumulated_visual_context_for_descendants_index();
         }
 
         // Build this element's own state from inherited state.
-        RefPtr<AccumulatedVisualContext const> own_state = inherited_state;
+        VisualContextIndex own_state = inherited_state;
 
         if (paintable_box.is_sticky_position()) {
             // For sticky elements, use enclosing_scroll_frame which holds the sticky frame.
             // own_scroll_frame may be a different scroll frame if the sticky element also has scrollable overflow.
-            if (auto sticky_frame = paintable_box.enclosing_scroll_frame(); sticky_frame && sticky_frame->is_sticky())
-                own_state = append_node(own_state, ScrollData { sticky_frame->id(), true });
+            if (auto sticky_idx = paintable_box.enclosing_scroll_frame_index(); sticky_idx.value() && m_scroll_state.frame_at(sticky_idx).is_sticky())
+                own_state = append_node(own_state, ScrollData { sticky_idx, true });
         }
 
         auto const& computed_values = paintable_box.computed_values();
@@ -430,7 +431,7 @@ void ViewportPaintable::assign_accumulated_visual_contexts()
         paintable_box.set_accumulated_visual_context(own_state);
 
         // Build state for descendants: own state + perspective + clip + scroll.
-        RefPtr<AccumulatedVisualContext const> state_for_descendants = own_state;
+        VisualContextIndex state_for_descendants = own_state;
 
         if (auto perspective_matrix = compute_perspective_matrix(paintable_box, computed_values); perspective_matrix.has_value()) {
             auto scaled_matrix = scale_matrix_for_device_pixels(*perspective_matrix, scale);
@@ -440,10 +441,10 @@ void ViewportPaintable::assign_accumulated_visual_contexts()
         if (auto clip_data = compute_clip_data(paintable_box, computed_values, converter); clip_data.has_value())
             state_for_descendants = append_node(state_for_descendants, clip_data.value());
 
-        if (paintable_box.own_scroll_frame()) {
-            auto is_sticky_without_scrollable_overflow = paintable_box.is_sticky_position() && paintable_box.enclosing_scroll_frame() == paintable_box.own_scroll_frame();
+        if (paintable_box.own_scroll_frame_index().value()) {
+            auto is_sticky_without_scrollable_overflow = paintable_box.is_sticky_position() && paintable_box.enclosing_scroll_frame_index() == paintable_box.own_scroll_frame_index();
             if (!is_sticky_without_scrollable_overflow)
-                state_for_descendants = append_node(state_for_descendants, ScrollData { paintable_box.own_scroll_frame()->id(), false });
+                state_for_descendants = append_node(state_for_descendants, ScrollData { paintable_box.own_scroll_frame_index(), false });
         }
 
         paintable_box.set_accumulated_visual_context_for_descendants(state_for_descendants);
@@ -458,21 +459,21 @@ void ViewportPaintable::refresh_scroll_state()
         return;
     m_needs_to_refresh_scroll_state = false;
 
-    m_scroll_state.for_each_sticky_frame([&](auto& scroll_frame) {
-        auto nearest_scrolling_ancestor_frame = scroll_frame->nearest_scrolling_ancestor();
-        if (!nearest_scrolling_ancestor_frame || !scroll_frame->has_sticky_constraints())
+    m_scroll_state.for_each_sticky_frame([&](auto idx, auto& frame) {
+        auto nearest_scrolling_ancestor_index = m_scroll_state.nearest_scrolling_ancestor(idx);
+        if (!nearest_scrolling_ancestor_index.value() || !frame.has_sticky_constraints())
             return;
 
-        auto const& sticky_data = scroll_frame->sticky_constraints();
+        auto const& sticky_data = frame.sticky_constraints();
         auto const& sticky_insets = sticky_data.insets;
-        auto const& scroll_ancestor_paintable = nearest_scrolling_ancestor_frame->paintable_box();
+        auto const& scroll_ancestor_paintable = m_scroll_state.frame_at(nearest_scrolling_ancestor_index).paintable_box();
 
         // For nested sticky elements, the parent sticky's offset is applied via cumulative_offset.
         // We need to adjust all position calculations to account for this, so we work in the
         // coordinate space where the parent sticky is at its current (offset) position.
         CSSPixelPoint parent_sticky_offset;
-        if (auto parent = scroll_frame->parent(); parent && parent->is_sticky())
-            parent_sticky_offset = parent->cumulative_offset();
+        if (auto parent_idx = frame.parent_index(); parent_idx.value() && m_scroll_state.frame_at(parent_idx).is_sticky())
+            parent_sticky_offset = m_scroll_state.cumulative_offset(parent_idx);
 
         auto sticky_position_in_ancestor = sticky_data.position_relative_to_scroll_ancestor + parent_sticky_offset;
 
@@ -505,11 +506,11 @@ void ViewportPaintable::refresh_scroll_state()
                 sticky_offset.set_x(max(scrollport_rect.right() - sticky_data.border_box_size.width() - *sticky_insets.right, min_offset_within_containing_block.x()) - sticky_position_in_ancestor.x());
         }
 
-        scroll_frame->set_own_offset(sticky_offset);
+        frame.set_own_offset(sticky_offset);
     });
 
-    m_scroll_state.for_each_scroll_frame([&](auto& scroll_frame) {
-        scroll_frame->set_own_offset(-scroll_frame->paintable_box().scroll_offset());
+    m_scroll_state.for_each_scroll_frame([&](auto, auto& frame) {
+        frame.set_own_offset(-frame.paintable_box().scroll_offset());
     });
 
     m_scroll_state_snapshot = m_scroll_state.snapshot(document().page().client().device_pixels_per_css_pixel());

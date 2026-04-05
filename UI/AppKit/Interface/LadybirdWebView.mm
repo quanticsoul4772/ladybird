@@ -205,6 +205,16 @@ struct HideCursor {
     m_web_view_bridge->set_maximum_frames_per_second([[[self window] screen] maximumFramesPerSecond]);
 }
 
+- (void)handleEnteredFullScreen
+{
+    m_web_view_bridge->set_is_fullscreen(Web::ViewportIsFullscreen::Yes);
+}
+
+- (void)handleExitedFullScreen
+{
+    m_web_view_bridge->set_is_fullscreen(Web::ViewportIsFullscreen::No);
+}
+
 - (void)handleExitFullScreen
 {
     m_web_view_bridge->exit_fullscreen();
@@ -854,7 +864,6 @@ struct HideCursor {
         }
 
         [self.observer onEnterFullscreenWindow];
-        m_web_view_bridge->did_update_window_rect();
     };
 
     m_web_view_bridge->on_exit_fullscreen_window = [weak_self]() {
@@ -864,7 +873,6 @@ struct HideCursor {
         }
 
         [self.observer onExitFullscreenWindow];
-        m_web_view_bridge->did_update_window_rect();
     };
 
     m_web_view_bridge->on_theme_color_change = [weak_self](auto color) {
@@ -1090,7 +1098,7 @@ struct HideCursor {
 
 - (void)mouseExited:(NSEvent*)event
 {
-    Web::MouseEvent mouse_event { Web::MouseEvent::Type::MouseLeave, {}, {}, Web::UIEvents::MouseButton::None, Web::UIEvents::MouseButton::None, Web::UIEvents::KeyModifier::Mod_None, 0, 0, nullptr };
+    Web::MouseEvent mouse_event { Web::MouseEvent::Type::MouseLeave, {}, {}, Web::UIEvents::MouseButton::None, Web::UIEvents::MouseButton::None, Web::UIEvents::KeyModifier::Mod_None, 0, 0, 0, nullptr };
     m_web_view_bridge->enqueue_input_event(move(mouse_event));
 }
 

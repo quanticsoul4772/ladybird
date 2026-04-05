@@ -6,8 +6,6 @@
  */
 
 #include <LibGC/Root.h>
-#include <LibJS/Lexer.h>
-#include <LibJS/Parser.h>
 #include <LibJS/Runtime/Accessor.h>
 #include <LibJS/Runtime/AggregateErrorConstructor.h>
 #include <LibJS/Runtime/AggregateErrorPrototype.h>
@@ -96,8 +94,6 @@
 #include <LibJS/Runtime/SetConstructor.h>
 #include <LibJS/Runtime/SetIteratorPrototype.h>
 #include <LibJS/Runtime/SetPrototype.h>
-#include <LibJS/Runtime/ShadowRealmConstructor.h>
-#include <LibJS/Runtime/ShadowRealmPrototype.h>
 #include <LibJS/Runtime/Shape.h>
 #include <LibJS/Runtime/SharedArrayBufferConstructor.h>
 #include <LibJS/Runtime/SharedArrayBufferPrototype.h>
@@ -210,24 +206,8 @@ GC::Ref<Intrinsics> Intrinsics::create(Realm& realm)
 static Vector<GC::Root<SharedFunctionInstanceData>> parse_builtin_file(unsigned char const* script_text, VM& vm)
 {
     auto rust_compilation = RustIntegration::compile_builtin_file(script_text, vm);
-    if (rust_compilation.has_value())
-        return move(rust_compilation.value());
-
-    auto script_text_as_utf16 = Utf16String::from_utf8_without_validation({ script_text, strlen(reinterpret_cast<char const*>(script_text)) });
-    auto code = SourceCode::create("BuiltinFile"_string, move(script_text_as_utf16));
-
-    auto lexer = Lexer { move(code) };
-    auto parser = Parser { move(lexer) };
-    VERIFY(!parser.has_errors());
-    auto program = parser.parse_program(true);
-
-    Vector<GC::Root<SharedFunctionInstanceData>> shared_data_list;
-    for (auto const& child : program->children()) {
-        if (auto const* function_declaration = as_if<FunctionDeclaration>(*child))
-            shared_data_list.append(SharedFunctionInstanceData::create_for_function_node(vm, *function_declaration));
-    }
-
-    return shared_data_list;
+    VERIFY(rust_compilation.has_value());
+    return move(rust_compilation.value());
 }
 
 void Intrinsics::initialize_intrinsics(Realm& realm)
@@ -374,8 +354,8 @@ void Intrinsics::initialize_intrinsics(Realm& realm)
     m_default_array_prototype_shape = array_prototype()->shape();
     m_default_object_prototype_shape = object_prototype()->shape();
 
-    VERIFY(array_prototype()->indexed_properties().is_empty());
-    VERIFY(object_prototype()->indexed_properties().is_empty());
+    VERIFY(array_prototype()->indexed_array_like_size() == 0);
+    VERIFY(object_prototype()->indexed_array_like_size() == 0);
 
     m_regexp_builtin_exec_array_shape = heap().allocate<Shape>(realm);
     m_regexp_builtin_exec_array_shape->set_prototype_without_transition(realm.intrinsics().array_prototype());

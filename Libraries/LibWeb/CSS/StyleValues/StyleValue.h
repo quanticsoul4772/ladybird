@@ -43,6 +43,7 @@ namespace Web::CSS {
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(BorderRadius, border_radius, BorderRadiusStyleValue)                                                      \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(BorderRadiusRect, border_radius_rect, BorderRadiusRectStyleValue)                                         \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(Calculated, calculated, CalculatedStyleValue)                                                             \
+    __ENUMERATE_CSS_STYLE_VALUE_TYPE(ColorInterpolationMethod, color_interpolation_method, ColorInterpolationMethodStyleValue)                 \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(ColorScheme, color_scheme, ColorSchemeStyleValue)                                                         \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(Color, color, ColorStyleValue)                                                                            \
     __ENUMERATE_CSS_STYLE_VALUE_TYPE(ConicGradient, conic_gradient, ConicGradientStyleValue)                                                   \
@@ -183,6 +184,11 @@ public:
         return this->equals(other);
     }
 
+    // https://drafts.css-houdini.org/css-properties-values-api/#computationally-independent
+    // A property value is computationally independent if it can be converted into a computed value using only the value
+    // of the property on the element, and "global" information that cannot be changed by CSS.
+    virtual bool is_computationally_independent() const = 0;
+
 protected:
     explicit StyleValue(Type);
 
@@ -204,7 +210,7 @@ struct StyleValueWithDefaultOperators : public StyleValue {
     }
 };
 
-i64 int_from_style_value(NonnullRefPtr<StyleValue const> const& style_value);
+i32 int_from_style_value(NonnullRefPtr<StyleValue const> const& style_value);
 double number_from_style_value(NonnullRefPtr<StyleValue const> const& style_value, Optional<double> percentage_basis);
 FlyString const& string_from_style_value(NonnullRefPtr<StyleValue const> const& style_value);
 

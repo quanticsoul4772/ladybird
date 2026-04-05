@@ -25,7 +25,6 @@
 #include <LibWeb/Painting/BorderRadiusCornerClipper.h>
 #include <LibWeb/Painting/DisplayListCommand.h>
 #include <LibWeb/Painting/GradientData.h>
-#include <LibWeb/Painting/PaintBoxShadowParams.h>
 #include <LibWeb/Painting/PaintStyle.h>
 #include <LibWeb/Painting/ShouldAntiAlias.h>
 
@@ -88,8 +87,8 @@ public:
 
     void translate(Gfx::IntPoint delta);
 
-    void set_accumulated_visual_context(RefPtr<AccumulatedVisualContext const> state) { m_accumulated_visual_context = move(state); }
-    RefPtr<AccumulatedVisualContext const> accumulated_visual_context() const { return m_accumulated_visual_context; }
+    void set_accumulated_visual_context(VisualContextIndex index) { m_accumulated_visual_context_index = index; }
+    VisualContextIndex accumulated_visual_context() const { return m_accumulated_visual_context_index; }
 
     void replay_cached_commands(ReadonlySpan<DisplayListCommand> commands);
 
@@ -130,15 +129,15 @@ public:
 
     void apply_backdrop_filter(Gfx::IntRect const& backdrop_region, CornerRadii const& corner_radii, Gfx::Filter const& backdrop_filter);
 
-    void paint_outer_box_shadow(PaintBoxShadowParams params);
-    void paint_inner_box_shadow(PaintBoxShadowParams params);
+    void paint_outer_box_shadow(PaintOuterBoxShadow);
+    void paint_inner_box_shadow(PaintInnerBoxShadow);
     void paint_text_shadow(int blur_radius, Gfx::IntRect bounding_rect, Gfx::IntRect text_rect, Gfx::GlyphRun const&, double glyph_run_scale, Color color, Gfx::FloatPoint draw_location);
 
     void fill_rect_with_rounded_corners(Gfx::IntRect const& rect, Color color, CornerRadii const&);
     void fill_rect_with_rounded_corners(Gfx::IntRect const& a_rect, Color color, int radius);
     void fill_rect_with_rounded_corners(Gfx::IntRect const& a_rect, Color color, int top_left_radius, int top_right_radius, int bottom_right_radius, int bottom_left_radius);
 
-    void paint_scrollbar(int scroll_frame_id, Gfx::IntRect gutter_rect, Gfx::IntRect thumb_rect, double scroll_size, Color thumb_color, Color track_color, bool vertical);
+    void paint_scrollbar(ScrollFrameIndex scroll_frame_index, Gfx::IntRect gutter_rect, Gfx::IntRect thumb_rect, double scroll_size, Color thumb_color, Color track_color, bool vertical);
 
     void apply_effects(float opacity = 1.0f, Gfx::CompositingAndBlendingOperator = Gfx::CompositingAndBlendingOperator::Normal, Optional<Gfx::Filter> filter = {}, Optional<Gfx::MaskKind> mask_kind = {});
 
@@ -150,7 +149,7 @@ public:
 private:
     void end_capture();
 
-    RefPtr<AccumulatedVisualContext const> m_accumulated_visual_context;
+    VisualContextIndex m_accumulated_visual_context_index {};
     Vector<size_t> m_push_sc_index_stack;
     DisplayList& m_display_list;
     bool m_is_capturing { false };

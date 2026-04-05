@@ -15,7 +15,6 @@
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
 #include <LibJS/Runtime/FunctionObject.h>
-#include <LibRegex/Regex.h>
 #include <LibWeb/Animations/Animation.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/Bindings/NodePrototype.h>
@@ -43,6 +42,7 @@
 #include <LibWeb/DOM/StyleInvalidator.h>
 #include <LibWeb/DOM/XMLDocument.h>
 #include <LibWeb/HTML/CustomElements/CustomElementReactionNames.h>
+#include <LibWeb/HTML/CustomElements/CustomElementRegistry.h>
 #include <LibWeb/HTML/HTMLAnchorElement.h>
 #include <LibWeb/HTML/HTMLDocument.h>
 #include <LibWeb/HTML/HTMLFieldSetElement.h>
@@ -60,6 +60,7 @@
 #include <LibWeb/HTML/Parser/HTMLParser.h>
 #include <LibWeb/HTML/Scripting/SimilarOriginWindowAgent.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/XMLSerializer.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 #include <LibWeb/Layout/Node.h>
@@ -397,17 +398,9 @@ WebIDL::ExceptionOr<void> Node::set_node_value(Optional<String> const& maybe_val
 // https://html.spec.whatwg.org/multipage/document-sequences.html#node-navigable
 GC::Ptr<HTML::Navigable> Node::navigable() const
 {
-    auto& document = const_cast<Document&>(this->document());
-    if (auto cached_navigable = document.cached_navigable()) {
-        if (cached_navigable->active_document() == &document)
-            return cached_navigable;
-    }
-
     // To get the node navigable of a node node, return the navigable whose active document is node's node document,
     // or null if there is no such navigable.
-    auto navigable = HTML::Navigable::navigable_with_active_document(document);
-    document.set_cached_navigable(navigable);
-    return navigable;
+    return document().navigable();
 }
 
 [[maybe_unused]] static StringView to_string(StyleInvalidationReason reason)
@@ -481,16 +474,30 @@ void Node::invalidate_style(StyleInvalidationReason reason)
     // When invalidating style for a node, we actually invalidate:
     // - the node itself
     // - all of its descendants
-    // - all of its preceding siblings and their descendants (only on DOM insert/remove)
-    // - all of its subsequent siblings and their descendants
+    // - preceding siblings that depend on following-sibling counts (only on DOM insert/remove)
+    // - subsequent siblings that depend on previous siblings or sibling combinators
     // FIXME: This is a lot of invalidation and we should implement more sophisticated invalidation to do less work!
 
-    set_entire_subtree_needs_style_update(true);
+    auto mark_entire_subtree_for_style_update = [](Node& node_to_mark) {
+        node_to_mark.set_entire_subtree_needs_style_update(true);
+    };
+
+    mark_entire_subtree_for_style_update(*this);
+
+    auto previous_sibling_needs_structural_invalidation = [](Element const& element) {
+        return element.affected_by_backward_structural_changes();
+    };
+
+    auto next_sibling_needs_structural_invalidation = [](Element const& element, size_t current_sibling_distance) {
+        if (element.affected_by_indirect_sibling_combinator() || element.affected_by_first_child_pseudo_class() || element.affected_by_forward_positional_pseudo_class())
+            return true;
+        return element.affected_by_direct_sibling_combinator() && current_sibling_distance <= element.sibling_invalidation_distance();
+    };
 
     if (reason == StyleInvalidationReason::NodeInsertBefore || reason == StyleInvalidationReason::NodeRemove) {
         for (auto* sibling = previous_sibling(); sibling; sibling = sibling->previous_sibling()) {
-            if (auto* element = as_if<Element>(sibling); element && element->style_affected_by_structural_changes())
-                element->set_entire_subtree_needs_style_update(true);
+            if (auto* element = as_if<Element>(sibling); element && previous_sibling_needs_structural_invalidation(*element))
+                mark_entire_subtree_for_style_update(*element);
         }
     }
 
@@ -499,15 +506,14 @@ void Node::invalidate_style(StyleInvalidationReason reason)
         if (auto* element = as_if<Element>(sibling)) {
             bool needs_to_invalidate = false;
             if (reason == StyleInvalidationReason::NodeInsertBefore || reason == StyleInvalidationReason::NodeRemove) {
-                needs_to_invalidate = element->style_affected_by_structural_changes();
-            } else if (element->affected_by_indirect_sibling_combinator() || element->affected_by_nth_child_pseudo_class()) {
+                needs_to_invalidate = next_sibling_needs_structural_invalidation(*element, current_sibling_distance);
+            } else if (element->affected_by_indirect_sibling_combinator() || element->affected_by_forward_positional_pseudo_class()) {
                 needs_to_invalidate = true;
             } else if (element->affected_by_direct_sibling_combinator() && current_sibling_distance <= element->sibling_invalidation_distance()) {
                 needs_to_invalidate = true;
             }
-            if (needs_to_invalidate) {
-                element->set_entire_subtree_needs_style_update(true);
-            }
+            if (needs_to_invalidate)
+                mark_entire_subtree_for_style_update(*element);
             current_sibling_distance++;
         }
     }
@@ -541,28 +547,18 @@ void Node::invalidate_style(StyleInvalidationReason reason, Vector<CSS::Invalida
             shadow_style_scope->schedule_ancestors_style_invalidation_due_to_presence_of_has(*this);
     }
 
-    auto invalidate_for_style_scope = [this, reason, &properties, &options](CSS::StyleScope& style_scope) {
-        auto invalidation_set = document().style_computer().invalidation_set_for_properties(properties, style_scope);
+    if (options.invalidate_self)
+        set_needs_style_update(true);
 
-        if (invalidation_set.needs_invalidate_whole_subtree()) {
-            invalidate_style(reason);
-            return;
-        }
-
-        if (options.invalidate_self || invalidation_set.needs_invalidate_self()) {
-            set_needs_style_update(true);
-        }
-
-        if (!invalidation_set.has_properties()) {
-            return;
-        }
-
-        document().style_invalidator().add_pending_invalidation(*this, move(invalidation_set));
+    auto invalidate_for_style_scope = [this, reason, &properties](CSS::StyleScope& style_scope) {
+        auto plan = document().style_computer().invalidation_plan_for_properties(properties, style_scope);
+        return document().style_invalidator().enqueue_invalidation_plan(*this, reason, *plan);
     };
 
-    invalidate_for_style_scope(style_scope);
+    if (invalidate_for_style_scope(style_scope))
+        return;
     if (shadow_style_scope)
-        invalidate_for_style_scope(*shadow_style_scope);
+        (void)invalidate_for_style_scope(*shadow_style_scope);
 }
 
 Utf16String Node::child_text_content() const
@@ -700,7 +696,7 @@ void Node::insert_before(GC::Ref<Node> node, GC::Ptr<Node> child, bool suppress_
     if (count == 0)
         return;
 
-    // 4. If node is a DocumentFragment node, then:
+    // 4. If node is a DocumentFragment node:
     if (is<DocumentFragment>(*node)) {
         // 1. Remove its children with suppressObservers set to true.
         node->remove_all_children(true);
@@ -710,7 +706,7 @@ void Node::insert_before(GC::Ref<Node> node, GC::Ptr<Node> child, bool suppress_
         node->queue_tree_mutation_record({}, nodes, nullptr, nullptr);
     }
 
-    // 5. If child is non-null, then:
+    // 5. If child is non-null:
     if (child) {
         // 1. For each live range whose start node is parent and start offset is greater than child’s index:
         //    increase its start offset by count.
@@ -783,22 +779,38 @@ void Node::insert_before(GC::Ref<Node> node, GC::Ptr<Node> child, bool suppress_
             // 1. Run the insertion steps with inclusiveDescendant.
             inclusive_descendant.inserted();
 
-            // 2. If inclusiveDescendant is connected, then:
-            // NOTE: This is not specified here in the spec, but these steps can only be performed on an element.
-            if (auto* element = as_if<DOM::Element>(inclusive_descendant); element && inclusive_descendant.is_connected()) {
-                // 1. If inclusiveDescendant is custom, then enqueue a custom element callback reaction with inclusiveDescendant,
-                //    callback name "connectedCallback", and an empty argument list.
+            // 2. If inclusiveDescendant is not connected, then continue.
+            if (!inclusive_descendant.is_connected())
+                return TraversalDecision::Continue;
+
+            // 3. If inclusiveDescendant is an element and inclusiveDescendant’s custom element registry is non-null:
+            if (auto* element = as_if<Element>(inclusive_descendant); element && element->custom_element_registry()) {
+                // 1. If inclusiveDescendant’s custom element registry’s is scoped is true, then append
+                //    inclusiveDescendant’s node document to inclusiveDescendant’s custom element registry’s scoped
+                //    document set.
+                if (element->custom_element_registry()->is_scoped())
+                    element->custom_element_registry()->append_scoped_document(element->document());
+
+                // 2. If inclusiveDescendant is custom, then enqueue a custom element callback reaction with
+                //    inclusiveDescendant, callback name "connectedCallback", and « ».
                 if (element->is_custom()) {
                     GC::RootVector<JS::Value> empty_arguments { vm().heap() };
                     element->enqueue_a_custom_element_callback_reaction(HTML::CustomElementReactionNames::connectedCallback, move(empty_arguments));
                 }
 
-                // 2. Otherwise, try to upgrade inclusiveDescendant.
-                // NOTE: If this successfully upgrades inclusiveDescendant, its connectedCallback will be enqueued automatically during
-                //       the upgrade an element algorithm.
+                // 3. Otherwise, try to upgrade inclusiveDescendant.
                 else {
                     element->try_to_upgrade();
                 }
+            }
+            // 4. Otherwise, if inclusiveDescendant is a shadow root, inclusiveDescendant’s custom element registry is
+            //    non-null, and inclusiveDescendant’s custom element registry’s is scoped is true, then append
+            //    inclusiveDescendant’s node document to inclusiveDescendant’s custom element registry’s scoped
+            //    document set.
+            else if (auto* shadow_root = as_if<ShadowRoot>(inclusive_descendant);
+                shadow_root && shadow_root->custom_element_registry() && shadow_root->custom_element_registry()->is_scoped()) {
+
+                shadow_root->custom_element_registry()->append_scoped_document(shadow_root->document());
             }
 
             return TraversalDecision::Continue;
@@ -813,7 +825,7 @@ void Node::insert_before(GC::Ref<Node> node, GC::Ptr<Node> child, bool suppress_
 
     // 9. Run the children changed steps for parent.
     ChildrenChangedMetadata metadata { ChildrenChangedMetadata::Type::Inserted, node };
-    children_changed(&metadata);
+    children_changed(metadata);
 
     // 10. Let staticNodeList be a list of nodes, initially « ».
     // NOTE: We collect all nodes before calling the post-connection steps on any one of them, instead of calling the
@@ -1080,7 +1092,8 @@ void Node::remove(bool suppress_observers)
     }
 
     // 17. Run the children changed steps for parent.
-    parent->children_changed(nullptr);
+    ChildrenChangedMetadata metadata { ChildrenChangedMetadata::Type::Removal, *this };
+    parent->children_changed(metadata);
 
     document().bump_dom_tree_version();
 }
@@ -1181,20 +1194,22 @@ WebIDL::ExceptionOr<GC::Ref<Node>> Node::replace_child(GC::Ref<Node> node, GC::R
 }
 
 // https://dom.spec.whatwg.org/#concept-node-clone
-WebIDL::ExceptionOr<GC::Ref<Node>> Node::clone_node(Document* document, bool subtree, Node* parent) const
+WebIDL::ExceptionOr<GC::Ref<Node>> Node::clone_node(GC::Ptr<Document> document, bool subtree, GC::Ptr<Node> parent, GC::Ptr<HTML::CustomElementRegistry> fallback_registry) const
 {
     // To clone a node given a node node and an optional document document (default node’s node document),
-    // boolean subtree (default false), and node-or-null parent (default null):
+    // boolean subtree (default false), node-or-null parent (default null), and null or a CustomElementRegistry object
+    // fallbackRegistry (default null):
     if (!document)
         document = m_document;
 
     // 1. Assert: node is not a document or node is document.
     VERIFY(!is_document() || this == document);
 
-    // 2. Let copy be the result of cloning a single node given node and document.
-    auto copy = TRY(clone_single_node(*document));
+    // 2. Let copy be the result of cloning a single node given node, document, and fallbackRegistry.
+    auto copy = TRY(clone_single_node(*document, fallback_registry));
 
-    // 3. Run any cloning steps defined for node in other applicable specifications and pass node, copy, and subtree as parameters.
+    // 3. Run any cloning steps defined for node in other applicable specifications and pass node, copy, and subtree as
+    //    parameters.
     TRY(cloned(*copy, subtree));
 
     // 4. If parent is non-null, then append copy to parent.
@@ -1202,32 +1217,44 @@ WebIDL::ExceptionOr<GC::Ref<Node>> Node::clone_node(Document* document, bool sub
         TRY(parent->append_child(copy));
 
     // 5. If subtree is true, then for each child of node’s children, in tree order:
-    //    clone a node given child with document set to document, subtree set to subtree, and parent set to copy.
+    //    clone a node given child with document set to document, subtree set to subtree, parent set to copy, and
+    //    fallbackRegistry set to fallbackRegistry.
     if (subtree) {
         for (auto child = first_child(); child; child = child->next_sibling()) {
-            TRY(child->clone_node(document, subtree, copy));
+            TRY(child->clone_node(document, subtree, copy, fallback_registry));
         }
     }
 
     // 6. If node is an element, node is a shadow host, and node’s shadow root’s clonable is true:
-    if (is_element()) {
-        auto& node_element = as<Element>(*this);
-        if (node_element.is_shadow_host() && node_element.shadow_root()->clonable()) {
-            // 1. Assert: copy is not a shadow host.
-            auto& copy_element = as<Element>(*copy);
-            VERIFY(!copy_element.is_shadow_host());
+    if (auto* node_element = as_if<Element>(*this); node_element && node_element->is_shadow_host() && node_element->shadow_root()->clonable()) {
+        // 1. Assert: copy is not a shadow host.
+        auto& copy_element = as<Element>(*copy);
+        VERIFY(!copy_element.is_shadow_host());
 
-            // 2. Attach a shadow root with copy, node’s shadow root’s mode, true, node’s shadow root’s serializable, node’s shadow root’s delegates focus, and node’s shadow root’s slot assignment.
-            TRY(copy_element.attach_a_shadow_root(node_element.shadow_root()->mode(), true, node_element.shadow_root()->serializable(), node_element.shadow_root()->delegates_focus(), node_element.shadow_root()->slot_assignment()));
+        // 2. Let shadowRootRegistry be node’s shadow root’s custom element registry.
+        auto shadow_root_registry = node_element->shadow_root()->custom_element_registry();
 
-            // 3. Set copy’s shadow root’s declarative to node’s shadow root’s declarative.
-            copy_element.shadow_root()->set_declarative(node_element.shadow_root()->declarative());
+        // 3. If shadowRootRegistry is a global custom element registry, then set shadowRootRegistry to document’s
+        //    effective global custom element registry.
+        if (is_a_global_custom_element_registry(shadow_root_registry))
+            shadow_root_registry = document->effective_global_custom_element_registry();
 
-            // 4. For each child of node’s shadow root’s children, in tree order:
-            //    clone a node given child with document set to document, subtree set to subtree, and parent set to copy’s shadow root.
-            for (auto child = node_element.shadow_root()->first_child(); child; child = child->next_sibling()) {
-                TRY(child->clone_node(document, subtree, copy_element.shadow_root()));
-            }
+        // 4. Attach a shadow root with copy, node’s shadow root’s mode, true, node’s shadow root’s serializable,
+        //    node’s shadow root’s delegates focus, node’s shadow root’s slot assignment, and shadowRootRegistry.
+        TRY(copy_element.attach_a_shadow_root(node_element->shadow_root()->mode(), true, node_element->shadow_root()->serializable(), node_element->shadow_root()->delegates_focus(), node_element->shadow_root()->slot_assignment(), shadow_root_registry));
+
+        // 5. Set copy’s shadow root’s declarative to node’s shadow root’s declarative.
+        copy_element.shadow_root()->set_declarative(node_element->shadow_root()->declarative());
+
+        // 6. Set copy’s shadow root’s keep custom element registry null to node’s shadow root’s keep custom element
+        //    registry null.
+        copy_element.shadow_root()->set_keep_custom_element_registry_null(node_element->shadow_root()->keep_custom_element_registry_null());
+
+        // 7. For each child of node’s shadow root’s children, in tree order:
+        //    clone a node given child with document set to document, subtree set to subtree, and parent set to copy’s
+        //    shadow root.
+        for (auto child = node_element->shadow_root()->first_child(); child; child = child->next_sibling()) {
+            TRY(child->clone_node(document, subtree, copy_element.shadow_root()));
         }
     }
 
@@ -1293,7 +1320,7 @@ WebIDL::ExceptionOr<void> Node::move_node(Node& new_parent, Node* child)
     if (old_parent->is_connected()) {
         // Since the tree structure is about to change, we need to invalidate both style and layout.
         // In the future, we should find a way to only invalidate the parts that actually need it.
-        old_parent->invalidate_style(StyleInvalidationReason::NodeRemove);
+        invalidate_style(StyleInvalidationReason::NodeRemove);
 
         // NOTE: If we didn’t have a layout node before, rebuilding the layout tree isn’t gonna give us one
         //       after we’ve been removed from the DOM.
@@ -1366,7 +1393,7 @@ WebIDL::ExceptionOr<void> Node::move_node(Node& new_parent, Node* child)
         new_parent.insert_before_impl(*this, child);
     }
 
-    new_parent.invalidate_style(StyleInvalidationReason::NodeInsertBefore);
+    invalidate_style(StyleInvalidationReason::NodeInsertBefore);
     if (is_connected()) {
         new_parent.set_needs_layout_tree_update(true, SetNeedsLayoutTreeUpdateReason::NodeInsertBefore);
     }
@@ -1436,24 +1463,36 @@ WebIDL::ExceptionOr<void> Node::move_node(Node& new_parent, Node* child)
 }
 
 // https://dom.spec.whatwg.org/#clone-a-single-node
-WebIDL::ExceptionOr<GC::Ref<Node>> Node::clone_single_node(Document& document) const
+WebIDL::ExceptionOr<GC::Ref<Node>> Node::clone_single_node(Document& document, GC::Ptr<HTML::CustomElementRegistry> fallback_registry) const
 {
-    // To clone a single node given a node node and document document:
+    // To clone a single node given a node node, document document, and null or a CustomElementRegistry object fallbackRegistry:
 
     // 1. Let copy be null.
     GC::Ptr<Node> copy = nullptr;
 
     // 2. If node is an element:
-    if (is_element()) {
-        // 1. Set copy to the result of creating an element, given document, node’s local name, node’s namespace, node’s namespace prefix, and node’s is value.
-        auto& element = *as<Element>(this);
-        auto element_copy = TRY(DOM::create_element(document, element.local_name(), element.namespace_uri(), element.prefix(), element.is_value()));
+    if (auto* element = as_if<Element>(this)) {
+        // 1. Let registry be node’s custom element registry.
+        auto registry = element->custom_element_registry();
 
-        // 2. For each attribute of node’s attribute list:
+        // 2. If registry is null, then set registry to fallbackRegistry.
+        if (!registry)
+            registry = fallback_registry;
+
+        // 3. If registry is a global custom element registry, then set registry to document’s effective global custom
+        //    element registry.
+        if (is_a_global_custom_element_registry(registry))
+            registry = document.effective_global_custom_element_registry();
+
+        // 4. Set copy to the result of creating an element, given document, node’s local name, node’s namespace,
+        //    node’s namespace prefix, node’s is value, false, and registry.
+        auto element_copy = TRY(DOM::create_element(document, element->local_name(), element->namespace_uri(), element->prefix(), element->is_value(), false, registry));
+
+        // 5. For each attribute of node’s attribute list:
         Optional<WebIDL::Exception> maybe_exception;
-        element.for_each_attribute([&](Attr const& attr) {
-            // 1. Let copyAttribute be the result of cloning a single node given attribute and document.
-            auto copy_attribute_or_error = attr.clone_single_node(document);
+        element->for_each_attribute([&](Attr const& attr) {
+            // 1. Let copyAttribute be the result of cloning a single node given attribute, document, and null.
+            auto copy_attribute_or_error = attr.clone_single_node(document, nullptr);
             if (copy_attribute_or_error.is_error()) {
                 maybe_exception = copy_attribute_or_error.release_error();
                 return;
@@ -1471,7 +1510,8 @@ WebIDL::ExceptionOr<GC::Ref<Node>> Node::clone_single_node(Document& document) c
         copy = move(element_copy);
     }
 
-    // 3. Otherwise, set copy to a node that implements the same interfaces as node, and fulfills these additional requirements, switching on the interface node implements:
+    // 3. Otherwise, set copy to a node that implements the same interfaces as node, and fulfills these additional
+    //    requirements, switching on the interface node implements:
     else {
         if (is_document()) {
             // -> Document
@@ -1487,7 +1527,8 @@ WebIDL::ExceptionOr<GC::Ref<Node>> Node::clone_single_node(Document& document) c
                 }
             }();
 
-            // Set copy’s encoding, content type, URL, origin, type, mode, allow declarative shadow roots, and custom element registry to those of node.
+            // 1. Set copy’s encoding, content type, URL, origin, type, mode, and allow declarative shadow roots to
+            //    those of node.
             document_copy->set_encoding(document_.encoding());
             document_copy->set_content_type(document_.content_type());
             document_copy->set_url(document_.url());
@@ -1495,7 +1536,12 @@ WebIDL::ExceptionOr<GC::Ref<Node>> Node::clone_single_node(Document& document) c
             document_copy->set_document_type(document_.document_type());
             document_copy->set_quirks_mode(document_.mode());
             document_copy->set_allow_declarative_shadow_roots(document_.allow_declarative_shadow_roots());
-            // FIXME: Custom element registry.
+
+            // 2. If node’s custom element registry’s is scoped is true, then set copy’s custom element registry to
+            //    node’s custom element registry.
+            if (auto registry = document_.custom_element_registry(); registry && registry->is_scoped())
+                document_copy->set_custom_element_registry(registry);
+
             copy = move(document_copy);
         } else if (is_document_type()) {
             // -> DocumentType
@@ -1677,7 +1723,8 @@ bool Node::is_editing_host() const
     }
 
     // or a child HTML element of a Document whose design mode enabled is true.
-    return is<Document>(parent()) && as<Document>(*parent()).design_mode_enabled_state();
+    auto* doc = as_if<Document>(parent());
+    return doc && doc->design_mode_enabled_state();
 }
 
 // https://w3c.github.io/editing/docs/execCommand/#editing-host-of
@@ -2127,19 +2174,17 @@ void Node::serialize_tree_as_json(JsonObjectSerializer<StringBuilder>& object) c
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#concept-n-script
-// https://whatpr.org/html/9893/webappapis.html#concept-n-script
 bool Node::is_scripting_enabled() const
 {
-    // Scripting is enabled for a node node if node's node document's browsing context is non-null, and scripting is enabled for node's relevant realm.
-    return document().browsing_context() && HTML::is_scripting_enabled(HTML::relevant_realm(*this));
+    // Scripting is enabled for a platform object object, when object's scripting is not disabled.
+    return !is_scripting_disabled();
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#concept-n-noscript
-// https://whatpr.org/html/9893/webappapis.html#concept-n-script
 bool Node::is_scripting_disabled() const
 {
-    // Scripting is disabled for a node when scripting is not enabled, i.e., when its node document's browsing context is null or when scripting is disabled for its relevant realm.
-    return !is_scripting_enabled();
+    // Scripting is disabled for a node when scripting is not enabled, i.e., when its node document's browsing context is null or when scripting is disabled for its relevant settings object.
+    return !document().browsing_context() || HTML::is_scripting_disabled(HTML::relevant_settings_object(*this));
 }
 
 // https://dom.spec.whatwg.org/#concept-shadow-including-descendant
@@ -2690,8 +2735,10 @@ void Node::clear_paintable()
 
 void Node::set_needs_repaint(InvalidateDisplayList should_invalidate_display_list)
 {
-    if (auto* p = unsafe_paintable())
-        p->set_needs_repaint(should_invalidate_display_list);
+    if (auto* layout_node = unsafe_layout_node()) {
+        for (auto& paintable : layout_node->paintables())
+            paintable.set_needs_repaint(should_invalidate_display_list);
+    }
 }
 
 void Node::set_needs_layout_update(SetNeedsLayoutReason reason)
@@ -3397,6 +3444,17 @@ bool Node::has_inclusive_ancestor_with_display_none()
             return true;
         }
     }
+    return false;
+}
+
+bool Node::has_inclusive_ancestor_with_event_listener(FlyString const& type) const
+{
+    for (auto const* ancestor = this; ancestor; ancestor = ancestor->parent_or_shadow_host()) {
+        if (ancestor->has_event_listener(type))
+            return true;
+    }
+    if (auto window = document().window())
+        return window->has_event_listener(type);
     return false;
 }
 

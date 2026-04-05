@@ -112,6 +112,7 @@ private:
     struct FlexLine {
         Vector<FlexItem&> items;
         CSSPixels cross_size { 0 };
+        bool has_baseline_aligned_items { false };
         Optional<CSSPixels> remaining_free_space;
         double chosen_flex_fraction { 0 };
 
@@ -199,10 +200,17 @@ private:
 
     void align_all_flex_items_along_the_cross_axis();
 
+    void resolve_baseline_aligned_items();
+
     void align_all_flex_lines();
 
     bool is_row_layout() const { return m_flex_direction == CSS::FlexDirection::Row || m_flex_direction == CSS::FlexDirection::RowReverse; }
     bool is_single_line() const { return flex_container().computed_values().flex_wrap() == CSS::FlexWrap::Nowrap; }
+    bool inline_axis_is_horizontal(Box const&) const;
+    bool main_axis_is_horizontal() const;
+    bool cross_axis_is_horizontal() const { return !main_axis_is_horizontal(); }
+    bool main_axis_is_parallel_to_inline_axis(Box const&) const;
+    bool cross_axis_is_reverse() const;
     bool is_direction_reverse() const;
     void populate_specified_margins(FlexItem&, CSS::FlexDirection) const;
 

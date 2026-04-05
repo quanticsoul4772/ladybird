@@ -57,6 +57,8 @@ public:
     FloatRect cached_blob_bounds() const;
     SkTextBlob* cached_skia_text_blob() const;
 
+    [[nodiscard]] Vector<float> get_glyph_intercepts(float scale, float y_top, float y_bottom) const;
+
 private:
     Vector<DrawGlyph> m_glyphs;
     NonnullRefPtr<Font const> m_font;
@@ -68,7 +70,7 @@ private:
 };
 
 NonnullRefPtr<GlyphRun> shape_text(FloatPoint baseline_start, float letter_spacing, Utf16View const&, Gfx::Font const& font, GlyphRun::TextType);
-Vector<NonnullRefPtr<GlyphRun>> shape_text(FloatPoint baseline_start, Utf16View const&, FontCascadeList const&);
+Vector<NonnullRefPtr<GlyphRun>> shape_text(FloatPoint baseline_start, Utf16View const&, FontCascadeList const&, float letter_spacing = 0.f);
 float measure_text_width(Utf16View const&, Font const& font, float letter_spacing = 0.f);
 
 }

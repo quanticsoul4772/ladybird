@@ -56,7 +56,7 @@ void SVGScriptElement::inserted()
     process_the_script_element();
 }
 
-void SVGScriptElement::children_changed(ChildrenChangedMetadata const* metadata)
+void SVGScriptElement::children_changed(ChildrenChangedMetadata const& metadata)
 {
     Base::children_changed(metadata);
     if (m_parser_inserted)
@@ -174,10 +174,9 @@ void SVGScriptElement::process_the_script_element()
 
     // https://html.spec.whatwg.org/multipage/document-lifecycle.html#read-html
     // Before any script execution occurs, the user agent must wait for scripts may run for the newly-created document to be true for document.
-    if (!m_document->ready_to_run_scripts())
-        HTML::main_thread_event_loop().spin_until(GC::create_function(heap(), [&] { return m_document->ready_to_run_scripts(); }));
+    VERIFY(m_document->ready_to_run_scripts());
 
-    m_script = HTML::ClassicScript::create(script_url.basename(), script_content, realm(), m_document->base_url(), m_source_line_number);
+    m_script = HTML::ClassicScript::create(script_url.basename(), script_content, HTML::relevant_settings_object(*this), m_document->base_url(), m_source_line_number);
 
     // FIXME: Note that a load event is dispatched on a 'script' element once it has been processed,
     // unless it referenced external script content with an invalid IRI reference and 'externalResourcesRequired' was set to 'true'.

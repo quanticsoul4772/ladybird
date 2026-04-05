@@ -196,15 +196,18 @@ RuleCache const* StyleComputer::rule_cache_for_cascade_origin(CascadeOrigin casc
     return true;
 }
 
-InvalidationSet StyleComputer::invalidation_set_for_properties(Vector<InvalidationSet::Property> const& properties, StyleScope const& style_scope) const
+NonnullRefPtr<InvalidationPlan> StyleComputer::invalidation_plan_for_properties(Vector<InvalidationSet::Property> const& properties, StyleScope const& style_scope) const
 {
+    auto result = InvalidationPlan::create();
     if (!style_scope.m_style_invalidation_data)
-        return {};
-    auto const& descendant_invalidation_sets = style_scope.m_style_invalidation_data->descendant_invalidation_sets;
-    InvalidationSet result;
+        return result;
+    auto const& invalidation_plans = style_scope.m_style_invalidation_data->invalidation_plans;
     for (auto const& property : properties) {
-        if (auto it = descendant_invalidation_sets.find(property); it != descendant_invalidation_sets.end())
-            result.include_all_from(it->value);
+        if (auto it = invalidation_plans.find(property); it != invalidation_plans.end()) {
+            result->include_all_from(*it->value);
+            if (result->invalidate_whole_subtree)
+                break;
+        }
     }
     return result;
 }
@@ -320,8 +323,12 @@ Vector<MatchingRule const*> StyleComputer::collect_matching_rules(DOM::AbstractE
             add_rules_from_cache(*rule_cache);
     }
 
-    if (auto assigned_slot = abstract_element.element().assigned_slot_internal()) {
-        if (auto const* slot_shadow_root = as_if<DOM::ShadowRoot>(assigned_slot->root())) {
+    // Walk up the slot chain for nested slots. An element can be assigned to a slot
+    // which is itself assigned to another slot in a parent shadow root. The ::slotted()
+    // pseudo-element matches elements assigned "after flattening", so we must collect
+    // slotted rules from every shadow root in the chain.
+    for (GC::Ptr<HTML::HTMLSlotElement const> slot = abstract_element.element().assigned_slot_internal(); slot; slot = slot->assigned_slot_internal()) {
+        if (auto const* slot_shadow_root = as_if<DOM::ShadowRoot>(slot->root())) {
             if (auto const* rule_cache = rule_cache_for_cascade_origin(cascade_origin, qualified_layer_name, slot_shadow_root)) {
                 add_rules_to_run(rule_cache->slotted_rules);
             }
@@ -329,8 +336,12 @@ Vector<MatchingRule const*> StyleComputer::collect_matching_rules(DOM::AbstractE
     }
 
     // ::part() can apply to anything in a shadow tree, that is either an element with a `part` attribute or a pseudo-element.
-    // Rules from any ancestor style scope can apply.
+    // Rules from any ancestor style scope can apply, including from the element's own shadow root
+    // (for :host::part() within the shadow DOM's own stylesheet).
     if (shadow_root && (abstract_element.pseudo_element().has_value() || !abstract_element.element().part_names().is_empty())) {
+        if (auto const* rule_cache = rule_cache_for_cascade_origin(cascade_origin, qualified_layer_name, shadow_root)) {
+            add_rules_to_run(rule_cache->part_rules);
+        }
         for (auto* part_shadow_root = abstract_element.element().first_flat_tree_ancestor_of_type<DOM::ShadowRoot>();
             part_shadow_root;
             part_shadow_root = part_shadow_root->first_flat_tree_ancestor_of_type<DOM::ShadowRoot>()) {
@@ -348,19 +359,22 @@ Vector<MatchingRule const*> StyleComputer::collect_matching_rules(DOM::AbstractE
     matching_rules.ensure_capacity(rules_to_run.size());
 
     for (auto const& rule_to_run : rules_to_run) {
-        // NOTE: When matching an element against a rule from outside the shadow root's style scope,
-        //       we have to pass in null for the shadow host, otherwise combinator traversal will
-        //       be confined to the element itself (since it refuses to cross the shadow boundary).
+        // NOTE: When matching an element that is itself a shadow host against a rule from
+        //       outside its own shadow root, we must not use the element as the shadow host
+        //       for traversal (which would confine traversal to the element itself).
+        //       Instead, use the rule's shadow root's host, so that combinators can traverse
+        //       up to the enclosing shadow host (e.g. for `:host(...) .descendant` selectors).
         auto rule_root = rule_to_run.shadow_root;
         auto shadow_host_to_use = shadow_host;
         if (abstract_element.element().is_shadow_host() && rule_root != abstract_element.element().shadow_root())
-            shadow_host_to_use = nullptr;
+            shadow_host_to_use = rule_root ? rule_root->host() : nullptr;
 
         auto const& selector = rule_to_run.selector;
 
         SelectorEngine::MatchContext context {
             .style_sheet_for_rule = *rule_to_run.sheet,
             .subject = abstract_element.element(),
+            .rule_shadow_root = rule_root,
             .collect_per_element_selector_involvement_metadata = true,
             .has_result_cache = m_has_result_cache.ptr(),
         };
@@ -374,10 +388,25 @@ Vector<MatchingRule const*> StyleComputer::collect_matching_rules(DOM::AbstractE
             // For ::slotted() matching, slot should be used as a subject instead of element,
             // while element itself is saved in matching context, so selector engine could
             // switch back to it when matching inside ::slotted() argument.
-            auto const& slot = *abstract_element.element().assigned_slot_internal();
+            // For nested slots, find the slot that lives in the same shadow root as the rule.
+            GC::Ptr<HTML::HTMLSlotElement const> matching_slot;
+            for (GC::Ptr<HTML::HTMLSlotElement const> slot = abstract_element.element().assigned_slot_internal(); slot; slot = slot->assigned_slot_internal()) {
+                if (as_if<DOM::ShadowRoot>(slot->root()) == rule_root) {
+                    matching_slot = slot;
+                    break;
+                }
+            }
+            if (!matching_slot)
+                continue;
             context.slotted_element = &abstract_element.element();
-            context.subject = &slot;
-            if (!SelectorEngine::matches(selector, slot, shadow_host_to_use, context, PseudoElement::Slotted))
+            context.subject = matching_slot;
+            // The slot lives inside a shadow tree. Derive the shadow host from the
+            // slot's containing shadow root so that combinators like
+            // `:host ::slotted(...)` can traverse from the slot to the shadow host.
+            GC::Ptr<DOM::Element const> slot_shadow_host;
+            if (auto const* slot_shadow_root = as_if<DOM::ShadowRoot>(matching_slot->root()))
+                slot_shadow_host = slot_shadow_root->host();
+            if (!SelectorEngine::matches(selector, *matching_slot, slot_shadow_host, context, PseudoElement::Slotted))
                 continue;
         } else if (!SelectorEngine::matches(selector, abstract_element.element(), shadow_host_to_use, context, abstract_element.pseudo_element()))
             continue;
@@ -450,28 +479,24 @@ void StyleComputer::cascade_declarations(
     Vector<MatchingRule const*> const& matching_rules,
     CascadeOrigin cascade_origin,
     Important important,
-    Optional<FlyString> layer_name,
-    Optional<LogicalAliasMappingContext> logical_alias_mapping_context,
-    ReadonlySpan<PropertyID> properties_to_cascade) const
+    Optional<FlyString> layer_name) const
 {
     AK::FixedBitmap<to_underlying(last_property_id) + 1> seen_properties(false);
     auto cascade_style_declaration = [&](CSSStyleProperties const& declaration) {
         seen_properties.fill(false);
         for (auto const& property : declaration.properties()) {
-
-            // OPTIMIZATION: If we've been asked to only cascade a specific set of properties, skip the rest.
-            if (!properties_to_cascade.is_empty()) {
-                if (!properties_to_cascade.contains_slow(property.property_id))
-                    continue;
-            }
-
             if (important != property.important)
                 continue;
 
-            if (abstract_element.pseudo_element().has_value() && !pseudo_element_supports_property(*abstract_element.pseudo_element(), property.property_id))
+            if (abstract_element.pseudo_element().has_value()
+                && !pseudo_element_supports_property(*abstract_element.pseudo_element(), property.property_id)
+                && !property.value->is_unresolved())
                 continue;
 
             auto property_value = property.value;
+
+            if (property_value->is_pending_substitution())
+                continue;
 
             if (property_value->is_unresolved())
                 property_value = Parser::Parser::resolve_unresolved_style_value(Parser::ParsingParams { abstract_element.document() }, abstract_element, PropertyNameAndID::from_id(property.property_id), property_value->as_unresolved());
@@ -497,28 +522,21 @@ void StyleComputer::cascade_declarations(
             }
 
             for_each_property_expanding_shorthands(property.property_id, property_value, [&](PropertyID longhand_id, StyleValue const& longhand_value) {
+                if (abstract_element.pseudo_element().has_value() && !pseudo_element_supports_property(*abstract_element.pseudo_element(), longhand_id))
+                    return;
+
                 // If we're a PSV that's already been seen, that should mean that our shorthand already got
                 // resolved and gave us a value, so we don't want to overwrite it with a PSV.
                 if (seen_properties.get(to_underlying(longhand_id)) && property_value->is_pending_substitution())
                     return;
                 seen_properties.set(to_underlying(longhand_id), true);
 
-                PropertyID physical_property_id;
-
-                if (property_is_logical_alias(longhand_id)) {
-                    if (!logical_alias_mapping_context.has_value())
-                        return;
-                    physical_property_id = map_logical_alias_to_physical_property(longhand_id, logical_alias_mapping_context.value());
-                } else {
-                    physical_property_id = longhand_id;
-                }
-
                 if (longhand_value.is_revert()) {
-                    cascaded_properties.revert_property(physical_property_id, important, cascade_origin);
+                    cascaded_properties.revert_property(longhand_id, important, cascade_origin);
                 } else if (longhand_value.is_revert_layer()) {
-                    cascaded_properties.revert_layer_property(physical_property_id, important, layer_name);
+                    cascaded_properties.revert_layer_property(longhand_id, important, layer_name);
                 } else {
-                    cascaded_properties.set_property(physical_property_id, longhand_value, important, cascade_origin, layer_name, declaration);
+                    cascaded_properties.set_property(longhand_id, longhand_value, important, cascade_origin, layer_name, declaration);
                 }
             });
         }
@@ -576,6 +594,25 @@ static void cascade_custom_properties(DOM::AbstractElement abstract_element, Vec
     custom_properties.update(important_custom_properties);
 }
 
+static Optional<CSS::EasingFunction> resolve_keyframe_easing(CSS::StyleValue const& style_value, DOM::AbstractElement abstract_element)
+{
+    RefPtr<CSS::StyleValue const> resolved = style_value;
+    if (resolved->is_unresolved())
+        resolved = Parser::Parser::resolve_unresolved_style_value(Parser::ParsingParams { abstract_element.document() }, abstract_element, CSS::PropertyNameAndID::from_id(CSS::PropertyID::AnimationTimingFunction), resolved->as_unresolved());
+    if (!resolved || resolved->is_guaranteed_invalid())
+        return {};
+    if (resolved->is_value_list()) {
+        auto const& list = resolved->as_value_list();
+        if (list.size() > 0)
+            resolved = list.value_at(0, false);
+        else
+            return {};
+    }
+    if (resolved->is_easing() || resolved->is_keyword())
+        return CSS::EasingFunction::from_style_value(*resolved);
+    return {};
+}
+
 void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element, GC::Ref<Animations::KeyframeEffect> effect, ComputedProperties& computed_properties) const
 {
     auto animation = effect->associated_animation();
@@ -630,6 +667,22 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
     auto keyframe_end_values = *keyframe_end_it;
 
     auto progress_in_keyframe = (progress - keyframe_start) / static_cast<double>(keyframe_end - keyframe_start);
+
+    // https://drafts.csswg.org/css-animations-1/#animation-timing-function
+    // Apply the per-keyframe easing to the interval progress. The easing on a keyframe applies to the
+    // interval from that keyframe to the next. If the keyframe doesn't specify an easing, use the
+    // animation's default easing (from the animation-timing-function property).
+    auto resolved_easing = keyframe_values.easing.visit(
+        [](Empty) -> Optional<CSS::EasingFunction> { return {}; },
+        [](CSS::EasingFunction const& easing) -> Optional<CSS::EasingFunction> { return easing; },
+        [&](NonnullRefPtr<CSS::StyleValue const> const& value) -> Optional<CSS::EasingFunction> {
+            return resolve_keyframe_easing(*value, abstract_element);
+        });
+    if (resolved_easing.has_value()) {
+        progress_in_keyframe = resolved_easing->evaluate_at(progress_in_keyframe, false);
+    } else if (animation->is_css_animation()) {
+        progress_in_keyframe = static_cast<CSSAnimation const&>(*animation).default_easing().evaluate_at(progress_in_keyframe, false);
+    }
 
     if constexpr (LIBWEB_CSS_ANIMATION_DEBUG) {
         auto valid_properties = keyframe_values.properties.size();
@@ -707,6 +760,14 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
 
             if (style_value->is_unresolved())
                 style_value = Parser::Parser::resolve_unresolved_style_value(Parser::ParsingParams { abstract_element.document() }, abstract_element, PropertyNameAndID::from_id(property_id), style_value->as_unresolved());
+
+            // https://drafts.csswg.org/css-values-5/#invalid-at-computed-value-time
+            // When substitution results in a guaranteed-invalid value, treat it as unset
+            // (i.e. inherit for inherited properties, initial for non-inherited properties).
+            if (style_value->is_guaranteed_invalid()) {
+                specified_values.set(property_id, nullptr);
+                continue;
+            }
 
             for_each_property_expanding_shorthands(property_id, *style_value, [&](PropertyID longhand_id, StyleValue const& longhand_value) {
                 auto physical_longhand_id = map_logical_alias_to_physical_property(longhand_id, LogicalAliasMappingContext { computed_properties.writing_mode(), computed_properties.direction() });
@@ -808,7 +869,7 @@ void StyleComputer::collect_animation_into(DOM::AbstractElement abstract_element
         auto start = resolved_start_property.release_nonnull();
         auto end = resolved_end_property.release_nonnull();
 
-        // OPTIMIZATION: Values resulting from animations other than CSS transitions are overriden by important
+        // OPTIMIZATION: Values resulting from animations other than CSS transitions are overridden by important
         //               properties so there's no need to calculate them
         if (!animation->is_css_transition() && computed_properties.is_property_important(it.key)) {
             continue;
@@ -868,10 +929,19 @@ void StyleComputer::process_animation_definitions(ComputedProperties const& comp
 
         animation->apply_css_properties(animation_properties);
 
-        if (auto const* rule_cache = rule_cache_for_cascade_origin(CascadeOrigin::Author, {}, {})) {
-            if (auto keyframe_set = rule_cache->rules_by_animation_keyframes.get(animation_properties.name); keyframe_set.has_value())
-                effect->set_key_frame_set(keyframe_set.value());
-        }
+        auto find_keyframes = [&](GC::Ptr<DOM::ShadowRoot const> shadow_root) -> RefPtr<Animations::KeyframeEffect::KeyFrameSet const> {
+            if (auto const* rule_cache = rule_cache_for_cascade_origin(CascadeOrigin::Author, {}, shadow_root)) {
+                if (auto keyframe_set = rule_cache->rules_by_animation_keyframes.get(animation_properties.name); keyframe_set.has_value())
+                    return keyframe_set.value();
+            }
+            return {};
+        };
+
+        // Look up @keyframes in the element's shadow root first, then fall back to the document-level rules.
+        if (auto shadow_root = as_if<DOM::ShadowRoot>(abstract_element.element().root()))
+            effect->set_key_frame_set(find_keyframes(shadow_root));
+        if (!effect->key_frame_set())
+            effect->set_key_frame_set(find_keyframes(nullptr));
 
         effect->set_target(abstract_element);
         abstract_element.set_has_css_defined_animations();
@@ -1193,7 +1263,7 @@ StyleComputer::MatchingRuleSet StyleComputer::build_matching_rule_set(DOM::Abstr
 
 // https://www.w3.org/TR/css-cascade/#cascading
 // https://drafts.csswg.org/css-cascade-5/#layering
-GC::Ref<CascadedProperties> StyleComputer::compute_cascaded_values(DOM::AbstractElement abstract_element, bool did_match_any_pseudo_element_rules, ComputeStyleMode mode, MatchingRuleSet const& matching_rule_set, Optional<LogicalAliasMappingContext> logical_alias_mapping_context, ReadonlySpan<PropertyID> properties_to_cascade) const
+GC::Ref<CascadedProperties> StyleComputer::compute_cascaded_values(DOM::AbstractElement abstract_element, bool did_match_any_pseudo_element_rules, ComputeStyleMode mode, MatchingRuleSet const& matching_rule_set) const
 {
     auto cascaded_properties = m_document->heap().allocate<CascadedProperties>();
     if (mode == ComputeStyleMode::CreatePseudoElementStyleIfNeeded) {
@@ -1202,10 +1272,10 @@ GC::Ref<CascadedProperties> StyleComputer::compute_cascaded_values(DOM::Abstract
     }
 
     // Normal user agent declarations
-    cascade_declarations(*cascaded_properties, abstract_element, matching_rule_set.user_agent_rules, CascadeOrigin::UserAgent, Important::No, {}, logical_alias_mapping_context, properties_to_cascade);
+    cascade_declarations(*cascaded_properties, abstract_element, matching_rule_set.user_agent_rules, CascadeOrigin::UserAgent, Important::No, {});
 
     // Normal user declarations
-    cascade_declarations(*cascaded_properties, abstract_element, matching_rule_set.user_rules, CascadeOrigin::User, Important::No, {}, logical_alias_mapping_context, properties_to_cascade);
+    cascade_declarations(*cascaded_properties, abstract_element, matching_rule_set.user_rules, CascadeOrigin::User, Important::No, {});
 
     // Author presentational hints
     // The spec calls this a special "Author presentational hint origin":
@@ -1231,19 +1301,19 @@ GC::Ref<CascadedProperties> StyleComputer::compute_cascaded_values(DOM::Abstract
 
     // Normal author declarations, ordered by @layer, with un-@layer-ed rules last
     for (auto const& layer : matching_rule_set.author_rules) {
-        cascade_declarations(cascaded_properties, abstract_element, layer.rules, CascadeOrigin::Author, Important::No, layer.qualified_layer_name, logical_alias_mapping_context, properties_to_cascade);
+        cascade_declarations(cascaded_properties, abstract_element, layer.rules, CascadeOrigin::Author, Important::No, layer.qualified_layer_name);
     }
 
     // Important author declarations, with un-@layer-ed rules first, followed by each @layer in reverse order.
     for (auto const& layer : matching_rule_set.author_rules.in_reverse()) {
-        cascade_declarations(cascaded_properties, abstract_element, layer.rules, CascadeOrigin::Author, Important::Yes, {}, logical_alias_mapping_context, properties_to_cascade);
+        cascade_declarations(cascaded_properties, abstract_element, layer.rules, CascadeOrigin::Author, Important::Yes, {});
     }
 
     // Important user declarations
-    cascade_declarations(cascaded_properties, abstract_element, matching_rule_set.user_rules, CascadeOrigin::User, Important::Yes, {}, logical_alias_mapping_context, properties_to_cascade);
+    cascade_declarations(cascaded_properties, abstract_element, matching_rule_set.user_rules, CascadeOrigin::User, Important::Yes, {});
 
     // Important user agent declarations
-    cascade_declarations(cascaded_properties, abstract_element, matching_rule_set.user_agent_rules, CascadeOrigin::UserAgent, Important::Yes, {}, logical_alias_mapping_context, properties_to_cascade);
+    cascade_declarations(cascaded_properties, abstract_element, matching_rule_set.user_agent_rules, CascadeOrigin::UserAgent, Important::Yes, {});
 
     // Transition declarations [css-transitions-1]
     // Note that we have to do these after finishing computing the style,
@@ -1348,45 +1418,6 @@ CSSPixels StyleComputer::relative_size_mapping(RelativeSize relative_size, CSSPi
     VERIFY_NOT_REACHED();
 }
 
-LogicalAliasMappingContext StyleComputer::compute_logical_alias_mapping_context(DOM::AbstractElement abstract_element, ComputeStyleMode mode, MatchingRuleSet const& matching_rule_set) const
-{
-    auto normalize_value = [&](auto property_id, auto value) {
-        if (!value || value->is_inherit() || value->is_unset()) {
-            if (auto const inheritance_parent = abstract_element.element_to_inherit_style_from(); inheritance_parent.has_value()) {
-                value = inheritance_parent->computed_properties()->property(property_id);
-            } else {
-                value = property_initial_value(property_id);
-            }
-        }
-
-        if (value->is_initial())
-            value = property_initial_value(property_id);
-
-        return value;
-    };
-
-    bool did_match_any_pseudo_element_rules = false;
-
-    static Array<PropertyID, 2> properties_to_cascade {
-        PropertyID::WritingMode,
-        PropertyID::Direction,
-    };
-    auto cascaded_properties = compute_cascaded_values(
-        abstract_element,
-        did_match_any_pseudo_element_rules,
-        mode, matching_rule_set,
-        {},
-        properties_to_cascade);
-
-    auto writing_mode = normalize_value(PropertyID::WritingMode, cascaded_properties->property(PropertyID::WritingMode));
-    auto direction = normalize_value(PropertyID::Direction, cascaded_properties->property(PropertyID::Direction));
-
-    return LogicalAliasMappingContext {
-        .writing_mode = keyword_to_writing_mode(writing_mode->to_keyword()).release_value(),
-        .direction = keyword_to_direction(direction->to_keyword()).release_value()
-    };
-}
-
 void StyleComputer::compute_property_values(ComputedProperties& style, Optional<DOM::AbstractElement> abstract_element) const
 {
     VERIFY(computation_context_cache_is_empty());
@@ -1444,7 +1475,7 @@ ComputationContext const& StyleComputer::get_computation_context_for_property(Pr
             m_cached_font_computation_context = {
                 .length_resolution_context = inheritance_parent.has_value()
                     ? Length::ResolutionContext::for_element(inheritance_parent.value())
-                    : Length::ResolutionContext::for_window(*m_document->window()),
+                    : Length::ResolutionContext::for_document(m_document),
                 .abstract_element = abstract_element
             };
         }
@@ -1458,7 +1489,7 @@ ComputationContext const& StyleComputer::get_computation_context_for_property(Pr
             auto line_height_font_metrics = Length::FontMetrics {
                 style.font_size(),
                 style.first_available_computed_font(document().font_computer())->pixel_metrics(),
-                inheritance_parent.has_value() ? inheritance_parent->computed_properties()->line_height() : InitialValues::line_height()
+                (inheritance_parent.has_value() && inheritance_parent->computed_properties()) ? inheritance_parent->computed_properties()->line_height() : InitialValues::line_height()
             };
 
             m_cached_line_height_computation_context = {
@@ -1651,6 +1682,11 @@ void StyleComputer::transform_box_type_if_needed(ComputedProperties& style, DOM:
             new_display = Display { DisplayInternal::TableCell };
     }
 
+    // https://www.w3.org/TR/CSS2/visuren.html#dis-pos-flo
+    // If 'position' has the value 'absolute' or 'fixed', [...] 'float' is set to 'none'
+    if (style.position() == Positioning::Absolute || style.position() == Positioning::Fixed)
+        style.set_property(PropertyID::Float, KeywordStyleValue::create(Keyword::None));
+
     switch (required_box_type_transformation(style, abstract_element)) {
     case BoxTypeTransformation::None:
         break;
@@ -1722,6 +1758,20 @@ GC::Ref<ComputedProperties> StyleComputer::compute_style(DOM::AbstractElement ab
     return *compute_style_impl(abstract_element, ComputeStyleMode::Normal, did_change_custom_properties, style_scope);
 }
 
+GC::Ref<ComputedProperties> StyleComputer::compute_style_with_seeded_ancestors(DOM::AbstractElement abstract_element)
+{
+    for (auto parent = abstract_element.parent_element(); parent; parent = parent->parent_element()) {
+        push_ancestor(*parent);
+    }
+
+    ScopeGuard pop_ancestors = [&] {
+        for (auto parent = abstract_element.parent_element(); parent; parent = parent->parent_element())
+            pop_ancestor(*parent);
+    };
+
+    return compute_style(abstract_element);
+}
+
 GC::Ptr<ComputedProperties> StyleComputer::compute_pseudo_element_style_if_needed(DOM::AbstractElement abstract_element, Optional<bool&> did_change_custom_properties) const
 {
     auto& style_scope = abstract_element.style_scope();
@@ -1767,6 +1817,22 @@ GC::Ptr<ComputedProperties> StyleComputer::compute_style_impl(DOM::AbstractEleme
     PseudoClassBitmap attempted_pseudo_class_matches;
     auto matching_rule_set = build_matching_rule_set(abstract_element, attempted_pseudo_class_matches, did_match_any_pseudo_element_rules, mode, style_scope);
 
+    if (mode == ComputeStyleMode::CreatePseudoElementStyleIfNeeded) {
+        // NOTE: If we're computing style for a pseudo-element, we look for a number of reasons to bail early.
+
+        // Some pseudo-elements are generated regardless of CSS rules, so we need to compute their styles even when no
+        // rules matched.
+        auto has_implicit_style = first_is_one_of(*abstract_element.pseudo_element(),
+            PseudoElement::DetailsContent,
+            PseudoElement::FileSelectorButton,
+            PseudoElement::Marker,
+            PseudoElement::Placeholder);
+
+        // Bail if no pseudo-element rules matched.
+        if (!did_match_any_pseudo_element_rules && !has_implicit_style)
+            return {};
+    }
+
     auto old_custom_property_data = abstract_element.custom_property_data();
 
     // Resolve all the CSS custom properties ("variables") for this element:
@@ -1804,25 +1870,10 @@ GC::Ptr<ComputedProperties> StyleComputer::compute_style_impl(DOM::AbstractEleme
         }
     }
 
-    auto logical_alias_mapping_context = compute_logical_alias_mapping_context(abstract_element, mode, matching_rule_set);
-    auto cascaded_properties = compute_cascaded_values(abstract_element, did_match_any_pseudo_element_rules, mode, matching_rule_set, logical_alias_mapping_context, {});
+    auto cascaded_properties = compute_cascaded_values(abstract_element, did_match_any_pseudo_element_rules, mode, matching_rule_set);
     abstract_element.set_cascaded_properties(cascaded_properties);
 
     if (mode == ComputeStyleMode::CreatePseudoElementStyleIfNeeded) {
-        // NOTE: If we're computing style for a pseudo-element, we look for a number of reasons to bail early.
-
-        // Some pseudo-elements are generated regardless of CSS rules, so we need to compute their styles even when no
-        // rules matched.
-        auto has_implicit_style = first_is_one_of(*abstract_element.pseudo_element(),
-            PseudoElement::DetailsContent,
-            PseudoElement::FileSelectorButton,
-            PseudoElement::Marker,
-            PseudoElement::Placeholder);
-
-        // Bail if no pseudo-element rules matched.
-        if (!did_match_any_pseudo_element_rules && !has_implicit_style)
-            return {};
-
         // Bail if no pseudo-element would be generated due to...
         // - content: none
         // - content: normal (for ::before and ::after)
@@ -1888,7 +1939,7 @@ RefPtr<StyleValue const> StyleComputer::recascade_font_size_if_needed(DOM::Abstr
 
     // FIXME: This should be configurable.
     constexpr CSSPixels default_monospace_font_size_in_px = 13;
-    static auto monospace_font_family_name = Platform::FontPlugin::the().generic_font_name(Platform::GenericFont::Monospace);
+    static auto monospace_font_family_name = Platform::FontPlugin::the().generic_font_name(Platform::GenericFont::Monospace, 400, 0);
     static auto monospace_font = Gfx::FontDatabase::the().get(monospace_font_family_name, default_monospace_font_size_in_px * 0.75f, 400, Gfx::FontWidth::Normal, 0);
 
     // Reconstruct the line of ancestor elements we need to inherit style from, and then do the cascade again
@@ -1973,11 +2024,45 @@ GC::Ref<ComputedProperties> StyleComputer::compute_properties(DOM::AbstractEleme
         return compute_value_of_property(property_id, style_value, get_property_specified_value, computation_context, device_pixels_per_css_pixel);
     };
 
+    Optional<LogicalAliasMappingContext> logical_alias_mapping_context;
+    auto const get_logical_alias_mapping_context = [&]() {
+        if (!logical_alias_mapping_context.has_value())
+            logical_alias_mapping_context = LogicalAliasMappingContext { computed_style->writing_mode(), computed_style->direction() };
+
+        return *logical_alias_mapping_context;
+    };
+
     for (auto property_id : property_computation_order()) {
         RefPtr<StyleValue const> value;
         bool requires_computation;
 
-        if (auto cascaded_style_property = cascaded_properties.style_property(property_id); cascaded_style_property.has_value()) {
+        PropertyID cascaded_property_id = property_id;
+        PropertyID inherited_property_id = property_id;
+
+        if (logical_property_group_for_property(property_id).has_value()) {
+            PropertyID counterpart_property_id;
+
+            if (property_is_logical_alias(property_id)) {
+                counterpart_property_id = map_logical_alias_to_physical_property(property_id, get_logical_alias_mapping_context());
+
+                // AD-HOC: While the spec says that inheritance of logical aliases should be direct, other browsers
+                //         instead inherit from the physical counterpart - the CSSWG has resolved to update the spec to
+                //         reflect this - see https://github.com/w3c/csswg-drafts/issues/3029
+                inherited_property_id = counterpart_property_id;
+            } else {
+                counterpart_property_id = map_physical_property_to_logical_alias(property_id, get_logical_alias_mapping_context());
+            }
+
+            // https://drafts.csswg.org/css-logical/#box
+            // Within each logical property group, corresponding flow-relative and physical properties are paired using
+            // the element’s own computed writing mode. Although the specified value of each property remains distinct,
+            // paired properties share a computed value. This shared value is determined by cascading the declarations
+            // of both properties together as one; in other words, the computed value of both properties in the pair is
+            // derived from the specified value of the property declared with higher priority in the CSS cascade.
+            cascaded_property_id = cascaded_properties.property_with_higher_priority(property_id, counterpart_property_id);
+        }
+
+        if (auto cascaded_style_property = cascaded_properties.style_property(cascaded_property_id); cascaded_style_property.has_value()) {
             if (cascaded_style_property->important == Important::Yes)
                 computed_style->set_property_important(property_id, Important::Yes);
             value = cascaded_style_property->value;
@@ -2002,18 +2087,17 @@ GC::Ref<ComputedProperties> StyleComputer::compute_properties(DOM::AbstractEleme
         // In the color property, the used value of currentcolor is the resolved inherited value.
         should_inherit |= property_id == PropertyID::Color && value && value->to_keyword() == Keyword::Currentcolor;
 
-        // FIXME: Logical properties should inherit from their parent's equivalent unmapped logical property.
         if (should_inherit && computed_properties_to_inherit_from) {
             computed_style->set_property_inherited(property_id, ComputedProperties::Inherited::Yes);
-            value = computed_properties_to_inherit_from->property(property_id, ComputedProperties::WithAnimationsApplied::No);
+            value = computed_properties_to_inherit_from->property(inherited_property_id, ComputedProperties::WithAnimationsApplied::No);
             requires_computation = property_requires_computation_with_inherited_value(property_id);
 
             // FIXME: Do we need to recompute animated inherited values?
-            if (auto animated_value = computed_properties_to_inherit_from->animated_property_values().get(property_id); animated_value.has_value())
+            if (auto animated_value = computed_properties_to_inherit_from->animated_property_values().get(inherited_property_id); animated_value.has_value())
                 computed_style->set_animated_property(
                     property_id,
                     *animated_value.value(),
-                    computed_properties_to_inherit_from->is_animated_property_result_of_transition(property_id)
+                    computed_properties_to_inherit_from->is_animated_property_result_of_transition(inherited_property_id)
                         ? AnimatedPropertyResultOfTransition::Yes
                         : AnimatedPropertyResultOfTransition::No,
                     ComputedProperties::Inherited::Yes);
@@ -2024,7 +2108,9 @@ GC::Ref<ComputedProperties> StyleComputer::compute_properties(DOM::AbstractEleme
             requires_computation = property_requires_computation_with_initial_value(property_id);
         }
 
-        computed_style->set_property_without_modifying_flags(property_id, requires_computation ? compute_property(property_id, value.release_nonnull()) : value.release_nonnull());
+        // NB: We compute using the inherited (physical) property to avoid having to add cases for all the logical
+        //     alias properties in `compute_value_of_property`
+        computed_style->set_property_without_modifying_flags(property_id, requires_computation ? compute_property(inherited_property_id, value.release_nonnull()) : value.release_nonnull());
     }
 
     if (is<HTML::HTMLHtmlElement>(abstract_element.element()))
@@ -2193,6 +2279,7 @@ void StyleComputer::compute_custom_properties(ComputedProperties&, DOM::Abstract
         return;
     }
 
+    // FIXME: We should update in place so that non-recomputed children aren't left pointing at stale data
     abstract_element.set_custom_property_data(
         CustomPropertyData::create(move(resolved_own), parent_data ? move(parent_data) : data->parent()));
 }
@@ -2350,7 +2437,7 @@ NonnullRefPtr<StyleValue const> StyleComputer::compute_animation_name(NonnullRef
             auto const& string_value = entry->as_string().string_value();
 
             // AD-HOC: We shouldn't convert strings that aren't valid <custom-ident>s
-            if (is_css_wide_keyword(string_value) || string_value.is_one_of_ignoring_ascii_case("default"sv, "none"sv))
+            if (!is_valid_custom_ident(string_value, { { "none"sv } }))
                 return entry;
 
             return CustomIdentStyleValue::create(entry->as_string().string_value());
@@ -2445,11 +2532,11 @@ NonnullRefPtr<StyleValue const> StyleComputer::compute_font_size(NonnullRefPtr<S
     // https://drafts.csswg.org/css-fonts/#font-size-prop
     // an absolute length
 
-    auto inherited_font_size = inheritance_parent.has_value()
+    auto inherited_font_size = (inheritance_parent.has_value() && inheritance_parent->computed_properties())
         ? inheritance_parent->computed_properties()->font_size()
         : InitialValues::font_size();
 
-    auto inherited_math_depth = inheritance_parent.has_value()
+    auto inherited_math_depth = (inheritance_parent.has_value() && inheritance_parent->computed_properties())
         ? inheritance_parent->computed_properties()->math_depth()
         : InitialValues::math_depth();
 
@@ -2534,7 +2621,7 @@ NonnullRefPtr<StyleValue const> StyleComputer::compute_font_weight(NonnullRefPtr
     // https://drafts.csswg.org/css-fonts-4/#font-weight-prop
     // a number, see below
 
-    auto inherited_font_weight = inheritance_parent.has_value()
+    auto inherited_font_weight = (inheritance_parent.has_value() && inheritance_parent->computed_properties())
         ? inheritance_parent->computed_properties()->font_weight()
         : InitialValues::font_weight();
 
@@ -2797,11 +2884,11 @@ NonnullRefPtr<StyleValue const> StyleComputer::compute_position_area(NonnullRefP
 // https://w3c.github.io/mathml-core/#propdef-math-depth
 NonnullRefPtr<StyleValue const> StyleComputer::compute_math_depth(NonnullRefPtr<StyleValue const> const& absolutized_value, Optional<DOM::AbstractElement> const& inheritance_parent)
 {
-    auto inherited_math_depth = inheritance_parent.has_value()
+    auto inherited_math_depth = (inheritance_parent.has_value() && inheritance_parent->computed_properties())
         ? inheritance_parent->computed_properties()->math_depth()
         : InitialValues::math_depth();
 
-    auto inherited_math_style = inheritance_parent.has_value()
+    auto inherited_math_style = (inheritance_parent.has_value() && inheritance_parent->computed_properties())
         ? inheritance_parent->computed_properties()->math_style()
         : InitialValues::math_style();
 

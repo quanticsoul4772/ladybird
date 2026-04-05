@@ -14,8 +14,14 @@
 #include <AK/Time.h>
 #include <AK/Vector.h>
 #include <LibCore/File.h>
+#if !defined(AK_OS_MACOS)
+#    include <LibCore/Socket.h>
+#else
+#    include <LibIPC/TransportBootstrapMach.h>
+#endif
 #include <LibHTTP/Cookie/Cookie.h>
 #include <LibHTTP/Cookie/ParsedCookie.h>
+#include <LibIPC/Transport.h>
 #include <LibJS/Runtime/Value.h>
 #include <LibURL/Parser.h>
 #include <LibWeb/CSS/ComputedProperties.h>
@@ -192,18 +198,25 @@ static bool fire_an_event(FlyString const& name, Optional<Web::DOM::Element&> ta
     return target->dispatch_event(event);
 }
 
-ErrorOr<NonnullRefPtr<WebDriverConnection>> WebDriverConnection::connect(Web::PageClient& page_client, ByteString const& webdriver_ipc_path)
+ErrorOr<NonnullRefPtr<WebDriverConnection>> WebDriverConnection::connect(Web::PageClient& page_client, ByteString const& webdriver_endpoint)
 {
-    // TODO: Mach IPC and Windows IPC
-
-    dbgln_if(WEBDRIVER_DEBUG, "Trying to connect to {}", webdriver_ipc_path);
-    auto socket = TRY(Core::LocalSocket::connect(webdriver_ipc_path));
+    dbgln_if(WEBDRIVER_DEBUG, "Trying to connect to {}", webdriver_endpoint);
+#if defined(AK_OS_MACOS)
+    auto transport_ports = TRY(IPC::bootstrap_transport_from_mach_server(webdriver_endpoint));
+#else
+    auto socket = TRY(Core::LocalSocket::connect(webdriver_endpoint));
+#endif
 
     // Allow pop-ups, or otherwise /window/new won't be able to open a new tab.
     page_client.page().set_should_block_pop_ups(false);
 
     dbgln_if(WEBDRIVER_DEBUG, "Connected to WebDriver");
-    auto connection = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) WebDriverConnection(make<IPC::Transport>(move(socket)), page_client)));
+#if defined(AK_OS_MACOS)
+    auto transport = make<IPC::Transport>(move(transport_ports.receive_right), move(transport_ports.send_right));
+#else
+    auto transport = TRY(IPC::Transport::from_socket(move(socket)));
+#endif
+    auto connection = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) WebDriverConnection(move(transport), page_client)));
     connection->async_did_set_window_handle(page_client.page().top_level_traversable()->window_handle());
     return connection;
 }
@@ -406,12 +419,10 @@ Messages::WebDriverClient::BackResponse WebDriverConnection::back()
 
         // 7. If the previous step completed results in a pageHide event firing, wait until pageShow event fires or
         //    timer' timeout fired flag to be set, whichever occurs first.
-        current_top_level_browsing_context()->top_level_traversable()->append_session_history_traversal_steps(GC::create_function(realm.heap(), [this, timer, on_complete]() {
-            // NB: Use Core::Promise to signal SessionHistoryTraversalQueue that it can continue to execute next entry.
-            auto signal_to_continue_session_history_processing = Core::Promise<Empty>::construct();
+        current_top_level_browsing_context()->top_level_traversable()->append_session_history_traversal_steps(GC::create_function(realm.heap(), [this, timer, on_complete](NonnullRefPtr<Core::Promise<Empty>> signal) {
             if (timer->is_timed_out()) {
-                signal_to_continue_session_history_processing->resolve({});
-                return signal_to_continue_session_history_processing;
+                signal->resolve({});
+                return;
             }
 
             if (auto* document = current_top_level_browsing_context()->active_document(); document->page_showing()) {
@@ -425,8 +436,7 @@ Messages::WebDriverClient::BackResponse WebDriverConnection::back()
                 });
             }
 
-            signal_to_continue_session_history_processing->resolve({});
-            return signal_to_continue_session_history_processing;
+            signal->resolve({});
         }));
     });
 
@@ -483,12 +493,10 @@ Messages::WebDriverClient::ForwardResponse WebDriverConnection::forward()
 
         // 7. If the previous step completed results in a pageHide event firing, wait until pageShow event fires or
         //    timer' timeout fired flag to be set, whichever occurs first.
-        current_top_level_browsing_context()->top_level_traversable()->append_session_history_traversal_steps(GC::create_function(realm.heap(), [this, timer, on_complete]() {
-            // NB: Use Core::Promise to signal SessionHistoryTraversalQueue that it can continue to execute next entry.
-            auto signal_to_continue_session_history_processing = Core::Promise<Empty>::construct();
+        current_top_level_browsing_context()->top_level_traversable()->append_session_history_traversal_steps(GC::create_function(realm.heap(), [this, timer, on_complete](NonnullRefPtr<Core::Promise<Empty>> signal) {
             if (timer->is_timed_out()) {
-                signal_to_continue_session_history_processing->resolve({});
-                return signal_to_continue_session_history_processing;
+                signal->resolve({});
+                return;
             }
 
             if (auto* document = current_top_level_browsing_context()->active_document(); document->page_showing()) {
@@ -502,8 +510,7 @@ Messages::WebDriverClient::ForwardResponse WebDriverConnection::forward()
                 });
             }
 
-            signal_to_continue_session_history_processing->resolve({});
-            return signal_to_continue_session_history_processing;
+            signal->resolve({});
         }));
     });
 
@@ -1703,7 +1710,7 @@ Web::WebDriver::Response WebDriverConnection::element_click_impl(StringView elem
         };
 
         // 3. Let input id be a the result of generating a UUID.
-        auto input_id = MUST(Web::Crypto::generate_random_uuid());
+        auto input_id = Web::Crypto::generate_random_uuid();
 
         // 4. Let source be the result of create an input source with input state, and "pointer".
         auto source = Web::WebDriver::create_input_source(input_state, Web::WebDriver::InputSourceType::Pointer, Web::WebDriver::PointerInputSource::Subtype::Mouse);
@@ -1804,7 +1811,7 @@ Web::WebDriver::Response WebDriverConnection::element_clear_impl(StringView elem
 
             // -> otherwise
             //    True if its value IDL attribute is an empty string, and false otherwise.
-            return form_associated_element.value().is_empty();
+            return form_associated_element.form_value().is_empty();
         }();
 
         // 2. If element is a candidate for constraint validation it satisfies its constraints, and empty is true,
@@ -1910,7 +1917,7 @@ Web::WebDriver::Response WebDriverConnection::element_send_keys_impl(StringView 
             return Web::WebDriver::Error::from_code(Web::WebDriver::ErrorCode::ElementNotInteractable, "Element is not keyboard-interactable"sv);
 
         // 7. If element is not the active element run the focusing steps for the element.
-        if (!element->is_active())
+        if (!element->is_the_active_element())
             Web::HTML::run_focusing_steps(element);
     }
 
@@ -2022,7 +2029,7 @@ Web::WebDriver::Response WebDriverConnection::element_send_keys_impl(StringView 
     auto& input_state = Web::WebDriver::get_input_state(*current_top_level_browsing_context());
 
     // 10. Let input id be a the result of generating a UUID.
-    auto input_id = MUST(Web::Crypto::generate_random_uuid());
+    auto input_id = Web::Crypto::generate_random_uuid();
 
     // 11. Let source be the result of create an input source with input state, and "key".
     auto source = Web::WebDriver::create_input_source(input_state, Web::WebDriver::InputSourceType::Key, {});

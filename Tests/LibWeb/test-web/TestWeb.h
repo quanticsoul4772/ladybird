@@ -58,11 +58,14 @@ struct Test {
     size_t total_runs { 1 };
 
     String text {};
+    bool did_start_test { false };
     bool did_finish_test { false };
     bool did_finish_loading { false };
+    bool did_inject_js { false };
     bool did_check_variants { false };
 
     Optional<RefTestExpectationType> ref_test_expectation_type {};
+    Optional<URL::URL> ref_test_expectation_url {};
     Vector<FuzzyMatch> fuzzy_matches {};
 
     RefPtr<Gfx::Bitmap const> actual_screenshot {};

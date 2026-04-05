@@ -12,6 +12,7 @@
 #include <AK/JsonValue.h>
 #include <AK/Math.h>
 #include <AK/Utf8View.h>
+#include <LibCore/Timer.h>
 #include <LibWeb/Crypto/Crypto.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/BrowsingContext.h>
@@ -1121,9 +1122,10 @@ static ErrorOr<void, WebDriver::Error> dispatch_pointer_down_action(ActionObject
     //     and [POINTER-EVENTS]. set ctrlKey, shiftKey, altKey, and metaKey equal to the corresponding items in global
     //     key state. Type specific properties for the pointer that are not exposed through the webdriver API must be
     //     set to the default value specified for hardware that doesn't support that property.
+    int click_count = 1;
     switch (pointer_type) {
     case PointerInputSource::Subtype::Mouse:
-        browsing_context.page().handle_mousedown(position, position, button, buttons, global_key_state.modifiers());
+        browsing_context.page().handle_mousedown(position, position, button, buttons, global_key_state.modifiers(), click_count);
         break;
     case PointerInputSource::Subtype::Pen:
         return WebDriver::Error::from_code(WebDriver::ErrorCode::UnsupportedOperation, "Pen events not implemented"sv);
@@ -1364,7 +1366,7 @@ GC_DEFINE_ALLOCATOR(ActionExecutor);
 void wait_for_an_action_queue_token(InputState& input_state)
 {
     // 1. Let token be a new unique identifier.
-    auto token = MUST(Crypto::generate_random_uuid());
+    auto token = Crypto::generate_random_uuid();
 
     // 2. Enqueue token in input state's actions queue.
     input_state.actions_queue.append(token);

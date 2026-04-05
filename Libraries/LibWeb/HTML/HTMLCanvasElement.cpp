@@ -15,6 +15,7 @@
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
+#include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RatioStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/DOM/Document.h>
@@ -23,7 +24,6 @@
 #include <LibWeb/HTML/HTMLCanvasElement.h>
 #include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
-#include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Layout/CanvasBox.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
@@ -102,7 +102,7 @@ void HTMLCanvasElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperti
         cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::AspectRatio,
             CSS::StyleValueList::create(CSS::StyleValueVector {
                                             CSS::KeywordStyleValue::create(CSS::Keyword::Auto),
-                                            CSS::RatioStyleValue::create(CSS::Ratio { static_cast<double>(w.value()), static_cast<double>(h.value()) }) },
+                                            CSS::RatioStyleValue::create(CSS::NumberStyleValue::create(w.value()), CSS::NumberStyleValue::create(h.value())) },
 
                 CSS::StyleValueList::Separator::Space));
 }
@@ -310,14 +310,13 @@ String HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
     // Track potential fingerprinting (Milestone 0.4 Phase 4)
     document().page().client().page_did_call_fingerprinting_api("canvas"sv, "toDataURL"sv);
 
-    // It is possible the canvas doesn't have a associated bitmap so create one
+    // It is possible the canvas doesn't have an associated bitmap so create one
     allocate_painting_surface_if_needed();
     auto surface = this->surface();
     auto size = bitmap_size_for_canvas();
     if (!surface && !size.is_empty()) {
         // If the context is not initialized yet, we need to allocate transparent surface for serialization
-        auto skia_backend_context = navigable()->traversable_navigable()->skia_backend_context();
-        surface = Gfx::PaintingSurface::create_with_size(skia_backend_context, size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
+        surface = Gfx::PaintingSurface::create_with_size(size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
     }
 
     // FIXME: 1. If this canvas element's bitmap's origin-clean flag is set to false, then throw a "SecurityError" DOMException.
@@ -397,8 +396,7 @@ RefPtr<Gfx::Bitmap> HTMLCanvasElement::get_bitmap_from_surface()
     auto surface = this->surface();
     if (auto const size = bitmap_size_for_canvas(); !surface && !size.is_empty()) {
         // If the context is not initialized yet, we need to allocate transparent surface for serialization
-        auto const skia_backend_context = navigable()->traversable_navigable()->skia_backend_context();
-        surface = Gfx::PaintingSurface::create_with_size(skia_backend_context, size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
+        surface = Gfx::PaintingSurface::create_with_size(size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
     }
 
     RefPtr<Gfx::Bitmap> bitmap;

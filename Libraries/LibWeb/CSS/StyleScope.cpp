@@ -18,6 +18,7 @@
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/CSS/StyleScope.h>
+#include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/Page/Page.h>
 
@@ -94,9 +95,7 @@ void StyleScope::build_rule_cache()
     m_selector_insights = make<SelectorInsights>();
     m_style_invalidation_data = make<StyleInvalidationData>();
 
-    if (auto user_style_source = document().page().user_style(); user_style_source.has_value()) {
-        m_user_style_sheet = GC::make_root(parse_css_stylesheet(CSS::Parser::ParsingParams(document()), user_style_source.value()));
-    }
+    build_user_style_sheet_if_needed();
 
     build_qualified_layer_names_cache();
 
@@ -114,6 +113,7 @@ void StyleScope::build_rule_cache()
 
 void StyleScope::invalidate_rule_cache()
 {
+    document().invalidate_counter_style_cache();
     m_author_rule_cache = nullptr;
 
     // NOTE: We could be smarter about keeping the user rule cache, and style sheet.
@@ -128,6 +128,15 @@ void StyleScope::invalidate_rule_cache()
 
     m_pseudo_class_rule_cache = {};
     m_style_invalidation_data = nullptr;
+}
+
+void StyleScope::build_user_style_sheet_if_needed()
+{
+    if (m_user_style_sheet)
+        return;
+
+    if (auto user_style_source = document().page().user_style(); user_style_source.has_value())
+        m_user_style_sheet = GC::make_root(parse_css_stylesheet(CSS::Parser::ParsingParams(document()), user_style_source.value()));
 }
 
 void StyleScope::build_rule_cache_if_needed() const
@@ -187,8 +196,10 @@ void StyleScope::for_each_stylesheet(CascadeOrigin cascade_origin, Function<void
         callback(svg_stylesheet());
     }
     if (cascade_origin == CascadeOrigin::User) {
-        if (m_user_style_sheet)
-            callback(*m_user_style_sheet);
+        auto& style_scope = const_cast<StyleScope&>(*this);
+        style_scope.build_user_style_sheet_if_needed();
+        if (style_scope.m_user_style_sheet)
+            callback(*style_scope.m_user_style_sheet);
     }
     if (cascade_origin == CascadeOrigin::Author) {
         for_each_active_css_style_sheet(move(callback));
@@ -300,6 +311,23 @@ void StyleScope::make_rule_cache_for_cascade_origin(CascadeOrigin cascade_origin
                 auto key = static_cast<u64>(keyframe.key().value() * Animations::KeyframeEffect::AnimationKeyFrameKeyScaleFactor);
                 auto const& keyframe_style = *keyframe.style();
                 for (auto const& it : keyframe_style.properties()) {
+                    if (it.property_id == PropertyID::AnimationTimingFunction) {
+                        // animation-timing-function is a list property, but inside @keyframes only
+                        // a single value is meaningful.
+                        NonnullRefPtr<StyleValue const> easing_value = it.value;
+                        if (easing_value->is_value_list()) {
+                            auto const& list = easing_value->as_value_list();
+                            if (list.size() > 0)
+                                easing_value = list.value_at(0, false);
+                            else
+                                continue;
+                        }
+                        if (easing_value->is_easing() || easing_value->is_keyword())
+                            resolved_keyframe.easing = EasingFunction::from_style_value(*easing_value);
+                        else
+                            resolved_keyframe.easing = easing_value;
+                        continue;
+                    }
                     if (it.property_id == PropertyID::AnimationComposition) {
                         auto composition_str = it.value->to_string(SerializationMode::Normal);
                         AnimationComposition composition = AnimationComposition::Replace;
@@ -320,7 +348,16 @@ void StyleScope::make_rule_cache_for_cascade_origin(CascadeOrigin cascade_origin
                     });
                 }
 
-                keyframe_set->keyframes_by_key.insert(key, resolved_keyframe);
+                if (auto* existing_keyframe = keyframe_set->keyframes_by_key.find(key)) {
+                    for (auto& [property_id, value] : resolved_keyframe.properties)
+                        existing_keyframe->properties.set(property_id, move(value));
+                    if (resolved_keyframe.composite != Bindings::CompositeOperationOrAuto::Auto)
+                        existing_keyframe->composite = resolved_keyframe.composite;
+                    if (!resolved_keyframe.easing.has<Empty>())
+                        existing_keyframe->easing = move(resolved_keyframe.easing);
+                } else {
+                    keyframe_set->keyframes_by_key.insert(key, resolved_keyframe);
+                }
             }
 
             Animations::KeyframeEffect::generate_initial_and_final_frames(keyframe_set, animated_properties);
@@ -413,9 +450,12 @@ void StyleScope::build_qualified_layer_names_cache()
                 // Ignore everything else
             case CSSRule::Type::Style:
             case CSSRule::Type::Media:
+            case CSSRule::Type::Container:
             case CSSRule::Type::CounterStyle:
             case CSSRule::Type::FontFace:
             case CSSRule::Type::FontFeatureValues:
+            case CSSRule::Type::Function:
+            case CSSRule::Type::FunctionDeclarations:
             case CSSRule::Type::Keyframes:
             case CSSRule::Type::Keyframe:
             case CSSRule::Type::Margin:
@@ -492,12 +532,17 @@ void StyleScope::invalidate_style_of_elements_affected_by_has()
         return;
     }
 
+    HashTable<DOM::Element*> elements_already_invalidated_for_has;
     auto nodes = move(m_pending_nodes_for_style_invalidation_due_to_presence_of_has);
     for (auto& node : nodes) {
         for (auto* ancestor = &node; ancestor; ancestor = ancestor->parent_or_shadow_host()) {
             if (!ancestor->is_element())
                 continue;
             auto& element = static_cast<DOM::Element&>(*ancestor);
+
+            if (elements_already_invalidated_for_has.set(&element) != AK::HashSetResult::InsertedNewEntry)
+                break;
+
             element.invalidate_style_if_affected_by_has();
 
             auto* parent = ancestor->parent_or_shadow_host();
@@ -507,8 +552,12 @@ void StyleScope::invalidate_style_of_elements_affected_by_has()
             // If any ancestor's sibling was tested against selectors like ".a:has(+ .b)" or ".a:has(~ .b)"
             // its style might be affected by the change in descendant node.
             parent->for_each_child_of_type<DOM::Element>([&](auto& ancestor_sibling_element) {
-                if (ancestor_sibling_element.affected_by_has_pseudo_class_with_relative_selector_that_has_sibling_combinator())
+                if (ancestor_sibling_element.affected_by_has_pseudo_class_with_relative_selector_that_has_sibling_combinator()) {
+                    if (elements_already_invalidated_for_has.set(&ancestor_sibling_element) != AK::HashSetResult::InsertedNewEntry)
+                        return IterationDecision::Continue;
+
                     ancestor_sibling_element.invalidate_style_if_affected_by_has();
+                }
                 return IterationDecision::Continue;
             });
         }

@@ -6,8 +6,14 @@
 
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/DOM/Event.h>
+#include <LibWeb/DOM/EventTarget.h>
+#include <LibWeb/HTML/EventLoop/EventLoop.h>
+#include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/MessagePort.h>
+#include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/HTML/Worker.h>
 #include <LibWeb/HTML/WorkerAgentParent.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Worker/WebWorkerClient.h>
@@ -16,12 +22,13 @@ namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(WorkerAgentParent);
 
-WorkerAgentParent::WorkerAgentParent(URL::URL url, WorkerOptions const& options, GC::Ptr<MessagePort> outside_port, GC::Ref<EnvironmentSettingsObject> outside_settings, Bindings::AgentType agent_type)
+WorkerAgentParent::WorkerAgentParent(URL::URL url, WorkerOptions const& options, GC::Ptr<MessagePort> outside_port, GC::Ref<EnvironmentSettingsObject> outside_settings, GC::Ref<DOM::EventTarget> worker_event_target, Bindings::AgentType agent_type)
     : m_worker_options(options)
     , m_agent_type(agent_type)
     , m_url(move(url))
     , m_outside_port(outside_port)
     , m_outside_settings(outside_settings)
+    , m_worker_event_target(worker_event_target)
 {
 }
 
@@ -42,16 +49,14 @@ void WorkerAgentParent::initialize(JS::Realm& realm)
 
     // NOTE: This blocking IPC call may launch another process.
     //    If spinning the event loop for this can cause other javascript to execute, we're in trouble.
-    auto worker_socket_file = Bindings::principal_host_defined_page(realm).client().request_worker_agent(m_agent_type);
+    auto response = Bindings::principal_host_defined_page(realm).client().request_worker_agent(m_agent_type);
 
-    auto worker_socket = MUST(Core::LocalSocket::adopt_fd(worker_socket_file.take_fd()));
-    MUST(worker_socket->set_blocking(true));
-
-    // TODO: Mach IPC
-    auto transport = make<IPC::Transport>(move(worker_socket));
-
+    auto transport = MUST(response.worker_handle.create_transport());
     m_worker_ipc = make_ref_counted<WebWorkerClient>(move(transport));
     setup_worker_ipc_callbacks(realm);
+
+    m_worker_ipc->async_connect_to_request_server(move(response.request_server_handle));
+    m_worker_ipc->async_connect_to_image_decoder(move(response.image_decoder_handle));
 
     auto serialized_outside_settings = m_outside_settings->serialize();
 
@@ -65,9 +70,21 @@ void WorkerAgentParent::setup_worker_ipc_callbacks(JS::Realm& realm)
         auto& client = Bindings::principal_host_defined_page(realm).client();
         return client.page_did_request_cookie(url, source);
     };
-    m_worker_ipc->on_request_worker_agent = [realm = GC::RawRef { realm }](Web::Bindings::AgentType worker_type) {
+    m_worker_ipc->on_request_worker_agent = [realm = GC::RawRef { realm }](Web::Bindings::AgentType worker_type) -> Messages::WebWorkerClient::RequestWorkerAgentResponse {
         auto& client = Bindings::principal_host_defined_page(realm).client();
-        return client.request_worker_agent(worker_type);
+        auto response = client.request_worker_agent(worker_type);
+        return { move(response.worker_handle), move(response.request_server_handle), move(response.image_decoder_handle) };
+    };
+    m_worker_ipc->on_worker_script_load_failure = [self = GC::Weak { *this }]() {
+        if (!self)
+            return;
+        auto& outside_settings = *self->m_outside_settings;
+        auto& event_target = *self->m_worker_event_target;
+        // See: https://html.spec.whatwg.org/multipage/workers.html#worker-processing-model, onComplete handler for fetching script.
+        // 1. Queue a global task on the DOM manipulation task source given worker's relevant global object to fire an event named error at worker.
+        queue_global_task(Task::Source::DOMManipulation, outside_settings.global_object(), GC::create_function(outside_settings.heap(), [&event_target, &outside_settings]() {
+            event_target.dispatch_event(DOM::Event::create(outside_settings.realm(), EventNames::error));
+        }));
     };
 }
 
@@ -77,6 +94,7 @@ void WorkerAgentParent::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_message_port);
     visitor.visit(m_outside_port);
     visitor.visit(m_outside_settings);
+    visitor.visit(m_worker_event_target);
 }
 
 }

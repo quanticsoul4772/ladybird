@@ -27,6 +27,7 @@
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
 #include <LibWeb/HTML/CustomElements/CustomElementDefinition.h>
+#include <LibWeb/HTML/CustomElements/CustomElementRegistry.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/HTMLFormElement.h>
@@ -48,12 +49,14 @@
 #include <LibWeb/Infra/Strings.h>
 #include <LibWeb/MathML/TagNames.h>
 #include <LibWeb/Namespace.h>
+#include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/SVG/SVGScriptElement.h>
 #include <LibWeb/SVG/TagNames.h>
 
 namespace Web::HTML {
 
 GC_DEFINE_ALLOCATOR(HTMLParser);
+GC_DEFINE_ALLOCATOR(HTMLParserEndState);
 
 static inline void log_parse_error(SourceLocation const& location = SourceLocation::current())
 {
@@ -274,8 +277,6 @@ void HTMLParser::run(URL::URL const& url, HTMLTokenizer::StopAtInsertionPoint st
 // https://html.spec.whatwg.org/multipage/parsing.html#the-end
 void HTMLParser::the_end(GC::Ref<DOM::Document> document, GC::Ptr<HTMLParser> parser)
 {
-    auto& heap = document->heap();
-
     // Once the user agent stops parsing the document, the user agent must run the following steps:
 
     // NOTE: This is a static method because the spec sometimes wants us to "act as if the user agent had stopped
@@ -331,33 +332,128 @@ void HTMLParser::the_end(GC::Ref<DOM::Document> document, GC::Ptr<HTMLParser> pa
         return;
     }
 
-    // 5. While the list of scripts that will execute when the document has finished parsing is not empty:
-    while (!document->scripts_to_execute_when_parsing_has_finished().is_empty()) {
-        // 1. Spin the event loop until the first script in the list of scripts that will execute when the document has finished parsing
-        //    has its "ready to be parser-executed" flag set and the parser's Document has no style sheet that is blocking scripts.
-        main_thread_event_loop().spin_until(GC::create_function(heap, [document] {
-            return document->scripts_to_execute_when_parsing_has_finished().first()->is_ready_to_be_parser_executed()
-                && !document->has_a_style_sheet_that_is_blocking_scripts();
-        }));
+    // Steps 5-11 are handled by the HTMLParserEndState state machine.
+    auto state = HTMLParserEndState::create(document, parser);
+    document->set_html_parser_end_state(state);
+    state->schedule_progress_check();
+}
 
-        // 2. Execute the first script in the list of scripts that will execute when the document has finished parsing.
-        document->scripts_to_execute_when_parsing_has_finished().first()->execute_script();
+static constexpr int THE_END_TIMEOUT_MS = 15000;
 
-        // 3. Remove the first script element from the list of scripts that will execute when the document has finished parsing (i.e. shift out the first entry in the list).
-        (void)document->scripts_to_execute_when_parsing_has_finished().take_first();
+GC::Ref<HTMLParserEndState> HTMLParserEndState::create(GC::Ref<DOM::Document> document, GC::Ptr<HTMLParser> parser)
+{
+    return document->heap().allocate<HTMLParserEndState>(document, parser);
+}
+
+HTMLParserEndState::HTMLParserEndState(GC::Ref<DOM::Document> document, GC::Ptr<HTMLParser> parser)
+    : m_document(document)
+    , m_parser(parser)
+    , m_timeout(Platform::Timer::create_single_shot(heap(), THE_END_TIMEOUT_MS, GC::create_function(heap(), [this] {
+        if (m_phase != Phase::Completed)
+            dbgln("HTMLParserEndState: timed out in phase {}", to_underlying(m_phase));
+    })))
+{
+    m_timeout->start();
+}
+
+void HTMLParserEndState::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_document);
+    visitor.visit(m_parser);
+    visitor.visit(m_timeout);
+}
+
+void HTMLParserEndState::schedule_progress_check()
+{
+    if (m_phase == Phase::Completed)
+        return;
+    if (m_check_pending)
+        return;
+    m_check_pending = true;
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(heap(), [this] {
+        // NOTE: Pending microtasks (e.g. image load event delayer creation from update_the_image_data
+        //       step 8) must be processed before we check conditions, matching spin_until's behavior.
+        //       Skip the checkpoint when the microtask queue is empty to avoid unnecessary work
+        //       (save/restore execution context stack, notify_about_rejected_promises, etc.).
+        if (!main_thread_event_loop().microtask_queue_empty()) {
+            auto& vm = main_thread_event_loop().vm();
+            vm.save_execution_context_stack();
+            vm.clear_execution_context_stack();
+            main_thread_event_loop().perform_a_microtask_checkpoint();
+            vm.restore_execution_context_stack();
+        }
+        check_progress();
+        m_check_pending = false;
+    }));
+}
+
+void HTMLParserEndState::check_progress()
+{
+    // AD-HOC: Bail out if the document is no longer fully active (e.g. navigated away from).
+    if (!m_document->is_fully_active()) {
+        complete();
+        return;
     }
 
+    switch (m_phase) {
+    case Phase::WaitingForDeferredScripts:
+        // 5. While the list of scripts that will execute when the document has finished parsing is not empty:
+        while (!m_document->scripts_to_execute_when_parsing_has_finished().is_empty()) {
+            auto& first_script = *m_document->scripts_to_execute_when_parsing_has_finished().first();
+
+            // 1. Spin the event loop until the first script in the list of scripts that will execute when the document has finished parsing
+            //    has its "ready to be parser-executed" flag set and the parser's Document has no style sheet that is blocking scripts.
+            if (!first_script.is_ready_to_be_parser_executed() || m_document->has_a_style_sheet_that_is_blocking_scripts())
+                return;
+
+            // 2. Execute the first script in the list of scripts that will execute when the document has finished parsing.
+            first_script.execute_script();
+
+            // 3. Remove the first script element from the list of scripts that will execute when the document has finished parsing (i.e. shift out the first entry in the list).
+            (void)m_document->scripts_to_execute_when_parsing_has_finished().take_first();
+        }
+
+        advance_to_asap_scripts_phase();
+        [[fallthrough]];
+
+    case Phase::WaitingForASAPScripts:
+        // 7. Spin the event loop until the set of scripts that will execute as soon as possible and the list of scripts
+        //    that will execute in order as soon as possible are empty.
+        if (!m_document->scripts_to_execute_as_soon_as_possible().is_empty()
+            || !m_document->scripts_to_execute_in_order_as_soon_as_possible().is_empty())
+            return;
+
+        m_phase = Phase::WaitingForLoadEventDelay;
+        [[fallthrough]];
+
+    case Phase::WaitingForLoadEventDelay:
+        // 8. Spin the event loop until there is nothing that delays the load event in the Document.
+        if (m_document->anything_is_delaying_the_load_event())
+            return;
+
+        m_phase = Phase::Completed;
+        [[fallthrough]];
+
+    case Phase::Completed:
+        complete();
+        return;
+    }
+}
+
+void HTMLParserEndState::advance_to_asap_scripts_phase()
+{
     // AD-HOC: We need to scroll to the fragment on page load somewhere.
     // But a script that ran in step 5 above may have scrolled the page already,
     // so only do this if there is an actual fragment to avoid resetting the scroll position unexpectedly.
     // Spec bug: https://github.com/whatwg/html/issues/10914
-    auto indicated_part = document->determine_the_indicated_part();
+    auto indicated_part = m_document->determine_the_indicated_part();
     if (indicated_part.has<DOM::Element*>() && indicated_part.get<DOM::Element*>() != nullptr) {
-        document->scroll_to_the_fragment();
+        m_document->scroll_to_the_fragment();
     }
 
     // 6. Queue a global task on the DOM manipulation task source given the Document's relevant global object to run the following substeps:
-    queue_global_task(HTML::Task::Source::DOMManipulation, *document, GC::create_function(heap, [document] {
+    queue_global_task(HTML::Task::Source::DOMManipulation, *m_document, GC::create_function(m_document->heap(), [document = m_document] {
         // 1. Set the Document's load timing info's DOM content loaded event start time to the current high resolution time given the Document's relevant global object.
         document->load_timing_info().dom_content_loaded_event_start_time = HighResolutionTime::current_high_resolution_time(relevant_global_object(*document));
 
@@ -374,32 +470,23 @@ void HTMLParser::the_end(GC::Ref<DOM::Document> document, GC::Ptr<HTMLParser> pa
         // FIXME: 5. Invoke WebDriver BiDi DOM content loaded with the Document's browsing context, and a new WebDriver BiDi navigation status whose id is the Document object's navigation id, status is "pending", and url is the Document object's URL.
     }));
 
-    // 7. Spin the event loop until the set of scripts that will execute as soon as possible and the list of scripts that will execute in order as soon as possible are empty.
-    main_thread_event_loop().spin_until(GC::create_function(heap, [document] {
-        // AD-HOC: Also bail out if the document is no longer fully active (e.g. navigated away from).
-        //         Otherwise this spin_until stays on the call stack indefinitely, and all subsequent
-        //         event processing on the same event loop happens in nested spin_until pumping.
-        if (!document->is_fully_active())
-            return true;
-        return document->scripts_to_execute_as_soon_as_possible().is_empty();
-    }));
+    m_phase = Phase::WaitingForASAPScripts;
+}
 
-    // 8. Spin the event loop until there is nothing that delays the load event in the Document.
-    main_thread_event_loop().spin_until(GC::create_function(heap, [document] {
-        // AD-HOC: Bail out if the document is no longer fully active.
-        if (!document->is_fully_active())
-            return true;
-        return !document->anything_is_delaying_the_load_event();
-    }));
+void HTMLParserEndState::complete()
+{
+    m_phase = Phase::Completed;
+    m_timeout->stop();
+    m_document->set_html_parser_end_state(nullptr);
 
     // 9. Queue a global task on the DOM manipulation task source given the Document's relevant global object to run the following steps:
-    queue_global_task(HTML::Task::Source::DOMManipulation, *document, GC::create_function(document->heap(), [document, parser] {
+    queue_global_task(HTML::Task::Source::DOMManipulation, *m_document, GC::create_function(m_document->heap(), [document = m_document, parser = m_parser] {
         // 1. Update the current document readiness to "complete".
         document->update_readiness(HTML::DocumentReadyState::Complete);
 
         // AD-HOC: We need to wait until the document ready state is complete before detaching the parser, otherwise the DOM complete time will not be set correctly.
         if (parser)
-            document->detach_parser({});
+            document->detach_parser();
 
         // 2. If the Document object's browsing context is null, then abort these steps.
         if (!document->browsing_context())
@@ -441,7 +528,7 @@ void HTMLParser::the_end(GC::Ref<DOM::Document> document, GC::Ptr<HTMLParser> pa
     // FIXME: 10. If the Document's print when loaded flag is set, then run the printing steps.
 
     // 11. The Document is now ready for post-load tasks.
-    document->set_ready_for_post_load_tasks(true);
+    m_document->set_ready_for_post_load_tasks(true);
 }
 
 void HTMLParser::process_using_the_rules_for(InsertionMode mode, HTMLToken& token)
@@ -792,8 +879,8 @@ HTMLParser::AdjustedInsertionLocation HTMLParser::find_appropriate_place_for_ins
 // https://html.spec.whatwg.org/multipage/parsing.html#create-an-element-for-the-token
 GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Optional<FlyString> const& namespace_, DOM::Node& intended_parent)
 {
-    // FIXME: 1. If the active speculative HTML parser is not null, then return the result of creating a speculative mock element given given namespace, token's tag name, and token's attributes.
-    // FIXME: 2. Otherwise, optionally create a speculative mock element given given namespace, token's tag name, and token's attributes.
+    // FIXME: 1. If the active speculative HTML parser is not null, then return the result of creating a speculative mock element given namespace, token's tag name, and token's attributes.
+    // FIXME: 2. Otherwise, optionally create a speculative mock element given namespace, token's tag name, and token's attributes.
 
     // 3. Let document be intendedParent's node document.
     GC::Ref<DOM::Document> document = intended_parent.document();
@@ -804,11 +891,15 @@ GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Opt
     // 5. Let is be the value of the "is" attribute in token, if such an attribute exists; otherwise null.
     auto is_value = token.attribute(AttributeNames::is);
 
-    // FIXME: 6. Let registry be the result of looking up a custom element registry given intendedParent.
-    // 7. Let definition be the result of looking up a custom element definition given registry, namespace, localName, and is.
-    auto definition = document->lookup_custom_element_definition(namespace_, local_name, is_value);
+    // 6. Let registry be the result of looking up a custom element registry given intendedParent.
+    auto registry = look_up_a_custom_element_registry(intended_parent);
 
-    // 8. Let willExecuteScript be true if definition is non-null and the parser was not created as part of the HTML fragment parsing algorithm; otherwise false.
+    // 7. Let definition be the result of looking up a custom element definition given registry, namespace, localName,
+    //    and is.
+    auto definition = look_up_a_custom_element_definition(registry, namespace_, local_name, is_value);
+
+    // 8. Let willExecuteScript be true if definition is non-null and the parser was not created as part of the HTML
+    //    fragment parsing algorithm; otherwise false.
     bool will_execute_script = definition && !m_parsing_fragment;
 
     // 9. If willExecuteScript is true:
@@ -825,9 +916,9 @@ GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Opt
         relevant_similar_origin_window_agent(document).custom_element_reactions_stack.element_queue_stack.append({});
     }
 
-    // 10. Let element be the result of creating an element given document, localName, namespace, null, is, willExecuteScript, and registry.
-    // FIXME: and registry.
-    auto element = create_element(*document, local_name, namespace_, {}, is_value, will_execute_script).release_value_but_fixme_should_propagate_errors();
+    // 10. Let element be the result of creating an element given document, localName, namespace, null, is,
+    //     willExecuteScript, and registry.
+    auto element = create_element(*document, local_name, namespace_, {}, is_value, will_execute_script, registry).release_value_but_fixme_should_propagate_errors();
 
     // AD-HOC: See AD-HOC comment on Element.m_had_duplicate_attribute_during_tokenization about why this is done.
     if (token.had_duplicate_attribute()) {
@@ -877,23 +968,25 @@ GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Opt
     // FIXME: 13. If element has an xmlns attribute in the XMLNS namespace whose value is not exactly the same as the element's namespace, that is a parse error.
     //            Similarly, if element has an xmlns:xlink attribute in the XMLNS namespace whose value is not the XLink Namespace, that is a parse error.
 
-    // FIXME: 14. If element is a resettable element and not a form-associated custom element, then invoke its reset algorithm. (This initializes the element's value and checkedness based on the element's attributes.)
+    if (auto* html_element = as_if<HTML::HTMLElement>(*element)) {
+        if (html_element->is_form_associated_element() && !html_element->is_form_associated_custom_element()) {
+            // 14. If element is a resettable element and not a form-associated custom element, then invoke its reset algorithm.
+            //     (This initializes the element's value and checkedness based on the element's attributes.)
+            if (html_element->is_resettable())
+                html_element->reset_algorithm();
 
-    // 15. If element is a form-associated element and not a form-associated custom element, the form element pointer
-    //     is not null, there is no template element on the stack of open elements, element is either not listed or
-    //     doesn't have a form attribute, and the intendedParent is in the same tree as the element pointed to by the
-    //     form element pointer, then associate element with the form element pointed to by the form element pointer
-    //     and set element's parser inserted flag.
-    // FIXME: Check if the element is not a form-associated custom element.
-    if (auto* form_associated_element = as_if<FormAssociatedElement>(*element)) {
-        auto& html_element = form_associated_element->form_associated_element_to_html_element();
-
-        if (m_form_element.ptr()
-            && !m_stack_of_open_elements.contains_template_element()
-            && (!form_associated_element->is_listed() || !html_element.has_attribute(HTML::AttributeNames::form))
-            && &intended_parent.root() == &m_form_element->root()) {
-            form_associated_element->set_form(m_form_element.ptr());
-            form_associated_element->set_parser_inserted({});
+            // 15. If element is a form-associated element and not a form-associated custom element, the form element pointer
+            //     is not null, there is no template element on the stack of open elements, element is either not listed or
+            //     doesn't have a form attribute, and the intendedParent is in the same tree as the element pointed to by the
+            //     form element pointer, then associate element with the form element pointed to by the form element pointer
+            //     and set element's parser inserted flag.
+            if (m_form_element.ptr()
+                && !m_stack_of_open_elements.contains_template_element()
+                && (!html_element->is_listed() || !html_element->has_attribute(HTML::AttributeNames::form))
+                && &intended_parent.root() == &m_form_element->root()) {
+                html_element->set_form(m_form_element.ptr());
+                html_element->set_parser_inserted({});
+            }
         }
     }
 
@@ -904,11 +997,11 @@ GC::Ref<DOM::Element> HTMLParser::create_element_for(HTMLToken const& token, Opt
 // https://html.spec.whatwg.org/multipage/parsing.html#insert-a-foreign-element
 GC::Ref<DOM::Element> HTMLParser::insert_foreign_element(HTMLToken const& token, Optional<FlyString> const& namespace_, OnlyAddToElementStack only_add_to_element_stack)
 {
-    // 1. Let the adjusted insertion location be the appropriate place for inserting a node.
+    // 1. Let the adjustedInsertionLocation be the appropriate place for inserting a node.
     auto adjusted_insertion_location = find_appropriate_place_for_inserting_node();
 
-    // 2. Let element be the result of creating an element for the token in the given namespace,
-    //    with the intended parent being the element in which the adjusted insertion location finds itself.
+    // 2. Let element be the result of creating an element for the token given token, namespace, and the element in
+    //    which the adjustedInsertionLocation finds itself.
     auto element = create_element_for(token, namespace_, *adjusted_insertion_location.parent);
 
     // 3. If onlyAddToElementStack is false, then run insert an element at the adjusted insertion location with element.
@@ -926,8 +1019,8 @@ GC::Ref<DOM::Element> HTMLParser::insert_foreign_element(HTMLToken const& token,
 // https://html.spec.whatwg.org/multipage/parsing.html#insert-an-html-element
 GC::Ref<DOM::Element> HTMLParser::insert_html_element(HTMLToken const& token)
 {
-    // When the steps below require the user agent to insert an HTML element for a token, the user agent must insert a
-    // foreign element for the token, with the HTML namespace and false.
+    // To insert an HTML element given a token token: insert a foreign element given token, the HTML namespace, and
+    // false.
     return insert_foreign_element(token, Namespace::HTML, OnlyAddToElementStack::No);
 }
 
@@ -1174,7 +1267,8 @@ void HTMLParser::handle_in_head(HTMLToken& token)
         // 4. Switch the insertion mode to "in template".
         m_insertion_mode = InsertionMode::InTemplate;
 
-        // 5. Push "in template" onto the stack of template insertion modes so that it is the new current template insertion mode.
+        // 5. Push "in template" onto the stack of template insertion modes so that it is the new current template
+        //    insertion mode.
         m_stack_of_template_insertion_modes.append(InsertionMode::InTemplate);
 
         // 6. Let the adjustedInsertionLocation be the appropriate place for inserting a node.
@@ -1214,7 +1308,8 @@ void HTMLParser::handle_in_head(HTMLToken& token)
             // 1. Let declarativeShadowHostElement be adjusted current node.
             auto& declarative_shadow_host_element = *adjusted_current_node();
 
-            // 2. Let template be the result of insert a foreign element for templateStartTag, with HTML namespace and true.
+            // 2. Let template be the result of insert a foreign element for templateStartTag, with HTML namespace and
+            //    true.
             auto template_ = insert_foreign_element(template_start_tag, Namespace::HTML, OnlyAddToElementStack::Yes);
 
             // 3. Let mode be templateStartTag's shadowrootmode attribute's value.
@@ -1226,10 +1321,12 @@ void HTMLParser::handle_in_head(HTMLToken& token)
             // 5. Let serializable be true if templateStartTag has a shadowrootserializable attribute; otherwise false.
             auto serializable = template_start_tag.has_attribute(HTML::AttributeNames::shadowrootserializable);
 
-            // 6. Let delegatesFocus be true if templateStartTag has a shadowrootdelegatesfocus attribute; otherwise false.
+            // 6. Let delegatesFocus be true if templateStartTag has a shadowrootdelegatesfocus attribute; otherwise
+            //    false.
             auto delegates_focus = template_start_tag.has_attribute(HTML::AttributeNames::shadowrootdelegatesfocus);
 
-            // 7. If declarativeShadowHostElement is a shadow host, then insert an element at the adjusted insertion location with template.
+            // 7. If declarativeShadowHostElement is a shadow host, then insert an element at the adjusted insertion
+            //    location with template.
             if (declarative_shadow_host_element.is_shadow_host()) {
                 // FIXME: We do manual "insert before" instead of "insert an element at the adjusted insertion location" here
                 //        Otherwise, two template elements in a row will cause the second to try to insert into itself.
@@ -1239,11 +1336,15 @@ void HTMLParser::handle_in_head(HTMLToken& token)
 
             // 8. Otherwise:
             else {
-                // FIXME: 1. Let registry be null if templateStartTag has a shadowrootcustomelementregistry attribute; otherwise declarativeShadowHostElement's node document's custom element registry.
+                // 1. Let registry be null if templateStartTag has a shadowrootcustomelementregistry attribute;
+                //    otherwise declarativeShadowHostElement's node document's custom element registry.
+                GC::Ptr<CustomElementRegistry> registry;
+                if (!template_start_tag.has_attribute(AttributeNames::shadowrootcustomelementregistry))
+                    registry = declarative_shadow_host_element.document().custom_element_registry();
 
-                // 2. Attach a shadow root with declarativeShadowHostElement, mode, clonable, serializable, delegatesFocus, "named", and registry.
-                // FIXME: and registry.
-                auto result = declarative_shadow_host_element.attach_a_shadow_root(mode, clonable, serializable, delegates_focus, Bindings::SlotAssignmentMode::Named);
+                // 2. Attach a shadow root with declarativeShadowHostElement, mode, clonable, serializable,
+                //    delegatesFocus, "named", and registry.
+                auto result = declarative_shadow_host_element.attach_a_shadow_root(mode, clonable, serializable, delegates_focus, Bindings::SlotAssignmentMode::Named, registry);
                 //    If an exception is thrown, then catch it and:
                 if (result.is_error()) {
                     // 1. Insert an element at the adjusted insertion location with template.
@@ -1271,7 +1372,10 @@ void HTMLParser::handle_in_head(HTMLToken& token)
                 // 6. Set shadow's available to element internals to true.
                 shadow.set_available_to_element_internals(true);
 
-                // FIXME: 7. If templateStartTag has a shadowrootcustomelementregistry attribute, then set shadow's keep custom element registry null to true.
+                // 7. If templateStartTag has a shadowrootcustomelementregistry attribute, then set shadow's keep
+                //    custom element registry null to true.
+                if (template_start_tag.has_attribute(AttributeNames::shadowrootcustomelementregistry))
+                    shadow.set_keep_custom_element_registry_null(true);
             }
         }
 
@@ -2568,7 +2672,7 @@ void HTMLParser::handle_in_body(HTMLToken& token)
         // 2. If the current node is not an li element, then this is a parse error.
         if (current_node()->local_name() != HTML::TagNames::li) {
             log_parse_error();
-            dbgln("Expected <li> current node, but had <{}>", current_node()->local_name());
+            dbgln_if(HTML_PARSER_DEBUG, "Expected <li> current node, but had <{}>", current_node()->local_name());
         }
 
         // 3. Pop elements from the stack of open elements until an li element has been popped from the stack.
@@ -4848,6 +4952,7 @@ WebIDL::ExceptionOr<Vector<GC::Root<DOM::Node>>> HTMLParser::parse_html_fragment
 
     // AD-HOC: We set the about base URL of the document to the same as the context element's document.
     //         This is required for Document::parse_url() to work inside iframe srcdoc documents.
+    //         Spec issue: https://github.com/whatwg/html/issues/12210
     temp_document->set_about_base_url(context_element.document().about_base_url());
 
     // 2. If context's node document is in quirks mode, then set document's mode to "quirks".
@@ -4904,8 +5009,9 @@ WebIDL::ExceptionOr<Vector<GC::Root<DOM::Node>>> HTMLParser::parse_html_fragment
         // Leave the tokenizer in the data state.
     }
 
-    // 7. Let root be the result of creating an element given document, "html", and the HTML namespace.
-    auto root = MUST(create_element(context_element.document(), HTML::TagNames::html, Namespace::HTML));
+    // 7. Let root be the result of creating an element given document, "html", the HTML namespace, null, null, false,
+    //    and context's custom element registry.
+    auto root = MUST(create_element(context_element.document(), HTML::TagNames::html, Namespace::HTML, {}, {}, false, context_element.custom_element_registry()));
 
     // 8. Append root to document.
     MUST(temp_document->append_child(root));
@@ -5153,14 +5259,39 @@ String HTMLParser::serialize_html_fragment(DOM::Node const& node, SerializableSh
                 if (shadow->clonable())
                     builder.append(" shadowrootclonable=\"\""sv);
 
-                // 7. Append ">".
+                // 7. Let shouldAppendRegistryAttribute be the result of running these steps:
+                auto should_append_registry_attribute = [&] {
+                    // 1. Let documentRegistry be shadow's node document's custom element registry.
+                    auto document_registry = shadow->document().custom_element_registry();
+
+                    // 2. Let shadowRegistry be shadow's custom element registry.
+                    auto shadow_registry = shadow->custom_element_registry();
+
+                    // 3. If documentRegistry is null and shadowRegistry is null, then return false.
+                    if (!document_registry && !shadow_registry)
+                        return false;
+
+                    // 4. If documentRegistry is a global custom element registry and shadowRegistry is a global custom
+                    //    element registry, then return false.
+                    if (is_a_global_custom_element_registry(document_registry) && is_a_global_custom_element_registry(shadow_registry))
+                        return false;
+
+                    // 5. Return true.
+                    return true;
+                }();
+
+                // 8. If shouldAppendRegistryAttribute is true, then append " shadowrootcustomelementregistry=""".
+                if (should_append_registry_attribute)
+                    builder.append(" shadowrootcustomelementregistry=\"\""sv);
+
+                // 9. Append ">".
                 builder.append('>');
 
-                // 8. Append the value of running the HTML fragment serialization algorithm with shadow,
+                // 10. Append the value of running the HTML fragment serialization algorithm with shadow,
                 //    serializableShadowRoots, and shadowRoots (thus recursing into this algorithm for that element).
                 builder.append(serialize_html_fragment(*shadow, serializable_shadow_roots, shadow_roots));
 
-                // 9. Append "</template>".
+                // 11. Append "</template>".
                 builder.append("</template>"sv);
             }
         }

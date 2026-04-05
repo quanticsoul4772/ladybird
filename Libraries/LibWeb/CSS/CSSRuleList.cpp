@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025, Sam Atkins <sam@ladybird.org>
+ * Copyright (c) 2021-2026, Sam Atkins <sam@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,7 +7,10 @@
 #include <AK/TypeCasts.h>
 #include <LibWeb/Bindings/CSSRuleListPrototype.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/CSS/CSSContainerRule.h>
 #include <LibWeb/CSS/CSSFontFaceRule.h>
+#include <LibWeb/CSS/CSSFontFeatureValuesRule.h>
+#include <LibWeb/CSS/CSSFunctionRule.h>
 #include <LibWeb/CSS/CSSImportRule.h>
 #include <LibWeb/CSS/CSSKeyframesRule.h>
 #include <LibWeb/CSS/CSSLayerBlockRule.h>
@@ -148,6 +151,8 @@ WebIDL::ExceptionOr<unsigned> CSSRuleList::insert_a_css_rule(Variant<StringView,
     // 8. Insert new rule into list at the zero-indexed position index.
     m_rules.insert(index, *new_rule);
 
+    // FIXME: Load font faces for inserted @font-face rules
+
     // 9. Return index.
     if (on_change)
         on_change();
@@ -206,6 +211,7 @@ void CSSRuleList::for_each_effective_rule(TraversalOrder order, Function<void(We
             break;
         }
 
+        case CSSRule::Type::Container:
         case CSSRule::Type::LayerBlock:
         case CSSRule::Type::Media:
         case CSSRule::Type::Page:
@@ -217,6 +223,8 @@ void CSSRuleList::for_each_effective_rule(TraversalOrder order, Function<void(We
         case CSSRule::Type::CounterStyle:
         case CSSRule::Type::FontFace:
         case CSSRule::Type::FontFeatureValues:
+        case CSSRule::Type::Function:
+        case CSSRule::Type::FunctionDeclarations:
         case CSSRule::Type::Keyframe:
         case CSSRule::Type::Keyframes:
         case CSSRule::Type::LayerStatement:
@@ -238,6 +246,16 @@ bool CSSRuleList::evaluate_media_queries(DOM::Document const& document)
 
     for (auto& rule : m_rules) {
         switch (rule->type()) {
+        case CSSRule::Type::Container: {
+            auto& container_rule = as<CSSContainerRule>(*rule);
+            if (container_rule.css_rules().evaluate_media_queries(document))
+                any_media_queries_changed_match_state = true;
+            break;
+        }
+        case CSSRule::Type::Function: {
+            any_media_queries_changed_match_state |= as<CSSFunctionRule>(*rule).css_rules().evaluate_media_queries(document);
+            break;
+        }
         case CSSRule::Type::Import: {
             auto& import_rule = as<CSSImportRule>(*rule);
             if (import_rule.loaded_style_sheet() && import_rule.loaded_style_sheet()->evaluate_media_queries(document))
@@ -275,6 +293,7 @@ bool CSSRuleList::evaluate_media_queries(DOM::Document const& document)
         case CSSRule::Type::CounterStyle:
         case CSSRule::Type::FontFace:
         case CSSRule::Type::FontFeatureValues:
+        case CSSRule::Type::FunctionDeclarations:
         case CSSRule::Type::Keyframe:
         case CSSRule::Type::Keyframes:
         case CSSRule::Type::LayerStatement:

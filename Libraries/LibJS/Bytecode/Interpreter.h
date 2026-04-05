@@ -27,16 +27,16 @@ public:
     ~Interpreter();
 
     [[nodiscard]] Realm& realm() { return *m_running_execution_context->realm; }
-    [[nodiscard]] Object& global_object() { return *m_running_execution_context->global_object; }
-    [[nodiscard]] DeclarativeEnvironment& global_declarative_environment() { return *m_running_execution_context->global_declarative_environment; }
+    [[nodiscard]] Object& global_object() { return realm().global_object(); }
+    [[nodiscard]] DeclarativeEnvironment& global_declarative_environment();
     static VM& vm() { return VM::the(); }
 
     ThrowCompletionOr<Value> run(Script&, GC::Ptr<Environment> lexical_environment_override = nullptr);
     ThrowCompletionOr<Value> run(SourceTextModule&);
 
-    ThrowCompletionOr<Value> run_executable(ExecutionContext&, Executable&, Optional<size_t> entry_point);
+    ThrowCompletionOr<Value> run_executable(ExecutionContext&, Executable&, u32 entry_point = 0);
 
-    ThrowCompletionOr<Value> run_executable(ExecutionContext& context, Executable& executable, Optional<size_t> entry_point, Value initial_accumulator_value)
+    ThrowCompletionOr<Value> run_executable(ExecutionContext& context, Executable& executable, u32 entry_point, Value initial_accumulator_value)
     {
         context.registers_and_constants_and_locals_and_arguments_span()[0] = initial_accumulator_value;
         return run_executable(context, executable, entry_point);
@@ -52,8 +52,14 @@ public:
         return m_running_execution_context->registers_and_constants_and_locals_and_arguments()[r.index()];
     }
 
-    [[nodiscard]] Value get(Operand) const;
-    void set(Operand, Value);
+    ALWAYS_INLINE Value get(Operand op) const
+    {
+        return m_running_execution_context->registers_and_constants_and_locals_and_arguments()[op.raw()];
+    }
+    ALWAYS_INLINE void set(Operand op, Value value)
+    {
+        m_running_execution_context->registers_and_constants_and_locals_and_arguments_span().data()[op.raw()] = value;
+    }
 
     Value do_yield(Value value, Optional<Label> continuation);
     void do_return(Value value)
@@ -70,6 +76,7 @@ public:
     Executable const& current_executable() const { return *m_running_execution_context->executable; }
 
     ExecutionContext& running_execution_context() { return *m_running_execution_context; }
+    void set_running_execution_context(ExecutionContext* ctx) { m_running_execution_context = ctx; }
 
     [[nodiscard]] Utf16FlyString const& get_identifier(IdentifierTableIndex) const;
     [[nodiscard]] Optional<Utf16FlyString const&> get_identifier(Optional<IdentifierTableIndex> index) const
@@ -80,9 +87,6 @@ public:
     }
 
     [[nodiscard]] PropertyKey const& get_property_key(PropertyKeyTableIndex) const;
-
-private:
-    void run_bytecode(size_t entry_point);
 
     enum class HandleExceptionResponse {
         ExitFromExecutable,
@@ -104,12 +108,12 @@ private:
         Object* new_target,
         bool is_construct);
 
+private:
+    void run_bytecode(size_t entry_point);
+
     ExecutionContext* m_running_execution_context { nullptr };
 };
 
 JS_API extern bool g_dump_bytecode;
-
-GC::Ref<Bytecode::Executable> compile(VM&, ASTNode const&, JS::FunctionKind kind, Utf16FlyString const& name);
-GC::Ref<Bytecode::Executable> compile(VM&, GC::Ref<SharedFunctionInstanceData const>, BuiltinAbstractOperationsEnabled builtin_abstract_operations_enabled);
 
 }

@@ -21,6 +21,7 @@
 #include <LibWeb/Loader/FileRequest.h>
 #include <LibWeb/Page/EventResult.h>
 #include <LibWeb/Page/InputEvent.h>
+#include <LibWeb/Page/ViewportIsFullscreen.h>
 #include <LibWeb/Platform/Timer.h>
 #include <LibWebView/DOMNodeProperties.h>
 #include <LibWebView/Forward.h>
@@ -46,8 +47,8 @@ public:
     PageHost& page_host() { return *m_page_host; }
     PageHost const& page_host() const { return *m_page_host; }
 
-    Function<void(IPC::File const&)> on_request_server_connection;
-    Function<void(IPC::File const&)> on_image_decoder_connection;
+    Function<void(IPC::TransportHandle const&)> on_request_server_connection;
+    Function<void(IPC::TransportHandle const&)> on_image_decoder_connection;
 
     Queue<Web::QueuedInputEvent>& input_event_queue() { return m_input_event_queue; }
 
@@ -61,17 +62,17 @@ private:
     virtual void close_server() override;
     virtual Messages::WebContentServer::GetWindowHandleResponse get_window_handle(u64 page_id) override;
     virtual void set_window_handle(u64 page_id, String handle) override;
-    virtual void connect_to_webdriver(u64 page_id, ByteString webdriver_ipc_path) override;
-    virtual void connect_to_web_ui(u64 page_id, IPC::File web_ui_socket) override;
-    virtual void connect_to_request_server(IPC::File request_server_socket) override;
-    virtual void connect_to_image_decoder(IPC::File image_decoder_socket) override;
+    virtual void connect_to_webdriver(u64 page_id, ByteString webdriver_endpoint) override;
+    virtual void connect_to_web_ui(u64 page_id, IPC::TransportHandle handle) override;
+    virtual void connect_to_request_server(IPC::TransportHandle handle) override;
+    virtual void connect_to_image_decoder(IPC::TransportHandle handle) override;
     virtual void update_system_theme(u64 page_id, Core::AnonymousBuffer) override;
     virtual void update_screen_rects(u64 page_id, Vector<Web::DevicePixelRect>, u32) override;
     virtual void load_url(u64 page_id, URL::URL) override;
     virtual void load_html(u64 page_id, ByteString) override;
     virtual void reload(u64 page_id) override;
     virtual void traverse_the_history_by_delta(u64 page_id, i32 delta) override;
-    virtual void set_viewport(u64 page_id, Web::DevicePixelSize, double device_pixel_ratio) override;
+    virtual void set_viewport(u64 page_id, Web::DevicePixelSize, double device_pixel_ratio, Web::ViewportIsFullscreen is_fullscreen) override;
     virtual void key_event(u64 page_id, Web::KeyEvent) override;
     virtual void mouse_event(u64 page_id, Web::MouseEvent) override;
     virtual void drag_event(u64 page_id, Web::DragEvent) override;

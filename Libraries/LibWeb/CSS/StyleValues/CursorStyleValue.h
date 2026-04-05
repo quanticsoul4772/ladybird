@@ -9,7 +9,6 @@
 #include <AK/Optional.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/Cursor.h>
-#include <LibWeb/CSS/CalculatedOr.h>
 #include <LibWeb/CSS/Length.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
 #include <LibWeb/Forward.h>
@@ -33,6 +32,8 @@ public:
     virtual ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const&) const override;
 
     bool properties_equal(CursorStyleValue const& other) const { return m_properties == other.m_properties; }
+
+    virtual bool is_computationally_independent() const override;
 
 private:
     CursorStyleValue(ValueComparingNonnullRefPtr<AbstractImageStyleValue const> image,

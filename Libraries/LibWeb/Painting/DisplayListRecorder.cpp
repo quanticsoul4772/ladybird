@@ -8,7 +8,6 @@
 #include <LibWeb/Painting/DisplayList.h>
 #include <LibWeb/Painting/DisplayListCommand.h>
 #include <LibWeb/Painting/DisplayListRecorder.h>
-#include <LibWeb/Painting/ShadowPainting.h>
 
 namespace Web::Painting {
 
@@ -61,17 +60,17 @@ consteval static int command_nesting_level_change(T const& command)
     return 0;
 }
 
-#define APPEND(...)                                                                 \
-    do {                                                                            \
-        auto command = __VA_ARGS__;                                                 \
-        m_save_nesting_level += command_nesting_level_change(command);              \
-        if (m_is_capturing) {                                                       \
-            auto command_copy = command;                                            \
-            if (m_display_list.append(move(command), m_accumulated_visual_context)) \
-                m_captured_commands.append(move(command_copy));                     \
-        } else {                                                                    \
-            m_display_list.append(move(command), m_accumulated_visual_context);     \
-        }                                                                           \
+#define APPEND(...)                                                                       \
+    do {                                                                                  \
+        auto command = __VA_ARGS__;                                                       \
+        m_save_nesting_level += command_nesting_level_change(command);                    \
+        if (m_is_capturing) {                                                             \
+            auto command_copy = command;                                                  \
+            if (m_display_list.append(move(command), m_accumulated_visual_context_index)) \
+                m_captured_commands.append(move(command_copy));                           \
+        } else {                                                                          \
+            m_display_list.append(move(command), m_accumulated_visual_context_index);     \
+        }                                                                                 \
     } while (false)
 
 void DisplayListRecorder::replay_cached_commands(ReadonlySpan<DisplayListCommand> commands)
@@ -83,7 +82,7 @@ void DisplayListRecorder::replay_cached_commands(ReadonlySpan<DisplayListCommand
                 return command.nesting_level_change;
             return 0;
         });
-        m_display_list.append(move(command_copy), m_accumulated_visual_context);
+        m_display_list.append(move(command_copy), m_accumulated_visual_context_index);
     }
 }
 
@@ -349,14 +348,14 @@ void DisplayListRecorder::apply_backdrop_filter(Gfx::IntRect const& backdrop_reg
     });
 }
 
-void DisplayListRecorder::paint_outer_box_shadow(PaintBoxShadowParams params)
+void DisplayListRecorder::paint_outer_box_shadow(PaintOuterBoxShadow outer_box_shadow)
 {
-    APPEND(PaintOuterBoxShadow { .box_shadow_params = params });
+    APPEND(move(outer_box_shadow));
 }
 
-void DisplayListRecorder::paint_inner_box_shadow(PaintBoxShadowParams params)
+void DisplayListRecorder::paint_inner_box_shadow(PaintInnerBoxShadow inner_box_shadow)
 {
-    APPEND(PaintInnerBoxShadow { .box_shadow_params = params });
+    APPEND(move(inner_box_shadow));
 }
 
 void DisplayListRecorder::paint_text_shadow(int blur_radius, Gfx::IntRect bounding_rect, Gfx::IntRect text_rect, Gfx::GlyphRun const& glyph_run, double glyph_run_scale, Color color, Gfx::FloatPoint draw_location)
@@ -402,10 +401,10 @@ void DisplayListRecorder::fill_rect_with_rounded_corners(Gfx::IntRect const& a_r
             { bottom_left_radius, bottom_left_radius } });
 }
 
-void DisplayListRecorder::paint_scrollbar(int scroll_frame_id, Gfx::IntRect gutter_rect, Gfx::IntRect thumb_rect, double scroll_size, Color thumb_color, Color track_color, bool vertical)
+void DisplayListRecorder::paint_scrollbar(ScrollFrameIndex scroll_frame_index, Gfx::IntRect gutter_rect, Gfx::IntRect thumb_rect, double scroll_size, Color thumb_color, Color track_color, bool vertical)
 {
     APPEND(PaintScrollBar {
-        .scroll_frame_id = scroll_frame_id,
+        .scroll_frame_index = scroll_frame_index,
         .gutter_rect = gutter_rect,
         .thumb_rect = thumb_rect,
         .scroll_size = scroll_size,

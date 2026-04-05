@@ -73,6 +73,8 @@ private:
         GC::Weak<DOM::IDLEventListener> listener;
     };
     Vector<RegisteredEventListener> m_registered_event_listeners;
+    GC::Weak<WebIDL::CallbackType> m_request_animation_frame_callback;
+    u32 m_request_animation_frame_id { 0 };
 
     enum class Scrubbing : u8 {
         No,
@@ -93,6 +95,8 @@ private:
         High,
     };
     MuteIconState m_mute_icon_state { MuteIconState::Empty };
+
+    double m_last_timeline_percentage { 0.0 };
 };
 
 }

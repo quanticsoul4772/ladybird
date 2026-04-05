@@ -27,12 +27,11 @@ WebIDL::ExceptionOr<GC::Ref<MessageEvent>> MessageEvent::construct_impl(JS::Real
     return create(realm, event_name, event_init);
 }
 
-MessageEvent::MessageEventSourceInternal MessageEvent::to_message_event_source_internal(Optional<MessageEventSource> const& source)
+MessageEvent::MessageEventSourceInternal MessageEvent::to_message_event_source_internal(NullableMessageEventSource const& source)
 {
-    if (!source.has_value())
-        return Empty {};
-
-    return source->visit([](auto const& root) -> MessageEventSourceInternal { return GC::Ref { *root }; });
+    return source.visit(
+        [](Empty) -> MessageEventSourceInternal { return Empty {}; },
+        [](auto const& root) -> MessageEventSourceInternal { return GC::Ref { *root }; });
 }
 
 MessageEvent::MessageEvent(JS::Realm& realm, FlyString const& event_name, MessageEventInit const& event_init)
@@ -68,11 +67,29 @@ void MessageEvent::visit_edges(Cell::Visitor& visitor)
         [&](auto const& ref) { visitor.visit(ref); });
 }
 
-MessageEvent::SourceResult MessageEvent::source() const
+// https://html.spec.whatwg.org/multipage/comms.html#dom-messageevent-origin
+String MessageEvent::origin() const
+{
+    return m_origin.visit(
+        // 1. If this's origin is an origin, then return the serialization of this's origin.
+        [](URL::Origin const& origin) {
+            return origin.serialize();
+        },
+        // 2. If this's origin is null, then return the empty string.
+        [](Empty) {
+            return String {};
+        },
+        // 3. Return this's origin.
+        [](String const& origin) {
+            return origin;
+        });
+}
+
+NullableMessageEventSource MessageEvent::source() const
 {
     return m_source.visit(
-        [](Empty) -> SourceResult { return Empty {}; },
-        [](auto const& ref) -> SourceResult { return GC::Root { *ref }; });
+        [](Empty) -> NullableMessageEventSource { return Empty {}; },
+        [](auto const& ref) -> NullableMessageEventSource { return GC::Root { *ref }; });
 }
 
 GC::Ref<JS::Object> MessageEvent::ports() const
@@ -89,7 +106,7 @@ GC::Ref<JS::Object> MessageEvent::ports() const
 }
 
 // https://html.spec.whatwg.org/multipage/comms.html#dom-messageevent-initmessageevent
-void MessageEvent::init_message_event(String const& type, bool bubbles, bool cancelable, JS::Value data, String const& origin, String const& last_event_id, Optional<MessageEventSource> source, Vector<GC::Root<MessagePort>> const& ports)
+void MessageEvent::init_message_event(String const& type, bool bubbles, bool cancelable, JS::Value data, String const& origin, String const& last_event_id, NullableMessageEventSource source, Vector<GC::Root<MessagePort>> const& ports)
 {
     // The initMessageEvent(type, bubbles, cancelable, data, origin, lastEventId, source, ports) method must initialize the event in a
     // manner analogous to the similarly-named initEvent() method.
@@ -119,8 +136,14 @@ void MessageEvent::init_message_event(String const& type, bool bubbles, bool can
 // https://html.spec.whatwg.org/multipage/comms.html#the-messageevent-interface:extract-an-origin
 Optional<URL::Origin> MessageEvent::extract_an_origin() const
 {
-    // Objects implementing the MessageEvent interface's extract an origin steps are to return this's relevant settings object's origin.
-    return relevant_settings_object(*this).origin();
+    // Objects implementing the MessageEvent interface's extract an origin steps are to return this's origin if it is an origin; otherwise null.
+    return m_origin.visit(
+        [](URL::Origin const& origin) -> Optional<URL::Origin> {
+            return origin;
+        },
+        [](auto const&) -> Optional<URL::Origin> {
+            return {};
+        });
 }
 
 }

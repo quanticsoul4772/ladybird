@@ -71,7 +71,7 @@ private:
     static int on_timeout_callback(void*, long timeout_ms, void* user_data);
     void check_active_requests();
 
-    ErrorOr<IPC::File> create_client_socket();
+    ErrorOr<IPC::TransportHandle> create_client_socket();
 
     ConnectionMap& m_connections;
     Optional<HTTP::DiskCache&> m_disk_cache;
@@ -80,6 +80,7 @@ private:
 
     HashMap<u64, NonnullOwnPtr<Request>> m_active_requests;
     HashMap<u64, NonnullOwnPtr<Request>> m_active_revalidation_requests;
+    HashTable<u64> m_pending_websockets;
     HashMap<u64, RefPtr<WebSocket::WebSocket>> m_websockets;
 
     RefPtr<Core::Timer> m_timer;

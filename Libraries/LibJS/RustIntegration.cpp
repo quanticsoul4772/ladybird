@@ -6,76 +6,65 @@
 
 #include <LibJS/RustIntegration.h>
 
-#ifdef ENABLE_RUST
-
-#    include <AK/Utf16String.h>
-#    include <AK/Utf16View.h>
-#    include <LibGC/DeferGC.h>
-#    include <LibJS/AST.h>
-#    include <LibJS/Bytecode/ClassBlueprint.h>
-#    include <LibJS/Bytecode/Executable.h>
-#    include <LibJS/Bytecode/Generator.h>
-#    include <LibJS/Bytecode/IdentifierTable.h>
-#    include <LibJS/Bytecode/PropertyKeyTable.h>
-#    include <LibJS/Bytecode/RegexTable.h>
-#    include <LibJS/Bytecode/StringTable.h>
-#    include <LibJS/BytecodeFactory.h>
-#    include <LibJS/Lexer.h>
-#    include <LibJS/Parser.h>
-#    include <LibJS/PipelineComparison.h>
-#    include <LibJS/Runtime/BigInt.h>
-#    include <LibJS/Runtime/Intrinsics.h>
-#    include <LibJS/Runtime/NativeJavaScriptBackedFunction.h>
-#    include <LibJS/Runtime/PrimitiveString.h>
-#    include <LibJS/Runtime/RegExpObject.h>
-#    include <LibJS/Runtime/SharedFunctionInstanceData.h>
-#    include <LibJS/Runtime/VM.h>
-#    include <LibJS/Script.h>
-#    include <LibJS/SourceCode.h>
+#include <AK/Utf16String.h>
+#include <AK/Utf16View.h>
+#include <LibGC/DeferGC.h>
+#include <LibJS/Bytecode/ClassBlueprint.h>
+#include <LibJS/Bytecode/Executable.h>
+#include <LibJS/Bytecode/IdentifierTable.h>
+#include <LibJS/Bytecode/PropertyKeyTable.h>
+#include <LibJS/Bytecode/RegexTable.h>
+#include <LibJS/Bytecode/StringTable.h>
+#include <LibJS/Runtime/BigInt.h>
+#include <LibJS/Runtime/Intrinsics.h>
+#include <LibJS/Runtime/NativeJavaScriptBackedFunction.h>
+#include <LibJS/Runtime/PrimitiveString.h>
+#include <LibJS/Runtime/RegExpObject.h>
+#include <LibJS/Runtime/SharedFunctionInstanceData.h>
+#include <LibJS/Runtime/VM.h>
+#include <LibJS/RustFFI.h>
+#include <LibJS/Script.h>
+#include <LibJS/SourceCode.h>
 
 extern bool JS::g_dump_ast;
 extern bool JS::g_dump_ast_use_color;
+
+using namespace JS::FFI;
 
 namespace JS::RustIntegration {
 
 // --- Shared helpers ---
 
-static bool rust_pipeline_enabled()
+static Utf16View utf16_view_from_bytes(uint16_t const* data, size_t len)
 {
-    static bool const enabled = getenv("LIBJS_CPP") == nullptr;
-    return enabled;
-}
-
-static void pair_shared_function_data(Bytecode::Executable& rust_executable, Bytecode::Executable& cpp_executable)
-{
-    VERIFY(rust_executable.shared_function_data.size() == cpp_executable.shared_function_data.size());
-    for (size_t i = 0; i < rust_executable.shared_function_data.size(); ++i)
-        rust_executable.shared_function_data[i]->m_cpp_comparison_sfd = cpp_executable.shared_function_data[i];
+    if (len == 0)
+        return {};
+    return Utf16View { reinterpret_cast<char16_t const*>(data), len };
 }
 
 static Utf16FlyString utf16_fly_from(uint16_t const* data, size_t len)
 {
-    return Utf16FlyString::from_utf16(Utf16View { reinterpret_cast<char16_t const*>(data), len });
+    return Utf16FlyString::from_utf16(utf16_view_from_bytes(data, len));
 }
 
 static Utf16FlyString utf16_fly_from_raw(uint16_t const* data, size_t len)
 {
     if (len == 0)
         return {};
-    return Utf16FlyString::from_utf16(Utf16View(reinterpret_cast<char16_t const*>(data), len));
+    return Utf16FlyString::from_utf16(utf16_view_from_bytes(data, len));
 }
 
 static Utf16String utf16_from_raw(uint16_t const* data, size_t len)
 {
     if (len == 0)
         return {};
-    return Utf16String::from_utf16(Utf16View(reinterpret_cast<char16_t const*>(data), len));
+    return Utf16String::from_utf16(utf16_view_from_bytes(data, len));
 }
 
 // --- Error collection callbacks ---
 
 // Collects parse errors as a Vector<ParserError> (for Script/Module compilation).
-static void collect_parse_errors(void* ctx, char const* message, size_t message_len, uint32_t line, uint32_t column)
+static void collect_parse_errors(void* ctx, uint8_t const* message, size_t message_len, uint32_t line, uint32_t column)
 {
     auto& errors = *static_cast<Vector<ParserError>*>(ctx);
     errors.append({
@@ -85,7 +74,7 @@ static void collect_parse_errors(void* ctx, char const* message, size_t message_
 }
 
 // Collects a single parse error as a formatted String (for eval/dynamic function compilation).
-static void collect_single_parse_error(void* ctx, char const* message, size_t message_len, uint32_t line, uint32_t column)
+static void collect_single_parse_error(void* ctx, uint8_t const* message, size_t message_len, uint32_t line, uint32_t column)
 {
     auto& error_message = *static_cast<String*>(ctx);
     if (error_message.is_empty())
@@ -99,6 +88,8 @@ struct ScriptGdiBuilder {
 };
 
 }
+
+namespace JS::FFI {
 
 extern "C" void script_gdi_push_lexical_name(void* ctx, uint16_t const* name, size_t len)
 {
@@ -134,6 +125,8 @@ extern "C" void script_gdi_push_lexical_binding(void* ctx, uint16_t const* name,
     static_cast<JS::RustIntegration::ScriptGdiBuilder*>(ctx)->result.lexical_bindings.append({ JS::RustIntegration::utf16_fly_from(name, len), is_constant });
 }
 
+}
+
 // --- Eval GDI builder and callbacks ---
 
 namespace JS::RustIntegration {
@@ -164,6 +157,8 @@ struct EvalGdiBuilder {
 };
 
 }
+
+namespace JS::FFI {
 
 extern "C" void eval_gdi_set_strict(void* ctx, bool is_strict)
 {
@@ -197,6 +192,8 @@ extern "C" void eval_gdi_push_annex_b_name(void* ctx, uint16_t const* name, size
 extern "C" void eval_gdi_push_lexical_binding(void* ctx, uint16_t const* name, size_t len, bool is_constant)
 {
     static_cast<JS::RustIntegration::EvalGdiBuilder*>(ctx)->lexical_bindings.append({ JS::RustIntegration::utf16_fly_from(name, len), is_constant });
+}
+
 }
 
 // --- Module builder and callbacks ---
@@ -351,78 +348,64 @@ static void collect_builtin_function(void* ctx, void* sfd_ptr, uint16_t const*, 
 
 // --- Compile functions ---
 
-Optional<Result<ScriptResult, Vector<ParserError>>> compile_script(
-    StringView source_text, Realm& realm, StringView filename, size_t line_number_offset)
+bool rust_pipeline_available()
 {
-    bool const compare_pipelines = compare_pipelines_enabled();
-    if (!rust_pipeline_enabled() && !compare_pipelines)
+    return true;
+}
+
+ParsedProgram* parse_program(u16 const* utf16_data, size_t length_in_code_units, ProgramType type, size_t line_number_offset)
+{
+    return rust_parse_program(utf16_data, length_in_code_units, static_cast<u8>(type), line_number_offset, g_dump_ast, g_dump_ast_use_color);
+}
+
+bool parsed_program_has_errors(ParsedProgram const* parsed)
+{
+    return rust_parsed_program_has_errors(const_cast<ParsedProgram*>(parsed));
+}
+
+void free_parsed_program(ParsedProgram* parsed)
+{
+    rust_free_parsed_program(parsed);
+}
+
+Optional<Result<ScriptResult, Vector<ParserError>>> compile_parsed_script(ParsedProgram* parsed, NonnullRefPtr<SourceCode const> source_code, Realm& realm)
+{
+    if (!parsed)
         return {};
 
+    if (rust_parsed_program_has_errors(parsed)) {
+        Vector<ParserError> parse_errors;
+        rust_parsed_program_take_errors(parsed, &parse_errors, collect_parse_errors);
+        rust_free_parsed_program(parsed);
+        return parse_errors;
+    }
+
+    auto length = source_code->length_in_code_units();
+
+    GC::DeferGC defer_gc(realm.vm().heap());
+    ScriptGdiBuilder builder;
+
+    void* exec_ptr = rust_compile_parsed_script(parsed, &realm.vm(), source_code.ptr(), &builder, length);
+
+    if (!exec_ptr)
+        return Vector<ParserError> {};
+
+    builder.result.executable = static_cast<Bytecode::Executable*>(exec_ptr);
+    return builder.result;
+}
+
+Optional<Result<ScriptResult, Vector<ParserError>>> compile_script(StringView source_text, Realm& realm, StringView filename, size_t line_number_offset)
+{
     auto source_code = SourceCode::create(
         String::from_utf8(filename).release_value_but_fixme_should_propagate_errors(),
         Utf16String::from_utf8(source_text));
 
-    auto const& code_view = source_code->code_view();
-    auto length = code_view.length_in_code_units();
-
-    GC::DeferGC defer_gc(realm.vm().heap());
-    ScriptGdiBuilder builder;
-    Vector<ParserError> parse_errors;
-
-    u8* rust_ast_data = nullptr;
-    size_t rust_ast_len = 0;
-    u8** rust_ast_data_ptr = compare_pipelines ? &rust_ast_data : nullptr;
-    size_t* rust_ast_len_ptr = compare_pipelines ? &rust_ast_len : nullptr;
-
     auto const* source_ptr = source_code->utf16_data();
+    auto length = source_code->length_in_code_units();
 
-    void* exec_ptr = rust_compile_script(source_ptr, length, &realm.vm(), source_code.ptr(), &builder,
-        g_dump_ast, g_dump_ast_use_color,
-        &parse_errors, collect_parse_errors, rust_ast_data_ptr, rust_ast_len_ptr, line_number_offset);
+    auto* parsed = rust_parse_program(source_ptr, length, static_cast<u8>(ProgramType::Script), line_number_offset, g_dump_ast, g_dump_ast_use_color);
 
-    if (!exec_ptr) {
-        if (rust_ast_data)
-            rust_free_string(rust_ast_data, rust_ast_len);
-        return parse_errors;
-    }
-
-    if (compare_pipelines) {
-        auto rust_ast_dump = StringView { rust_ast_data, rust_ast_len };
-
-        auto parser = Parser(Lexer(source_code, line_number_offset));
-        auto cpp_program = parser.parse_program();
-
-        if (!parser.has_errors()) {
-            auto cpp_ast_dump = cpp_program->dump_to_string();
-            compare_pipeline_asts(rust_ast_dump, cpp_ast_dump, filename);
-
-            if (!cpp_program->is_strict_mode()) {
-                HashTable<Utf16FlyString> lexical_names;
-                MUST(cpp_program->for_each_lexically_declared_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
-                    lexical_names.set(identifier.string());
-                    return {};
-                }));
-                MUST(cpp_program->for_each_function_hoistable_with_annexB_extension([&](FunctionDeclaration& function_declaration) -> ThrowCompletionOr<void> {
-                    if (!lexical_names.contains(function_declaration.name()))
-                        function_declaration.set_should_do_additional_annexB_steps();
-                    return {};
-                }));
-            }
-
-            auto& rust_executable = *static_cast<Bytecode::Executable*>(exec_ptr);
-            auto cpp_executable = Bytecode::Generator::generate_from_ast_node(realm.vm(), *cpp_program, {});
-            auto rust_bytecode_dump = rust_executable.dump_to_string();
-            auto cpp_bytecode_dump = cpp_executable->dump_to_string();
-            compare_pipeline_bytecode(rust_bytecode_dump, cpp_bytecode_dump, filename, cpp_ast_dump);
-
-            pair_shared_function_data(rust_executable, *cpp_executable);
-        }
-
-        rust_free_string(rust_ast_data, rust_ast_len);
-    }
-
-    builder.result.executable = static_cast<Bytecode::Executable*>(exec_ptr);
-    return builder.result;
+    return compile_parsed_script(parsed, source_code, realm);
 }
 
 Optional<Result<EvalResult, String>> compile_eval(
@@ -430,10 +413,6 @@ Optional<Result<EvalResult, String>> compile_eval(
     CallerMode strict_caller, bool in_function, bool in_method,
     bool in_derived_constructor, bool in_class_field_initializer)
 {
-    bool const compare_pipelines = compare_pipelines_enabled();
-    if (!rust_pipeline_enabled() && !compare_pipelines)
-        return {};
-
     auto source_code = SourceCode::create({}, code_string.utf16_string());
     auto const& code_view = source_code->code_view();
     auto length = code_view.length_in_code_units();
@@ -442,64 +421,15 @@ Optional<Result<EvalResult, String>> compile_eval(
     EvalGdiBuilder builder;
     String parse_error;
 
-    u8* rust_ast_data = nullptr;
-    size_t rust_ast_len = 0;
-    u8** rust_ast_data_ptr = compare_pipelines ? &rust_ast_data : nullptr;
-    size_t* rust_ast_len_ptr = compare_pipelines ? &rust_ast_len : nullptr;
-
     auto const* source_ptr = source_code->utf16_data();
 
     void* exec_ptr = rust_compile_eval(source_ptr, length, &vm, source_code.ptr(), &builder,
         strict_caller == CallerMode::Strict,
         in_function, in_method, in_derived_constructor, in_class_field_initializer,
-        &parse_error, collect_single_parse_error, rust_ast_data_ptr, rust_ast_len_ptr);
+        &parse_error, collect_single_parse_error, nullptr, nullptr);
 
-    if (!exec_ptr) {
-        if (rust_ast_data)
-            rust_free_string(rust_ast_data, rust_ast_len);
+    if (!exec_ptr)
         return parse_error;
-    }
-
-    if (compare_pipelines) {
-        auto rust_ast_dump = StringView { rust_ast_data, rust_ast_len };
-
-        Parser::EvalInitialState initial_state {
-            .in_eval_function_context = in_function,
-            .allow_super_property_lookup = in_method,
-            .allow_super_constructor_call = in_derived_constructor,
-            .in_class_field_initializer = in_class_field_initializer,
-        };
-        Parser parser(Lexer(source_code), Program::Type::Script, move(initial_state));
-        auto cpp_program = parser.parse_program(strict_caller == CallerMode::Strict);
-
-        if (!parser.has_errors()) {
-            auto cpp_ast_dump = cpp_program->dump_to_string();
-            compare_pipeline_asts(rust_ast_dump, cpp_ast_dump, "eval"sv);
-
-            if (!cpp_program->is_strict_mode()) {
-                HashTable<Utf16FlyString> lexical_names;
-                MUST(cpp_program->for_each_lexically_declared_identifier([&](Identifier const& identifier) -> ThrowCompletionOr<void> {
-                    lexical_names.set(identifier.string());
-                    return {};
-                }));
-                MUST(cpp_program->for_each_function_hoistable_with_annexB_extension([&](FunctionDeclaration& function_declaration) -> ThrowCompletionOr<void> {
-                    if (!lexical_names.contains(function_declaration.name()))
-                        function_declaration.set_should_do_additional_annexB_steps();
-                    return {};
-                }));
-            }
-
-            auto& rust_executable = *static_cast<Bytecode::Executable*>(exec_ptr);
-            auto cpp_executable = Bytecode::Generator::generate_from_ast_node(vm, *cpp_program, {});
-            auto rust_bytecode_dump = rust_executable.dump_to_string();
-            auto cpp_bytecode_dump = cpp_executable->dump_to_string();
-            compare_pipeline_bytecode(rust_bytecode_dump, cpp_bytecode_dump, "eval"sv, cpp_ast_dump);
-
-            pair_shared_function_data(rust_executable, *cpp_executable);
-        }
-
-        rust_free_string(rust_ast_data, rust_ast_len);
-    }
 
     builder.executable = static_cast<Bytecode::Executable*>(exec_ptr);
     builder.executable->name = "eval"_utf16_fly_string;
@@ -513,76 +443,19 @@ Optional<Result<EvalResult, String>> compile_eval(
     return result;
 }
 
-Optional<Result<EvalResult, String>> compile_shadow_realm_eval(
-    PrimitiveString& source_text, VM& vm)
+Optional<Result<ModuleResult, Vector<ParserError>>> compile_parsed_module(ParsedProgram* parsed, NonnullRefPtr<SourceCode const> source_code, Realm& realm)
 {
-    bool const compare_pipelines = compare_pipelines_enabled();
-    if (!rust_pipeline_enabled() && !compare_pipelines)
+    if (!parsed)
         return {};
 
-    auto source_code = SourceCode::create({}, source_text.utf16_string());
-    auto const& code_view = source_code->code_view();
-    auto length = code_view.length_in_code_units();
-
-    GC::DeferGC defer_gc(vm.heap());
-    EvalGdiBuilder builder;
-    String parse_error;
-
-    u8* rust_ast_data = nullptr;
-    size_t rust_ast_len = 0;
-    u8** rust_ast_data_ptr = compare_pipelines ? &rust_ast_data : nullptr;
-    size_t* rust_ast_len_ptr = compare_pipelines ? &rust_ast_len : nullptr;
-
-    auto const* source_ptr = source_code->utf16_data();
-
-    void* exec_ptr = rust_compile_eval(source_ptr, length, &vm, source_code.ptr(), &builder,
-        false, false, false, false, false,
-        &parse_error, collect_single_parse_error, rust_ast_data_ptr, rust_ast_len_ptr);
-
-    if (!exec_ptr) {
-        if (rust_ast_data)
-            rust_free_string(rust_ast_data, rust_ast_len);
-        return parse_error;
+    if (rust_parsed_program_has_errors(parsed)) {
+        Vector<ParserError> parse_errors;
+        rust_parsed_program_take_errors(parsed, &parse_errors, collect_parse_errors);
+        rust_free_parsed_program(parsed);
+        return parse_errors;
     }
 
-    if (compare_pipelines) {
-        auto rust_ast_dump = StringView { rust_ast_data, rust_ast_len };
-
-        auto parser = Parser(Lexer(source_code), Program::Type::Script, Parser::EvalInitialState {});
-        auto cpp_program = parser.parse_program();
-
-        if (!parser.has_errors()) {
-            auto cpp_ast_dump = cpp_program->dump_to_string();
-            compare_pipeline_asts(rust_ast_dump, cpp_ast_dump, "ShadowRealmEval"sv);
-
-            auto& rust_executable = *static_cast<Bytecode::Executable*>(exec_ptr);
-            auto cpp_executable = Bytecode::Generator::generate_from_ast_node(vm, *cpp_program, {});
-            auto rust_bytecode_dump = rust_executable.dump_to_string();
-            auto cpp_bytecode_dump = cpp_executable->dump_to_string();
-            compare_pipeline_bytecode(rust_bytecode_dump, cpp_bytecode_dump, "ShadowRealmEval"sv, cpp_ast_dump);
-
-            pair_shared_function_data(rust_executable, *cpp_executable);
-        }
-
-        rust_free_string(rust_ast_data, rust_ast_len);
-    }
-
-    builder.executable = static_cast<Bytecode::Executable*>(exec_ptr);
-    builder.executable->name = "ShadowRealmEval"_utf16_fly_string;
-
-    return builder.to_result();
-}
-
-Optional<Result<ModuleResult, Vector<ParserError>>> compile_module(
-    StringView source_text, Realm& realm, StringView filename)
-{
-    bool const compare_pipelines = compare_pipelines_enabled();
-    if (!rust_pipeline_enabled() && !compare_pipelines)
-        return {};
-
-    auto source_code = SourceCode::create(String::from_utf8(filename).release_value_but_fixme_should_propagate_errors(), Utf16String::from_utf8(source_text));
-    auto const& code_view = source_code->code_view();
-    auto length = code_view.length_in_code_units();
+    auto length = source_code->length_in_code_units();
 
     GC::DeferGC defer_gc(realm.vm().heap());
     ModuleBuilder builder;
@@ -599,59 +472,13 @@ Optional<Result<ModuleResult, Vector<ParserError>>> compile_module(
         .push_lexical_binding = module_push_lexical_binding,
     };
 
-    Vector<ParserError> errors;
-    auto error_callback = [](void* ctx, char const* message, size_t message_len, u32 line, u32 column) {
-        auto* error_list = static_cast<Vector<ParserError>*>(ctx);
-        auto msg = String::from_utf8({ message, message_len }).release_value_but_fixme_should_propagate_errors();
-        error_list->empend(move(msg), Position { .line = line, .column = column, .offset = 0 });
-    };
-
-    u8* rust_ast_data = nullptr;
-    size_t rust_ast_len = 0;
-    u8** rust_ast_data_ptr = compare_pipelines ? &rust_ast_data : nullptr;
-    size_t* rust_ast_len_ptr = compare_pipelines ? &rust_ast_len : nullptr;
-
     void* tla_executable = nullptr;
 
-    auto const* source_ptr = source_code->utf16_data();
+    void* exec_ptr = rust_compile_parsed_module(parsed, &realm.vm(), source_code.ptr(),
+        &builder, &callbacks, &tla_executable, length);
 
-    void* exec_ptr = rust_compile_module(source_ptr, length,
-        &realm.vm(), source_code.ptr(),
-        &builder, &callbacks,
-        g_dump_ast, g_dump_ast_use_color,
-        &errors, error_callback,
-        &tla_executable,
-        rust_ast_data_ptr, rust_ast_len_ptr);
-
-    if (!exec_ptr && !tla_executable) {
-        if (rust_ast_data)
-            rust_free_string(rust_ast_data, rust_ast_len);
-        return errors;
-    }
-
-    if (compare_pipelines) {
-        auto rust_ast_dump = StringView { rust_ast_data, rust_ast_len };
-
-        auto parser = Parser(Lexer(source_code), Program::Type::Module);
-        auto cpp_program = parser.parse_program();
-
-        if (!parser.has_errors()) {
-            auto cpp_ast_dump = cpp_program->dump_to_string();
-            compare_pipeline_asts(rust_ast_dump, cpp_ast_dump, filename);
-
-            if (!tla_executable) {
-                auto& rust_executable = *static_cast<Bytecode::Executable*>(exec_ptr);
-                auto cpp_executable = Bytecode::Generator::generate_from_ast_node(realm.vm(), *cpp_program, {});
-                auto rust_bytecode_dump = rust_executable.dump_to_string();
-                auto cpp_bytecode_dump = cpp_executable->dump_to_string();
-                compare_pipeline_bytecode(rust_bytecode_dump, cpp_bytecode_dump, filename, cpp_ast_dump);
-
-                pair_shared_function_data(rust_executable, *cpp_executable);
-            }
-        }
-
-        rust_free_string(rust_ast_data, rust_ast_len);
-    }
+    if (!exec_ptr && !tla_executable)
+        return Vector<ParserError> {};
 
     if (tla_executable) {
         auto& vm = realm.vm();
@@ -673,14 +500,21 @@ Optional<Result<ModuleResult, Vector<ParserError>>> compile_module(
     return builder.result;
 }
 
+Optional<Result<ModuleResult, Vector<ParserError>>> compile_module(StringView source_text, Realm& realm, StringView filename)
+{
+    auto source_code = SourceCode::create(String::from_utf8(filename).release_value_but_fixme_should_propagate_errors(), Utf16String::from_utf8(source_text));
+
+    auto const* source_ptr = source_code->utf16_data();
+    auto length = source_code->length_in_code_units();
+    auto* parsed = rust_parse_program(source_ptr, length, static_cast<u8>(ProgramType::Module), 0, g_dump_ast, g_dump_ast_use_color);
+
+    return compile_parsed_module(parsed, source_code, realm);
+}
+
 Optional<Result<GC::Ref<SharedFunctionInstanceData>, String>> compile_dynamic_function(
     VM& vm, StringView source_text, StringView parameters_string, StringView body_parse_string,
     FunctionKind kind)
 {
-    bool const compare_pipelines = compare_pipelines_enabled();
-    if (!rust_pipeline_enabled() && !compare_pipelines)
-        return {};
-
     auto source_code = SourceCode::create({}, Utf16String::from_utf8(source_text));
     auto const& code_view = source_code->code_view();
     auto full_length = code_view.length_in_code_units();
@@ -707,11 +541,6 @@ Optional<Result<GC::Ref<SharedFunctionInstanceData>, String>> compile_dynamic_fu
     GC::DeferGC defer_gc(vm.heap());
     String parse_error;
 
-    u8* rust_ast_data = nullptr;
-    size_t rust_ast_len = 0;
-    u8** rust_ast_data_ptr = compare_pipelines ? &rust_ast_data : nullptr;
-    size_t* rust_ast_len_ptr = compare_pipelines ? &rust_ast_len : nullptr;
-
     void* sfd_ptr = rust_compile_dynamic_function(
         full_data, full_length,
         params_data, params_utf16.utf16_view().length_in_code_units(),
@@ -719,28 +548,10 @@ Optional<Result<GC::Ref<SharedFunctionInstanceData>, String>> compile_dynamic_fu
         &vm, source_code.ptr(),
         static_cast<u8>(kind),
         &parse_error, collect_single_parse_error,
-        rust_ast_data_ptr, rust_ast_len_ptr);
+        nullptr, nullptr);
 
-    if (!sfd_ptr) {
-        if (rust_ast_data)
-            rust_free_string(rust_ast_data, rust_ast_len);
+    if (!sfd_ptr)
         return parse_error;
-    }
-
-    if (compare_pipelines) {
-        auto rust_ast_dump = StringView { rust_ast_data, rust_ast_len };
-
-        auto source_parser = Parser(Lexer(source_code));
-        source_parser.set_is_dynamic_function();
-        auto cpp_program = source_parser.parse_program();
-
-        if (!source_parser.has_errors()) {
-            auto cpp_ast_dump = cpp_program->dump_to_string();
-            compare_pipeline_asts(rust_ast_dump, cpp_ast_dump, "new Function"sv);
-        }
-
-        rust_free_string(rust_ast_data, rust_ast_len);
-    }
 
     auto& function_data = *static_cast<SharedFunctionInstanceData*>(sfd_ptr);
     function_data.m_source_text_owner = Utf16String::from_utf8(source_text);
@@ -752,10 +563,6 @@ Optional<Result<GC::Ref<SharedFunctionInstanceData>, String>> compile_dynamic_fu
 Optional<Vector<GC::Root<SharedFunctionInstanceData>>> compile_builtin_file(
     unsigned char const* script_text, VM& vm)
 {
-    bool const compare_pipelines = compare_pipelines_enabled();
-    if (!rust_pipeline_enabled() && !compare_pipelines)
-        return {};
-
     auto script_text_as_utf16 = Utf16String::from_utf8_without_validation({ script_text, strlen(reinterpret_cast<char const*>(script_text)) });
     auto code = SourceCode::create("BuiltinFile"_string, move(script_text_as_utf16));
 
@@ -764,32 +571,12 @@ Optional<Vector<GC::Root<SharedFunctionInstanceData>>> compile_builtin_file(
 
     GC::DeferGC defer_gc(vm.heap());
 
-    u8* rust_ast_data = nullptr;
-    size_t rust_ast_len = 0;
-    u8** rust_ast_data_ptr = compare_pipelines ? &rust_ast_data : nullptr;
-    size_t* rust_ast_len_ptr = compare_pipelines ? &rust_ast_len : nullptr;
-
     Vector<GC::Root<SharedFunctionInstanceData>> shared_data_list;
 
     auto const* source_ptr = code->utf16_data();
 
     rust_compile_builtin_file(source_ptr, length, &vm, code.ptr(), &shared_data_list, collect_builtin_function,
-        rust_ast_data_ptr, rust_ast_len_ptr);
-
-    if (compare_pipelines) {
-        auto rust_ast_dump = StringView { rust_ast_data, rust_ast_len };
-
-        auto lexer = Lexer { code };
-        auto parser = Parser { move(lexer) };
-        auto cpp_program = parser.parse_program(true);
-
-        if (!parser.has_errors()) {
-            auto cpp_ast_dump = cpp_program->dump_to_string();
-            compare_pipeline_asts(rust_ast_dump, cpp_ast_dump, "BuiltinFile"sv);
-        }
-
-        rust_free_string(rust_ast_data, rust_ast_len);
-    }
+        nullptr, nullptr);
 
     return shared_data_list;
 }
@@ -812,24 +599,6 @@ GC::Ptr<Bytecode::Executable> compile_function(VM& vm, SharedFunctionInstanceDat
         builtin_abstract_operations_enabled));
     shared_data.m_rust_function_ast = nullptr;
 
-    if (exec && shared_data.m_cpp_comparison_sfd) {
-        auto cpp_executable = Bytecode::Generator::generate_from_function(vm, *shared_data.m_cpp_comparison_sfd,
-            builtin_abstract_operations_enabled
-                ? Bytecode::BuiltinAbstractOperationsEnabled::Yes
-                : Bytecode::BuiltinAbstractOperationsEnabled::No);
-
-        auto rust_dump = exec->dump_to_string();
-        auto cpp_dump = cpp_executable->dump_to_string();
-        auto context = MUST(String::formatted("function {}", shared_data.m_name));
-        String ast_dump;
-        if (shared_data.m_cpp_comparison_sfd->m_ecmascript_code
-            && !is<ClassFieldInitializerStatement>(*shared_data.m_cpp_comparison_sfd->m_ecmascript_code))
-            ast_dump = shared_data.m_cpp_comparison_sfd->m_ecmascript_code->dump_to_string();
-        compare_pipeline_bytecode(rust_dump, cpp_dump, context, ast_dump);
-
-        pair_shared_function_data(*exec, *cpp_executable);
-    }
-
     return exec;
 }
 
@@ -843,15 +612,15 @@ void free_function_ast(void* ast)
 
 // --- FFI factory functions (called by Rust to create C++ objects) ---
 
+namespace JS::FFI {
+
 struct RustCompiledRegex {
-    regex::Parser::Result parsed_regex;
     String parsed_pattern;
-    regex::RegexOptions<ECMAScriptFlags> flags;
 };
 
 static Utf16View view_from_ffi(FFIUtf16Slice slice)
 {
-    return Utf16View { reinterpret_cast<char16_t const*>(slice.data), slice.length };
+    return JS::RustIntegration::utf16_view_from_bytes(slice.data, slice.length);
 }
 
 static Utf16String utf16_from_ffi(FFIUtf16Slice slice)
@@ -867,42 +636,43 @@ static Utf16FlyString utf16_fly_from_ffi(FFIUtf16Slice slice)
 static JS::Value decode_constant(JS::VM& vm, uint8_t const*& cursor, uint8_t const* end)
 {
     VERIFY(cursor < end);
-    auto tag = *cursor++;
+    auto const tag = *cursor++;
 
-    switch (tag) {
-    case CONSTANT_TAG_NUMBER: {
+    switch (static_cast<ConstantTag>(tag)) {
+    case ConstantTag::Number: {
         VERIFY(cursor + 8 <= end);
         double value;
         memcpy(&value, cursor, 8);
         cursor += 8;
         return JS::Value(value);
     }
-    case CONSTANT_TAG_BOOLEAN_TRUE:
+    case ConstantTag::BooleanTrue:
         return JS::Value(true);
-    case CONSTANT_TAG_BOOLEAN_FALSE:
+    case ConstantTag::BooleanFalse:
         return JS::Value(false);
-    case CONSTANT_TAG_NULL:
+    case ConstantTag::Null:
         return JS::js_null();
-    case CONSTANT_TAG_UNDEFINED:
+    case ConstantTag::Undefined:
         return JS::js_undefined();
-    case CONSTANT_TAG_EMPTY:
+    case ConstantTag::Empty:
         return JS::js_special_empty_value();
-    case CONSTANT_TAG_STRING: {
+    case ConstantTag::String: {
         VERIFY(cursor + 4 <= end);
         uint32_t len;
         memcpy(&len, cursor, 4);
         cursor += 4;
         VERIFY(cursor + len * 2 <= end);
+        if (len == 0)
+            return JS::PrimitiveString::create(vm, Utf16String {});
         // NB: cursor may not be 2-byte aligned, so copy to an aligned buffer.
         Vector<char16_t> aligned_buf;
         aligned_buf.resize(len);
-        if (len > 0)
-            memcpy(aligned_buf.data(), cursor, len * 2);
+        memcpy(aligned_buf.data(), cursor, len * 2);
         auto str = Utf16String::from_utf16(Utf16View(aligned_buf.data(), len));
         cursor += len * 2;
         return JS::PrimitiveString::create(vm, move(str));
     }
-    case CONSTANT_TAG_BIGINT: {
+    case ConstantTag::BigInt: {
         VERIFY(cursor + 4 <= end);
         uint32_t len;
         memcpy(&len, cursor, 4);
@@ -923,7 +693,7 @@ static JS::Value decode_constant(JS::VM& vm, uint8_t const*& cursor, uint8_t con
         }();
         return JS::BigInt::create(vm, move(integer));
     }
-    case CONSTANT_TAG_RAW_VALUE: {
+    case ConstantTag::RawValue: {
         VERIFY(cursor + 8 <= end);
         JS::Value value;
         memcpy(&value, cursor, 8);
@@ -937,7 +707,7 @@ static JS::Value decode_constant(JS::VM& vm, uint8_t const*& cursor, uint8_t con
 
 extern "C" void* rust_create_executable(
     void* vm_ptr,
-    void* source_code_ptr,
+    void const* source_code_ptr,
     FFIExecutableData const* data)
 {
     auto& vm = *static_cast<JS::VM*>(vm_ptr);
@@ -965,11 +735,12 @@ extern "C" void* rust_create_executable(
         str_table->insert(utf16_from_ffi(data->string_table[i]));
     }
 
-    // Build regex table from pre-compiled regex objects
+    // Build regex table from pre-compiled regex objects.
+    // NB: The regex table is no longer read at runtime (new_regexp uses pattern+flags directly),
+    // but we still need to iterate and free the RustCompiledRegex objects.
     auto regex_tbl = make<JS::Bytecode::RegexTable>();
     for (size_t i = 0; i < data->regex_count; ++i) {
         auto* cr = static_cast<RustCompiledRegex*>(data->compiled_regexes[i]);
-        regex_tbl->insert(JS::Bytecode::ParsedRegex { move(cr->parsed_regex), move(cr->parsed_pattern), cr->flags });
         delete cr;
     }
 
@@ -1053,6 +824,8 @@ extern "C" void* rust_create_executable(
         delete bp;
     }
 
+    executable->fixup_cache_pointers();
+
     return executable.ptr();
 }
 
@@ -1125,7 +898,7 @@ extern "C" void rust_sfd_set_class_field_initializer_name(
     bool is_private)
 {
     auto& shared = *static_cast<JS::SharedFunctionInstanceData*>(sfd_ptr);
-    auto utf16_name = Utf16FlyString::from_utf16(Utf16View(reinterpret_cast<char16_t const*>(name), name_len));
+    auto utf16_name = Utf16FlyString::from_utf16(JS::RustIntegration::utf16_view_from_bytes(name, name_len));
     if (is_private) {
         shared.m_class_field_initializer_name = JS::PrivateName(0, utf16_name);
     } else {
@@ -1152,7 +925,7 @@ extern "C" void* rust_create_class_blueprint(
     blueprint->has_name = has_name;
 
     if (name_len > 0)
-        blueprint->name = Utf16FlyString::from_utf16(Utf16View(reinterpret_cast<char16_t const*>(name), name_len));
+        blueprint->name = Utf16FlyString::from_utf16(JS::RustIntegration::utf16_view_from_bytes(name, name_len));
 
     // Store source text as a view into the SourceCode buffer.
     if (source_text_len > 0) {
@@ -1168,28 +941,28 @@ extern "C" void* rust_create_class_blueprint(
         desc.is_static = elem.is_static;
         desc.is_private = elem.is_private;
         if (elem.private_identifier_len > 0)
-            desc.private_identifier = Utf16FlyString::from_utf16(Utf16View(reinterpret_cast<char16_t const*>(elem.private_identifier), elem.private_identifier_len));
+            desc.private_identifier = Utf16FlyString::from_utf16(JS::RustIntegration::utf16_view_from_bytes(elem.private_identifier, elem.private_identifier_len));
         if (elem.shared_function_data_index.has_value)
             desc.shared_function_data_index = elem.shared_function_data_index.value;
         desc.has_initializer = elem.has_initializer;
         switch (elem.literal_value_kind) {
-        case 0: // none
+        case LiteralValueKind::None:
             break;
-        case 1: // number
+        case LiteralValueKind::Number:
             desc.literal_value = JS::Value(elem.literal_value_number);
             break;
-        case 2: // boolean true
+        case LiteralValueKind::BooleanTrue:
             desc.literal_value = JS::Value(true);
             break;
-        case 3: // boolean false
+        case LiteralValueKind::BooleanFalse:
             desc.literal_value = JS::Value(false);
             break;
-        case 4: // null
+        case LiteralValueKind::Null:
             desc.literal_value = JS::js_null();
             break;
-        case 5: { // string
+        case LiteralValueKind::String: {
             auto& vm = *static_cast<JS::VM*>(vm_ptr);
-            auto str_view = Utf16View(reinterpret_cast<char16_t const*>(elem.literal_value_string), elem.literal_value_string_len);
+            auto str_view = JS::RustIntegration::utf16_view_from_bytes(elem.literal_value_string, elem.literal_value_string_len);
             desc.literal_value = JS::Value(JS::PrimitiveString::create(vm, str_view));
             break;
         }
@@ -1206,7 +979,7 @@ extern "C" void module_sfd_set_name(
     size_t name_len)
 {
     auto& shared = *static_cast<JS::SharedFunctionInstanceData*>(sfd_ptr);
-    shared.m_name = Utf16FlyString::from_utf16(Utf16View(reinterpret_cast<char16_t const*>(name), name_len));
+    shared.m_name = Utf16FlyString::from_utf16(JS::RustIntegration::utf16_view_from_bytes(name, name_len));
 }
 
 extern "C" void* rust_compile_regex(
@@ -1215,11 +988,21 @@ extern "C" void* rust_compile_regex(
     char const** error_out)
 {
     *error_out = nullptr;
-    auto pattern = Utf16View { reinterpret_cast<char16_t const*>(pattern_data), pattern_len };
-    auto flags_view = Utf16View { reinterpret_cast<char16_t const*>(flags_data), flags_len };
-    auto parsed_flags = JS::regex_flags_from_string(flags_view);
-    auto ecma_flags = parsed_flags.is_error() ? regex::RegexOptions<ECMAScriptFlags> {} : parsed_flags.release_value();
-    auto parsed_pattern = JS::parse_regex_pattern(pattern, ecma_flags.has_flag_set(ECMAScriptFlags::Unicode), ecma_flags.has_flag_set(ECMAScriptFlags::UnicodeSets));
+    auto pattern = JS::RustIntegration::utf16_view_from_bytes(pattern_data, pattern_len);
+    auto flags_view = JS::RustIntegration::utf16_view_from_bytes(flags_data, flags_len);
+
+    // Extract unicode/unicode_sets from flags for parse_regex_pattern.
+    bool is_unicode = false;
+    bool is_unicode_sets = false;
+    for (size_t i = 0; i < flags_view.length_in_code_units(); ++i) {
+        auto ch = flags_view.code_unit_at(i);
+        if (ch == 'u')
+            is_unicode = true;
+        else if (ch == 'v')
+            is_unicode_sets = true;
+    }
+
+    auto parsed_pattern = JS::parse_regex_pattern(pattern, is_unicode, is_unicode_sets);
     if (parsed_pattern.is_error()) {
         auto msg = MUST(String::formatted("RegExp compile error: {}", parsed_pattern.release_error().error));
         auto* buf = static_cast<char*>(malloc(msg.byte_count() + 1));
@@ -1229,17 +1012,52 @@ extern "C" void* rust_compile_regex(
         return nullptr;
     }
     auto pattern_str = parsed_pattern.release_value();
-    auto parsed_regex = Regex<ECMA262>::parse_pattern(pattern_str, ecma_flags);
-    if (parsed_regex.error != regex::Error::NoError) {
-        auto error_string = Regex<ECMA262>(parsed_regex, ""sv, ecma_flags).error_string();
-        auto msg = MUST(String::formatted("RegExp compile error: {}", error_string));
+
+    // Build compile flags from the flag characters.
+    regex::ECMAScriptCompileFlags compile_flags {};
+    for (size_t i = 0; i < flags_view.length_in_code_units(); ++i) {
+        auto ch = flags_view.code_unit_at(i);
+        switch (ch) {
+        case 'g':
+            compile_flags.global = true;
+            break;
+        case 'i':
+            compile_flags.ignore_case = true;
+            break;
+        case 'm':
+            compile_flags.multiline = true;
+            break;
+        case 's':
+            compile_flags.dot_all = true;
+            break;
+        case 'u':
+            compile_flags.unicode = true;
+            break;
+        case 'v':
+            compile_flags.unicode_sets = true;
+            break;
+        case 'y':
+            compile_flags.sticky = true;
+            break;
+        case 'd':
+            compile_flags.has_indices = true;
+            break;
+        default:
+            break;
+        }
+    }
+
+    auto compiled = regex::ECMAScriptRegex::compile(pattern_str.bytes_as_string_view(), compile_flags);
+    if (compiled.is_error()) {
+        auto msg = MUST(String::formatted("RegExp compile error: {}", compiled.release_error()));
         auto* buf = static_cast<char*>(malloc(msg.byte_count() + 1));
         memcpy(buf, msg.bytes().data(), msg.byte_count());
         buf[msg.byte_count()] = '\0';
         *error_out = buf;
         return nullptr;
     }
-    return new RustCompiledRegex { move(parsed_regex), move(pattern_str), ecma_flags };
+
+    return new RustCompiledRegex { move(pattern_str) };
 }
 
 extern "C" void rust_free_compiled_regex(void* ptr)
@@ -1275,15 +1093,15 @@ extern "C" size_t rust_format_double(double value, uint8_t* buffer, size_t buffe
     return len;
 }
 
-extern "C" uint64_t get_well_known_symbol(void* vm_ptr, uint32_t symbol_id)
+extern "C" uint64_t get_well_known_symbol(void* vm_ptr, WellKnownSymbolKind symbol_id)
 {
     auto& vm = *static_cast<JS::VM*>(vm_ptr);
     JS::Value value;
     switch (symbol_id) {
-    case 0:
+    case WellKnownSymbolKind::SymbolIterator:
         value = vm.well_known_symbol_iterator();
         break;
-    case 1:
+    case WellKnownSymbolKind::SymbolAsyncIterator:
         value = vm.well_known_symbol_async_iterator();
         break;
     default:
@@ -1296,59 +1114,16 @@ extern "C" uint64_t get_abstract_operation_function(void* vm_ptr, uint16_t const
 {
     auto& vm = *static_cast<JS::VM*>(vm_ptr);
     auto& intrinsics = vm.current_realm()->intrinsics();
-    auto name_view = Utf16View(reinterpret_cast<char16_t const*>(name), name_len);
+    auto name_view = JS::RustIntegration::utf16_view_from_bytes(name, name_len);
     auto name_str = MUST(name_view.to_utf8());
 
-#    define __JS_ENUMERATE(snake_name, functionName, length) \
-        if (name_str == #functionName##sv)                   \
-            return JS::Value(intrinsics.snake_name##_abstract_operation_function().ptr()).encoded();
+#define __JS_ENUMERATE(snake_name, functionName, length) \
+    if (name_str == #functionName##sv)                   \
+        return JS::Value(intrinsics.snake_name##_abstract_operation_function().ptr()).encoded();
     JS_ENUMERATE_NATIVE_JAVASCRIPT_BACKED_ABSTRACT_OPERATIONS
-#    undef __JS_ENUMERATE
+#undef __JS_ENUMERATE
 
     VERIFY_NOT_REACHED();
 }
 
-#else // !ENABLE_RUST
-
-namespace JS::RustIntegration {
-
-Optional<Result<ScriptResult, Vector<ParserError>>> compile_script(StringView, Realm&, StringView, size_t)
-{
-    return {};
 }
-
-Optional<Result<EvalResult, String>> compile_eval(PrimitiveString&, VM&, CallerMode, bool, bool, bool, bool)
-{
-    return {};
-}
-
-Optional<Result<EvalResult, String>> compile_shadow_realm_eval(PrimitiveString&, VM&)
-{
-    return {};
-}
-
-Optional<Result<ModuleResult, Vector<ParserError>>> compile_module(StringView, Realm&, StringView)
-{
-    return {};
-}
-
-Optional<Result<GC::Ref<SharedFunctionInstanceData>, String>> compile_dynamic_function(VM&, StringView, StringView, StringView, FunctionKind)
-{
-    return {};
-}
-
-Optional<Vector<GC::Root<SharedFunctionInstanceData>>> compile_builtin_file(unsigned char const*, VM&)
-{
-    return {};
-}
-
-GC::Ptr<Bytecode::Executable> compile_function(VM&, SharedFunctionInstanceData&, bool)
-{
-    return nullptr;
-}
-
-void free_function_ast(void*) { }
-
-}
-
-#endif // ENABLE_RUST

@@ -8,12 +8,12 @@
 
 #include <AK/ByteReader.h>
 #include <AK/MemoryStream.h>
-#include <LibCore/Socket.h>
 #include <LibCore/System.h>
+#include <LibGC/WeakHashSet.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
-#include <LibIPC/File.h>
 #include <LibIPC/Transport.h>
+#include <LibIPC/TransportHandle.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/MessagePortPrototype.h>
@@ -32,9 +32,9 @@ constexpr u8 IPC_FILE_TAG = 0xA5;
 
 GC_DEFINE_ALLOCATOR(MessagePort);
 
-static HashTable<GC::RawPtr<MessagePort>>& all_message_ports()
+static GC::WeakHashSet<MessagePort>& all_message_ports()
 {
-    static HashTable<GC::RawPtr<MessagePort>> ports;
+    static GC::WeakHashSet<MessagePort> ports;
     return ports;
 }
 
@@ -46,15 +46,16 @@ GC::Ref<MessagePort> MessagePort::create(JS::Realm& realm)
 MessagePort::MessagePort(JS::Realm& realm)
     : DOM::EventTarget(realm)
 {
-    all_message_ports().set(this);
+    all_message_ports().set(*this);
 }
 
 MessagePort::~MessagePort() = default;
 
 void MessagePort::for_each_message_port(Function<void(MessagePort&)> callback)
 {
-    for (auto port : all_message_ports())
-        callback(*port);
+    auto ports = all_message_ports();
+    for (auto& port : ports)
+        callback(port);
 }
 
 void MessagePort::initialize(JS::Realm& realm)
@@ -66,7 +67,7 @@ void MessagePort::initialize(JS::Realm& realm)
 void MessagePort::finalize()
 {
     Base::finalize();
-    all_message_ports().remove(this);
+    all_message_ports().remove(*this);
     disentangle();
 }
 
@@ -105,13 +106,12 @@ WebIDL::ExceptionOr<void> MessagePort::transfer_steps(HTML::TransferDataEncoder&
         if (m_remote_port)
             m_remote_port->m_has_been_shipped = true;
 
-        auto fd = MUST(m_transport->release_underlying_transport_for_transfer());
+        auto handle = MUST(m_transport->release_for_transfer());
         m_transport.clear();
 
         // 2. Set dataHolder.[[RemotePort]] to remotePort.
-        // TODO: Mach IPC
         data_holder.encode(IPC_FILE_TAG);
-        data_holder.encode(IPC::File::adopt_fd(fd));
+        data_holder.encode(handle);
     }
     // 4. Otherwise, set dataHolder.[[RemotePort]] to null.
     else {
@@ -133,9 +133,8 @@ WebIDL::ExceptionOr<void> MessagePort::transfer_receiving_steps(HTML::TransferDa
     // 3. If dataHolder.[[RemotePort]] is not null, then entangle dataHolder.[[RemotePort]] and value.
     //     (This will disentangle dataHolder.[[RemotePort]] from the original port that was transferred.)
     if (auto fd_tag = data_holder.decode<u8>(); fd_tag == IPC_FILE_TAG) {
-        // TODO: Mach IPC
-        auto fd = data_holder.decode<IPC::File>();
-        m_transport = make<IPC::Transport>(MUST(Core::LocalSocket::adopt_fd(fd.take_fd())));
+        auto handle = data_holder.decode<IPC::TransportHandle>();
+        m_transport = MUST(handle.create_transport());
 
         m_transport->set_up_read_hook([strong_this = GC::make_root(this)]() {
             if (strong_this->m_enabled)
@@ -181,23 +180,9 @@ void MessagePort::entangle_with(MessagePort& remote_port)
     remote_port.m_remote_port = this;
     m_remote_port = &remote_port;
 
-    // FIXME: Abstract such that we can entangle different transport types
-    auto create_paired_sockets = []() -> Array<NonnullOwnPtr<Core::LocalSocket>, 2> {
-        int fds[2] = {};
-        MUST(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, fds));
-        auto socket0 = MUST(Core::LocalSocket::adopt_fd(fds[0]));
-        MUST(socket0->set_blocking(false));
-        MUST(socket0->set_close_on_exec(true));
-        auto socket1 = MUST(Core::LocalSocket::adopt_fd(fds[1]));
-        MUST(socket1->set_blocking(false));
-        MUST(socket1->set_close_on_exec(true));
-
-        return Array { move(socket0), move(socket1) };
-    };
-
-    auto sockets = create_paired_sockets();
-    m_transport = make<IPC::Transport>(move(sockets[0]));
-    m_remote_port->m_transport = make<IPC::Transport>(move(sockets[1]));
+    auto paired = MUST(IPC::Transport::create_paired());
+    m_transport = move(paired.local);
+    m_remote_port->m_transport = MUST(paired.remote_handle.create_transport());
 
     m_transport->set_up_read_hook([strong_this = GC::make_root(this)]() {
         if (strong_this->m_enabled)
@@ -306,7 +291,7 @@ void MessagePort::read_from_transport()
 
     auto schedule_shutdown = m_transport->read_as_many_messages_as_possible_without_blocking([this](auto&& raw_message) {
         FixedMemoryStream stream { raw_message.bytes.span(), FixedMemoryStream::Mode::ReadOnly };
-        IPC::Decoder decoder { stream, raw_message.fds };
+        IPC::Decoder decoder { stream, raw_message.attachments };
 
         auto serialized_transfer_record = MUST(decoder.decode<SerializedTransferRecord>());
 

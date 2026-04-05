@@ -13,6 +13,7 @@
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ShareableBitmap.h>
 #include <LibHTTP/Cookie/ParsedCookie.h>
+#include <LibIPC/TransportHandle.h>
 #include <LibJS/Console.h>
 #include <LibJS/Runtime/ConsoleObject.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
@@ -1021,12 +1022,12 @@ void PageClient::page_did_change_audio_play_state(Web::HTML::AudioPlayState play
     client().async_did_change_audio_play_state(m_id, play_state);
 }
 
-void PageClient::page_did_allocate_backing_stores(i32 front_bitmap_id, Gfx::ShareableBitmap front_bitmap, i32 back_bitmap_id, Gfx::ShareableBitmap back_bitmap)
+void PageClient::page_did_allocate_backing_stores(i32 front_bitmap_id, Web::SharedBackingStore front_backing_store, i32 back_bitmap_id, Web::SharedBackingStore back_backing_store)
 {
-    client().async_did_allocate_backing_stores(m_id, front_bitmap_id, front_bitmap, back_bitmap_id, back_bitmap);
+    client().async_did_allocate_backing_stores(m_id, front_bitmap_id, move(front_backing_store), back_bitmap_id, move(back_backing_store));
 }
 
-IPC::File PageClient::request_worker_agent(Web::Bindings::AgentType type)
+Web::PageClient::WorkerAgentResponse PageClient::request_worker_agent(Web::Bindings::AgentType type)
 {
     auto response = client().send_sync_but_allow_failure<Messages::WebContentClient::RequestWorkerAgent>(m_id, type);
     if (!response) {
@@ -1034,7 +1035,7 @@ IPC::File PageClient::request_worker_agent(Web::Bindings::AgentType type)
         exit(0);
     }
 
-    return response->take_socket();
+    return { response->take_handle(), response->take_request_server_handle(), response->take_image_decoder_handle() };
 }
 
 void PageClient::page_did_mutate_dom(FlyString const& type, Web::DOM::Node const& target, Web::DOM::NodeList& added_nodes, Web::DOM::NodeList& removed_nodes, GC::Ptr<Web::DOM::Node>, GC::Ptr<Web::DOM::Node>, Optional<String> const& attribute_name)
@@ -1085,22 +1086,22 @@ void PageClient::page_did_take_screenshot(Gfx::ShareableBitmap const& screenshot
     client().async_did_take_screenshot(m_id, screenshot);
 }
 
-ErrorOr<void> PageClient::connect_to_webdriver(ByteString const& webdriver_ipc_path)
+ErrorOr<void> PageClient::connect_to_webdriver(ByteString const& webdriver_endpoint)
 {
     VERIFY(!m_webdriver);
-    m_webdriver = TRY(WebDriverConnection::connect(*this, webdriver_ipc_path));
+    m_webdriver = TRY(WebDriverConnection::connect(*this, webdriver_endpoint));
 
     return {};
 }
 
-ErrorOr<void> PageClient::connect_to_web_ui(IPC::File web_ui_socket)
+ErrorOr<void> PageClient::connect_to_web_ui(IPC::TransportHandle handle)
 {
     auto* active_document = page().top_level_browsing_context().active_document();
     if (!active_document || !active_document->window())
         return {};
 
     VERIFY(!m_web_ui);
-    m_web_ui = TRY(WebUIConnection::connect(move(web_ui_socket), *active_document));
+    m_web_ui = TRY(WebUIConnection::connect(move(handle), *active_document));
 
     return {};
 }
@@ -1182,10 +1183,10 @@ void PageClient::run_javascript(StringView js_source)
     // Let baseURL be settings's API base URL.
     auto base_url = settings.api_base_url();
 
-    // Let script be the result of creating a classic script given scriptSource, setting's realm, baseURL, and the default classic script fetch options.
+    // Let script be the result of creating a classic script given scriptSource, settings, baseURL, and the default classic script fetch options.
     // FIXME: This doesn't pass in "default classic script fetch options"
     // FIXME: What should the filename be here?
-    auto script = Web::HTML::ClassicScript::create("(client connection run_javascript)", js_source, settings.realm(), move(base_url));
+    auto script = Web::HTML::ClassicScript::create("(client connection run_javascript)", js_source, settings, move(base_url));
 
     // Let evaluationStatus be the result of running the classic script script.
     auto evaluation_status = script->run();

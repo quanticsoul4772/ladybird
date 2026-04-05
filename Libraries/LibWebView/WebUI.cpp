@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibCore/Socket.h>
-#include <LibCore/System.h>
+#include <LibIPC/Transport.h>
+#include <LibIPC/TransportHandle.h>
 #include <LibWebView/WebContentClient.h>
 #include <LibWebView/WebUI.h>
 #include <LibWebView/WebUI/ProcessesUI.h>
@@ -17,19 +17,11 @@ namespace WebView {
 template<typename WebUIType>
 static ErrorOr<NonnullRefPtr<WebUIType>> create_web_ui(WebContentClient& client, String host)
 {
-    Array<int, 2> socket_fds { 0, 0 };
-    TRY(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, socket_fds.data()));
+    auto paired = TRY(IPC::Transport::create_paired());
+    auto handle = move(paired.remote_handle);
 
-    auto client_socket = Core::LocalSocket::adopt_fd(socket_fds[0]);
-    if (client_socket.is_error()) {
-        close(socket_fds[0]);
-        close(socket_fds[1]);
-
-        return client_socket.release_error();
-    }
-
-    auto web_ui = WebUIType::create(client, make<IPC::Transport>(client_socket.release_value()), move(host));
-    client.async_connect_to_web_ui(0, IPC::File::adopt_fd(socket_fds[1]));
+    auto web_ui = WebUIType::create(client, move(paired.local), move(host));
+    client.async_connect_to_web_ui(0, move(handle));
 
     return web_ui;
 }

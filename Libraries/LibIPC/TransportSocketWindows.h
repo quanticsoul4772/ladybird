@@ -9,7 +9,8 @@
 
 #include <AK/Queue.h>
 #include <LibCore/Socket.h>
-#include <LibIPC/File.h>
+#include <LibIPC/Attachment.h>
+#include <LibIPC/TransportHandle.h>
 
 namespace IPC {
 
@@ -18,7 +19,14 @@ class TransportSocketWindows {
     AK_MAKE_DEFAULT_MOVABLE(TransportSocketWindows);
 
 public:
-    explicit TransportSocketWindows(NonnullOwnPtr<Core::Socket> socket);
+    struct Paired {
+        NonnullOwnPtr<TransportSocketWindows> local;
+        TransportHandle remote_handle;
+    };
+    static ErrorOr<Paired> create_paired();
+    static ErrorOr<NonnullOwnPtr<TransportSocketWindows>> from_socket(NonnullOwnPtr<Core::LocalSocket> socket);
+
+    explicit TransportSocketWindows(NonnullOwnPtr<Core::LocalSocket> socket);
 
     void set_peer_pid(int pid);
     void set_up_read_hook(Function<void()>);
@@ -36,21 +44,18 @@ public:
     };
     struct Message {
         Vector<u8> bytes;
-        Queue<File> fds; // always empty, present to avoid OS #ifdefs in Connection.cpp
+        Queue<Attachment> attachments; // always empty, present to avoid OS #ifdefs in Connection.cpp
     };
     ShouldShutdown read_as_many_messages_as_possible_without_blocking(Function<void(Message&&)>&&);
 
-    // Obnoxious name to make it clear that this is a dangerous operation.
-    ErrorOr<int> release_underlying_transport_for_transfer();
-
-    ErrorOr<IPC::File> clone_for_transfer();
+    ErrorOr<TransportHandle> release_for_transfer();
 
 private:
     ErrorOr<void> duplicate_handles(Bytes, Vector<size_t> const& handle_offsets);
     ErrorOr<void> transfer(ReadonlyBytes);
 
 private:
-    NonnullOwnPtr<Core::Socket> m_socket;
+    NonnullOwnPtr<Core::LocalSocket> m_socket;
     ByteBuffer m_unprocessed_bytes;
     int m_peer_pid = -1;
 };

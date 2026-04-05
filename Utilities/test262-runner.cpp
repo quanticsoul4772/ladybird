@@ -12,13 +12,14 @@
 #include <AK/ScopeGuard.h>
 #include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/ElapsedTimer.h>
 #include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Contrib/Test262/GlobalObject.h>
-#include <LibJS/Parser.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibJS/Runtime/ValueInlines.h>
+#include <LibJS/RustIntegration.h>
 #include <LibJS/Script.h>
 #include <LibJS/SourceTextModule.h>
 #include <fcntl.h>
@@ -61,11 +62,31 @@ static ErrorOr<ScriptOrModuleProgram, TestError> parse_program(JS::Realm& realm,
     return ScriptOrModuleProgram { script_or_error.release_value() };
 }
 
-static ErrorOr<ScriptOrModuleProgram, TestError> parse_program(JS::Realm& realm, StringView source, StringView filepath, JS::Program::Type program_type)
+static ErrorOr<ScriptOrModuleProgram, TestError> parse_program(JS::Realm& realm, StringView source, StringView filepath, JS::RustIntegration::ProgramType program_type)
 {
-    if (program_type == JS::Program::Type::Script)
+    if (program_type == JS::RustIntegration::ProgramType::Script)
         return parse_program<JS::Script>(realm, source, filepath);
     return parse_program<JS::SourceTextModule>(realm, source, filepath);
+}
+
+static ErrorOr<void, TestError> parse_only_check(StringView source, JS::RustIntegration::ProgramType program_type)
+{
+    auto source_utf16 = Utf16String::from_utf8(source);
+    auto source_code = JS::SourceCode::create({}, move(source_utf16));
+    auto const* data = source_code->utf16_data();
+    auto* parsed = JS::RustIntegration::parse_program(data, source_code->length_in_code_units(), program_type);
+    if (!parsed || JS::RustIntegration::parsed_program_has_errors(parsed)) {
+        if (parsed)
+            JS::RustIntegration::free_parsed_program(parsed);
+        return TestError {
+            NegativePhase::ParseOrEarly,
+            "SyntaxError"_string,
+            "Parse error"_string,
+            ""
+        };
+    }
+    JS::RustIntegration::free_parsed_program(parsed);
+    return {};
 }
 
 template<typename InterpreterT>
@@ -173,7 +194,7 @@ struct TestMetadata {
     SkipTest skip_test { SkipTest::No };
 
     StrictMode strict_mode { StrictMode::Both };
-    JS::Program::Type program_type { JS::Program::Type::Script };
+    JS::RustIntegration::ProgramType program_type { JS::RustIntegration::ProgramType::Script };
     bool is_async { false };
 
     bool is_negative { false };
@@ -183,22 +204,8 @@ struct TestMetadata {
 
 static ErrorOr<void, TestError> run_test(StringView source, StringView filepath, TestMetadata const& metadata)
 {
-    if (s_parse_only || (metadata.is_negative && metadata.phase == NegativePhase::ParseOrEarly && metadata.program_type != JS::Program::Type::Module)) {
-        // Creating the vm and interpreter is heavy so we just parse directly here.
-        // We can also skip if we know the test is supposed to fail during parse
-        // time. Unfortunately the phases of modules are not as clear and thus we
-        // only do this for scripts. See also the comment at the end of verify_test.
-        auto parser = JS::Parser(JS::Lexer(JS::SourceCode::create(String::from_utf8(filepath).release_value_but_fixme_should_propagate_errors(), Utf16String::from_utf8(source))), metadata.program_type);
-        auto program_or_error = parser.parse_program();
-        if (parser.has_errors()) {
-            return TestError {
-                NegativePhase::ParseOrEarly,
-                "SyntaxError"_string,
-                parser.errors()[0].to_string(),
-                ""
-            };
-        }
-        return {};
+    if (s_parse_only) {
+        return parse_only_check(source, metadata.program_type);
     }
 
     auto vm = JS::VM::create();
@@ -280,7 +287,31 @@ static ErrorOr<TestMetadata, String> extract_metadata(StringView source)
 
     Vector<StringView> include_list;
     bool parsing_includes_list = false;
+    bool parsing_flags_block = false;
     bool has_phase = false;
+
+    auto apply_flag = [&](StringView flag) {
+        if (flag == "raw"sv) {
+            metadata.strict_mode = StrictMode::NoStrict;
+            metadata.harness_files.clear();
+        } else if (flag == "noStrict"sv) {
+            metadata.strict_mode = StrictMode::NoStrict;
+        } else if (flag == "onlyStrict"sv) {
+            metadata.strict_mode = StrictMode::OnlyStrict;
+        } else if (flag == "module"sv) {
+            VERIFY(metadata.strict_mode == StrictMode::Both);
+            metadata.program_type = JS::RustIntegration::ProgramType::Module;
+            metadata.strict_mode = StrictMode::NoStrict;
+        } else if (flag == "async"sv) {
+            metadata.harness_files.append(async_include);
+            metadata.is_async = true;
+        } else if (flag == "CanBlockIsFalse"sv) {
+            // NOTE: This should only be skipped if AgentCanSuspend is set to true. This is currently always the case.
+            //       Ideally we would check that, but we don't have the VM by this stage. So for now, we rely on that
+            //       assumption.
+            metadata.skip_test = SkipTest::Yes;
+        }
+    };
 
     for (auto raw_line : lines) {
         if (!failed_message.is_empty())
@@ -345,30 +376,22 @@ static ErrorOr<TestMetadata, String> extract_metadata(StringView source)
             }
         }
 
+        if (parsing_flags_block) {
+            if (line.starts_with('-')) {
+                apply_flag(second_word(line));
+                continue;
+            } else {
+                parsing_flags_block = false;
+            }
+        }
+
         if (line.starts_with("flags:"sv)) {
             auto flags = parse_list(line);
-
-            for (auto flag : flags) {
-                if (flag == "raw"sv) {
-                    metadata.strict_mode = StrictMode::NoStrict;
-                    metadata.harness_files.clear();
-                } else if (flag == "noStrict"sv) {
-                    metadata.strict_mode = StrictMode::NoStrict;
-                } else if (flag == "onlyStrict"sv) {
-                    metadata.strict_mode = StrictMode::OnlyStrict;
-                } else if (flag == "module"sv) {
-                    VERIFY(metadata.strict_mode == StrictMode::Both);
-                    metadata.program_type = JS::Program::Type::Module;
-                    metadata.strict_mode = StrictMode::NoStrict;
-                } else if (flag == "async"sv) {
-                    metadata.harness_files.append(async_include);
-                    metadata.is_async = true;
-                } else if (flag == "CanBlockIsFalse"sv) {
-                    // NOTE: This should only be skipped if AgentCanSuspend is set to true. This is currently always the case.
-                    //       Ideally we would check that, but we don't have the VM by this stage. So for now, we rely on that
-                    //       assumption.
-                    metadata.skip_test = SkipTest::Yes;
-                }
+            if (!flags.is_empty()) {
+                for (auto flag : flags)
+                    apply_flag(flag);
+            } else if (!line.contains('[')) {
+                parsing_flags_block = true;
             }
         } else if (line.starts_with("includes:"sv)) {
             auto files = parse_list(line);
@@ -477,7 +500,7 @@ static bool verify_test(ErrorOr<void, TestError>& result, TestMetadata const& me
 
     got_error = JsonValue { error_to_json(error) };
 
-    if (metadata.program_type == JS::Program::Type::Module && metadata.type == "SyntaxError"sv) {
+    if (metadata.program_type == JS::RustIntegration::ProgramType::Module && metadata.type == "SyntaxError"sv) {
         // NOTE: Since the "phase" of negative results is both not defined and hard to
         //       track throughout the entire Module life span we will just accept any
         //       SyntaxError as the correct one.
@@ -751,16 +774,25 @@ int main(int argc, char** argv)
 
         bool passed = true;
 
-        if (metadata.strict_mode != StrictMode::OnlyStrict) {
-            result_object.set("strict_mode"sv, false);
+        auto run_test_with_strict_mode = [&](bool strict_mode) {
+            result_object.set("strict_mode"sv, strict_mode);
+
+            auto timer = Core::ElapsedTimer::start_new(Core::TimerType::Precise);
 
             ARM_TIMER();
-            auto result = run_test(original_contents, path, metadata);
+            auto result = run_test(strict_mode ? with_strict : original_contents, path, metadata);
             DISARM_TIMER();
+
+            auto elapsed = timer.elapsed_milliseconds();
+
+            auto output_key = strict_mode ? "strict_output"sv : "output"sv;
+            auto elapsed_key = strict_mode ? "strict_duration_ms"sv : "duration_ms"sv;
+
+            result_object.set(elapsed_key, elapsed);
 
             auto first_output = collect_output();
             if (first_output.has_value())
-                result_object.set("output"sv, String::from_utf8_with_replacement_character(*first_output));
+                result_object.set(output_key, String::from_utf8_with_replacement_character(*first_output));
 
             passed = verify_test(result, metadata, result_object);
             auto output = first_output.value_or("");
@@ -768,37 +800,17 @@ int main(int argc, char** argv)
                 if (!output.contains("Test262:AsyncTestComplete"sv) || output.contains("Test262:AsyncTestFailure"sv)) {
                     result_object.set("async_fail"sv, true);
                     if (!first_output.has_value())
-                        result_object.set("output"sv, JsonValue {});
+                        result_object.set(output_key, JsonValue {});
 
                     passed = false;
                 }
             }
-        }
+        };
 
-        if (passed && metadata.strict_mode != StrictMode::NoStrict) {
-            result_object.set("strict_mode"sv, true);
-
-            ARM_TIMER();
-            auto result = run_test(with_strict, path, metadata);
-            DISARM_TIMER();
-
-            auto first_output = collect_output();
-            if (first_output.has_value())
-                result_object.set("strict_output"sv, String::from_utf8_with_replacement_character(*first_output));
-
-            passed = verify_test(result, metadata, result_object);
-            auto output = first_output.value_or("");
-
-            if (metadata.is_async && !s_parse_only) {
-                if (!output.contains("Test262:AsyncTestComplete"sv) || output.contains("Test262:AsyncTestFailure"sv)) {
-                    result_object.set("async_fail"sv, true);
-                    if (!first_output.has_value())
-                        result_object.set("output"sv, JsonValue {});
-
-                    passed = false;
-                }
-            }
-        }
+        if (metadata.strict_mode != StrictMode::OnlyStrict)
+            run_test_with_strict_mode(false);
+        if (passed && metadata.strict_mode != StrictMode::NoStrict)
+            run_test_with_strict_mode(true);
 
         if (passed)
             result_object.remove("strict_mode"sv);

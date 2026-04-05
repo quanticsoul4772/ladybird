@@ -14,8 +14,10 @@
 
 namespace Web::IntersectionObserver {
 
+using NullableIntersectionObserverRoot = Variant<GC::Root<DOM::Element>, GC::Root<DOM::Document>, Empty>;
+
 struct IntersectionObserverInit {
-    Optional<Variant<GC::Root<DOM::Element>, GC::Root<DOM::Document>>> root;
+    NullableIntersectionObserverRoot root { Empty {} };
     String root_margin { "0px"_string };
     String scroll_margin { "0px"_string };
     Variant<double, Vector<double>> threshold { 0 };
@@ -42,14 +44,17 @@ public:
 
     Vector<GC::Ref<DOM::Element>> const& observation_targets() const { return m_observation_targets; }
 
-    Variant<GC::Root<DOM::Element>, GC::Root<DOM::Document>, Empty> root() const;
+    NullableIntersectionObserverRoot root() const;
     String root_margin() const;
     String scroll_margin() const;
+    Vector<CSS::LengthPercentage> const& scroll_margin_values() const { return m_scroll_margin; }
     Vector<double> const& thresholds() const { return m_thresholds; }
     long delay() const { return m_delay; }
     bool track_visibility() const { return m_track_visibility; }
 
     Variant<GC::Root<DOM::Element>, GC::Root<DOM::Document>> intersection_root() const;
+    GC::Ref<DOM::Node> intersection_root_node() const;
+    bool is_implicit_root() const { return !m_root; }
     CSSPixelRect root_intersection_rectangle() const;
 
     void queue_entry(Badge<DOM::Document>, GC::Ref<IntersectionObserverEntry>);
@@ -57,7 +62,7 @@ public:
     WebIDL::CallbackType& callback() { return *m_callback; }
 
 private:
-    explicit IntersectionObserver(JS::Realm&, GC::Ptr<WebIDL::CallbackType> callback, Optional<Variant<GC::Root<DOM::Element>, GC::Root<DOM::Document>>> const& root, Vector<CSS::LengthPercentage> root_margin, Vector<CSS::LengthPercentage> scroll_margin, Vector<double>&& thresholds, double debug, bool track_visibility);
+    explicit IntersectionObserver(JS::Realm&, GC::Ptr<WebIDL::CallbackType> callback, NullableIntersectionObserverRoot const& root, Vector<CSS::LengthPercentage> root_margin, Vector<CSS::LengthPercentage> scroll_margin, Vector<double>&& thresholds, double debug, bool track_visibility);
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(JS::Cell::Visitor&) override;

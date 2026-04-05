@@ -7,16 +7,47 @@
 
 #include <AK/ByteReader.h>
 #include <AK/Checked.h>
+#include <AK/ScopeGuard.h>
 #include <AK/Types.h>
+#include <LibCore/System.h>
+#include <LibIPC/File.h>
 #include <LibIPC/HandleType.h>
 #include <LibIPC/Limits.h>
+#include <LibIPC/TransportHandle.h>
 #include <LibIPC/TransportSocketWindows.h>
 
 #include <AK/Windows.h>
 
 namespace IPC {
 
-TransportSocketWindows::TransportSocketWindows(NonnullOwnPtr<Core::Socket> socket)
+ErrorOr<NonnullOwnPtr<TransportSocketWindows>> TransportSocketWindows::from_socket(NonnullOwnPtr<Core::LocalSocket> socket)
+{
+    return make<TransportSocketWindows>(move(socket));
+}
+
+ErrorOr<TransportSocketWindows::Paired> TransportSocketWindows::create_paired()
+{
+    int fds[2] {};
+    TRY(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, fds));
+
+    ArmedScopeGuard guard_fd_0 { [&] { MUST(Core::System::close(fds[0])); } };
+    ArmedScopeGuard guard_fd_1 { [&] { MUST(Core::System::close(fds[1])); } };
+
+    auto socket0 = TRY(Core::LocalSocket::adopt_fd(fds[0]));
+    guard_fd_0.disarm();
+    TRY(socket0->set_close_on_exec(true));
+    TRY(socket0->set_blocking(false));
+
+    TRY(Core::System::set_close_on_exec(fds[1], true));
+    guard_fd_1.disarm();
+
+    return Paired {
+        make<TransportSocketWindows>(move(socket0)),
+        TransportHandle { File::adopt_fd(fds[1]) },
+    };
+}
+
+TransportSocketWindows::TransportSocketWindows(NonnullOwnPtr<Core::LocalSocket> socket)
     : m_socket(move(socket))
 {
 }
@@ -246,14 +277,10 @@ TransportSocketWindows::ShouldShutdown TransportSocketWindows::read_as_many_mess
     return should_shutdown;
 }
 
-ErrorOr<int> TransportSocketWindows::release_underlying_transport_for_transfer()
+ErrorOr<TransportHandle> TransportSocketWindows::release_for_transfer()
 {
-    return m_socket->release_fd();
-}
-
-ErrorOr<IPC::File> TransportSocketWindows::clone_for_transfer()
-{
-    return IPC::File::clone_fd(m_socket->fd().value());
+    auto fd = TRY(m_socket->release_fd());
+    return TransportHandle { File::adopt_fd(fd) };
 }
 
 }

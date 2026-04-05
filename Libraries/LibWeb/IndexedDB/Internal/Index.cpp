@@ -6,6 +6,7 @@
 
 #include <AK/QuickSort.h>
 #include <LibWeb/IndexedDB/Internal/Index.h>
+#include <LibWeb/IndexedDB/Internal/MutationLog.h>
 #include <LibWeb/IndexedDB/Internal/ObjectStore.h>
 
 namespace Web::IndexedDB {
@@ -59,22 +60,24 @@ bool Index::has_record_with_key(GC::Ref<Key> key)
 }
 
 // https://w3c.github.io/IndexedDB/#index-referenced-value
-HTML::SerializationRecord Index::referenced_value(IndexRecord const& index_record) const
+HTML::SerializationRecord const& Index::referenced_value(IndexRecord const& index_record) const
 {
     // Records in an index are said to have a referenced value.
     // This is the value of the record in the index’s referenced object store which has a key equal to the index’s record’s value.
-    return m_object_store
-        ->records()
-        .first_matching([&](auto const& store_record) {
-            return Key::equals(store_record.key, index_record.value);
-        })
-        .value()
-        .value;
+    return *m_object_store
+                ->records()
+                .first_matching([&](auto const& store_record) {
+                    return Key::equals(store_record.key, index_record.value);
+                })
+                .value()
+                .value;
 }
 
 void Index::clear_records()
 {
-    m_records.clear();
+    auto deleted = move(m_records);
+    if (auto log = m_object_store->mutation_log(); log && !deleted.is_empty())
+        log->note_index_records_deleted(*this, move(deleted));
 }
 
 Optional<IndexRecord&> Index::first_in_range(GC::Ref<IDBKeyRange> range)
@@ -124,6 +127,9 @@ u64 Index::count_records_in_range(GC::Ref<IDBKeyRange> range)
 
 void Index::store_a_record(IndexRecord const& record)
 {
+    if (auto log = m_object_store->mutation_log())
+        log->note_index_record_stored(*this, record);
+
     m_records.append(record);
 
     // NOTE: The record is stored in index’s list of records such that the list is sorted primarily on the records keys, and secondarily on the records values, in ascending order.
@@ -136,11 +142,29 @@ void Index::store_a_record(IndexRecord const& record)
     });
 }
 
+void Index::remove_record(IndexRecord const& record)
+{
+    m_records.remove_first_matching([&](auto const& existing) {
+        return Key::equals(existing.key, record.key) && Key::equals(existing.value, record.value);
+    });
+}
+
 void Index::remove_records_with_value_in_range(GC::Ref<IDBKeyRange> range)
 {
-    m_records.remove_all_matching([&](auto const& record) {
-        return range->is_in_range(record.value);
-    });
+    auto log = m_object_store->mutation_log();
+    Vector<IndexRecord> removed_records;
+    for (size_t i = 0; i < m_records.size();) {
+        auto const& record = m_records[i];
+        if (range->is_in_range(record.value)) {
+            auto removed_record = m_records.take(i);
+            if (log)
+                removed_records.append(removed_record);
+            continue;
+        }
+        i++;
+    }
+    if (!removed_records.is_empty())
+        log->note_index_records_deleted(*this, move(removed_records));
 }
 
 }

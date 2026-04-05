@@ -34,7 +34,6 @@
 #include <LibWeb/HTML/ImageRequest.h>
 #include <LibWeb/HTML/Path2D.h>
 #include <LibWeb/HTML/TextMetrics.h>
-#include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Infra/CharacterTypes.h>
 #include <LibWeb/Layout/TextNode.h>
 #include <LibWeb/Painting/Paintable.h>
@@ -248,8 +247,7 @@ void CanvasRenderingContext2D::allocate_painting_surface_if_needed()
 
     auto color_type = m_context_attributes.alpha ? Gfx::BitmapFormat::BGRA8888 : Gfx::BitmapFormat::BGRx8888;
 
-    auto skia_backend_context = canvas_element().navigable()->traversable_navigable()->skia_backend_context();
-    m_surface = Gfx::PaintingSurface::create_with_size(skia_backend_context, canvas_element().bitmap_size_for_canvas(), color_type, Gfx::AlphaType::Premultiplied);
+    m_surface = Gfx::PaintingSurface::create_with_size(canvas_element().bitmap_size_for_canvas(), color_type, Gfx::AlphaType::Premultiplied);
     m_painter = nullptr;
 
     // https://html.spec.whatwg.org/multipage/canvas.html#the-canvas-settings:concept-canvas-alpha
@@ -261,6 +259,16 @@ void CanvasRenderingContext2D::allocate_painting_surface_if_needed()
     }
 }
 
+static float resolved_letter_spacing(CanvasState::DrawingState const& drawing_state, HTMLCanvasElement& canvas_element)
+{
+    CSS::Length::ResolutionContext context = [&] {
+        if (canvas_element.computed_properties())
+            return CSS::Length::ResolutionContext::for_element(DOM::AbstractElement { canvas_element });
+        return CSS::Length::ResolutionContext::for_document(canvas_element.document());
+    }();
+    return static_cast<float>(drawing_state.letter_spacing.to_px(context).to_double());
+}
+
 Gfx::Path CanvasRenderingContext2D::text_path(Utf16String const& text, float x, float y, Optional<double> max_width)
 {
     if (max_width.has_value() && max_width.value() <= 0)
@@ -270,7 +278,8 @@ Gfx::Path CanvasRenderingContext2D::text_path(Utf16String const& text, float x, 
 
     auto const& font_cascade_list = this->font_cascade_list();
     auto const& font = font_cascade_list->first();
-    auto glyph_runs = Gfx::shape_text({ x, y }, text.utf16_view(), *font_cascade_list);
+    auto glyph_runs = Gfx::shape_text({ x, y }, text.utf16_view(), *font_cascade_list,
+        resolved_letter_spacing(drawing_state, canvas_element()));
     Gfx::Path path;
     for (auto const& glyph_run : glyph_runs) {
         path.glyph_run(glyph_run);
@@ -326,16 +335,27 @@ Gfx::Path CanvasRenderingContext2D::text_path(Utf16String const& text, float x, 
     // Left is the default - no translation needed
 
     // Apply text baseline
-    // FIXME: Implement CanvasTextBaseline::Hanging, Bindings::CanvasTextAlign::Alphabetic and Bindings::CanvasTextAlign::Ideographic for real
-    //        right now they are just handled as textBaseline = top or bottom.
-    //        https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-textbaseline-hanging
-    // Default baseline of draw_text is top so do nothing by CanvasTextBaseline::Top and CanvasTextBaseline::Hanging
-    if (drawing_state.text_baseline == Bindings::CanvasTextBaseline::Middle) {
-        transform = Gfx::AffineTransform {}.set_translation({ 0, font.pixel_size() / 2 }).multiply(transform);
-    }
-    if (drawing_state.text_baseline == Bindings::CanvasTextBaseline::Top || drawing_state.text_baseline == Bindings::CanvasTextBaseline::Hanging) {
-        transform = Gfx::AffineTransform {}.set_translation({ 0, font.pixel_size() }).multiply(transform);
-    }
+    // https://html.spec.whatwg.org/multipage/canvas.html#dom-context-2d-textbaseline
+    auto const& font_pixel_metrics = font.pixel_metrics();
+    auto baseline_y_offset = [&] {
+        switch (drawing_state.text_baseline) {
+        case Bindings::CanvasTextBaseline::Top:
+            return font_pixel_metrics.ascent;
+        case Bindings::CanvasTextBaseline::Hanging:
+            return font_pixel_metrics.ascent * 0.8f;
+        case Bindings::CanvasTextBaseline::Middle:
+            return (font_pixel_metrics.ascent - font_pixel_metrics.descent) / 2.0f;
+        case Bindings::CanvasTextBaseline::Alphabetic:
+            return 0.0f;
+        case Bindings::CanvasTextBaseline::Ideographic:
+        case Bindings::CanvasTextBaseline::Bottom:
+            return -font_pixel_metrics.descent;
+        }
+        VERIFY_NOT_REACHED();
+    }();
+
+    if (baseline_y_offset != 0.f)
+        transform = Gfx::AffineTransform {}.set_translation({ 0, baseline_y_offset }).multiply(transform);
 
     return path.copy_transformed(transform);
 }
@@ -772,7 +792,8 @@ CanvasRenderingContext2D::PreparedText CanvasRenderingContext2D::prepare_text(Ut
     auto replaced_text = builder.to_utf16_string();
 
     // 3. Let font be the current font of target, as given by that object's font attribute.
-    auto glyph_runs = Gfx::shape_text({ 0, 0 }, replaced_text.utf16_view(), *font_cascade_list());
+    auto glyph_runs = Gfx::shape_text({ 0, 0 }, replaced_text.utf16_view(), *font_cascade_list(),
+        resolved_letter_spacing(drawing_state(), canvas_element()));
 
     // FIXME: 4. Let language be the target's language.
     // FIXME: 5. If language is "inherit":

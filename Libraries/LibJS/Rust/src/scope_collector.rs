@@ -57,7 +57,7 @@ use crate::ast::{
     FunctionScopeData, Identifier, LocalBinding, LocalVarKind, LocalVariable, ScopeData,
     Utf16String, VarToInit,
 };
-use crate::parser::{DeclarationKind, FunctionKind, ProgramType};
+use crate::parser::{DeclarationKind, FunctionKind, ParseError, ProgramType};
 use crate::u32_from_usize;
 
 // === Enums ===
@@ -296,12 +296,6 @@ fn last_function_scope(index: usize, records: &[ScopeRecord]) -> Option<usize> {
 
 // === ScopeCollector ===
 
-pub struct ScopeError {
-    pub message: String,
-    pub line: u32,
-    pub column: u32,
-}
-
 /// Saved flags for a scope record, used to restore state after
 /// speculative parsing (e.g. failed arrow function attempts).
 struct SavedScopeFlags {
@@ -324,7 +318,7 @@ pub struct ScopeCollectorState {
 pub struct ScopeCollector {
     records: Vec<ScopeRecord>,
     current: Option<usize>,
-    errors: Vec<ScopeError>,
+    errors: Vec<ParseError>,
 }
 
 impl Default for ScopeCollector {
@@ -342,12 +336,12 @@ impl ScopeCollector {
         }
     }
 
-    pub fn drain_errors(&mut self) -> Vec<ScopeError> {
+    pub fn drain_errors(&mut self) -> Vec<ParseError> {
         std::mem::take(&mut self.errors)
     }
 
     fn already_declared_error(&mut self, name: &[u16], line: u32, column: u32) {
-        self.errors.push(ScopeError {
+        self.errors.push(ParseError {
             message: format!(
                 "Identifier '{}' already declared",
                 String::from_utf16_lossy(name)
@@ -617,7 +611,7 @@ impl ScopeCollector {
         if scope_level != ScopeLevel::NotTopLevel && scope_level != ScopeLevel::ModuleTopLevel {
             let var = self.records[index].variable(name);
             var.flags |= VarFlags::VAR;
-            var.var_identifier = name_identifier.clone();
+            var.var_identifier = name_identifier;
         } else {
             // Check flags first, then modify. This avoids borrow checker issues
             // since we need to access both variables and functions_to_hoist.
@@ -1251,9 +1245,8 @@ impl ScopeCollector {
     // - arguments object metadata (has_argument_parameter, has_function_named_arguments, etc.)
     fn build_function_scope_data(records: &[ScopeRecord], index: usize) {
         let record = &records[index];
-        let scope_data = match record.scope_data {
-            Some(ref sd) => sd,
-            None => return,
+        let Some(ref scope_data) = record.scope_data else {
+            return;
         };
 
         let has_argument_parameter = record
@@ -1275,10 +1268,8 @@ impl ScopeCollector {
         {
             let sd = scope_data.borrow();
             for i in (0..sd.children.len()).rev() {
-                if let crate::ast::StatementKind::FunctionDeclaration {
-                    name: Some(ref name_ident),
-                    ..
-                } = sd.children[i].inner
+                if let crate::ast::StatementKind::FunctionDeclaration(ref fd) = sd.children[i].inner
+                    && let Some(ref name_ident) = fd.name
                     && seen_function_names.insert(name_ident.name.clone())
                 {
                     functions_to_initialize.push(crate::ast::FunctionToInit { child_index: i });
@@ -1420,14 +1411,10 @@ impl ScopeCollector {
                 if let Some(ref block_scope) = function.block_scope_data {
                     let bs = block_scope.borrow();
                     for child in &bs.children {
-                        if let crate::ast::StatementKind::FunctionDeclaration {
-                            ref name,
-                            ref is_hoisted,
-                            ..
-                        } = child.inner
-                            && name.as_ref().is_some_and(|n| n.name == function.name)
+                        if let crate::ast::StatementKind::FunctionDeclaration(ref fd) = child.inner
+                            && fd.name.as_ref().is_some_and(|n| n.name == function.name)
                         {
-                            is_hoisted.set(true);
+                            fd.is_hoisted.set(true);
                         }
                     }
                 }

@@ -14,6 +14,7 @@
 #include <AK/StringBuilder.h>
 #include <AK/Time.h>
 #include <LibFileSystem/FileSystem.h>
+#include <LibJS/Bytecode/Executable.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Array.h>
@@ -79,6 +80,10 @@ VM::VM(ErrorMessages error_messages)
     s_the = this;
     m_bytecode_interpreter = make<Bytecode::Interpreter>();
 
+    m_heap.register_sweep_callback([] {
+        Bytecode::StaticPropertyLookupCache::sweep_all();
+    });
+
     m_empty_string = m_heap.allocate<PrimitiveString>(String {});
 
     cached_strings = {
@@ -111,6 +116,10 @@ VM::VM(ErrorMessages error_messages)
 
     host_enqueue_promise_job = [this](GC::Ref<GC::Function<ThrowCompletionOr<Value>()>> job, Realm* realm) {
         enqueue_promise_job(job, realm);
+    };
+
+    host_promise_job_queue_is_empty = [this]() -> bool {
+        return m_promise_jobs.is_empty();
     };
 
     host_make_job_callback = [](FunctionObject& function_object) {
@@ -204,18 +213,6 @@ VM::VM(ErrorMessages error_messages)
 
         // The default implementation of HostGrowSharedArrayBuffer is to return NormalCompletion(unhandled).
         return HandledByHost::Unhandled;
-    };
-
-    // 3.6.1 HostInitializeShadowRealm ( realm, context, O ), https://tc39.es/proposal-shadowrealm/#sec-hostinitializeshadowrealm
-    host_initialize_shadow_realm = [](Realm&, NonnullOwnPtr<ExecutionContext>, ShadowRealm&) -> ThrowCompletionOr<void> {
-        // The host-defined abstract operation HostInitializeShadowRealm takes arguments realm (a Realm Record),
-        // context (an execution context), and O (a ShadowRealm object) and returns either a normal completion
-        // containing unused or a throw completion. It is used to inform the host of any newly created realms
-        // from the ShadowRealm constructor. The idea of this hook is to initialize host data structures related
-        // to the ShadowRealm, e.g., for module loading.
-        //
-        // The host may use this hook to add properties to the ShadowRealm's global object. Those properties must be configurable.
-        return {};
     };
 
     // 2.3.1 HostSystemUTCEpochNanoseconds ( global ), https://tc39.es/proposal-temporal/#sec-hostsystemutcepochnanoseconds
@@ -610,16 +607,16 @@ ThrowCompletionOr<void> VM::link_and_eval_module(CyclicModule& module)
     if (evaluated_or_error.is_error())
         return evaluated_or_error.throw_completion();
 
-    auto evaluated_value = evaluated_or_error.value();
+    auto const& evaluated_value = static_cast<Promise&>(*evaluated_or_error.value()->promise());
 
     run_queued_promise_jobs();
     VERIFY(m_promise_jobs.is_empty());
 
     // FIXME: This will break if we start doing promises actually asynchronously.
-    VERIFY(evaluated_value->state() != Promise::State::Pending);
+    VERIFY(evaluated_value.state() != Promise::State::Pending);
 
-    if (evaluated_value->state() == Promise::State::Rejected)
-        return JS::throw_completion(evaluated_value->result());
+    if (evaluated_value.state() == Promise::State::Rejected)
+        return JS::throw_completion(evaluated_value.result());
 
     dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] Evaluating passed for module {}", module.filename());
     return {};
@@ -765,7 +762,7 @@ void VM::load_imported_module(ImportedModuleReferrer referrer, ModuleRequest con
         // must either be the Completion Record returned by an invocation of ParseJSONModule or a throw completion.
         if (module_type == "json"sv) {
             dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] reading and parsing JSON module {}", filename);
-            return parse_json_module(*current_realm(), content_view, filename);
+            return TRY(parse_json_module(*current_realm(), content_view, filename));
         }
 
         dbgln_if(JS_MODULE_DEBUG, "[JS MODULE] reading and parsing as SourceTextModule module {}", filename);
@@ -792,30 +789,17 @@ void VM::load_imported_module(ImportedModuleReferrer referrer, ModuleRequest con
     finish_loading_imported_module(referrer, module_request, payload, module);
 }
 
-static GC::Ptr<CachedSourceRange> get_source_range(ExecutionContext* context)
+Vector<StackTraceElement> VM::stack_trace() const
 {
-    // native function
-    if (!context->executable)
-        return {};
-
-    if (!context->cached_source_range
-        || context->cached_source_range->program_counter != context->program_counter) {
-        auto unrealized_source_range = context->executable->source_range_at(context->program_counter);
-        context->cached_source_range = context->executable->heap().allocate<CachedSourceRange>(
-            context->program_counter,
-            move(unrealized_source_range));
-    }
-    return context->cached_source_range;
-}
-
-GC::ConservativeVector<StackTraceElement> VM::stack_trace() const
-{
-    GC::ConservativeVector<StackTraceElement> stack_trace(heap());
+    Vector<StackTraceElement> stack_trace;
     stack_trace.ensure_capacity(m_execution_context_stack.size());
     for (auto* context : m_execution_context_stack.in_reverse()) {
+        Optional<SourceRange> source_range;
+        if (context->executable)
+            source_range = context->executable->get_source_range(context->program_counter);
         stack_trace.append({
             .execution_context = context,
-            .source_range = get_source_range(context),
+            .source_range = move(source_range),
         });
     }
 

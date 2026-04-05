@@ -24,6 +24,7 @@
 #include <LibWeb/CSS/StyleValues/BorderRadiusRectStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BorderRadiusStyleValue.h>
 #include <LibWeb/CSS/StyleValues/CalculatedStyleValue.h>
+#include <LibWeb/CSS/StyleValues/ColorInterpolationMethodStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorSchemeStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ColorStyleValue.h>
 #include <LibWeb/CSS/StyleValues/ConicGradientStyleValue.h>
@@ -100,8 +101,8 @@ ColorResolutionContext ColorResolutionContext::for_element(DOM::AbstractElement 
 
     return {
         .color_scheme = color_scheme,
-        .current_color = element.computed_properties()->color_or_fallback(PropertyID::Color, { color_scheme, CSS::InitialValues::color(), CSS::SystemColor::accent_color(color_scheme), element.document(), calculation_resolution_context }, CSS::InitialValues::color()),
-        .accent_color = element.computed_properties()->color_or_fallback(PropertyID::AccentColor, { color_scheme, CSS::InitialValues::color(), CSS::SystemColor::accent_color(color_scheme), element.document(), calculation_resolution_context }, CSS::SystemColor::accent_color(color_scheme)),
+        .current_color = element.computed_properties()->color(PropertyID::Color, { color_scheme, CSS::InitialValues::color(), CSS::SystemColor::accent_color(color_scheme), element.document(), calculation_resolution_context }),
+        .accent_color = element.computed_properties()->accent_color({ color_scheme, CSS::InitialValues::color(), CSS::SystemColor::accent_color(color_scheme), element.document(), calculation_resolution_context }),
         .document = element.document(),
         .calculation_resolution_context = calculation_resolution_context
     };
@@ -186,7 +187,7 @@ StyleValueVector StyleValue::subdivide_into_iterations(PropertyNameAndID const&)
     return StyleValueVector { *this };
 }
 
-i64 int_from_style_value(NonnullRefPtr<StyleValue const> const& style_value)
+i32 int_from_style_value(NonnullRefPtr<StyleValue const> const& style_value)
 {
     if (style_value->is_integer())
         return style_value->as_integer().integer();

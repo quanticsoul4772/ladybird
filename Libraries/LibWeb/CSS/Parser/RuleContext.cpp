@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, Sam Atkins <sam@ladybird.org>
+ * Copyright (c) 2025-2026, Sam Atkins <sam@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,6 +13,8 @@ namespace Web::CSS::Parser {
 RuleContext rule_context_type_for_rule(CSSRule::Type rule_type)
 {
     switch (rule_type) {
+    case CSSRule::Type::Container:
+        return RuleContext::AtContainer;
     case CSSRule::Type::CounterStyle:
         return RuleContext::AtCounterStyle;
     case CSSRule::Type::Style:
@@ -23,6 +25,8 @@ RuleContext rule_context_type_for_rule(CSSRule::Type rule_type)
         return RuleContext::AtFontFace;
     case CSSRule::Type::FontFeatureValues:
         return RuleContext::AtFontFeatureValues;
+    case CSSRule::Type::Function:
+        return RuleContext::AtFunction;
     case CSSRule::Type::Keyframes:
         return RuleContext::AtKeyframes;
     case CSSRule::Type::Keyframe:
@@ -43,6 +47,7 @@ RuleContext rule_context_type_for_rule(CSSRule::Type rule_type)
     case CSSRule::Type::Import:
     case CSSRule::Type::LayerStatement:
     case CSSRule::Type::Namespace:
+    case CSSRule::Type::FunctionDeclarations:
         break;
     }
     VERIFY_NOT_REACHED();
@@ -52,6 +57,8 @@ RuleContext rule_context_type_for_at_rule(FlyString const& name)
 {
     if (name.equals_ignoring_ascii_case("media"sv))
         return RuleContext::AtMedia;
+    if (name.equals_ignoring_ascii_case("container"sv))
+        return RuleContext::AtContainer;
     if (name.equals_ignoring_ascii_case("counter-style"sv))
         return RuleContext::AtCounterStyle;
     if (name.equals_ignoring_ascii_case("font-face"sv))
@@ -60,6 +67,8 @@ RuleContext rule_context_type_for_at_rule(FlyString const& name)
         return RuleContext::AtKeyframes;
     if (name.equals_ignoring_ascii_case("font-feature-values"sv))
         return RuleContext::AtFontFeatureValues;
+    if (name.equals_ignoring_ascii_case("function"sv))
+        return RuleContext::AtFunction;
     if (CSSFontFeatureValuesRule::is_font_feature_value_type_at_keyword(name))
         return RuleContext::FontFeatureValue;
     if (name.equals_ignoring_ascii_case("supports"sv))

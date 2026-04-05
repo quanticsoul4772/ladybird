@@ -42,6 +42,9 @@ public:
         LayerStatement = 101,
         NestedDeclarations = 102,
         Property = 103,
+        Function = 104,
+        FunctionDeclarations = 105,
+        Container = 106,
     };
 
     Type type() const { return m_type; }
@@ -55,7 +58,7 @@ public:
     void set_parent_rule(CSSRule*);
 
     CSSStyleSheet* parent_style_sheet() { return m_parent_style_sheet.ptr(); }
-    virtual void set_parent_style_sheet(CSSStyleSheet*);
+    MUST_UPCALL virtual void set_parent_style_sheet(CSSStyleSheet*);
 
     template<typename T>
     bool fast_is() const = delete;

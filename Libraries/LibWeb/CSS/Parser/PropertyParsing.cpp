@@ -485,10 +485,12 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_css_value(Pr
             return ParseError::SyntaxError;
         }
 
-        if (token.is_function())
-            token.function().contains_arbitrary_substitution_function(substitution_presence);
-        else if (token.is_block())
-            token.block().contains_arbitrary_substitution_function(substitution_presence);
+        // https://drafts.csswg.org/css-values-5/#resolve-property
+        // If a property value contains one or more arbitrary substitution functions, and all of those functions are
+        // themselves syntactically valid according to their argument grammars, the entire value’s grammar must be
+        // assumed to be valid at parse time.
+        if (collect_arbitrary_substitution_function_presence(token, substitution_presence).is_error())
+            return ParseError::SyntaxError;
     }
     tokens.restore_a_mark();
 
@@ -511,11 +513,15 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_css_value(Pr
     }
 
     if (property_id == PropertyID::Custom || substitution_presence.has_any()) {
-        Vector<ComponentValue> component_values;
-        while (tokens.has_next_token()) {
-            component_values.append(tokens.consume_a_token());
-        }
-        return UnresolvedStyleValue::create(move(component_values), substitution_presence, original_source_text);
+        return parse_all_as(tokens, [&](TokenStream<ComponentValue>& tokens) -> RefPtr<StyleValue const> {
+            if (tokens.is_empty())
+                return UnresolvedStyleValue::create({}, substitution_presence, move(original_source_text));
+
+            if (auto component_values = parse_declaration_value(tokens); component_values.has_value())
+                return UnresolvedStyleValue::create(component_values.release_value(), substitution_presence, move(original_source_text));
+
+            return nullptr;
+        });
     }
 
     tokens.discard_whitespace();
@@ -2354,6 +2360,9 @@ RefPtr<StyleValue const> Parser::parse_display_value(TokenStream<ComponentValue>
 
         auto transaction = tokens.begin_transaction();
         while (tokens.has_next_token()) {
+            tokens.discard_whitespace();
+            if (!tokens.has_next_token())
+                break;
             if (auto value = parse_keyword_value(tokens)) {
                 auto keyword = value->to_keyword();
                 if (keyword == Keyword::ListItem) {
@@ -2394,8 +2403,16 @@ RefPtr<StyleValue const> Parser::parse_display_value(TokenStream<ComponentValue>
         return Display { outside.value_or(DisplayOutside::Block), inside.value_or(DisplayInside::Flow), list_item };
     };
 
+    // Count non-whitespace tokens to decide between single and multi-component parsing.
+    // This is needed because var() substitution can leave trailing whitespace tokens.
+    size_t non_whitespace_token_count = 0;
+    for (size_t i = 0; i < tokens.remaining_token_count(); ++i) {
+        if (!tokens.peek_token(i).is(Token::Type::Whitespace))
+            ++non_whitespace_token_count;
+    }
+
     Optional<Display> display;
-    if (tokens.remaining_token_count() == 1)
+    if (non_whitespace_token_count == 1)
         display = parse_single_component_display(tokens);
     else
         display = parse_multi_component_display(tokens);
@@ -3595,9 +3612,13 @@ RefPtr<StyleValue const> Parser::parse_place_self_value(TokenStream<ComponentVal
 // https://drafts.csswg.org/css-anchor-position/#position-anchor
 RefPtr<StyleValue const> Parser::parse_position_anchor_value(TokenStream<ComponentValue>& tokens)
 {
-    // auto | <anchor-name>
-    if (auto auto_keyword = parse_all_as_single_keyword_value(tokens, Keyword::Auto))
-        return auto_keyword;
+    // normal | none | auto | <anchor-name>
+    if (auto keyword = parse_all_as_single_keyword_value(tokens, Keyword::Normal))
+        return keyword;
+    if (auto keyword = parse_all_as_single_keyword_value(tokens, Keyword::None))
+        return keyword;
+    if (auto keyword = parse_all_as_single_keyword_value(tokens, Keyword::Auto))
+        return keyword;
 
     // <anchor-name> = <dashed-ident>
     return parse_dashed_ident_value(tokens);

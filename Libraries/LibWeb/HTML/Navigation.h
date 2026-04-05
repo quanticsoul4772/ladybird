@@ -111,7 +111,7 @@ public:
     i64 get_the_navigation_api_entry_index(SessionHistoryEntry const&) const;
     void abort_the_ongoing_navigation(GC::Ptr<WebIDL::DOMException> error = {});
     void abort_a_navigate_event(GC::Ref<NavigateEvent>, GC::Ref<WebIDL::DOMException> reason);
-    bool fire_a_traverse_navigate_event(GC::Ref<SessionHistoryEntry> destination_she, UserNavigationInvolvement = UserNavigationInvolvement::None);
+    bool fire_a_traverse_navigate_event(NonnullRefPtr<SessionHistoryEntry> destination_she, UserNavigationInvolvement = UserNavigationInvolvement::None);
     bool fire_a_push_replace_reload_navigate_event(
         Bindings::NavigationType,
         URL::URL destination_url,
@@ -123,8 +123,8 @@ public:
         Optional<SerializationRecord> classic_history_api_state = {});
     bool fire_a_download_request_navigate_event(URL::URL destination_url, UserNavigationInvolvement user_involvement, GC::Ptr<DOM::Element> source_element, String filename);
 
-    void initialize_the_navigation_api_entries_for_a_new_document(Vector<GC::Ref<SessionHistoryEntry>> const& new_shes, GC::Ref<SessionHistoryEntry> initial_she);
-    void update_the_navigation_api_entries_for_a_same_document_navigation(GC::Ref<SessionHistoryEntry> destination_she, Bindings::NavigationType);
+    void initialize_the_navigation_api_entries_for_a_new_document(Vector<NonnullRefPtr<SessionHistoryEntry>> const& new_shes, NonnullRefPtr<SessionHistoryEntry> initial_she);
+    void update_the_navigation_api_entries_for_a_same_document_navigation(NonnullRefPtr<SessionHistoryEntry> destination_she, Bindings::NavigationType);
 
     virtual ~Navigation() override;
 
@@ -133,6 +133,8 @@ public:
 
     bool focus_changed_during_ongoing_navigation() const { return m_focus_changed_during_ongoing_navigation; }
     void set_focus_changed_during_ongoing_navigation(bool b) { m_focus_changed_during_ongoing_navigation = b; }
+
+    void set_was_initial_about_blank_opened(bool b) { m_was_initial_about_blank_opened = b; }
 
 private:
     explicit Navigation(JS::Realm&);
@@ -190,6 +192,9 @@ private:
 
     // https://html.spec.whatwg.org/multipage/nav-history-apis.html#upcoming-non-traverse-api-method-tracker
     HashMap<String, GC::Ref<NavigationAPIMethodTracker>> m_upcoming_traverse_api_method_trackers;
+
+    // AD-HOC: Set when document.open() is called on an initial about:blank document.
+    bool m_was_initial_about_blank_opened { false };
 };
 
 HistoryHandlingBehavior to_history_handling_behavior(Bindings::NavigationHistoryBehavior);

@@ -94,7 +94,25 @@ SkTextBlob* GlyphRun::cached_skia_text_blob() const
     return m_cached_text_blob->blob.get();
 }
 
-Vector<NonnullRefPtr<GlyphRun>> shape_text(FloatPoint baseline_start, Utf16View const& string, FontCascadeList const& font_cascade_list)
+Vector<float> GlyphRun::get_glyph_intercepts(float scale, float y_top, float y_bottom) const
+{
+    ensure_text_blob(scale);
+    auto* blob = cached_skia_text_blob();
+    if (!blob)
+        return {};
+
+    Array<SkScalar, 2> bounds { y_top, y_bottom };
+    int count = blob->getIntercepts(bounds.data(), nullptr);
+    if (count < 2)
+        return {};
+
+    Vector<float> intervals;
+    intervals.resize(count);
+    blob->getIntercepts(bounds.data(), intervals.data());
+    return intervals;
+}
+
+Vector<NonnullRefPtr<GlyphRun>> shape_text(FloatPoint baseline_start, Utf16View const& string, FontCascadeList const& font_cascade_list, float letter_spacing)
 {
     if (string.is_empty())
         return {};
@@ -106,8 +124,8 @@ Vector<NonnullRefPtr<GlyphRun>> shape_text(FloatPoint baseline_start, Utf16View 
     Font const* last_font = &font_cascade_list.font_for_code_point(*it);
     FloatPoint last_position = baseline_start;
 
-    auto add_run = [&runs, &last_position](Utf16View const& string, Font const& font) {
-        auto run = shape_text(last_position, 0, string, font, GlyphRun::TextType::Common);
+    auto add_run = [&runs, &last_position, letter_spacing](Utf16View const& string, Font const& font) {
+        auto run = shape_text(last_position, letter_spacing, string, font, GlyphRun::TextType::Common);
         last_position.translate_by(run->width(), 0);
         runs.append(*run);
     };

@@ -197,14 +197,16 @@ protected:
     CSSPixels tentative_width_for_replaced_element(Box const&, CSS::Size const& computed_width, AvailableSpace const&) const;
     CSSPixels tentative_height_for_replaced_element(Box const&, CSS::Size const& computed_height, AvailableSpace const&) const;
     CSSPixels compute_auto_height_for_block_formatting_context_root(Box const&) const;
+    static CSSPixels line_box_physical_width(Box const&, LineBox const&);
 
     [[nodiscard]] CSSPixelSize solve_replaced_size_constraint(CSSPixels input_width, CSSPixels input_height, Box const&, AvailableSpace const&) const;
 
     ShrinkToFitResult calculate_shrink_to_fit_widths(Box const&);
 
-    void layout_absolutely_positioned_element(Box const&, AbsposContainingBlockInfo const&);
+    void layout_absolutely_positioned_element(Box&);
     void layout_absolutely_positioned_children();
     virtual AbsposContainingBlockInfo resolve_abspos_containing_block_info(Box const&);
+    void resolve_anchor_insets(Box&) const;
     void compute_width_for_absolutely_positioned_element(Box const&, AvailableSpace const&);
     void compute_width_for_absolutely_positioned_non_replaced_element(Box const&, AvailableSpace const&);
     void compute_width_for_absolutely_positioned_replaced_element(Box const&, AvailableSpace const&);

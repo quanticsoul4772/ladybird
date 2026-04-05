@@ -1,5 +1,6 @@
 #include <LibCore/AnonymousBuffer.h>
 #include <LibGfx/Color.h>
+#include <LibIPC/TransportHandle.h>
 #include <LibGfx/Cursor.h>
 #include <LibGfx/ShareableBitmap.h>
 #include <LibHTTP/Cookie/Cookie.h>
@@ -20,6 +21,7 @@
 #include <LibWeb/HTML/WebViewHints.h>
 #include <LibWeb/Page/EventResult.h>
 #include <LibWeb/Page/Page.h>
+#include <LibWeb/Page/SharedBackingStore.h>
 #include <LibWebView/Attribute.h>
 #include <LibWebView/ConsoleOutput.h>
 #include <LibWebView/DOMNodeProperties.h>
@@ -104,7 +106,7 @@ endpoint WebContentClient
     did_request_resize_window(u64 page_id, Gfx::IntSize size) =|
     did_request_maximize_window(u64 page_id) =|
     did_request_minimize_window(u64 page_id) =|
-    did_request_fullscreen_window(u64 page_id) => (bool success)
+    did_request_fullscreen_window(u64 page_id) =|
     did_request_exit_fullscreen(u64 page_id) =|
     did_request_file(u64 page_id, ByteString path, i32 request_id) =|
     did_request_color_picker(u64 page_id, Color current_color) =|
@@ -117,7 +119,7 @@ endpoint WebContentClient
     did_request_clipboard_entries(u64 page_id, u64 request_id) =|
 
     did_update_navigation_buttons_state(u64 page_id, bool back_enabled, bool forward_enabled) =|
-    did_allocate_backing_stores(u64 page_id, i32 front_bitmap_id, Gfx::ShareableBitmap front_bitmap, i32 back_bitmap_id, Gfx::ShareableBitmap back_bitmap) =|
+    did_allocate_backing_stores(u64 page_id, i32 front_bitmap_id, Web::SharedBackingStore front_backing_store, i32 back_bitmap_id, Web::SharedBackingStore back_backing_store) =|
 
     did_change_audio_play_state(u64 page_id, Web::HTML::AudioPlayState play_state) =|
 
@@ -138,5 +140,5 @@ endpoint WebContentClient
 
     did_find_in_page(u64 page_id, size_t current_match_index, Optional<size_t> total_match_count) =|
 
-    request_worker_agent(u64 page_id, Web::Bindings::AgentType worker_type) => (IPC::File socket) // FIXME: Add required attributes to select a SharedWorker Agent
+    request_worker_agent(u64 page_id, Web::Bindings::AgentType worker_type) => (IPC::TransportHandle handle, IPC::TransportHandle request_server_handle, IPC::TransportHandle image_decoder_handle) // FIXME: Add required attributes to select a SharedWorker Agent
 }

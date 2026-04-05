@@ -51,15 +51,12 @@ void Task::execute()
 bool Task::is_runnable() const
 {
     // A task is runnable if its document is either null or fully active.
-    if (!m_document)
-        return true;
+    return !m_document || m_document->is_fully_active();
+}
 
-    // AD-HOC: If the document has been destroyed, we'll consider the task runnable.
-    //         Otherwise it would get stuck here forever, since a destroyed document never becomes fully active again.
-    if (m_document->has_been_destroyed())
-        return true;
-
-    return m_document->is_fully_active();
+bool Task::is_permanently_unrunnable() const
+{
+    return m_document && m_document->has_been_destroyed();
 }
 
 DOM::Document const* Task::document() const

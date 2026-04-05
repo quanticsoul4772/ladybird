@@ -62,7 +62,7 @@ GC::Ptr<NavigableContainer> NavigableContainer::navigable_container_with_content
 }
 
 // https://html.spec.whatwg.org/multipage/document-sequences.html#create-a-new-child-navigable
-WebIDL::ExceptionOr<void> NavigableContainer::create_new_child_navigable(GC::Ptr<GC::Function<void()>> after_session_history_update)
+void NavigableContainer::create_new_child_navigable()
 {
     // 1. Let parentNavigable be element's node navigable.
     auto parent_navigable = navigable();
@@ -74,7 +74,7 @@ WebIDL::ExceptionOr<void> NavigableContainer::create_new_child_navigable(GC::Ptr
 
     // 3. Let browsingContext and document be the result of creating a new browsing context and document given element's node document, element, and group.
     auto& page = document().page();
-    auto [browsing_context, document] = TRY(BrowsingContext::create_a_new_browsing_context_and_document(page, this->document(), *this, *group));
+    auto [browsing_context, document] = BrowsingContext::create_a_new_browsing_context_and_document(page, this->document(), *this, *group);
 
     // 4. Let targetName be null.
     Optional<String> target_name;
@@ -89,8 +89,7 @@ WebIDL::ExceptionOr<void> NavigableContainer::create_new_child_navigable(GC::Ptr
     //  - origin: document's origin
     //  - navigable target name: targetName
     //  - about base URL: document's about base URL
-    GC::Ref<DocumentState> document_state = *heap().allocate<HTML::DocumentState>();
-    document_state->set_document(document);
+    auto document_state = HTML::DocumentState::create();
     document_state->set_initiator_origin(document->origin());
     document_state->set_origin(document->origin());
     if (target_name.has_value())
@@ -101,7 +100,7 @@ WebIDL::ExceptionOr<void> NavigableContainer::create_new_child_navigable(GC::Ptr
     GC::Ref<Navigable> navigable = *heap().allocate<Navigable>(page, false);
 
     // 8. Initialize the navigable navigable given documentState and parentNavigable.
-    TRY_OR_THROW_OOM(vm(), navigable->initialize_navigable(document_state, parent_navigable));
+    navigable->initialize_navigable(document_state, parent_navigable, *document);
 
     // 9. Set element's content navigable to navigable.
     m_content_navigable = navigable;
@@ -112,13 +111,13 @@ WebIDL::ExceptionOr<void> NavigableContainer::create_new_child_navigable(GC::Ptr
     // 11. Let traversable be parentNavigable's traversable navigable.
     auto traversable = parent_navigable->traversable_navigable();
 
-    // AD-HOC: Let the initial about:blank document inherit the system visibility state from traversable.
-    document->update_the_visibility_state(traversable->system_visibility_state());
-
     // 12. Append the following session history traversal steps to traversable:
-    traversable->append_session_history_traversal_steps(GC::create_function(heap(), [traversable, navigable, parent_navigable, history_entry, after_session_history_update] {
-        // NB: Use Core::Promise to signal SessionHistoryTraversalQueue that it can continue to execute next entry.
-        auto signal_to_continue_session_history_processing = Core::Promise<Empty>::construct();
+    traversable->append_session_history_traversal_steps(GC::create_function(heap(), [this, navigable, parent_navigable, history_entry, traversable](NonnullRefPtr<Core::Promise<Empty>> signal) mutable {
+        if (navigable->has_been_destroyed() || parent_navigable->has_been_destroyed()) {
+            signal->resolve({});
+            return;
+        }
+
         // 1. Let parentDocState be parentNavigable's active session history entry's document state.
         auto parent_doc_state = parent_navigable->active_session_history_entry()->document_state();
 
@@ -143,16 +142,20 @@ WebIDL::ExceptionOr<void> NavigableContainer::create_new_child_navigable(GC::Ptr
         parent_doc_state->nested_histories().append(move(nested_history));
 
         // 7. Update for navigable creation/destruction given traversable
-        traversable->update_for_navigable_creation_or_destruction();
+        traversable->update_for_navigable_creation_or_destruction(GC::create_function(traversable->heap(), [signal](HistoryStepResult) {
+            signal->resolve({});
+        }));
 
-        if (after_session_history_update) {
-            after_session_history_update->function()();
-        }
-        signal_to_continue_session_history_processing->resolve({});
-        return signal_to_continue_session_history_processing;
+        traversable->append_session_history_traversal_steps(GC::create_function(traversable->heap(), [this, navigable](NonnullRefPtr<Core::Promise<Empty>> signal) {
+            if (navigable->has_been_destroyed() || content_navigable() != navigable) {
+                signal->resolve({});
+                return;
+            }
+
+            set_content_navigable_has_session_history_entry_and_ready_for_navigation();
+            signal->resolve({});
+        }));
     }));
-
-    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/browsers.html#concept-bcc-content-document
@@ -165,11 +168,16 @@ DOM::Document const* NavigableContainer::content_document() const
     // 2. Let document be container's content navigable's active document.
     auto document = m_content_navigable->active_document();
 
-    // 4. If document's origin and container's node document's origin are not same origin-domain, then return null.
+    // AD-HOC: The active document can be null during navigation, after the old document
+    //         has been destroyed but before the new document has been set.
+    if (!document)
+        return nullptr;
+
+    // 3. If document's origin and container's node document's origin are not same origin-domain, then return null.
     if (!document->origin().is_same_origin_domain(m_document->origin()))
         return nullptr;
 
-    // 5. Return document.
+    // 4. Return document.
     return document;
 }
 
@@ -212,7 +220,12 @@ Optional<URL::URL> NavigableContainer::shared_attribute_processing_steps_for_ifr
     if (!m_content_navigable)
         return {};
 
-    if (initial_insertion == InitialInsertion::Yes && m_content_navigable->has_pending_navigations()) {
+    // AD-HOC: If the content navigable already has a navigation in progress or pending,
+    //         skip the initial attribute processing. Without this, the about:blank URL update
+    //         from perform_url_and_history_update_steps creates a state machine that clobbers the
+    //         navigable's ongoing_navigation, causing the real navigation to be dropped when its
+    //         populate completion callback checks ongoing_navigation != navigation_id.
+    if (initial_insertion == InitialInsertion::Yes && (m_content_navigable->has_pending_navigations() || !m_content_navigable->ongoing_navigation().has<Empty>())) {
         return {};
     }
 
@@ -255,7 +268,10 @@ void NavigableContainer::navigate_an_iframe_or_frame(URL::URL url, ReferrerPolic
     auto history_handling = Bindings::NavigationHistoryBehavior::Auto;
 
     // 2. If element's content navigable's active document is not completely loaded, then set historyHandling to "replace".
-    if (m_content_navigable->active_document() && !m_content_navigable->active_document()->is_completely_loaded()) {
+    // AD-HOC: Only apply this check during initial insertion. For subsequent attribute-driven navigations,
+    //         the previous document may have parsed and run scripts but not yet fired its load event;
+    //         forcing "replace" in that case would incorrectly discard the history entry.
+    if (initial_insertion == InitialInsertion::Yes && m_content_navigable->active_document() && !m_content_navigable->active_document()->is_completely_loaded()) {
         history_handling = Bindings::NavigationHistoryBehavior::Replace;
     }
 
@@ -305,6 +321,12 @@ void NavigableContainer::destroy_the_child_navigable()
     //         block the parent document's load event indefinitely.
     navigable->set_delaying_load_events(false);
 
+    // AD-HOC: Clear the navigation load event guard that may have been set by
+    //         finalize_a_cross_document_navigation. Without this, the guard's
+    //         DocumentLoadEventDelayer on the parent document persists until GC,
+    //         blocking the parent's load event indefinitely.
+    navigable->clear_navigation_load_event_guard();
+
     // 4. Inform the navigation API about child navigable destruction given navigable.
     navigable->inform_the_navigation_api_about_child_navigable_destruction();
 
@@ -312,9 +334,10 @@ void NavigableContainer::destroy_the_child_navigable()
     navigable->active_document()->destroy_a_document_and_its_descendants(GC::create_function(heap(), [this, navigable] {
         // 3. Set container's content navigable to null.
         m_content_navigable = nullptr;
+        document().schedule_html_parser_end_check();
 
         // Not in the spec:
-        HTML::all_navigables().remove(*navigable);
+        navigable->remove_from_all_navigables();
 
         // 6. Let parentDocState be container's node navigable's active session history entry's document state.
         auto parent_doc_state = this->navigable()->active_session_history_entry()->document_state();
@@ -328,13 +351,11 @@ void NavigableContainer::destroy_the_child_navigable()
         auto traversable = this->navigable()->traversable_navigable();
 
         // 9. Append the following session history traversal steps to traversable:
-        traversable->append_session_history_traversal_steps(GC::create_function(heap(), [traversable] {
-            // NB: Use Core::Promise to signal SessionHistoryTraversalQueue that it can continue to execute next entry.
-            auto signal_to_continue_session_history_processing = Core::Promise<Empty>::construct();
+        traversable->append_session_history_traversal_steps(GC::create_function(heap(), [traversable](NonnullRefPtr<Core::Promise<Empty>> signal) {
             // 1. Update for navigable creation/destruction given traversable.
-            traversable->update_for_navigable_creation_or_destruction();
-            signal_to_continue_session_history_processing->resolve({});
-            return signal_to_continue_session_history_processing;
+            traversable->update_for_navigable_creation_or_destruction(GC::create_function(traversable->heap(), [signal](HistoryStepResult) {
+                signal->resolve({});
+            }));
         }));
     }));
 }
@@ -376,11 +397,19 @@ bool NavigableContainer::content_navigable_has_session_history_entry_and_ready_f
     return m_content_navigable->has_session_history_entry_and_ready_for_navigation();
 }
 
+void NavigableContainer::set_potentially_delays_the_load_event(bool value)
+{
+    m_potentially_delays_the_load_event = value;
+    if (!value)
+        document().schedule_html_parser_end_check();
+}
+
 void NavigableContainer::set_content_navigable_has_session_history_entry_and_ready_for_navigation()
 {
     if (!content_navigable())
         return;
     content_navigable()->set_has_session_history_entry_and_ready_for_navigation();
+    document().schedule_html_parser_end_check();
 }
 
 }

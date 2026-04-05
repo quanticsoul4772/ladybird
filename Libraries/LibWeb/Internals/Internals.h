@@ -49,7 +49,7 @@ public:
     void commit_text();
 
     // Low-level mouse primitives
-    void mouse_down(double x, double y, WebIDL::UnsignedShort button, WebIDL::UnsignedShort modifiers);
+    void mouse_down(double x, double y, WebIDL::UnsignedShort click_count, WebIDL::UnsignedShort button, WebIDL::UnsignedShort modifiers);
     void mouse_up(double x, double y, WebIDL::UnsignedShort button, WebIDL::UnsignedShort modifiers);
     void mouse_move(double x, double y, WebIDL::UnsignedShort modifiers);
 
@@ -92,6 +92,7 @@ public:
     String dump_paintable_tree(GC::Ref<DOM::Node>);
     String dump_stacking_context_tree();
     String dump_gc_graph();
+    String dump_session_history();
 
     GC::Ptr<DOM::ShadowRoot> get_shadow_root(GC::Ref<DOM::Element>);
 

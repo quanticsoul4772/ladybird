@@ -40,8 +40,6 @@ class WEBVIEW_API WebContentClient final
 public:
     using InitTransport = Messages::WebContentServer::InitTransport;
 
-    static Optional<ViewImplementation&> view_for_pid_and_page_id(pid_t pid, u64 page_id);
-
     template<CallableAs<IterationDecision, WebContentClient&> Callback>
     static void for_each_client(Callback callback);
 
@@ -136,7 +134,7 @@ private:
     virtual void did_request_resize_window(u64 page_id, Gfx::IntSize) override;
     virtual void did_request_maximize_window(u64 page_id) override;
     virtual void did_request_minimize_window(u64 page_id) override;
-    virtual Messages::WebContentClient::DidRequestFullscreenWindowResponse did_request_fullscreen_window(u64 page_id) override;
+    virtual void did_request_fullscreen_window(u64 page_id) override;
     virtual void did_request_exit_fullscreen(u64 page_id) override;
     virtual void did_request_file(u64 page_id, ByteString path, i32) override;
     virtual void did_request_color_picker(u64 page_id, Color current_color) override;
@@ -154,7 +152,7 @@ private:
     virtual void did_request_clipboard_entries(u64 page_id, u64 request_id) override;
     virtual void did_change_audio_play_state(u64 page_id, Web::HTML::AudioPlayState) override;
     virtual void did_update_navigation_buttons_state(u64 page_id, bool back_enabled, bool forward_enabled) override;
-    virtual void did_allocate_backing_stores(u64 page_id, i32 front_bitmap_id, Gfx::ShareableBitmap, i32 back_bitmap_id, Gfx::ShareableBitmap) override;
+    virtual void did_allocate_backing_stores(u64 page_id, i32 front_bitmap_id, Web::SharedBackingStore front_backing_store, i32 back_bitmap_id, Web::SharedBackingStore back_backing_store) override;
     virtual Messages::WebContentClient::RequestWorkerAgentResponse request_worker_agent(u64 page_id, Web::Bindings::AgentType worker_type) override;
 
     Optional<ViewImplementation&> view_for_page_id(u64, SourceLocation = SourceLocation::current());

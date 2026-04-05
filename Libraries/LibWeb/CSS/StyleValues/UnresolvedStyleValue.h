@@ -17,7 +17,7 @@ namespace Web::CSS {
 
 class UnresolvedStyleValue final : public StyleValue {
 public:
-    static ValueComparingNonnullRefPtr<UnresolvedStyleValue const> create(Vector<Parser::ComponentValue>&& values, Optional<Parser::SubstitutionFunctionsPresence> = {}, Optional<String> original_source_text = {});
+    static ValueComparingNonnullRefPtr<UnresolvedStyleValue const> create(Vector<Parser::ComponentValue>&& values, Parser::SubstitutionFunctionsPresence, Optional<String> original_source_text = {});
     virtual ~UnresolvedStyleValue() override = default;
 
     virtual void serialize(StringBuilder&, SerializationMode) const override;
@@ -26,11 +26,15 @@ public:
     Vector<Parser::ComponentValue> const& values() const { return m_values; }
     bool contains_arbitrary_substitution_function() const { return m_substitution_functions_presence.has_any(); }
     bool includes_attr_function() const { return m_substitution_functions_presence.attr; }
+    bool includes_inherit_function() const { return m_substitution_functions_presence.inherit; }
+    bool includes_if_function() const { return m_substitution_functions_presence.if_; }
     bool includes_var_function() const { return m_substitution_functions_presence.var; }
 
     virtual bool equals(StyleValue const& other) const override;
 
     virtual GC::Ref<CSSStyleValue> reify(JS::Realm&, FlyString const& associated_property) const override;
+
+    virtual bool is_computationally_independent() const override { VERIFY_NOT_REACHED(); }
 
 private:
     UnresolvedStyleValue(Vector<Parser::ComponentValue>&& values, Parser::SubstitutionFunctionsPresence, Optional<String> original_source_text);

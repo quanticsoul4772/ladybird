@@ -28,23 +28,24 @@
 
 namespace Web::HTML {
 
+class ApplyHistoryStepState;
+
 // https://html.spec.whatwg.org/multipage/document-sequences.html#traversable-navigable
 class WEB_API TraversableNavigable final : public Navigable {
     GC_CELL(TraversableNavigable, Navigable);
     GC_DECLARE_ALLOCATOR(TraversableNavigable);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<TraversableNavigable>> create_a_new_top_level_traversable(GC::Ref<Page>, GC::Ptr<BrowsingContext> opener, String target_name);
-    static WebIDL::ExceptionOr<GC::Ref<TraversableNavigable>> create_a_fresh_top_level_traversable(GC::Ref<Page>, URL::URL const& initial_navigation_url, Variant<Empty, String, POSTResource> = Empty {});
+    static GC::Ref<TraversableNavigable> create_a_new_top_level_traversable(GC::Ref<Page>, GC::Ptr<BrowsingContext> opener, String target_name);
+    static GC::Ref<TraversableNavigable> create_a_fresh_top_level_traversable(GC::Ref<Page>, URL::URL const& initial_navigation_url, Variant<Empty, String, POSTResource> = Empty {});
 
     virtual ~TraversableNavigable() override;
 
     virtual bool is_top_level_traversable() const override;
 
     int current_session_history_step() const { return m_current_session_history_step; }
-    Vector<GC::Ref<SessionHistoryEntry>>& session_history_entries() { return m_session_history_entries; }
-    Vector<GC::Ref<SessionHistoryEntry>> const& session_history_entries() const { return m_session_history_entries; }
-    bool running_nested_apply_history_step() const { return m_running_nested_apply_history_step; }
+    Vector<NonnullRefPtr<SessionHistoryEntry>>& session_history_entries() { return m_session_history_entries; }
+    Vector<NonnullRefPtr<SessionHistoryEntry>> const& session_history_entries() const { return m_session_history_entries; }
 
     VisibilityState system_visibility_state() const { return m_system_visibility_state; }
     void set_system_visibility_state(VisibilityState);
@@ -58,21 +59,14 @@ public:
     };
     HistoryObjectLengthAndIndex get_the_history_object_length_and_index(int) const;
 
-    enum class HistoryStepResult {
-        InitiatorDisallowed,
-        CanceledByBeforeUnload,
-        CanceledByNavigate,
-        Applied,
-    };
-
-    HistoryStepResult apply_the_traverse_history_step(int, GC::Ptr<SourceSnapshotParams>, GC::Ptr<Navigable>, UserNavigationInvolvement);
-    HistoryStepResult apply_the_reload_history_step(UserNavigationInvolvement);
+    void apply_the_traverse_history_step(int, GC::Ptr<SourceSnapshotParams>, GC::Ptr<Navigable>, UserNavigationInvolvement, GC::Ref<GC::Function<void(HistoryStepResult)>> on_complete);
+    void apply_the_reload_history_step(UserNavigationInvolvement, GC::Ref<GC::Function<void(HistoryStepResult)>> on_complete);
     enum class SynchronousNavigation : bool {
         Yes,
         No,
     };
-    HistoryStepResult apply_the_push_or_replace_history_step(int step, HistoryHandlingBehavior history_handling, UserNavigationInvolvement, SynchronousNavigation);
-    HistoryStepResult update_for_navigable_creation_or_destruction();
+    void apply_the_push_or_replace_history_step(int step, HistoryHandlingBehavior history_handling, UserNavigationInvolvement, SynchronousNavigation, GC::Ptr<DOM::Document> pending_document, GC::Ref<OnApplyHistoryStepComplete> on_complete);
+    void update_for_navigable_creation_or_destruction(GC::Ref<OnApplyHistoryStepComplete> on_complete);
 
     int get_the_used_step(int step) const;
     Vector<GC::Root<Navigable>> get_all_navigables_whose_current_session_history_entry_will_change_or_reload(int) const;
@@ -87,12 +81,12 @@ public:
     void definitely_close_top_level_traversable();
     void destroy_top_level_traversable();
 
-    void append_session_history_traversal_steps(GC::Ref<GC::Function<NonnullRefPtr<Core::Promise<Empty>>()>> steps)
+    void append_session_history_traversal_steps(GC::Ref<SessionHistoryTraversalSteps> steps)
     {
         m_session_history_traversal_queue->append(steps);
     }
 
-    void append_session_history_synchronous_navigation_steps(GC::Ref<Navigable> target_navigable, GC::Ref<GC::Function<NonnullRefPtr<Core::Promise<Empty>>()>> steps)
+    void append_session_history_synchronous_navigation_steps(GC::Ref<Navigable> target_navigable, GC::Ref<SessionHistoryTraversalSteps> steps)
     {
         m_session_history_traversal_queue->append_sync(steps, target_navigable);
     }
@@ -107,7 +101,7 @@ public:
         CanceledByNavigate,
         Continue,
     };
-    CheckIfUnloadingIsCanceledResult check_if_unloading_is_canceled(Vector<GC::Root<Navigable>> navigables_that_need_before_unload);
+    void check_if_unloading_is_canceled(Vector<GC::Root<Navigable>> navigables_that_need_before_unload, GC::Ref<GC::Function<void(CheckIfUnloadingIsCanceledResult)>> callback);
 
     StorageAPI::StorageShed& storage_shed() { return m_storage_shed; }
     StorageAPI::StorageShed const& storage_shed() const { return m_storage_shed; }
@@ -124,6 +118,8 @@ public:
     }
 
 private:
+    friend class ApplyHistoryStepState;
+
     TraversableNavigable(GC::Ref<Page>);
 
     virtual bool is_traversable() const override { return true; }
@@ -131,18 +127,30 @@ private:
     virtual void visit_edges(Cell::Visitor&) override;
 
     // FIXME: Fix spec typo cancelation --> cancellation
-    HistoryStepResult apply_the_history_step(
+    void apply_the_history_step(
         int step,
         bool check_for_cancelation,
         GC::Ptr<SourceSnapshotParams>,
         GC::Ptr<Navigable> initiator_to_check,
         UserNavigationInvolvement user_involvement,
         Optional<Bindings::NavigationType> navigation_type,
-        SynchronousNavigation);
+        SynchronousNavigation,
+        GC::Ptr<DOM::Document> pending_document,
+        GC::Ref<OnApplyHistoryStepComplete> on_complete);
 
-    CheckIfUnloadingIsCanceledResult check_if_unloading_is_canceled(Vector<GC::Root<Navigable>> navigables_that_need_before_unload, GC::Ptr<TraversableNavigable> traversable, Optional<int> target_step, Optional<UserNavigationInvolvement> user_involvement_for_navigate_events);
+    void apply_the_history_step_after_unload_check(
+        int step,
+        int target_step,
+        GC::Ptr<SourceSnapshotParams> source_snapshot_params,
+        UserNavigationInvolvement user_involvement,
+        Optional<Bindings::NavigationType> navigation_type,
+        SynchronousNavigation,
+        GC::Ptr<DOM::Document> pending_document,
+        GC::Ref<OnApplyHistoryStepComplete> on_complete);
 
-    Vector<GC::Ref<SessionHistoryEntry>> get_session_history_entries_for_the_navigation_api(GC::Ref<Navigable>, int);
+    void check_if_unloading_is_canceled(Vector<GC::Root<Navigable>> navigables_that_need_before_unload, GC::Ptr<TraversableNavigable> traversable, Optional<int> target_step, Optional<UserNavigationInvolvement> user_involvement_for_navigate_events, GC::Ref<GC::Function<void(CheckIfUnloadingIsCanceledResult)>> callback);
+
+    Vector<NonnullRefPtr<SessionHistoryEntry>> get_session_history_entries_for_the_navigation_api(GC::Ref<Navigable>, int);
 
     [[nodiscard]] bool can_go_forward() const;
 
@@ -150,12 +158,12 @@ private:
     int m_current_session_history_step { 0 };
 
     // https://html.spec.whatwg.org/multipage/document-sequences.html#tn-session-history-entries
-    Vector<GC::Ref<SessionHistoryEntry>> m_session_history_entries;
+    Vector<NonnullRefPtr<SessionHistoryEntry>> m_session_history_entries;
 
     // FIXME: https://html.spec.whatwg.org/multipage/document-sequences.html#tn-session-history-traversal-queue
 
-    // https://html.spec.whatwg.org/multipage/document-sequences.html#tn-running-nested-apply-history-step
-    bool m_running_nested_apply_history_step { false };
+    GC::Ptr<ApplyHistoryStepState> m_paused_apply_history_step_state;
+    GC::Ptr<ApplyHistoryStepState> m_apply_history_step_state;
 
     // https://html.spec.whatwg.org/multipage/document-sequences.html#system-visibility-state
     VisibilityState m_system_visibility_state { VisibilityState::Hidden };
@@ -185,8 +193,8 @@ struct BrowsingContextAndDocument {
     GC::Ref<DOM::Document> document;
 };
 
-WebIDL::ExceptionOr<BrowsingContextAndDocument> create_a_new_top_level_browsing_context_and_document(GC::Ref<Page> page);
-void finalize_a_same_document_navigation(GC::Ref<TraversableNavigable> traversable, GC::Ref<Navigable> target_navigable, GC::Ref<SessionHistoryEntry> target_entry, GC::Ptr<SessionHistoryEntry> entry_to_replace, HistoryHandlingBehavior, UserNavigationInvolvement);
+BrowsingContextAndDocument create_a_new_top_level_browsing_context_and_document(GC::Ref<Page> page);
+void finalize_a_same_document_navigation(GC::Ref<TraversableNavigable> traversable, GC::Ref<Navigable> target_navigable, NonnullRefPtr<SessionHistoryEntry> target_entry, RefPtr<SessionHistoryEntry> entry_to_replace, HistoryHandlingBehavior, UserNavigationInvolvement, GC::Ref<OnApplyHistoryStepComplete> on_complete);
 
 template<>
 inline bool Navigable::fast_is<TraversableNavigable>() const { return is_traversable(); }

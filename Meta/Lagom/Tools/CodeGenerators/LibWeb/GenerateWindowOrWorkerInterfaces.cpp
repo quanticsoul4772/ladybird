@@ -21,7 +21,6 @@ struct InterfaceSets {
     Vector<IDL::Interface&> window_exposed;
     Vector<IDL::Interface&> dedicated_worker_exposed;
     Vector<IDL::Interface&> shared_worker_exposed;
-    Vector<IDL::Interface&> shadow_realm_exposed;
     // TODO: service_worker_exposed
 };
 
@@ -67,6 +66,13 @@ static Optional<LegacyConstructor> const& lookup_legacy_constructor(IDL::Interfa
 
     s_legacy_constructors.set(interface.name, LegacyConstructor { name, move(constructor_class) });
     return s_legacy_constructors.get(interface.name).value();
+}
+
+static bool should_have_interface_object(IDL::Interface const& interface)
+{
+    if (interface.is_callback_interface)
+        return !interface.constants.is_empty();
+    return true;
 }
 
 static ErrorOr<void> generate_intrinsic_definitions_header(StringView output_path, InterfaceSets const& interface_sets)
@@ -124,8 +130,7 @@ static ErrorOr<void> generate_intrinsic_definitions_implementation(StringView ou
 #include <LibWeb/Export.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/HTML/DedicatedWorkerGlobalScope.h>
-#include <LibWeb/HTML/SharedWorkerGlobalScope.h>
-#include <LibWeb/HTML/ShadowRealmGlobalScope.h>)~~~");
+#include <LibWeb/HTML/SharedWorkerGlobalScope.h>)~~~");
 
     for (auto& interface : interface_sets.intrinsics) {
         auto gen = generator.fork();
@@ -248,7 +253,6 @@ static constexpr bool is_@global_name@_exposed(InterfaceName name)
     generate_global_exposed("window"sv, interface_sets.window_exposed);
     generate_global_exposed("dedicated_worker"sv, interface_sets.dedicated_worker_exposed);
     generate_global_exposed("shared_worker"sv, interface_sets.shared_worker_exposed);
-    generate_global_exposed("shadow_realm"sv, interface_sets.shadow_realm_exposed);
 
     // https://webidl.spec.whatwg.org/#dfn-exposed
     generator.append(R"~~~(
@@ -267,9 +271,6 @@ bool is_exposed(InterfaceName name, JS::Realm& realm)
            return false;
     } else if (is<HTML::SharedWorkerGlobalScope>(global_object)) {
         if (!is_shared_worker_exposed(name))
-            return false;
-    } else if (is<HTML::ShadowRealmGlobalScope>(global_object)) {
-        if (!is_shadow_realm_exposed(name))
             return false;
     } else {
         TODO(); // FIXME: ServiceWorkerGlobalScope and WorkletGlobalScope.
@@ -432,11 +433,14 @@ void add_@global_object_snake_name@_exposed_interfaces(JS::Object& global)
 {
     static constexpr u8 attr = JS::Attribute::Writable | JS::Attribute::Configurable;
 
-    [[maybe_unused]] bool is_secure_context = HTML::is_secure_context(HTML::relevant_principal_settings_object(global));
+    [[maybe_unused]] bool is_secure_context = HTML::is_secure_context(HTML::relevant_settings_object(global));
     [[maybe_unused]] bool expose_experimental_interfaces = HTML::UniversalGlobalScopeMixin::expose_experimental_interfaces();
 )~~~");
 
     auto add_interface = [class_name](SourceGenerator& gen, IDL::Interface const& interface) {
+        if (!should_have_interface_object(interface))
+            return;
+
         auto legacy_constructor = lookup_legacy_constructor(interface);
         Optional<ByteString const&> legacy_alias_name;
         if (class_name == "Window"sv)
@@ -612,13 +616,11 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     TRY(generate_exposed_interface_header("Window"sv, output_path));
     TRY(generate_exposed_interface_header("DedicatedWorker"sv, output_path));
     TRY(generate_exposed_interface_header("SharedWorker"sv, output_path));
-    TRY(generate_exposed_interface_header("ShadowRealm"sv, output_path));
     // TODO: ServiceWorkerExposed.h
 
     TRY(generate_exposed_interface_implementation("Window"sv, output_path, interface_sets.window_exposed));
     TRY(generate_exposed_interface_implementation("DedicatedWorker"sv, output_path, interface_sets.dedicated_worker_exposed));
     TRY(generate_exposed_interface_implementation("SharedWorker"sv, output_path, interface_sets.shared_worker_exposed));
-    TRY(generate_exposed_interface_implementation("ShadowRealm"sv, output_path, interface_sets.shadow_realm_exposed));
     // TODO: ServiceWorkerExposed.cpp
 
     return 0;
@@ -645,9 +647,6 @@ ErrorOr<void> add_to_interface_sets(IDL::Interface& interface, InterfaceSets& in
 
     if (has_flag(whom, IDL::ExposedTo::SharedWorker))
         interface_sets.shared_worker_exposed.append(interface);
-
-    if (has_flag(whom, IDL::ExposedTo::ShadowRealm))
-        interface_sets.shadow_realm_exposed.append(interface);
 
     return {};
 }

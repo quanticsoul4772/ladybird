@@ -14,6 +14,7 @@
 #include <LibCore/EventLoopImplementationUnix.h>
 #include <LibCore/EventReceiver.h>
 #include <LibCore/Notifier.h>
+#include <LibCore/Platform/ScopedAutoreleasePool.h>
 #include <LibCore/System.h>
 #include <LibCore/ThreadEventQueue.h>
 #include <LibThreading/Mutex.h>
@@ -308,6 +309,7 @@ int EventLoopImplementationUnix::exec()
 
 size_t EventLoopImplementationUnix::pump(PumpMode mode)
 {
+    ScopedAutoreleasePool autorelease_pool;
     static_cast<EventLoopManagerUnix&>(EventLoopManager::the()).wait_for_events(mode);
     return ThreadEventQueue::current().process();
 }
@@ -565,7 +567,14 @@ bool SignalHandlers::remove(int handler_id)
 void EventLoopManagerUnix::handle_signal(int signal_number)
 {
     VERIFY(signal_number != 0);
-    auto& thread_data = ThreadData::the();
+
+    // Use the thread-local directly instead of ThreadData::the() to avoid
+    // taking a write lock on s_thread_data_lock. Signal handlers must not
+    // acquire locks, as we may already be holding one on this thread.
+    if (!s_this_thread_data)
+        return;
+    auto& thread_data = *s_this_thread_data;
+
     // We MUST check if the current pid still matches, because there
     // is a window between fork() and exec() where a signal delivered
     // to our fork could be inadvertently routed to the parent process!

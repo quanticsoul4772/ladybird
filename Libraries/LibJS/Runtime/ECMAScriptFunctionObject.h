@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Export.h>
 #include <LibJS/Runtime/ClassFieldDefinition.h>
@@ -30,10 +29,6 @@ class JS_API ECMAScriptFunctionObject final : public FunctionObject {
     GC_DECLARE_ALLOCATOR(ECMAScriptFunctionObject);
 
 public:
-    static GC::Ref<ECMAScriptFunctionObject> create(Realm&, Utf16FlyString name, Utf16String source_text, Statement const& ecmascript_code, NonnullRefPtr<FunctionParameters const> parameters, i32 function_length, Vector<LocalVariable> local_variables_names, Environment* parent_environment, PrivateEnvironment* private_environment, FunctionKind, bool is_strict, FunctionParsingInsights, bool is_arrow_function = false, Variant<PropertyKey, PrivateName, Empty> class_field_initializer_name = {});
-    static GC::Ref<ECMAScriptFunctionObject> create(Realm&, Utf16FlyString name, Utf16View source_text, Statement const& ecmascript_code, NonnullRefPtr<FunctionParameters const> parameters, i32 function_length, Vector<LocalVariable> local_variables_names, Environment* parent_environment, PrivateEnvironment* private_environment, FunctionKind, bool is_strict, FunctionParsingInsights, bool is_arrow_function = false, Variant<PropertyKey, PrivateName, Empty> class_field_initializer_name = {});
-    static GC::Ref<ECMAScriptFunctionObject> create(Realm&, Utf16FlyString name, Object& prototype, Utf16View source_text, Statement const& ecmascript_code, NonnullRefPtr<FunctionParameters const> parameters, i32 function_length, Vector<LocalVariable> local_variables_names, Environment* parent_environment, PrivateEnvironment* private_environment, FunctionKind, bool is_strict, FunctionParsingInsights, bool is_arrow_function = false, Variant<PropertyKey, PrivateName, Empty> class_field_initializer_name = {});
-
     [[nodiscard]] static GC::Ref<ECMAScriptFunctionObject> create_from_function_data(
         GC::Ref<Realm>,
         GC::Ref<SharedFunctionInstanceData>,
@@ -50,7 +45,7 @@ public:
     virtual void initialize(Realm&) override;
     virtual ~ECMAScriptFunctionObject() override = default;
 
-    virtual void get_stack_frame_size(size_t& registers_and_locals_count, size_t& constants_count, size_t& argument_count) override;
+    virtual void get_stack_frame_info(size_t& registers_and_locals_count, ReadonlySpan<Value>& constants, size_t& argument_count) override;
     virtual ThrowCompletionOr<Value> internal_call(ExecutionContext&, Value this_argument) override;
     virtual ThrowCompletionOr<GC::Ref<Object>> internal_construct(ExecutionContext&, FunctionObject& new_target) override;
 
@@ -59,11 +54,6 @@ public:
     [[nodiscard]] bool is_module_wrapper() const { return shared_data().m_is_module_wrapper; }
     void set_is_module_wrapper(bool b) { const_cast<SharedFunctionInstanceData&>(shared_data()).m_is_module_wrapper = b; }
 
-    Statement const& ecmascript_code() const
-    {
-        VERIFY(shared_data().m_ecmascript_code);
-        return *shared_data().m_ecmascript_code;
-    }
     [[nodiscard]] u32 formal_parameter_count() const { return shared_data().m_formal_parameter_count; }
     [[nodiscard]] ReadonlySpan<Utf16FlyString> parameter_names_for_mapped_arguments() const { return shared_data().m_parameter_names_for_mapped_arguments; }
 
@@ -106,7 +96,7 @@ public:
     bool has_simple_parameter_list() const { return shared_data().m_has_simple_parameter_list; }
 
     // Equivalent to absence of [[Construct]]
-    virtual bool has_constructor() const override { return kind() == FunctionKind::Normal && !shared_data().m_is_arrow_function; }
+    virtual bool has_constructor() const override { return kind() == FunctionKind::Normal && !shared_data().m_is_arrow_function && !m_is_method; }
 
     virtual Vector<LocalVariable> const& local_variables_names() const override { return shared_data().m_local_variables_names; }
 
@@ -139,7 +129,6 @@ private:
     [[nodiscard]] bool function_environment_needed() const { return shared_data().m_function_environment_needed; }
     SharedFunctionInstanceData const& shared_data() const { return m_shared_data; }
 
-    virtual bool is_ecmascript_function_object() const override { return true; }
     virtual void visit_edges(Visitor&) override;
 
     void prepare_for_ordinary_call(VM&, ExecutionContext& callee_context, Object* new_target);
@@ -162,6 +151,7 @@ private:
     mutable OwnPtr<ClassData> m_class_data;
 
     mutable bool m_may_need_lazy_prototype_instantiation { false };
+    bool m_is_method { false };
 };
 
 template<>

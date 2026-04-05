@@ -34,10 +34,6 @@ void TaskQueue::add(GC::Ref<Task> task)
     if (task->document() && task->document()->is_temporary_document_for_fragment_parsing())
         return;
 
-    // AD-HOC: Don't enqueue tasks for documents that haven't been browsing context associated.
-    if (task->document() && !task->document()->has_been_browsing_context_associated())
-        return;
-
     m_tasks.append(task);
     m_event_loop->schedule();
 }
@@ -47,11 +43,21 @@ GC::Ptr<Task> TaskQueue::take_first_runnable()
     if (m_event_loop->execution_paused())
         return nullptr;
 
-    for (size_t i = 0; i < m_tasks.size(); ++i) {
-        if (m_event_loop->running_rendering_task() && m_tasks[i]->source() == Task::Source::Rendering)
+    for (size_t i = 0; i < m_tasks.size();) {
+        if (m_event_loop->running_rendering_task() && m_tasks[i]->source() == Task::Source::Rendering) {
+            ++i;
             continue;
+        }
+
         if (m_tasks[i]->is_runnable())
             return m_tasks.take(i);
+
+        if (m_tasks[i]->is_permanently_unrunnable()) {
+            m_tasks.remove(i);
+            continue;
+        }
+
+        ++i;
     }
     return nullptr;
 }
@@ -72,27 +78,26 @@ bool TaskQueue::has_runnable_tasks() const
 
 void TaskQueue::remove_tasks_matching(Function<bool(HTML::Task const&)> filter)
 {
-    m_tasks.remove_all_matching([&](auto& task) {
-        return filter(*task);
-    });
+    m_tasks.remove_all_matching(filter);
 }
 
-GC::RootVector<GC::Ref<Task>> TaskQueue::take_tasks_matching(Function<bool(HTML::Task const&)> filter)
+GC::Ptr<Task> TaskQueue::take_first_runnable_matching(Function<bool(HTML::Task const&)> filter)
 {
-    GC::RootVector<GC::Ref<Task>> matching_tasks(heap());
-
     for (size_t i = 0; i < m_tasks.size();) {
         auto& task = m_tasks.at(i);
 
-        if (filter(*task)) {
-            matching_tasks.append(task);
+        if (task->is_runnable() && filter(*task))
+            return m_tasks.take(i);
+
+        if (task->is_permanently_unrunnable()) {
             m_tasks.remove(i);
-        } else {
-            ++i;
+            continue;
         }
+
+        ++i;
     }
 
-    return matching_tasks;
+    return nullptr;
 }
 
 Task const* TaskQueue::last_added_task() const
@@ -104,11 +109,7 @@ Task const* TaskQueue::last_added_task() const
 
 bool TaskQueue::has_rendering_tasks() const
 {
-    for (auto const& task : m_tasks) {
-        if (task->source() == Task::Source::Rendering)
-            return true;
-    }
-    return false;
+    return m_tasks.contains([](auto const& task) { return task->source() == Task::Source::Rendering; });
 }
 
 }

@@ -14,6 +14,7 @@
 #include <AK/Variant.h>
 #include <LibCore/Forward.h>
 #include <LibCore/SharedCircularQueue.h>
+#include <LibIPC/Attachment.h>
 #include <LibIPC/Concepts.h>
 #include <LibIPC/File.h>
 #include <LibIPC/Forward.h>
@@ -51,9 +52,9 @@ public:
         return {};
     }
 
-    ErrorOr<void> append_file_descriptor(int fd)
+    ErrorOr<void> append_attachment(Attachment attachment)
     {
-        TRY(m_buffer.append_file_descriptor(fd));
+        TRY(m_buffer.append_attachment(move(attachment)));
         return {};
     }
 
@@ -126,6 +127,9 @@ ErrorOr<void> encode(Encoder&, URL::Host const&);
 
 template<>
 ErrorOr<void> encode(Encoder&, File const&);
+
+template<>
+ErrorOr<void> encode(Encoder&, TransportHandle const&);
 
 template<>
 ErrorOr<void> encode(Encoder&, Empty const&);

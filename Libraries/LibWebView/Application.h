@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/ByteString.h>
+#include <AK/Function.h>
 #include <AK/LexicalPath.h>
 #include <AK/Optional.h>
 #include <LibCore/EventLoop.h>
@@ -14,6 +15,7 @@
 #include <LibDatabase/Forward.h>
 #include <LibDevTools/DevToolsDelegate.h>
 #include <LibDevTools/Forward.h>
+#include <LibIPC/Forward.h>
 #include <LibImageDecoderClient/Client.h>
 #include <LibMain/Main.h>
 #include <LibRequests/Forward.h>
@@ -23,6 +25,7 @@
 #include <LibWeb/CSS/PreferredMotion.h>
 #include <LibWeb/Clipboard/SystemClipboard.h>
 #include <LibWeb/HTML/ActivateTab.h>
+#include <LibWebView/BookmarkStore.h>
 #include <LibWebView/FileDownloader.h>
 #include <LibWebView/Forward.h>
 #include <LibWebView/Options.h>
@@ -31,9 +34,14 @@
 #include <LibWebView/Settings.h>
 #include <LibWebView/StorageJar.h>
 
+#if defined(AK_OS_MACOS)
+#    include <LibIPC/TransportBootstrapMach.h>
+#endif
+
 namespace WebView {
 
 struct ApplicationSettingsObserver;
+struct ApplicationBookmarkStoreObserver;
 
 class WEBVIEW_API Application : public DevTools::DevToolsDelegate {
     AK_MAKE_NONCOPYABLE(Application);
@@ -54,16 +62,26 @@ public:
     static Requests::RequestClient& request_server_client() { return *the().m_request_server_client; }
     static ImageDecoderClient::Client& image_decoder_client() { return *the().m_image_decoder_client; }
 
+    static BookmarkStore& bookmark_store() { return the().m_bookmark_store; }
+    void update_bookmark_action_for_current_web_view();
+    void bookmarks_changed(Badge<ApplicationBookmarkStoreObserver>);
+    void show_bookmarks_bar_changed(Badge<ApplicationSettingsObserver>);
+
     static CookieJar& cookie_jar() { return *the().m_cookie_jar; }
     static StorageJar& storage_jar() { return *the().m_storage_jar; }
 
     static ProcessManager& process_manager() { return *the().m_process_manager; }
+#if defined(AK_OS_MACOS)
+    static IPC::TransportBootstrapMachServer& transport_bootstrap_server() { return the().m_transport_bootstrap_server; }
+    void set_browser_process_transport_handler(Function<void(NonnullOwnPtr<IPC::Transport>)> handler);
+#endif
 
     ErrorOr<NonnullRefPtr<WebContentClient>> launch_web_content_process(ViewImplementation&);
 
     virtual Optional<ViewImplementation&> active_web_view() const { return {}; }
     virtual Optional<ViewImplementation&> open_blank_new_tab(Web::HTML::ActivateTab) const { return {}; }
     void open_url_in_new_tab(URL::URL const&, Web::HTML::ActivateTab) const;
+    void open_bookmark_in_new_tab(String const& bookmark_id, Web::HTML::ActivateTab) const;
 
     void add_child_process(Process&&);
 
@@ -122,6 +140,11 @@ public:
     Menu& contrast_menu() { return *m_contrast_menu; }
     Menu& motion_menu() { return *m_motion_menu; }
 
+    Menu& bookmarks_menu() { return *m_bookmarks_menu; }
+    Menu& bookmarks_bar_context_menu() { return *m_bookmarks_bar_context_menu; }
+    Menu& bookmark_context_menu() { return *m_bookmark_context_menu; }
+    Menu& bookmark_folder_context_menu() { return *m_bookmark_folder_context_menu; }
+
     Menu& inspect_menu() { return *m_inspect_menu; }
     Action& view_source_action() { return *m_view_source_action; }
 
@@ -149,6 +172,23 @@ protected:
 
     virtual Optional<ByteString> ask_user_for_download_path([[maybe_unused]] StringView file) const { return {}; }
 
+    virtual void rebuild_bookmarks_menu() const { }
+    virtual void update_bookmarks_bar_display([[maybe_unused]] bool show_bookmarks_bar) const { }
+
+    struct BookmarkID {
+        String id;
+        Optional<String> target_folder_id;
+    };
+    virtual Optional<BookmarkID> bookmark_item_id_for_context_menu() const { return {}; }
+
+    using BookmarkPromise = Core::Promise<BookmarkItem::Bookmark>;
+    virtual NonnullRefPtr<BookmarkPromise> display_add_bookmark_dialog() const;
+    virtual NonnullRefPtr<BookmarkPromise> display_edit_bookmark_dialog([[maybe_unused]] BookmarkItem::Bookmark const& current_bookmark) const;
+
+    using BookmarkFolderPromise = Core::Promise<BookmarkItem::Folder>;
+    virtual NonnullRefPtr<BookmarkFolderPromise> display_add_bookmark_folder_dialog() const;
+    virtual NonnullRefPtr<BookmarkFolderPromise> display_edit_bookmark_folder_dialog([[maybe_unused]] BookmarkItem::Folder const& current_folder) const;
+
     virtual void on_devtools_enabled() const;
     virtual void on_devtools_disabled() const;
 
@@ -162,6 +202,15 @@ private:
     ErrorOr<void> launch_devtools_server();
 
     void initialize_actions();
+
+    void update_bookmarks_bar_action();
+
+    struct MenuData {
+        Menu& menu;
+        ReadonlySpan<BookmarkItem> items;
+        Optional<String const&> target_folder_id;
+    };
+    void create_bookmark_menu_items(Optional<MenuData> = {});
 
     virtual Vector<DevTools::TabDescription> tab_list() const override;
     virtual Vector<DevTools::CSSProperty> css_property_list() const override;
@@ -205,6 +254,9 @@ private:
     Settings m_settings;
     OwnPtr<ApplicationSettingsObserver> m_settings_observer;
 
+    BookmarkStore m_bookmark_store;
+    OwnPtr<ApplicationBookmarkStoreObserver> m_bookmark_store_observer;
+
     Main::Arguments m_arguments;
     BrowserOptions m_browser_options;
     RequestServerOptions m_request_server_options;
@@ -245,6 +297,15 @@ private:
     RefPtr<Menu> m_motion_menu;
     Web::CSS::PreferredMotion m_motion { Web::CSS::PreferredMotion::Auto };
 
+    RefPtr<Menu> m_bookmarks_menu;
+    RefPtr<Action> m_toggle_bookmark_action;
+    RefPtr<Action> m_toggle_bookmark_bar_action;
+    size_t m_bookmarks_menu_static_size { 0 };
+
+    RefPtr<Menu> m_bookmarks_bar_context_menu;
+    RefPtr<Menu> m_bookmark_context_menu;
+    RefPtr<Menu> m_bookmark_folder_context_menu;
+
     RefPtr<Menu> m_inspect_menu;
     RefPtr<Action> m_view_source_action;
     RefPtr<Action> m_toggle_devtools_action;
@@ -262,7 +323,9 @@ private:
     FileDownloader m_file_downloader;
 
 #if defined(AK_OS_MACOS)
-    OwnPtr<MachPortServer> m_mach_port_server;
+    OwnPtr<IPC::MachBootstrapListener> m_mach_port_server;
+    IPC::TransportBootstrapMachServer m_transport_bootstrap_server;
+    Function<void(NonnullOwnPtr<IPC::Transport>)> m_on_browser_process_transport;
 #endif
 
     OwnPtr<DevTools::DevToolsServer> m_devtools;

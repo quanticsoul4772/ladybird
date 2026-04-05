@@ -6,6 +6,7 @@
 
 //! Statement parsing: if, for, while, switch, try, etc.
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::ast::*;
@@ -18,7 +19,7 @@ enum LocalForInit {
     Expression(Expression),
 }
 
-impl<'a> Parser<'a> {
+impl Parser<'_> {
     pub(crate) fn parse_statement(&mut self, allow_labelled_function: bool) -> Statement {
         let start = self.position();
         let tt = self.current_token_type();
@@ -110,8 +111,7 @@ impl<'a> Parser<'a> {
         } else if self.match_token(TokenType::Function) || self.match_token(TokenType::Class) {
             let name = self.current_token.token_type.name();
             self.syntax_error(&format!(
-                "{} declaration not allowed in single-statement context",
-                name
+                "{name} declaration not allowed in single-statement context"
             ));
         } else if self.match_token(TokenType::Let)
             && self.next_token().token_type == TokenType::BracketOpen
@@ -189,7 +189,7 @@ impl<'a> Parser<'a> {
 
             if !self.labels_in_scope.contains_key(label_value.as_slice()) {
                 let label_str = String::from_utf16_lossy(&label_value);
-                self.syntax_error(&format!("Label '{}' not found", label_str));
+                self.syntax_error(&format!("Label '{label_str}' not found"));
             }
 
             self.consume_or_insert_semicolon();
@@ -238,7 +238,7 @@ impl<'a> Parser<'a> {
                 *entry = Some((label_line, label_col));
             } else {
                 let label_str = String::from_utf16_lossy(&label_value);
-                self.syntax_error(&format!("Label '{}' not found or invalid", label_str));
+                self.syntax_error(&format!("Label '{label_str}' not found or invalid"));
             }
 
             Some(label_value)
@@ -270,7 +270,13 @@ impl<'a> Parser<'a> {
         let predicate = self.parse_expression_any();
         self.consume_token(TokenType::ParenClose);
 
-        let consequent = if !self.flags.strict_mode && self.match_token(TokenType::Function) {
+        // https://tc39.es/ecma262/#sec-functiondeclarations-in-ifstatement-statement-clauses
+        // Annex B allows FunctionDeclarations (but NOT GeneratorDeclarations) in
+        // IfStatement bodies in sloppy mode.
+        let consequent = if !self.flags.strict_mode
+            && self.match_token(TokenType::Function)
+            && self.next_token().token_type != TokenType::Asterisk
+        {
             self.parse_function_declaration_as_block_statement(start)
         } else {
             self.parse_statement(false)
@@ -278,7 +284,10 @@ impl<'a> Parser<'a> {
 
         let alternate = if self.match_token(TokenType::Else) {
             self.consume();
-            if !self.flags.strict_mode && self.match_token(TokenType::Function) {
+            if !self.flags.strict_mode
+                && self.match_token(TokenType::Function)
+                && self.next_token().token_type != TokenType::Asterisk
+            {
                 Some(Box::new(
                     self.parse_function_declaration_as_block_statement(start),
                 ))
@@ -291,11 +300,11 @@ impl<'a> Parser<'a> {
 
         self.statement(
             start,
-            StatementKind::If {
+            StatementKind::If(Box::new(IfStatementData {
                 test: Box::new(predicate),
                 consequent: Box::new(consequent),
                 alternate,
-            },
+            })),
         )
     }
 
@@ -335,10 +344,10 @@ impl<'a> Parser<'a> {
 
         self.statement(
             start,
-            StatementKind::While {
+            StatementKind::While(Box::new(WhileStatementData {
                 test: Box::new(test),
                 body: Box::new(body),
-            },
+            })),
         )
     }
 
@@ -359,10 +368,10 @@ impl<'a> Parser<'a> {
 
         self.statement(
             start,
-            StatementKind::DoWhile {
+            StatementKind::DoWhile(Box::new(WhileStatementData {
                 test: Box::new(test),
                 body: Box::new(body),
-            },
+            })),
         )
     }
 
@@ -395,6 +404,7 @@ impl<'a> Parser<'a> {
         }
 
         let init_start = self.position();
+        let init_starts_with_async_keyword = self.match_token(TokenType::Async);
         let is_var_init = self.match_token(TokenType::Var);
         let is_using = self.match_for_using_declaration();
         let is_let = self.match_token(TokenType::Let)
@@ -430,10 +440,13 @@ impl<'a> Parser<'a> {
                 }
                 if self.for_loop_declaration_has_init {
                     // https://tc39.es/ecma262/#sec-initializers-in-forin-statement-heads
-                    // Annex B: In sloppy mode, a single `var` with an initializer is permitted.
-                    if !(self.for_loop_declaration_is_var
-                        && self.for_loop_declaration_count == 1
-                        && !self.flags.strict_mode)
+                    // Annex B: In sloppy mode, a single `var` with a simple
+                    // BindingIdentifier and an initializer is permitted.
+                    // Binding patterns with initializers are never allowed.
+                    if !self.for_loop_declaration_is_var
+                        || self.for_loop_declaration_count != 1
+                        || self.flags.strict_mode
+                        || self.for_loop_declaration_is_pattern
                     {
                         self.syntax_error("Variable initializer not allowed in for..in/of");
                     }
@@ -450,12 +463,12 @@ impl<'a> Parser<'a> {
             let lhs = self.synthesize_for_in_of_lhs(init, init_start);
             let result = self.statement(
                 forin_start,
-                StatementKind::ForInOf {
+                StatementKind::ForInOf(Box::new(ForInOfStatementData {
                     kind: ForInOfKind::ForIn,
                     lhs,
                     rhs: Box::new(rhs),
                     body: Box::new(body),
-                },
+                })),
             );
             return self.close_for_loop_scope(start, result);
         }
@@ -476,9 +489,22 @@ impl<'a> Parser<'a> {
                 } else {
                     self.validate_for_in_of_lhs(&init);
                     // https://tc39.es/ecma262/#sec-for-in-and-for-of-statements
+                    // `for (async of ...)` must be rejected when `async` is the
+                    // reserved keyword token. Escaped identifiers (e.g. `\u0061sync`)
+                    // are still valid here.
+                    if init_starts_with_async_keyword
+                        && let LocalForInit::Expression(ref expression) = init
+                        && let ExpressionKind::Identifier(ref ident) = expression.inner
+                        && ident.name == utf16!("async")
+                    {
+                        self.syntax_error(
+                            "for-of statement may not use 'async' as the left-hand side",
+                        );
+                    }
+                    // https://tc39.es/ecma262/#sec-for-in-and-for-of-statements
                     if let LocalForInit::Expression(ref expression) = init
-                        && let ExpressionKind::Member { ref object, .. } = expression.inner
-                        && let ExpressionKind::Identifier(ref ident) = object.inner
+                        && let ExpressionKind::Member(ref data) = expression.inner
+                        && let ExpressionKind::Identifier(ref ident) = data.object.inner
                         && ident.name == utf16!("let")
                     {
                         self.syntax_error("For of statement may not start with let.");
@@ -498,12 +524,12 @@ impl<'a> Parser<'a> {
                 };
                 let result = self.statement(
                     forof_start,
-                    StatementKind::ForInOf {
+                    StatementKind::ForInOf(Box::new(ForInOfStatementData {
                         kind: for_of_kind,
                         lhs,
                         rhs: Box::new(rhs),
                         body: Box::new(body),
-                    },
+                    })),
                 );
                 return self.close_for_loop_scope(start, result);
             }
@@ -511,12 +537,10 @@ impl<'a> Parser<'a> {
 
         // Standard for loop — const requires initializer.
         if let LocalForInit::Declaration(ref declaration) = init
-            && let StatementKind::VariableDeclaration {
-                kind: DeclarationKind::Const,
-                ref declarations,
-            } = declaration.inner
+            && let StatementKind::VariableDeclaration(ref vd) = declaration.inner
+            && vd.kind == DeclarationKind::Const
         {
-            for d in declarations {
+            for d in &vd.declarations {
                 if d.init.is_none() {
                     self.syntax_error("Missing initializer in const declaration");
                 }
@@ -561,12 +585,12 @@ impl<'a> Parser<'a> {
 
         self.statement(
             start,
-            StatementKind::For {
+            StatementKind::For(Box::new(ForStatementData {
                 init,
                 test,
                 update,
                 body: Box::new(body),
-            },
+            })),
         )
     }
 
@@ -583,10 +607,10 @@ impl<'a> Parser<'a> {
         self.scope_collector.close_scope();
         self.statement(
             start,
-            StatementKind::With {
+            StatementKind::With(Box::new(WithStatementData {
                 object: Box::new(object),
                 body: Box::new(body),
-            },
+            })),
         )
     }
 
@@ -629,11 +653,11 @@ impl<'a> Parser<'a> {
 
         self.statement(
             start,
-            StatementKind::Switch(SwitchStatementData {
+            StatementKind::Switch(Box::new(SwitchStatementData {
                 scope,
                 discriminant: Box::new(discriminant),
                 cases,
-            }),
+            })),
         )
     }
 
@@ -702,11 +726,11 @@ impl<'a> Parser<'a> {
 
         self.statement(
             start,
-            StatementKind::Try(TryStatementData {
+            StatementKind::Try(Box::new(TryStatementData {
                 block: Box::new(block),
                 handler,
                 finalizer,
-            }),
+            })),
         )
     }
 
@@ -732,6 +756,20 @@ impl<'a> Parser<'a> {
                     .iter()
                     .map(|(n, _)| n.clone())
                     .collect();
+                // https://tc39.es/ecma262/#sec-try-statement-static-semantics-early-errors
+                // It is a Syntax Error if BoundNames of CatchParameter
+                // contains any duplicate elements.
+                {
+                    let mut seen: HashSet<&[u16]> = HashSet::new();
+                    for name in &names_to_check {
+                        if !seen.insert(name.as_slice()) {
+                            let name_str = String::from_utf16_lossy(name);
+                            self.syntax_error(&format!(
+                                "Duplicate binding '{name_str}' in catch parameter"
+                            ));
+                        }
+                    }
+                }
                 for name in &names_to_check {
                     self.check_identifier_name_for_assignment_validity(name, false);
                 }
@@ -773,7 +811,68 @@ impl<'a> Parser<'a> {
             None
         };
 
+        // Collect catch parameter names for post-body validation.
+        let catch_names: Vec<Utf16String> = match &parameter {
+            Some(CatchBinding::Identifier(id)) => vec![id.name.clone()],
+            Some(CatchBinding::BindingPattern(_)) => self
+                .pattern_bound_names
+                .iter()
+                .map(|(n, _)| n.clone())
+                .collect(),
+            None => Vec::new(),
+        };
+
         let body = self.parse_block_statement();
+
+        // https://tc39.es/ecma262/#sec-try-statement-static-semantics-early-errors
+        // It is a Syntax Error if any element of the BoundNames of
+        // CatchParameter also occurs in the LexicallyDeclaredNames of Block.
+        if !catch_names.is_empty()
+            && let StatementKind::Block(ref scope) = body.inner
+        {
+            for child in &scope.borrow().children {
+                match &child.inner {
+                    StatementKind::VariableDeclaration(vd) if vd.kind != DeclarationKind::Var => {
+                        for decl in &vd.declarations {
+                            if let VariableDeclaratorTarget::Identifier(ref id) = decl.target {
+                                for cn in &catch_names {
+                                    if cn.as_slice() == id.name.as_slice() {
+                                        let n = String::from_utf16_lossy(cn);
+                                        self.syntax_error(&format!(
+                                            "Identifier '{n}' already declared as catch parameter"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    StatementKind::FunctionDeclaration(fd) if fd.name.is_some() => {
+                        let id = fd.name.as_ref().unwrap();
+                        for cn in &catch_names {
+                            if cn.as_slice() == id.name.as_slice() {
+                                let n = String::from_utf16_lossy(cn);
+                                self.syntax_error(&format!(
+                                    "Identifier '{n}' already declared as catch parameter"
+                                ));
+                            }
+                        }
+                    }
+                    StatementKind::ClassDeclaration(data) => {
+                        if let Some(ref id) = data.name {
+                            for cn in &catch_names {
+                                if cn.as_slice() == id.name.as_slice() {
+                                    let n = String::from_utf16_lossy(cn);
+                                    self.syntax_error(&format!(
+                                        "Identifier '{n}' already declared as catch parameter"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         self.scope_collector.close_scope();
 
@@ -806,6 +905,14 @@ impl<'a> Parser<'a> {
         self.discard_saved_state();
         self.consume(); // consume :
 
+        // https://tc39.es/ecma262/#sec-labelled-statements
+        // LabelIdentifier : Identifier (not ReservedWord)
+        // `true`, `false`, and `null` are reserved words and cannot be labels.
+        if token.token_type == TokenType::BoolLiteral || token.token_type == TokenType::NullLiteral
+        {
+            self.syntax_error("Reserved word cannot be used as a label");
+        }
+
         if self.flags.strict_mode
             && (label == utf16!("let") || crate::parser::is_strict_reserved_word(&label))
         {
@@ -814,13 +921,17 @@ impl<'a> Parser<'a> {
         if self.flags.in_generator_function_context && label == utf16!("yield") {
             self.syntax_error("'yield' label is not allowed in generator function context");
         }
-        if self.flags.await_expression_is_valid && label == utf16!("await") {
-            self.syntax_error("'await' label is not allowed in async function context");
+        if (self.flags.await_expression_is_valid
+            || self.flags.in_class_static_init_block
+            || self.program_type == crate::parser::ProgramType::Module)
+            && label == utf16!("await")
+        {
+            self.syntax_error("'await' is not allowed as a label in this context");
         }
 
         if self.labels_in_scope.contains_key(label.as_slice()) {
             let label_str = String::from_utf16_lossy(&label);
-            self.syntax_error(&format!("Label '{}' has already been declared", label_str));
+            self.syntax_error(&format!("Label '{label_str}' has already been declared"));
         }
 
         if self.match_token(TokenType::Function)
@@ -844,8 +955,8 @@ impl<'a> Parser<'a> {
         self.last_inner_label_is_iteration = false;
         let body = if self.match_token(TokenType::Function) {
             let fn_decl = self.parse_function_declaration();
-            if let StatementKind::FunctionDeclaration { kind, .. } = fn_decl.inner {
-                match kind {
+            if let StatementKind::FunctionDeclaration(ref fd) = fn_decl.inner {
+                match fd.kind {
                     FunctionKind::Generator | FunctionKind::AsyncGenerator => {
                         self.syntax_error(
                             "Generator functions cannot be defined in labelled statements",
@@ -880,10 +991,10 @@ impl<'a> Parser<'a> {
 
         Some(self.statement(
             start,
-            StatementKind::Labelled {
+            StatementKind::Labelled(Box::new(LabelledStatementData {
                 label,
                 item: Box::new(body),
-            },
+            })),
         ))
     }
 
@@ -911,14 +1022,25 @@ impl<'a> Parser<'a> {
 
     /// Validate that an expression-form LHS is valid for for-in/for-of.
     fn validate_for_in_of_lhs(&mut self, init: &LocalForInit) {
-        if let LocalForInit::Expression(ref expression) = *init
-            && !Self::is_identifier(expression)
-            && !Self::is_member_expression(expression)
-            && !Self::is_call_expression(expression)
-            && !Self::is_object_expression(expression)
-            && !Self::is_array_expression(expression)
-        {
-            self.syntax_error("Invalid left-hand side in for-loop");
+        if let LocalForInit::Expression(ref expression) = *init {
+            match &expression.inner {
+                // NewExpression is never a valid assignment target.
+                ExpressionKind::New(_) => {
+                    self.syntax_error("Invalid left-hand side in for-loop");
+                }
+                // CallExpression is a valid assignment target only in non-strict mode (web compat).
+                ExpressionKind::Call(_) if self.flags.strict_mode => {
+                    self.syntax_error("Invalid left-hand side in for-loop");
+                }
+                ExpressionKind::Identifier(_)
+                | ExpressionKind::Member(_)
+                | ExpressionKind::Call(_)
+                | ExpressionKind::Object(_)
+                | ExpressionKind::Array(_) => {}
+                _ => {
+                    self.syntax_error("Invalid left-hand side in for-loop");
+                }
+            }
         }
     }
 
@@ -932,15 +1054,15 @@ impl<'a> Parser<'a> {
             LocalForInit::Expression(expression) => {
                 if Self::is_array_expression(&expression) || Self::is_object_expression(&expression)
                 {
-                    match self.synthesize_binding_pattern(init_start) {
-                        Some(pattern) => {
-                            for (name, id) in self.pattern_bound_names.drain(..) {
-                                self.scope_collector.register_identifier(id, &name, None);
-                            }
-                            ForInOfLhs::Pattern(pattern)
-                        }
-                        _ => ForInOfLhs::Expression(Box::new(expression)),
+                    let pattern = self.synthesize_binding_pattern(init_start);
+
+                    let bound_names: Vec<_> = self.pattern_bound_names.drain(..).collect();
+                    for (name, id) in &bound_names {
+                        self.check_identifier_name_for_assignment_validity(name, false);
+                        self.scope_collector
+                            .register_identifier(id.clone(), name, None);
                     }
+                    ForInOfLhs::Pattern(pattern)
                 } else {
                     ForInOfLhs::Expression(Box::new(expression))
                 }

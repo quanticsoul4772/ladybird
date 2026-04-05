@@ -12,14 +12,12 @@
 #include <LibWebView/Forward.h>
 #include <UI/Qt/SecurityNotificationBanner.h>
 #include <UI/Qt/Tab.h>
+#include <UI/Qt/TabBar.h>
 
 #include <QIcon>
 #include <QMainWindow>
-#include <QMenuBar>
 #include <QPushButton>
 #include <QTabBar>
-#include <QTabWidget>
-#include <QToolBar>
 
 class QPropertyAnimation;
 
@@ -51,7 +49,12 @@ public:
     static constexpr int button_animation_time() { return 750; }
     explicit FullscreenMode(BrowserWindow* window, ExitFullscreenButton* exit_button);
 
-    void exit();
+    enum class ExitInitiatedBy {
+        UI,
+        WebContent,
+    };
+
+    void exit(ExitInitiatedBy);
     void enter(Tab* tab);
     // Called after a window change event that has identifed the current window state to be fullscreen.
     void entered_fullscreen();
@@ -101,6 +104,9 @@ public:
     QAction& new_window_action() const { return *m_new_window_action; }
     QAction& find_action() const { return *m_find_in_page_action; }
 
+    void rebuild_bookmarks_menu();
+    void update_bookmarks_bar_display(bool show_bookmarks_bar);
+
     double refresh_rate() const { return m_refresh_rate; }
 
     void on_devtools_enabled();
@@ -135,6 +141,7 @@ public slots:
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
 
+
 private:
     virtual bool event(QEvent*) override;
     virtual void resizeEvent(QResizeEvent*) override;
@@ -146,15 +153,13 @@ private:
     Tab& create_new_tab(Web::HTML::ActivateTab, Tab& parent, Optional<u64> page_index);
     void initialize_tab(Tab*);
 
-    void set_current_tab(Tab* tab) { m_current_tab = tab; }
+    void set_current_tab(Tab* tab);
 
     template<typename Callback>
     void for_each_tab(Callback&& callback)
     {
-        for (int i = 0; i < m_tabs_container->count(); ++i) {
-            auto& tab = as<Tab>(*m_tabs_container->widget(i));
-            callback(tab);
-        }
+        for (int i = 0; i < m_tabs_container->count(); ++i)
+            callback(*m_tabs_container->tab(i));
     }
 
     void create_close_button_for_tab(Tab*);
@@ -169,13 +174,15 @@ private:
     double m_device_pixel_ratio { 0 };
     double m_refresh_rate { 60.0 };
 
-    QTabWidget* m_tabs_container { nullptr };
+    TabWidget* m_tabs_container { nullptr };
     Tab* m_current_tab { nullptr };
 
     QToolBar* m_new_tab_button_toolbar { nullptr };
     SecurityNotificationBanner* m_security_notification_banner { nullptr };
 
+
     QMenu* m_hamburger_menu { nullptr };
+    QMenu* m_bookmarks_menu { nullptr };
 
     QAction* m_new_tab_action { nullptr };
     QAction* m_new_window_action { nullptr };

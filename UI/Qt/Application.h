@@ -33,7 +33,6 @@ public:
 private:
     explicit Application();
 
-    virtual void create_platform_arguments(Core::ArgsParser&) override;
     virtual void create_platform_options(WebView::BrowserOptions&, WebView::RequestServerOptions&, WebView::WebContentOptions&) override;
     virtual NonnullOwnPtr<Core::EventLoop> create_platform_event_loop() override;
 
@@ -49,12 +48,19 @@ private:
     virtual Vector<Web::Clipboard::SystemClipboardRepresentation> clipboard_entries() const override;
     virtual void insert_clipboard_entry(Web::Clipboard::SystemClipboardRepresentation) override;
 
+    virtual void rebuild_bookmarks_menu() const override;
+    virtual void update_bookmarks_bar_display(bool) const override;
+    virtual Optional<BookmarkID> bookmark_item_id_for_context_menu() const override;
+    virtual NonnullRefPtr<BookmarkPromise> display_add_bookmark_dialog() const override;
+    virtual NonnullRefPtr<BookmarkPromise> display_edit_bookmark_dialog(WebView::BookmarkItem::Bookmark const& current_bookmark) const override;
+    virtual NonnullRefPtr<BookmarkFolderPromise> display_add_bookmark_folder_dialog() const override;
+    virtual NonnullRefPtr<BookmarkFolderPromise> display_edit_bookmark_folder_dialog(WebView::BookmarkItem::Folder const& current_folder) const override;
+
     virtual void on_devtools_enabled() const override;
     virtual void on_devtools_disabled() const override;
 
     OwnPtr<QApplication> m_application;
     BrowserWindow* m_active_window { nullptr };
-    bool m_file_scheme_urls_have_tuple_origins { false };
 };
 
 }

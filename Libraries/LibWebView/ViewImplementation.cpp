@@ -15,6 +15,7 @@
 #include <LibWeb/Crypto/Crypto.h>
 #include <LibWeb/Infra/Strings.h>
 #include <LibWebView/Application.h>
+#include <LibWebView/BookmarkStore.h>
 #include <LibWebView/HelperProcess.h>
 #include <LibWebView/Menu.h>
 #include <LibWebView/URL.h>
@@ -96,11 +97,35 @@ u64 ViewImplementation::page_id() const
     return m_client_state.page_index;
 }
 
+void ViewImplementation::set_url(URL::URL url)
+{
+    if (m_url == url)
+        return;
+
+    m_url = move(url);
+    update_bookmark_action();
+}
+
+void ViewImplementation::set_favicon(Badge<WebContentClient>, Gfx::Bitmap const& favicon)
+{
+    m_favicon_base64_png.clear();
+
+    if (auto favicon_png = Gfx::PNGWriter::encode(favicon); !favicon_png.is_error()) {
+        if (auto favicon_base64_png = encode_base64(favicon_png.value().bytes()); !favicon_base64_png.is_error())
+            m_favicon_base64_png = favicon_base64_png.release_value();
+    }
+
+    if (m_favicon_base64_png.has_value())
+        Application::bookmark_store().update_favicon(m_url, *m_favicon_base64_png);
+
+    if (on_favicon_change)
+        on_favicon_change(favicon);
+}
+
 void ViewImplementation::create_new_process_for_cross_site_navigation(URL::URL const& url)
 {
     if (m_client_state.client) {
         m_client_state.client->unregister_view(m_client_state.page_index);
-        client().async_close_server();
     }
 
     initialize_client();
@@ -153,7 +178,7 @@ void ViewImplementation::set_system_visibility_state(Web::HTML::VisibilityState 
 
 void ViewImplementation::load(URL::URL const& url)
 {
-    m_url = url;
+    set_url(url);
     client().async_load_url(page_id(), url);
 }
 
@@ -480,6 +505,16 @@ void ViewImplementation::exit_fullscreen()
     client().async_exit_fullscreen(page_id());
 }
 
+void ViewImplementation::set_is_fullscreen(Web::ViewportIsFullscreen is_fullscreen)
+{
+    if (m_is_fullscreen == is_fullscreen)
+        return;
+    m_is_fullscreen = is_fullscreen;
+
+    handle_resize();
+    did_update_window_rect();
+}
+
 void ViewImplementation::alert_closed()
 {
     client().async_alert_closed(page_id());
@@ -556,7 +591,7 @@ void ViewImplementation::did_update_navigation_buttons_state(Badge<WebContentCli
     m_navigate_forward_action->set_enabled(forward_enabled);
 }
 
-void ViewImplementation::did_allocate_backing_stores(Badge<WebContentClient>, i32 front_bitmap_id, Gfx::ShareableBitmap const& front_bitmap, i32 back_bitmap_id, Gfx::ShareableBitmap const& back_bitmap)
+void ViewImplementation::did_allocate_backing_stores(Badge<WebContentClient>, i32 front_bitmap_id, Web::SharedBackingStore front_backing_store, i32 back_bitmap_id, Web::SharedBackingStore back_backing_store)
 {
     if (m_client_state.has_usable_bitmap) {
         // NOTE: We keep the outgoing front bitmap as a backup so we have something to paint until we get a new one.
@@ -564,45 +599,32 @@ void ViewImplementation::did_allocate_backing_stores(Badge<WebContentClient>, i3
         m_backup_bitmap_size = m_client_state.front_bitmap.last_painted_size;
     }
     m_client_state.has_usable_bitmap = false;
-
-    m_client_state.front_bitmap.bitmap = front_bitmap.bitmap();
     m_client_state.front_bitmap.id = front_bitmap_id;
-    m_client_state.back_bitmap.bitmap = back_bitmap.bitmap();
     m_client_state.back_bitmap.id = back_bitmap_id;
-}
 
 #ifdef AK_OS_MACOS
-void ViewImplementation::did_allocate_iosurface_backing_stores(i32 front_id, Core::MachPort&& front_port, i32 back_id, Core::MachPort&& back_port)
-{
-    if (m_client_state.has_usable_bitmap) {
-        // NOTE: We keep the outgoing front bitmap as a backup so we have something to paint until we get a new one.
-        m_backup_bitmap = m_client_state.front_bitmap.bitmap;
-        m_backup_bitmap_size = m_client_state.front_bitmap.last_painted_size;
-    }
-    m_client_state.has_usable_bitmap = false;
+    auto update_bitmap = [](SharedBitmap& target, Web::SharedBackingStore backing_store) {
+        auto iosurface_port = backing_store.release_iosurface_port();
+        auto iosurface = Core::IOSurfaceHandle::from_mach_port(iosurface_port);
+        auto size = Gfx::IntSize { iosurface.width(), iosurface.height() };
+        auto bytes_per_row = iosurface.bytes_per_row();
+        target.iosurface_ref = iosurface.core_foundation_pointer();
 
-    auto front_iosurface = Core::IOSurfaceHandle::from_mach_port(move(front_port));
-    auto back_iosurface = Core::IOSurfaceHandle::from_mach_port(move(back_port));
+        auto bitmap = Gfx::Bitmap::create_wrapper(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, size, bytes_per_row, iosurface.data(), [handle = move(iosurface)] { });
+        target.bitmap = bitmap.release_value_but_fixme_should_propagate_errors();
+    };
 
-    auto front_size = Gfx::IntSize { front_iosurface.width(), front_iosurface.height() };
-    auto back_size = Gfx::IntSize { back_iosurface.width(), back_iosurface.height() };
+    update_bitmap(m_client_state.front_bitmap, move(front_backing_store));
+    update_bitmap(m_client_state.back_bitmap, move(back_backing_store));
+#else
+    auto update_bitmap = [](SharedBitmap& target, Web::SharedBackingStore backing_store) {
+        target.bitmap = backing_store.bitmap().bitmap();
+    };
 
-    auto bytes_per_row = front_iosurface.bytes_per_row();
-
-    auto* front_ref = front_iosurface.core_foundation_pointer();
-    auto* back_ref = back_iosurface.core_foundation_pointer();
-
-    auto front_bitmap = Gfx::Bitmap::create_wrapper(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, front_size, bytes_per_row, front_iosurface.data(), [handle = move(front_iosurface)] { });
-    auto back_bitmap = Gfx::Bitmap::create_wrapper(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, back_size, bytes_per_row, back_iosurface.data(), [handle = move(back_iosurface)] { });
-
-    m_client_state.front_bitmap.bitmap = front_bitmap.release_value_but_fixme_should_propagate_errors();
-    m_client_state.front_bitmap.id = front_id;
-    m_client_state.front_bitmap.iosurface_ref = front_ref;
-    m_client_state.back_bitmap.bitmap = back_bitmap.release_value_but_fixme_should_propagate_errors();
-    m_client_state.back_bitmap.id = back_id;
-    m_client_state.back_bitmap.iosurface_ref = back_ref;
-}
+    update_bitmap(m_client_state.front_bitmap, move(front_backing_store));
+    update_bitmap(m_client_state.back_bitmap, move(back_backing_store));
 #endif
+}
 
 void ViewImplementation::update_zoom()
 {
@@ -618,7 +640,7 @@ void ViewImplementation::update_zoom()
 
 void ViewImplementation::handle_resize()
 {
-    client().async_set_viewport(page_id(), this->viewport_size(), m_device_pixel_ratio);
+    client().async_set_viewport(page_id(), viewport_size(), m_device_pixel_ratio, m_is_fullscreen);
 }
 
 void ViewImplementation::initialize_client(CreateNewClient create_new_client)
@@ -632,16 +654,16 @@ void ViewImplementation::initialize_client(CreateNewClient create_new_client)
         m_client_state.client->register_view(m_client_state.page_index, *this);
     }
 
-    m_client_state.client_handle = MUST(Web::Crypto::generate_random_uuid());
+    m_client_state.client_handle = Web::Crypto::generate_random_uuid();
     client().async_set_window_handle(m_client_state.page_index, m_client_state.client_handle);
     client().async_set_zoom_level(m_client_state.page_index, m_zoom_level);
-    client().async_set_viewport(m_client_state.page_index, viewport_size(), m_device_pixel_ratio);
+    client().async_set_viewport(m_client_state.page_index, viewport_size(), m_device_pixel_ratio, m_is_fullscreen);
     client().async_set_maximum_frames_per_second(m_client_state.page_index, m_maximum_frames_per_second);
     client().async_set_system_visibility_state(m_client_state.page_index, m_system_visibility_state);
     client().async_set_document_cookie_version_buffer(m_client_state.page_index, m_document_cookie_version_buffer);
 
-    if (auto webdriver_content_ipc_path = Application::browser_options().webdriver_content_ipc_path; webdriver_content_ipc_path.has_value())
-        client().async_connect_to_webdriver(m_client_state.page_index, *webdriver_content_ipc_path);
+    if (auto webdriver_endpoint = Application::browser_options().webdriver_endpoint; webdriver_endpoint.has_value())
+        client().async_connect_to_webdriver(m_client_state.page_index, *webdriver_endpoint);
 
     Application::the().apply_view_options({}, *this);
 
@@ -740,6 +762,21 @@ void ViewImplementation::global_privacy_control_changed()
 {
     auto global_privacy_control = Application::settings().global_privacy_control();
     client().async_set_enable_global_privacy_control(page_id(), global_privacy_control == GlobalPrivacyControl::Yes);
+}
+
+void ViewImplementation::bookmarks_changed()
+{
+    update_bookmark_action();
+}
+
+void ViewImplementation::update_bookmark_action()
+{
+    Application::the().update_bookmark_action_for_current_web_view();
+
+    auto is_bookmarked = Application::bookmark_store().is_bookmarked(url());
+
+    m_toggle_bookmark_action->set_tooltip(is_bookmarked ? "Remove bookmark"sv : "Bookmark this page"sv);
+    m_toggle_bookmark_action->set_engaged(is_bookmarked);
 }
 
 static ErrorOr<LexicalPath> save_screenshot(Gfx::Bitmap const* bitmap)
@@ -887,6 +924,16 @@ void ViewImplementation::initialize_context_menus()
     });
     m_navigate_back_action->set_enabled(false);
     m_navigate_forward_action->set_enabled(false);
+
+    m_toggle_bookmark_action = Action::create("Toggle Bookmark"sv, ActionID::ToggleBookmarkViaToolbar, [this]() {
+        auto& bookmark_store = Application::bookmark_store();
+
+        if (auto bookmark = bookmark_store.find_bookmark_by_url(url()); bookmark.has_value())
+            bookmark_store.remove_item(bookmark->id);
+        else
+            bookmark_store.add_bookmark(url(), title().to_utf8(), favicon_base64_png());
+    });
+    update_bookmark_action();
 
     m_reset_zoom_action = Action::create("100%"sv, ActionID::ResetZoomViaToolbar, [this]() {
         reset_zoom();

@@ -226,8 +226,8 @@ public:
 
     WebIDL::ExceptionOr<GC::Ref<Node>> replace_child(GC::Ref<Node> node, GC::Ref<Node> child);
 
-    WebIDL::ExceptionOr<GC::Ref<Node>> clone_node(Document* document = nullptr, bool subtree = false, Node* parent = nullptr) const;
-    WebIDL::ExceptionOr<GC::Ref<Node>> clone_single_node(Document&) const;
+    WebIDL::ExceptionOr<GC::Ref<Node>> clone_node(GC::Ptr<Document> document = nullptr, bool subtree = false, GC::Ptr<Node> parent = nullptr, GC::Ptr<HTML::CustomElementRegistry> fallback_registry = nullptr) const;
+    WebIDL::ExceptionOr<GC::Ref<Node>> clone_single_node(Document&, GC::Ptr<HTML::CustomElementRegistry> fallback_registry) const;
     WebIDL::ExceptionOr<GC::Ref<Node>> clone_node_binding(bool subtree);
 
     WebIDL::ExceptionOr<void> move_node(Node& new_parent, Node* child);
@@ -298,7 +298,7 @@ public:
         GC::Ref<Node> node;
     };
     // FIXME: It would be good if we could always provide this metadata for use in optimizations.
-    virtual void children_changed(ChildrenChangedMetadata const*) { }
+    virtual void children_changed(ChildrenChangedMetadata const&) { }
 
     virtual void adopted_from(Document&) { }
     virtual WebIDL::ExceptionOr<void> cloned(Node&, bool) const { return {}; }
@@ -454,6 +454,7 @@ public:
     bool is_inert() const;
 
     bool has_inclusive_ancestor_with_display_none();
+    bool has_inclusive_ancestor_with_event_listener(FlyString const& type) const;
 
     GC::Ptr<ShadowRoot> containing_shadow_root();
     GC::Ptr<ShadowRoot const> containing_shadow_root() const

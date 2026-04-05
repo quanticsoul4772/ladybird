@@ -158,7 +158,7 @@ WebIDL::ExceptionOr<GC::Ptr<DOM::Document>> XMLHttpRequest::response_xml()
 WebIDL::ExceptionOr<void> XMLHttpRequest::set_response_type(Bindings::XMLHttpRequestResponseType response_type)
 {
     // 1. If the current global object is not a Window object and the given value is "document", then return.
-    if (!is<HTML::Window>(HTML::current_principal_global_object()) && response_type == Bindings::XMLHttpRequestResponseType::Document)
+    if (!is<HTML::Window>(HTML::current_global_object()) && response_type == Bindings::XMLHttpRequestResponseType::Document)
         return {};
 
     // 2. If this’s state is loading or done, then throw an "InvalidStateError" DOMException.
@@ -166,7 +166,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::set_response_type(Bindings::XMLHttpReq
         return WebIDL::InvalidStateError::create(realm(), "Can't readyState when XHR is loading or done"_utf16);
 
     // 3. If the current global object is a Window object and this’s synchronous flag is set, then throw an "InvalidAccessError" DOMException.
-    if (is<HTML::Window>(HTML::current_principal_global_object()) && m_synchronous)
+    if (is<HTML::Window>(HTML::current_global_object()) && m_synchronous)
         return WebIDL::InvalidAccessError::create(realm(), "Can't set readyState on synchronous XHR in Window environment"_utf16);
 
     // 4. Set this’s response type to the given value.
@@ -203,14 +203,7 @@ WebIDL::ExceptionOr<JS::Value> XMLHttpRequest::response()
     // 5. If this’s response type is "arraybuffer",
     if (m_response_type == Bindings::XMLHttpRequestResponseType::Arraybuffer) {
         // then set this’s response object to a new ArrayBuffer object representing this’s received bytes. If this throws an exception, then set this’s response object to failure and return null.
-        auto buffer_result = JS::ArrayBuffer::create(realm(), m_received_bytes.size());
-        if (buffer_result.is_error()) {
-            m_response_object = Failure();
-            return JS::js_null();
-        }
-
-        auto buffer = buffer_result.release_value();
-        buffer->buffer().overwrite(0, m_received_bytes.data(), m_received_bytes.size());
+        auto buffer = JS::ArrayBuffer::create(realm(), move(m_received_bytes));
         m_response_object = GC::Ref<JS::Object> { buffer };
     }
     // 6. Otherwise, if this’s response type is "blob", set this’s response object to a new Blob object representing this’s received bytes with type set to the result of get a final MIME type for this.
@@ -497,7 +490,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::open(String const& method, String cons
     // 9. If async is false, the current global object is a Window object, and either this’s timeout is
     //     not 0 or this’s response type is not the empty string, then throw an "InvalidAccessError" DOMException.
     if (!async
-        && is<HTML::Window>(HTML::current_principal_global_object())
+        && is<HTML::Window>(HTML::current_global_object())
         && (m_timeout != 0 || m_response_type != Bindings::XMLHttpRequestResponseType::Empty)) {
         return WebIDL::InvalidAccessError::create(realm(), "Synchronous XMLHttpRequests in a Window context do not support timeout or a non-empty responseType"_utf16);
     }
@@ -509,16 +502,18 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::open(String const& method, String cons
     // 11. Set variables associated with the object as follows:
     // Unset this’s send() flag.
     m_send = false;
-    // Unset this’s upload listener flag.
-    m_upload_listener = false;
     // Set this’s request method to method.
     m_request_method = move(normalized_method);
     // Set this’s request URL to parsedURL.
     m_request_url = parsed_url.release_value();
-    // Set this’s synchronous flag if async is false; otherwise unset this’s synchronous flag.
-    m_synchronous = !async;
     // Empty this’s author request headers.
     m_author_request_headers->clear();
+    // Set this’s request body to null.
+    m_request_body = nullptr;
+    // Set this’s synchronous flag if async is false; otherwise unset this’s synchronous flag.
+    m_synchronous = !async;
+    // Unset this’s upload listener flag.
+    m_upload_listener = false;
     // Set this’s response to a network error.
     m_response = Fetch::Infrastructure::Response::network_error(realm().vm(), "Not yet sent"_string);
     // Set this’s received bytes to the empty byte sequence.
@@ -540,7 +535,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::open(String const& method, String cons
 }
 
 // https://xhr.spec.whatwg.org/#dom-xmlhttprequest-send
-WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequestBodyInit> body)
+WebIDL::ExceptionOr<void> XMLHttpRequest::send(NullableDocumentOrXMLHttpRequestBodyInit body)
 {
     auto& vm = this->vm();
     auto& realm = *vm.current_realm();
@@ -555,23 +550,23 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequest
 
     // 3. If this’s request method is `GET` or `HEAD`, then set body to null.
     if (m_request_method.is_one_of("GET"sv, "HEAD"sv))
-        body = {};
+        body = Empty {};
 
     // 4. If body is not null, then:
-    if (body.has_value()) {
+    if (!body.has<Empty>()) {
         // 1. Let extractedContentType be null.
         Optional<ByteString> extracted_content_type;
 
         // 2. If body is a Document, then set this’s request body to body, serialized, converted, and UTF-8 encoded.
-        if (body->has<GC::Root<DOM::Document>>()) {
-            auto string_serialized_document = TRY(body->get<GC::Root<DOM::Document>>().cell()->serialize_fragment(HTML::RequireWellFormed::No));
+        if (body.has<GC::Root<DOM::Document>>()) {
+            auto string_serialized_document = TRY(body.get<GC::Root<DOM::Document>>().cell()->serialize_fragment(HTML::RequireWellFormed::No));
             auto string_serialized_document_utf8 = string_serialized_document.to_utf8();
             m_request_body = Fetch::Infrastructure::byte_sequence_as_body(realm, string_serialized_document_utf8.bytes());
         }
         // 3. Otherwise:
         else {
             // 1. Let bodyWithType be the result of safely extracting body.
-            auto body_with_type = Fetch::safely_extract_body(realm, body->downcast<Fetch::BodyInitOrReadableBytes>());
+            auto body_with_type = Fetch::safely_extract_body(realm, body.downcast<Fetch::BodyInitOrReadableBytes>());
 
             // 2. Set this’s request body to bodyWithType’s body.
             m_request_body = body_with_type.body;
@@ -586,7 +581,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequest
         // 5. If originalAuthorContentType is non-null, then:
         if (original_author_content_type.has_value()) {
             // 1. If body is a Document or a USVString, then:
-            if (body->has<GC::Root<DOM::Document>>() || body->has<String>()) {
+            if (body.has<GC::Root<DOM::Document>>() || body.has<String>()) {
                 // 1. Let contentTypeRecord be the result of parsing originalAuthorContentType.
                 auto content_type_record = MimeSniff::MimeType::parse(original_author_content_type.value());
 
@@ -609,8 +604,8 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequest
         }
         // 6. Otherwise:
         else {
-            if (body->has<GC::Root<DOM::Document>>()) {
-                auto document = body->get<GC::Root<DOM::Document>>();
+            if (body.has<GC::Root<DOM::Document>>()) {
+                auto document = body.get<GC::Root<DOM::Document>>();
 
                 // NOTE: A document can only be an HTML document or XML document.
                 // 1. If body is an HTML document, then set (`Content-Type`, `text/html;charset=UTF-8`) in this’s author request headers.
@@ -806,6 +801,10 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequest
             if (!length.has<u64>())
                 length = 0;
 
+            // Pre-allocate received bytes buffer if Content-Length is known.
+            if (length.get<u64>() > 0)
+                m_received_bytes.ensure_capacity(length.get<u64>());
+
             // 10. Let processBodyChunk given bytes be these steps:
             auto process_body_chunks = GC::create_function(heap(), [this, length](ByteBuffer byte_buffer) {
                 // 1. Append bytes to this’s received bytes.
@@ -950,7 +949,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::send(Optional<DocumentOrXMLHttpRequest
         }
 
         // 7. Report timing for this’s fetch controller given the current global object.
-        m_fetch_controller->report_timing(HTML::current_principal_global_object());
+        m_fetch_controller->report_timing(HTML::current_global_object());
 
         // 8. Run handle response end-of-body for this.
         TRY(handle_response_end_of_body());
@@ -1040,7 +1039,7 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::set_timeout(u32 timeout)
 {
     // 1. If the current global object is a Window object and this’s synchronous flag is set,
     //    then throw an "InvalidAccessError" DOMException.
-    if (is<HTML::Window>(HTML::current_principal_global_object()) && m_synchronous)
+    if (is<HTML::Window>(HTML::current_global_object()) && m_synchronous)
         return WebIDL::InvalidAccessError::create(realm(), "Use of XMLHttpRequest's timeout attribute is not supported in the synchronous mode in window context."_utf16);
 
     // 2. Set this’s timeout to the given value.
@@ -1216,8 +1215,10 @@ WebIDL::ExceptionOr<void> XMLHttpRequest::handle_errors()
         return TRY(request_error_steps(EventNames::abort, WebIDL::AbortError::create(realm(), "Aborted"_utf16)));
 
     // 4. Otherwise, if xhr’s response is a network error, then run the request error steps for xhr, error, and "NetworkError" DOMException.
-    if (m_response->is_network_error())
-        return TRY(request_error_steps(EventNames::error, WebIDL::NetworkError::create(realm(), "Network error"_utf16)));
+    if (m_response->is_network_error()) {
+        auto message = m_response->network_error_message().value_or("Unknown error"_string);
+        return TRY(request_error_steps(EventNames::error, WebIDL::NetworkError::create(realm(), Utf16String::from_utf8(message))));
+    }
 
     return {};
 }

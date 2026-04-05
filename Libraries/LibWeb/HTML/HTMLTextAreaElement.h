@@ -26,7 +26,6 @@ class WEB_API HTMLTextAreaElement final
     , public AutocompleteElement {
     WEB_PLATFORM_OBJECT(HTMLTextAreaElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLTextAreaElement);
-    FORM_ASSOCIATED_ELEMENT(HTMLElement, HTMLTextAreaElement);
     AUTOCOMPLETE_ELEMENT(HTMLElement, HTMLTextAreaElement);
 
 public:
@@ -48,6 +47,9 @@ public:
 
     virtual void did_lose_focus() override;
     virtual void did_receive_focus() override;
+
+    // ^FormAssociatedElement
+    virtual bool is_form_associated_element() const override { return true; }
 
     // ^FormAssociatedElement
     // https://html.spec.whatwg.org/multipage/forms.html#category-listed
@@ -73,7 +75,7 @@ public:
     virtual void form_associated_element_was_inserted() override;
     virtual void form_associated_element_attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
 
-    virtual void children_changed(ChildrenChangedMetadata const*) override;
+    virtual void children_changed(ChildrenChangedMetadata const&) override;
 
     // https://www.w3.org/TR/html-aria/#el-textarea
     virtual Optional<ARIA::Role> default_role() const override { return ARIA::Role::textbox; }
@@ -81,7 +83,8 @@ public:
     Utf16String default_value() const;
     void set_default_value(Utf16String const&);
 
-    Utf16String value() const override;
+    Utf16String value() const;
+    virtual Utf16String form_value() const override { return value(); }
     void set_value(Utf16String const&);
 
     // https://html.spec.whatwg.org/multipage/form-elements.html#the-textarea-element:concept-fe-api-value-3
@@ -125,6 +128,7 @@ public:
     void set_dirty_value_flag(Badge<FormAssociatedElement>, bool flag) { m_dirty_value = flag; }
 
     // ^FormAssociatedTextControlElement
+    virtual HTMLElement& text_control_to_html_element() override { return *this; }
     virtual void did_edit_text_node(FlyString const& input_type, Optional<Utf16String> const& data) override;
     virtual GC::Ptr<DOM::Text> form_associated_element_to_text_node() override { return m_text_node; }
     virtual GC::Ptr<DOM::Element> text_control_scroll_container() override { return this; }
@@ -160,8 +164,6 @@ private:
 
     void handle_maxlength_attribute();
 
-    void queue_firing_input_event();
-
     void update_placeholder_visibility();
 
     GC::Ptr<DOM::Element> m_placeholder_element;
@@ -169,10 +171,6 @@ private:
 
     GC::Ptr<DOM::Element> m_inner_text_element;
     GC::Ptr<DOM::Text> m_text_node;
-
-    RefPtr<Core::Timer> m_input_event_timer;
-    FlyString m_pending_input_event_type;
-    Optional<Utf16String> m_pending_input_event_data;
 
     // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-fe-dirty
     bool m_dirty_value { false };

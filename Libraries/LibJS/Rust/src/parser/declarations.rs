@@ -28,24 +28,24 @@ fn expression_into_identifier(expression: Expression) -> Rc<Identifier> {
 /// Extract bound names from a declaration for export statements.
 fn get_declaration_export_names(statement: &Statement) -> Vec<Utf16String> {
     match &statement.inner {
-        StatementKind::VariableDeclaration { declarations, .. } => {
+        StatementKind::VariableDeclaration(vd) => {
             let mut names = Vec::new();
-            for declaration in declarations {
+            for declaration in &vd.declarations {
                 collect_declarator_names(&declaration.target, &mut names);
             }
             names
         }
-        StatementKind::UsingDeclaration { declarations } => {
+        StatementKind::UsingDeclaration(declarations) => {
             let mut names = Vec::new();
-            for declaration in declarations {
+            for declaration in declarations.iter() {
                 if let VariableDeclaratorTarget::Identifier(id) = &declaration.target {
                     names.push(id.name.clone());
                 }
             }
             names
         }
-        StatementKind::FunctionDeclaration { name, .. } => {
-            if let Some(name) = name {
+        StatementKind::FunctionDeclaration(fd) => {
+            if let Some(ref name) = fd.name {
                 vec![name.name.clone()]
             } else {
                 Vec::new()
@@ -84,7 +84,7 @@ fn collect_pattern_names(pat: &BindingPattern, names: &mut Vec<Utf16String>) {
     }
 }
 
-impl<'a> Parser<'a> {
+impl Parser<'_> {
     pub(crate) fn parse_declaration(&mut self) -> Statement {
         if self.match_token(TokenType::Async) {
             let next = self.next_token();
@@ -241,6 +241,10 @@ impl<'a> Parser<'a> {
                 None
             };
 
+            if kind == DeclarationKind::Const && init.is_none() && !is_for_loop {
+                self.syntax_error("Missing initializer in const declaration");
+            }
+
             declarators.push(VariableDeclarator {
                 range: self.range_from(start),
                 target,
@@ -261,14 +265,17 @@ impl<'a> Parser<'a> {
             self.for_loop_declaration_count = declarators.len();
             self.for_loop_declaration_has_init = any_init;
             self.for_loop_declaration_is_var = kind == DeclarationKind::Var;
+            self.for_loop_declaration_is_pattern = declarators
+                .iter()
+                .any(|d| matches!(d.target, VariableDeclaratorTarget::BindingPattern(_)));
         }
 
         self.statement(
             start,
-            StatementKind::VariableDeclaration {
+            StatementKind::VariableDeclaration(Box::new(VariableDeclarationData {
                 kind,
                 declarations: declarators,
-            },
+            })),
         )
     }
 
@@ -355,9 +362,7 @@ impl<'a> Parser<'a> {
 
         self.statement(
             start,
-            StatementKind::UsingDeclaration {
-                declarations: declarators,
-            },
+            StatementKind::UsingDeclaration(Box::new(declarators)),
         )
     }
 
@@ -416,7 +421,7 @@ impl<'a> Parser<'a> {
         self.scope_collector.set_is_function_declaration();
 
         let fd = self.parse_function_common(
-            &name,
+            name,
             &fn_name,
             kind,
             is_async,
@@ -429,12 +434,12 @@ impl<'a> Parser<'a> {
         let function_id = self.function_table.insert(fd);
         self.statement(
             start,
-            StatementKind::FunctionDeclaration {
+            StatementKind::FunctionDeclaration(Box::new(FunctionDeclarationData {
                 function_id,
                 name: decl_name,
                 kind: decl_kind,
                 is_hoisted: Cell::new(false),
-            },
+            })),
         )
     }
 
@@ -486,7 +491,7 @@ impl<'a> Parser<'a> {
         self.scope_collector.open_function_scope(fn_name_for_scope);
 
         let fd = self.parse_function_common(
-            &name,
+            name,
             &fn_name_value,
             kind,
             is_async,
@@ -503,7 +508,7 @@ impl<'a> Parser<'a> {
     #[allow(clippy::too_many_arguments)]
     fn parse_function_common(
         &mut self,
-        name: &Option<Rc<Identifier>>,
+        name: Option<Rc<Identifier>>,
         fn_name: &[u16],
         kind: FunctionKind,
         is_async: bool,
@@ -518,8 +523,7 @@ impl<'a> Parser<'a> {
             {
                 let name_str = String::from_utf16_lossy(fn_name);
                 self.syntax_error(&format!(
-                    "async generator function is not allowed to be called '{}'",
-                    name_str
+                    "async generator function is not allowed to be called '{name_str}'"
                 ));
             }
             if self.flags.in_class_static_init_block && fn_name == utf16!("await") {
@@ -531,10 +535,16 @@ impl<'a> Parser<'a> {
         let await_before = self.flags.await_expression_is_valid;
         let saved_static_init = self.flags.in_class_static_init_block;
         let saved_field_init = self.flags.in_class_field_initializer;
+        let saved_allow_super_call = self.flags.allow_super_constructor_call;
+        let saved_allow_super_lookup = self.flags.allow_super_property_lookup;
+        let saved_new_target = self.flags.new_target_is_valid;
         self.flags.in_generator_function_context = is_generator;
         self.flags.await_expression_is_valid = is_async;
         self.flags.in_class_static_init_block = false;
         self.flags.in_class_field_initializer = false;
+        self.flags.allow_super_constructor_call = false;
+        self.flags.allow_super_property_lookup = false;
+        self.flags.new_target_is_valid = true;
 
         // Save pattern_bound_names so that destructuring patterns in the
         // function body don't steal names from an outer binding context.
@@ -548,12 +558,15 @@ impl<'a> Parser<'a> {
 
         let (body, has_use_strict, mut insights) =
             self.parse_function_body(is_async, is_generator, parsed.is_simple);
+        self.flags.allow_super_constructor_call = saved_allow_super_call;
+        self.flags.allow_super_property_lookup = saved_allow_super_lookup;
 
         self.scope_collector.close_scope();
         self.pattern_bound_names = saved_pattern_bound_names;
 
         self.flags.in_class_static_init_block = saved_static_init;
         self.flags.in_class_field_initializer = saved_field_init;
+        self.flags.new_target_is_valid = saved_new_target;
 
         if name.is_some() {
             self.check_identifier_name_for_assignment_validity(fn_name, has_use_strict);
@@ -566,7 +579,7 @@ impl<'a> Parser<'a> {
         self.flags.function_might_need_arguments_object = saved_might_need_arguments;
 
         FunctionData {
-            name: name.clone(),
+            name,
             source_text_start: start.offset,
             source_text_end: self.source_text_end_offset(),
             body: Box::new(body),
@@ -687,8 +700,7 @@ impl<'a> Parser<'a> {
             } else {
                 let name_str = String::from_utf16_lossy(&name);
                 self.syntax_error(&format!(
-                    "Reference to undeclared private field or method '{}'",
-                    name_str
+                    "Reference to undeclared private field or method '{name_str}'"
                 ));
             }
         }
@@ -778,13 +790,13 @@ impl<'a> Parser<'a> {
 
             let super_call = self.expression(
                 start,
-                ExpressionKind::SuperCall(SuperCallData {
+                ExpressionKind::SuperCall(Box::new(SuperCallData {
                     arguments: vec![CallArgument {
                         value: arguments_expression,
                         is_spread: true,
                     }],
                     is_synthetic: true,
-                }),
+                })),
             );
             let return_statement =
                 self.statement(start, StatementKind::Return(Some(Box::new(super_call))));
@@ -876,6 +888,7 @@ impl<'a> Parser<'a> {
                 self.flags.in_class_field_initializer = true;
                 self.flags.in_class_static_init_block = true;
                 self.flags.allow_super_property_lookup = true;
+                self.flags.new_target_is_valid = true;
                 self.scope_collector.open_static_init_scope(None);
                 let children = self.parse_statement_list(false);
                 self.flags = saved_flags;
@@ -971,7 +984,7 @@ impl<'a> Parser<'a> {
             };
             let expression = self.expression(
                 class_start,
-                ExpressionKind::StringLiteral(Utf16String(name.to_vec())),
+                ExpressionKind::StringLiteral(Box::new(Utf16String(name.to_vec()))),
             );
             PropertyKey {
                 expression,
@@ -1037,8 +1050,7 @@ impl<'a> Parser<'a> {
                     if is_error {
                         let name_str = String::from_utf16_lossy(name);
                         self.syntax_error(&format!(
-                            "Duplicate private field or method named '{}'",
-                            name_str
+                            "Duplicate private field or method named '{name_str}'"
                         ));
                     }
                 }
@@ -1049,8 +1061,7 @@ impl<'a> Parser<'a> {
             {
                 let name_str = String::from_utf16_lossy(name);
                 self.syntax_error(&format!(
-                    "Duplicate private field or method named '{}'",
-                    name_str
+                    "Duplicate private field or method named '{name_str}'"
                 ));
             }
         }
@@ -1073,6 +1084,13 @@ impl<'a> Parser<'a> {
                 if is_async {
                     self.syntax_error("Class constructor may not be async");
                 }
+            }
+
+            // https://tc39.es/ecma262/#sec-class-definitions-static-semantics-early-errors
+            // It is a Syntax Error if PropName of MethodDefinition is "constructor"
+            // and SpecialMethod of MethodDefinition is true (getter/setter).
+            if !is_static && (is_getter || is_setter) && key_value.as_deref() == Some(ctor_name) {
+                self.syntax_error("Class constructor may not be an accessor");
             }
 
             let method_kind = if is_constructor {
@@ -1256,7 +1274,7 @@ impl<'a> Parser<'a> {
         let mut has_seen_default = false;
         let mut has_seen_rest = false;
         let mut parameter_info: Vec<ParamInfo> = Vec::new();
-        let mut seen_parameter_names: HashSet<Utf16String> = HashSet::new();
+        let mut parameter_info_ranges: Vec<(usize, usize, bool)> = Vec::new();
 
         // C++ uses the position at the start of parse_formal_parameters for all
         // parameter identifiers (i.e., the position of the first parameter).
@@ -1264,12 +1282,13 @@ impl<'a> Parser<'a> {
 
         loop {
             let parameter_start = self.position();
+            let parameter_info_start = parameter_info.len();
             let rest = self.eat(TokenType::TripleDot);
             if rest {
                 has_seen_rest = true;
             }
 
-            let (binding, _is_pat) = if self.match_identifier()
+            let (binding, is_pat) = if self.match_identifier()
                 || self.match_token(TokenType::Await)
                 || self.match_token(TokenType::Yield)
             {
@@ -1289,33 +1308,12 @@ impl<'a> Parser<'a> {
                 }
                 let token = self.consume();
                 let value = Utf16String::from(self.token_value(&token));
-                self.check_identifier_name_for_assignment_validity(&value, false);
-                // https://tc39.es/ecma262/#sec-function-definitions-static-semantics-early-errors
-                // It is a Syntax Error if IsSimpleParameterList is false and
-                // BoundNames of FormalParameters contains any duplicate elements.
-                // In strict mode, duplicates are always an error.
-                // Arrow functions check duplicates post-confirmation (after =>).
-                // Inline duplicate checks would cause speculative arrow parsing
-                // to bail out, so skip them when is_arrow is true.
-                if !is_arrow && seen_parameter_names.contains(value.as_slice()) {
-                    if self.flags.strict_mode {
-                        let name_str = String::from_utf16_lossy(&value);
-                        self.syntax_error(&format!(
-                            "Duplicate parameter '{}' not allowed in strict mode",
-                            name_str
-                        ));
-                    } else if has_seen_default {
-                        let name_str = String::from_utf16_lossy(&value);
-                        self.syntax_error(&format!("Duplicate parameter '{}' not allowed in function with default parameter", name_str));
-                    } else if has_seen_rest {
-                        let name_str = String::from_utf16_lossy(&value);
-                        self.syntax_error(&format!(
-                            "Duplicate parameter '{}' not allowed in function with rest parameter",
-                            name_str
-                        ));
-                    }
+                // Skip validity check for arrow functions; arrow parameter
+                // parsing is speculative and errors would abort the parse.
+                // The check runs after the arrow is confirmed instead.
+                if !is_arrow {
+                    self.check_identifier_name_for_assignment_validity(&value, false);
                 }
-                seen_parameter_names.insert(value.clone());
                 let id = Rc::new(Identifier::new(
                     self.range_from(formal_parameters_start),
                     value.clone(),
@@ -1332,7 +1330,6 @@ impl<'a> Parser<'a> {
             {
                 let pat = self.parse_binding_pattern();
                 for (n, id) in std::mem::take(&mut self.pattern_bound_names) {
-                    seen_parameter_names.insert(n.clone());
                     parameter_info.push(ParamInfo {
                         name: n,
                         is_rest: rest,
@@ -1371,11 +1368,18 @@ impl<'a> Parser<'a> {
                 function_length += 1;
             }
 
+            let parameter_is_non_simple = rest || is_pat || default_value.is_some();
             parameters.push(FunctionParameter {
                 binding,
                 default_value,
                 is_rest: rest,
             });
+            let parameter_info_end = parameter_info.len();
+            parameter_info_ranges.push((
+                parameter_info_start,
+                parameter_info_end,
+                parameter_is_non_simple,
+            ));
 
             if rest || !self.match_token(TokenType::Comma) {
                 break;
@@ -1385,6 +1389,37 @@ impl<'a> Parser<'a> {
             if self.match_token(TokenType::ParenClose) {
                 break;
             }
+        }
+
+        // Validate duplicates after parsing so we can use borrowed name slices
+        // from `parameter_info` without cloning each entry into the HashSet.
+        let mut seen_parameter_names: HashSet<&[u16]> = HashSet::new();
+        let mut has_seen_non_simple = false;
+        for (start, end, parameter_is_non_simple) in parameter_info_ranges {
+            for info in &parameter_info[start..end] {
+                if info.name.is_empty() {
+                    continue;
+                }
+                let is_duplicate = seen_parameter_names.contains(info.name.as_slice());
+                // https://tc39.es/ecma262/#sec-function-definitions-static-semantics-early-errors
+                // Duplicate names are tolerated only for sloppy, non-arrow
+                // functions with a fully simple parameter list.
+                // - `!is_arrow`: arrows reject duplicates via
+                //   check_arrow_duplicate_parameters().
+                // - `self.flags.strict_mode`: strict functions always reject.
+                // - `has_seen_non_simple || parameter_is_non_simple`: once any
+                //   rest/default/destructuring parameter appears, duplicates are
+                //   no longer allowed (e.g. `function(a, a = 1)`).
+                if is_duplicate
+                    && !is_arrow
+                    && (self.flags.strict_mode || has_seen_non_simple || parameter_is_non_simple)
+                {
+                    let name_str = String::from_utf16_lossy(&info.name);
+                    self.syntax_error(&format!("Duplicate parameter '{name_str}' not allowed"));
+                }
+                seen_parameter_names.insert(info.name.as_slice());
+            }
+            has_seen_non_simple |= parameter_is_non_simple;
         }
 
         self.flags.in_formal_parameter_context = saved_formal_parameter_ctx;
@@ -1562,12 +1597,9 @@ impl<'a> Parser<'a> {
                             if Self::is_object_expression(&expression)
                                 || Self::is_array_expression(&expression)
                             {
-                                if let Some(pattern) =
-                                    self.synthesize_binding_pattern(expression_start)
-                                {
-                                    entry_alias =
-                                        Some(BindingEntryAlias::BindingPattern(Box::new(pattern)));
-                                }
+                                let pattern = self.synthesize_binding_pattern(expression_start);
+                                entry_alias =
+                                    Some(BindingEntryAlias::BindingPattern(Box::new(pattern)));
                             } else if Self::is_member_expression(&expression) {
                                 entry_alias =
                                     Some(BindingEntryAlias::MemberExpression(Box::new(expression)));
@@ -1620,9 +1652,8 @@ impl<'a> Parser<'a> {
                 );
                 if Self::is_object_expression(&expression) || Self::is_array_expression(&expression)
                 {
-                    if let Some(pattern) = self.synthesize_binding_pattern(expression_start) {
-                        entry_alias = Some(BindingEntryAlias::BindingPattern(Box::new(pattern)));
-                    }
+                    let pattern = self.synthesize_binding_pattern(expression_start);
+                    entry_alias = Some(BindingEntryAlias::BindingPattern(Box::new(pattern)));
                 } else if Self::is_member_expression(&expression) {
                     entry_alias = Some(BindingEntryAlias::MemberExpression(Box::new(expression)));
                 } else if Self::is_identifier(&expression) {
@@ -1718,13 +1749,13 @@ impl<'a> Parser<'a> {
             self.consume_or_insert_semicolon();
             return self.statement(
                 start,
-                StatementKind::Import(ImportStatementData {
+                StatementKind::Import(Box::new(ImportStatementData {
                     module_request: ModuleRequest {
                         module_specifier,
                         attributes,
                     },
                     entries: Vec::new(),
-                }),
+                })),
             );
         }
 
@@ -1846,13 +1877,13 @@ impl<'a> Parser<'a> {
 
         self.statement(
             start,
-            StatementKind::Import(ImportStatementData {
+            StatementKind::Import(Box::new(ImportStatementData {
                 module_request: ModuleRequest {
                     module_specifier,
                     attributes,
                 },
                 entries,
-            }),
+            })),
         )
     }
 
@@ -1889,10 +1920,8 @@ impl<'a> Parser<'a> {
                 let has_default_name = matches_function == MatchesFunctionDeclaration::WithoutName;
                 let declaration = self.parse_function_declaration_for_export(has_default_name);
                 if !has_default_name
-                    && let StatementKind::FunctionDeclaration {
-                        name: Some(ref name_id),
-                        ..
-                    } = declaration.inner
+                    && let StatementKind::FunctionDeclaration(ref fd) = declaration.inner
+                    && let Some(ref name_id) = fd.name
                 {
                     local_name = Some(name_id.name.clone());
                 }
@@ -2083,12 +2112,12 @@ impl<'a> Parser<'a> {
 
         self.statement(
             start,
-            StatementKind::Export(ExportStatementData {
+            StatementKind::Export(Box::new(ExportStatementData {
                 statement,
                 entries,
                 is_default_export: is_default,
                 module_request,
-            }),
+            })),
         )
     }
 

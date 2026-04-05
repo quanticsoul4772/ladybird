@@ -63,9 +63,11 @@ struct Declaration {
 struct SubstitutionFunctionsPresence {
     bool attr { false };
     bool env { false };
+    bool if_ { false };
+    bool inherit { false };
     bool var { false };
 
-    bool has_any() const { return attr || env || var; }
+    bool has_any() const { return attr || env || if_ || inherit || var; }
 };
 
 // https://drafts.csswg.org/css-syntax/#simple-block
@@ -80,7 +82,6 @@ struct SimpleBlock {
 
     String to_string() const;
     String original_source_text() const;
-    void contains_arbitrary_substitution_function(SubstitutionFunctionsPresence&) const;
 
     bool operator==(SimpleBlock const& other) const { return token == other.token && value == other.value; }
 };
@@ -94,7 +95,6 @@ struct Function {
 
     String to_string() const;
     String original_source_text() const;
-    void contains_arbitrary_substitution_function(SubstitutionFunctionsPresence&) const;
 
     bool operator==(Function const& other) const { return name == other.name && value == other.value; }
 };

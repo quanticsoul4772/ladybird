@@ -127,10 +127,10 @@ static WebIDL::ExceptionOr<void> serialize_array_buffer(JS::VM& vm, TransferData
 
     // 1. If IsSharedArrayBuffer(value) is true, then:
     if (array_buffer.is_shared_array_buffer()) {
-        // 1. If the current principal settings object's cross-origin isolated capability is false, then throw a "DataCloneError" DOMException.
+        // 1. If the current settings object's cross-origin isolated capability is false, then throw a "DataCloneError" DOMException.
         // NOTE: This check is only needed when serializing (and not when deserializing) as the cross-origin isolated capability cannot change
         //       over time and a SharedArrayBuffer cannot leave an agent cluster.
-        if (current_principal_settings_object().cross_origin_isolated_capability() == CanUseCrossOriginIsolatedAPIs::No)
+        if (current_settings_object().cross_origin_isolated_capability() == CanUseCrossOriginIsolatedAPIs::No)
             return WebIDL::DataCloneError::create(*vm.current_realm(), "Cannot serialize SharedArrayBuffer when cross-origin isolated"_utf16);
 
         // 2. If forStorage is true, then throw a "DataCloneError" DOMException.
@@ -264,7 +264,6 @@ public:
     }
 
     // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
-    // https://whatpr.org/html/9893/structured-data.html#structuredserializeinternal
     WebIDL::ExceptionOr<SerializationRecord> serialize(JS::Value value)
     {
         TransferDataEncoder serialized;
@@ -346,7 +345,7 @@ public:
             //     { [[Type]]: "RegExp", [[RegExpMatcher]]: value.[[RegExpMatcher]], [[OriginalSource]]: value.[[OriginalSource]],
             //       [[OriginalFlags]]: value.[[OriginalFlags]] }.
             else if (auto const* reg_exp_object = as_if<JS::RegExpObject>(*object)) {
-                // NOTE: A Regex<ECMA262> object is perfectly happy to be reconstructed with just the source+flags.
+                // NOTE: ECMAScriptRegex is perfectly happy to be reconstructed with just the source+flags.
                 //       In the future, we could optimize the work being done on the deserialize step by serializing
                 //       more of the internal state (the [[RegExpMatcher]] internal slot).
                 serialized.encode(ValueTag::RegExpObject);
@@ -1292,32 +1291,43 @@ TransferDataEncoder::TransferDataEncoder(IPC::MessageBuffer&& buffer)
 {
 }
 
+IPC::MessageBuffer const& TransferDataEncoder::buffer() const
+{
+    return m_buffer;
+}
+
+IPC::MessageBuffer TransferDataEncoder::take_buffer() const
+{
+    VERIFY(!m_buffer_has_been_taken);
+    m_buffer_has_been_taken = true;
+    return move(m_buffer);
+}
+
 void TransferDataEncoder::append(SerializationRecord&& record)
 {
+    VERIFY(!m_buffer_has_been_taken);
     MUST(m_buffer.append_data(record.data(), record.size()));
 }
 
 void TransferDataEncoder::extend(Vector<TransferDataEncoder> data_holders)
 {
     for (auto& data_holder : data_holders)
-        MUST(m_buffer.extend(move(data_holder.m_buffer)));
+        MUST(m_buffer.extend(data_holder.take_buffer()));
 }
 
 TransferDataDecoder::TransferDataDecoder(SerializationRecord const& record)
     : m_stream(record.span())
-    , m_decoder(m_stream, m_files)
+    , m_decoder(m_stream, m_attachments)
 {
 }
 
 TransferDataDecoder::TransferDataDecoder(TransferDataEncoder&& data_holder)
     : m_buffer(data_holder.take_buffer())
     , m_stream(m_buffer.data().span())
-    , m_decoder(m_stream, m_files)
+    , m_decoder(m_stream, m_attachments)
 {
-    // FIXME: The churn between IPC::File and IPC::AutoCloseFileDescriptor is pretty awkward, we should find a way to
-    //        consolidate the way we use these type.
-    for (auto& auto_fd : m_buffer.take_fds())
-        m_files.enqueue(IPC::File::adopt_fd(auto_fd->take_fd()));
+    for (auto& attachment : m_buffer.take_attachments())
+        m_attachments.enqueue(move(attachment));
 }
 
 WebIDL::ExceptionOr<ByteBuffer> TransferDataDecoder::decode_buffer(JS::Realm& realm)
@@ -1339,18 +1349,15 @@ namespace IPC {
 template<>
 ErrorOr<void> encode(Encoder& encoder, Web::HTML::TransferDataEncoder const& data_holder)
 {
-    // FIXME: The churn between IPC::File and IPC::AutoCloseFileDescriptor is pretty awkward, we should find a way to
-    //        consolidate the way we use these type.
-    Vector<IPC::File> files;
-    files.ensure_capacity(data_holder.buffer().fds().size());
+    auto buffer = data_holder.take_buffer();
+    auto data = buffer.take_data();
+    auto attachments = buffer.take_attachments();
 
-    for (auto const& auto_fd : data_holder.buffer().fds()) {
-        auto fd = const_cast<AutoCloseFileDescriptor&>(*auto_fd).take_fd();
-        files.unchecked_append(IPC::File::adopt_fd(fd));
-    }
+    TRY(encoder.encode(data));
+    TRY(encoder.encode(static_cast<u32>(attachments.size())));
+    for (auto& attachment : attachments)
+        TRY(encoder.append_attachment(move(attachment)));
 
-    TRY(encoder.encode(data_holder.buffer().data()));
-    TRY(encoder.encode(files));
     return {};
 }
 
@@ -1358,19 +1365,14 @@ template<>
 ErrorOr<Web::HTML::TransferDataEncoder> decode(Decoder& decoder)
 {
     auto data = TRY(decoder.decode<Web::HTML::SerializationRecord>());
-    auto files = TRY(decoder.decode<Vector<IPC::File>>());
+    auto attachment_count = TRY(decoder.decode<u32>());
 
-    // FIXME: The churn between IPC::File and IPC::AutoCloseFileDescriptor is pretty awkward, we should find a way to
-    //        consolidate the way we use these type.
-    MessageFileType auto_files;
-    auto_files.ensure_capacity(files.size());
+    Vector<Attachment> attachments;
+    TRY(attachments.try_ensure_capacity(attachment_count));
+    for (u32 i = 0; i < attachment_count; ++i)
+        attachments.unchecked_append(TRY(decoder.attachments().try_dequeue()));
 
-    for (auto& fd : files) {
-        auto auto_fd = adopt_ref(*new AutoCloseFileDescriptor(fd.take_fd()));
-        auto_files.unchecked_append(move(auto_fd));
-    }
-
-    IPC::MessageBuffer buffer { move(data), move(auto_files) };
+    IPC::MessageBuffer buffer { move(data), move(attachments) };
     return Web::HTML::TransferDataEncoder { move(buffer) };
 }
 

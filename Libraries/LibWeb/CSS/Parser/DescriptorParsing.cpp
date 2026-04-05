@@ -22,35 +22,63 @@
 
 namespace Web::CSS::Parser {
 
-Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_value(AtRuleID at_rule_id, DescriptorID descriptor_id, TokenStream<ComponentValue>& unprocessed_tokens)
+Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_value(AtRuleID at_rule_id, DescriptorNameAndID const& descriptor_name_and_id, TokenStream<ComponentValue>& tokens)
 {
-    if (!at_rule_supports_descriptor(at_rule_id, descriptor_id)) {
+    if (!at_rule_supports_descriptor(at_rule_id, descriptor_name_and_id.id())) {
         ErrorReporter::the().report(UnknownPropertyError {
             .rule_name = to_string(at_rule_id),
-            .property_name = to_string(descriptor_id),
+            .property_name = descriptor_name_and_id.name(),
         });
         return ParseError::SyntaxError;
     }
 
-    auto context_guard = push_temporary_value_parsing_context(DescriptorContext { at_rule_id, descriptor_id });
+    auto context_guard = push_temporary_value_parsing_context(DescriptorContext { at_rule_id, descriptor_name_and_id.id() });
 
-    Vector<ComponentValue> component_values;
-    while (unprocessed_tokens.has_next_token()) {
-        if (unprocessed_tokens.peek_token().is(Token::Type::Semicolon))
-            break;
+    auto transaction = tokens.begin_transaction();
 
-        auto const& token = unprocessed_tokens.consume_a_token();
-        component_values.append(token);
+    auto descriptor_value_start_index = tokens.current_index();
+    SubstitutionFunctionsPresence substitution_functions_presence {};
+
+    tokens.mark();
+    while (tokens.has_next_token()) {
+        auto const& token = tokens.consume_a_token();
+
+        if (token.is(Token::Type::Semicolon))
+            return ParseError::SyntaxError;
+
+        if (collect_arbitrary_substitution_function_presence(token, substitution_functions_presence).is_error())
+            return ParseError::SyntaxError;
     }
+
+    auto metadata = get_descriptor_metadata(at_rule_id, descriptor_name_and_id.id());
+
+    if (substitution_functions_presence.has_any()) {
+        // https://drafts.csswg.org/css-values-5/#resolve-property
+        // Unless otherwise specified, arbitrary substitution functions can be used in place of any part of any
+        // property’s value (including within other functional notations); and are not valid in any other context.
+
+        // NB: Since we are not in a property value context we only allow ASFs if they are explicitly allowed in
+        //     Descriptors.json
+        if (!metadata.allow_arbitrary_substitution_functions) {
+            ErrorReporter::the().report(InvalidValueError {
+                .value_type = MUST(String::formatted("{}/{}", to_string(at_rule_id), descriptor_name_and_id.name())),
+                .value_string = tokens.dump_string(),
+                .description = "ASFs are not supported in this descriptor"_string,
+            });
+            return ParseError::SyntaxError;
+        }
+
+        return UnresolvedStyleValue::create(Vector<ComponentValue> { tokens.tokens_since(descriptor_value_start_index) }, substitution_functions_presence);
+    }
+
+    tokens.restore_a_mark();
 
     Optional<ComputationContext> computation_context = m_document
         ? ComputationContext { .length_resolution_context = Length::ResolutionContext::for_document(*m_document) }
         : Optional<ComputationContext> {};
 
-    TokenStream tokens { component_values };
-    auto metadata = get_descriptor_metadata(at_rule_id, descriptor_id);
     for (auto const& option : metadata.syntax) {
-        auto transaction = tokens.begin_transaction();
+        auto syntax_transaction = transaction.create_child();
         auto parsed_style_value = option.visit(
             [&](Keyword keyword) {
                 return parse_all_as_single_keyword_value(tokens, keyword);
@@ -60,10 +88,8 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
                 if (value_or_error.is_error())
                     return nullptr;
                 auto value_for_property = value_or_error.release_value();
-                // Descriptors don't accept the following, which properties do:
-                // - CSS-wide keywords
-                // - Arbitrary substitution functions (so, UnresolvedStyleValue)
-                if (value_for_property->is_css_wide_keyword() || value_for_property->is_unresolved())
+                // Descriptors don't accept the CSS-wide keywords
+                if (value_for_property->is_css_wide_keyword())
                     return nullptr;
                 return value_for_property;
             },
@@ -83,12 +109,12 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
                     // of a counter symbol and an integer weight. Each weight must be a non-negative integer, and the
                     // additive tuples must be specified in order of strictly descending weight; otherwise, the
                     // declaration is invalid and must be ignored.
-                    i64 previous_weight = NumericLimits<i64>::max();
+                    i32 previous_weight = NumericLimits<i32>::max();
 
                     for (auto const& tuple_style_value : additive_tuples->as_value_list().values()) {
                         auto const& weight = tuple_style_value->as_value_list().value_at(0, false);
 
-                        i64 resolved_weight;
+                        i32 resolved_weight;
 
                         if (weight->is_integer()) {
                             resolved_weight = weight->as_integer().integer();
@@ -180,7 +206,7 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
                             return nullptr;
                         };
 
-                        auto const resolve_value = [&](StyleValue const& value, i64 infinite_value) -> Optional<i64> {
+                        auto const resolve_value = [&](StyleValue const& value, i32 infinite_value) -> Optional<i32> {
                             if (value.is_integer())
                                 return value.as_integer().integer();
 
@@ -202,8 +228,8 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
 
                         // If the lower bound of any range is higher than the upper bound, the entire descriptor is
                         // invalid and must be ignored.
-                        auto first_int = resolve_value(*first_value, NumericLimits<i64>::min());
-                        auto second_int = resolve_value(*second_value, NumericLimits<i64>::max());
+                        auto first_int = resolve_value(*first_value, NumericLimits<i32>::min());
+                        auto second_int = resolve_value(*second_value, NumericLimits<i32>::max());
 
                         if (!first_int.has_value() || !second_int.has_value() || first_int.value() > second_int.value())
                             return nullptr;
@@ -293,10 +319,17 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
                 case DescriptorMetadata::ValueType::Length:
                     return parse_length_value(tokens);
                 case DescriptorMetadata::ValueType::OptionalDeclarationValue: {
-                    // `component_values` already has what we want. Just skip through its tokens so code below knows we consumed them.
-                    while (tokens.has_next_token())
-                        tokens.discard_a_token();
-                    return UnresolvedStyleValue::create(move(component_values));
+                    tokens.discard_whitespace();
+
+                    if (tokens.is_empty())
+                        return UnresolvedStyleValue::create({}, {});
+
+                    if (auto parsed_declaration_value = parse_declaration_value(tokens); parsed_declaration_value.has_value() && tokens.is_empty()) {
+                        // NB: We know this contains no substitution functions otherwise we would have returned earlier
+                        return UnresolvedStyleValue::create(parsed_declaration_value.release_value(), {});
+                    }
+
+                    return nullptr;
                 }
                 case DescriptorMetadata::ValueType::PageSize: {
                     // https://drafts.csswg.org/css-page-3/#page-size-prop
@@ -404,13 +437,13 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
             });
         if (!parsed_style_value || tokens.has_next_token())
             continue;
-        transaction.commit();
+        syntax_transaction.commit();
         return parsed_style_value.release_nonnull();
     }
 
     ErrorReporter::the().report(InvalidPropertyError {
         .rule_name = to_string(at_rule_id),
-        .property_name = to_string(descriptor_id),
+        .property_name = descriptor_name_and_id.name(),
         .value_string = tokens.dump_string(),
         .description = "Failed to parse."_string,
     });
@@ -420,16 +453,16 @@ Parser::ParseErrorOr<NonnullRefPtr<StyleValue const>> Parser::parse_descriptor_v
 
 Optional<Descriptor> Parser::convert_to_descriptor(AtRuleID at_rule_id, Declaration const& declaration)
 {
-    auto descriptor_id = descriptor_id_from_string(at_rule_id, declaration.name);
-    if (!descriptor_id.has_value())
+    auto descriptor_name_and_id = DescriptorNameAndID::from_name(at_rule_id, declaration.name);
+    if (!descriptor_name_and_id.has_value())
         return {};
 
     auto value_token_stream = TokenStream(declaration.value);
-    auto value = parse_descriptor_value(at_rule_id, descriptor_id.value(), value_token_stream);
+    auto value = parse_descriptor_value(at_rule_id, descriptor_name_and_id.value(), value_token_stream);
     if (value.is_error())
         return {};
 
-    return Descriptor { *descriptor_id, value.release_value() };
+    return Descriptor { descriptor_name_and_id.value(), value.release_value() };
 }
 
 }

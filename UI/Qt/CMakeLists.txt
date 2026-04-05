@@ -1,7 +1,13 @@
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+
 qt_add_executable(ladybird main.cpp)
 target_sources(ladybird PRIVATE
     Application.cpp
     Autocomplete.cpp
+    BookmarksBar.cpp
     BrowserWindow.cpp
     EventLoopImplementationQt.cpp
     EventLoopImplementationQtEventTarget.cpp

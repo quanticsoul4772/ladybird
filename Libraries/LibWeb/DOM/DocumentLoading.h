@@ -14,7 +14,7 @@
 namespace Web {
 
 bool build_xml_document(DOM::Document& document, ByteBuffer const& data, Optional<String> content_encoding);
-GC::Ptr<DOM::Document> load_document(HTML::NavigationParams const& navigation_params, NonnullRefPtr<Core::Promise<Empty>> signal_to_continue_session_history_processing, ReadonlyBytes sniff_bytes);
+GC::Ptr<DOM::Document> load_document(HTML::NavigationParams const& navigation_params, ReadonlyBytes sniff_bytes);
 bool can_load_document_with_type(MimeSniff::MimeType const&);
 
 // https://html.spec.whatwg.org/multipage/document-lifecycle.html#read-ua-inline
@@ -79,6 +79,7 @@ GC::Ref<DOM::Document> create_document_for_inline_content(GC::Ptr<HTML::Navigabl
 
     // 6. Either associate document with a custom rendering that is not rendered using the normal Document rendering
     //    rules, or mutate document until it represents the content the user agent wants to render.
+    document->set_ready_to_run_scripts();
     mutate_document(*document);
 
     // FIXME: 7. Act as if the user agent had stopped parsing document.

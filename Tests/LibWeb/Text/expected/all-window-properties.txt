@@ -38,11 +38,15 @@ ByteLengthQueuingStrategy
 CDATASection
 CSSAnimation
 CSSConditionRule
+CSSContainerRule
 CSSCounterStyleRule
 CSSFontFaceDescriptors
 CSSFontFaceRule
 CSSFontFeatureValuesMap
 CSSFontFeatureValuesRule
+CSSFunctionDeclarations
+CSSFunctionDescriptors
+CSSFunctionRule
 CSSGroupingRule
 CSSImageValue
 CSSImportRule
@@ -90,6 +94,7 @@ CSSTranslate
 CSSUnitValue
 CSSUnparsedValue
 CSSVariableReferenceValue
+Cache
 CacheStorage
 CanvasGradient
 CanvasPattern
@@ -316,7 +321,6 @@ NavigationHistoryEntry
 NavigationTransition
 Navigator
 Node
-NodeFilter
 NodeIterator
 NodeList
 Notification
@@ -457,7 +461,6 @@ ServiceWorker
 ServiceWorkerContainer
 ServiceWorkerRegistration
 Set
-ShadowRealm
 ShadowRoot
 SharedArrayBuffer
 SharedWorker
@@ -566,9 +569,12 @@ XMLSerializer
 XPathEvaluator
 XPathExpression
 XPathResult
+XRLayer
+XRRenderState
 XRSession
 XRSessionEvent
 XRSystem
+XRWebGLLayer
 __finishTest
 __preventMultipleTestFunctions
 animationFrame

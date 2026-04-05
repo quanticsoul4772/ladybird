@@ -28,18 +28,13 @@
 #include <LibGfx/Font/Font.h>
 #include <LibGfx/PainterSkia.h>
 #include <LibGfx/PathSkia.h>
+#include <LibGfx/SkiaBackendContext.h>
 #include <LibGfx/SkiaUtils.h>
 #include <LibWeb/CSS/ComputedValues.h>
 #include <LibWeb/Painting/DisplayListPlayerSkia.h>
 #include <LibWeb/Painting/PaintStyle.h>
-#include <LibWeb/Painting/ShadowPainting.h>
 
 namespace Web::Painting {
-
-DisplayListPlayerSkia::DisplayListPlayerSkia(RefPtr<Gfx::SkiaBackendContext> context)
-    : m_context(context)
-{
-}
 
 DisplayListPlayerSkia::DisplayListPlayerSkia()
 {
@@ -98,8 +93,8 @@ static SkM44 to_skia_matrix4x4(Gfx::FloatMatrix4x4 const& matrix)
 
 void DisplayListPlayerSkia::flush()
 {
-    if (m_context)
-        m_context->flush_and_submit(&surface().sk_surface());
+    if (auto context = Gfx::SkiaBackendContext::the())
+        context->flush_and_submit(&surface().sk_surface());
     surface().flush();
 }
 
@@ -144,7 +139,7 @@ void DisplayListPlayerSkia::draw_external_content(DrawExternalContent const& com
     auto bitmap = command.source->current_bitmap();
     if (!bitmap)
         return;
-    if (m_context && !bitmap->ensure_sk_image(*m_context))
+    if (Gfx::SkiaBackendContext::the() && !bitmap->ensure_sk_image(*Gfx::SkiaBackendContext::the()))
         return;
     auto dst_rect = to_skia_rect(command.dst_rect);
     SkRect src_rect = SkRect::MakeIWH(bitmap->width(), bitmap->height());
@@ -156,7 +151,7 @@ void DisplayListPlayerSkia::draw_external_content(DrawExternalContent const& com
 
 void DisplayListPlayerSkia::draw_scaled_immutable_bitmap(DrawScaledImmutableBitmap const& command)
 {
-    if (m_context && !command.bitmap->ensure_sk_image(*m_context))
+    if (Gfx::SkiaBackendContext::the() && !command.bitmap->ensure_sk_image(*Gfx::SkiaBackendContext::the()))
         return;
 
     auto dst_rect = to_skia_rect(command.dst_rect);
@@ -172,7 +167,7 @@ void DisplayListPlayerSkia::draw_scaled_immutable_bitmap(DrawScaledImmutableBitm
 
 void DisplayListPlayerSkia::draw_repeated_immutable_bitmap(DrawRepeatedImmutableBitmap const& command)
 {
-    if (m_context && !command.bitmap->ensure_sk_image(*m_context))
+    if (Gfx::SkiaBackendContext::the() && !command.bitmap->ensure_sk_image(*Gfx::SkiaBackendContext::the()))
         return;
 
     SkMatrix matrix;
@@ -224,60 +219,79 @@ void DisplayListPlayerSkia::translate(Translate const& command)
     canvas.translate(command.delta.x(), command.delta.y());
 }
 
-static SkGradientShader::Interpolation to_skia_interpolation(CSS::InterpolationMethod interpolation_method)
+static SkGradientShader::Interpolation to_skia_interpolation(CSS::ColorInterpolationMethodStyleValue::ColorInterpolationMethod interpolation_method)
 {
     SkGradientShader::Interpolation interpolation;
 
-    switch (interpolation_method.color_space) {
-    case CSS::GradientSpace::sRGB:
-        interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kSRGB;
-        break;
-    case CSS::GradientSpace::sRGBLinear:
-        interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kSRGBLinear;
-        break;
-    case CSS::GradientSpace::Lab:
-        interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kLab;
-        break;
-    case CSS::GradientSpace::OKLab:
-        interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kOKLab;
-        break;
-    case CSS::GradientSpace::HSL:
-        interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kHSL;
-        break;
-    case CSS::GradientSpace::HWB:
-        interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kHWB;
-        break;
-    case CSS::GradientSpace::LCH:
-        interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kLCH;
-        break;
-    case CSS::GradientSpace::OKLCH:
-        interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kOKLCH;
-        break;
-    case CSS::GradientSpace::DisplayP3:
-    case CSS::GradientSpace::A98RGB:
-    case CSS::GradientSpace::ProPhotoRGB:
-    case CSS::GradientSpace::Rec2020:
-    case CSS::GradientSpace::XYZD50:
-    case CSS::GradientSpace::XYZD65:
-        dbgln("FIXME: Unsupported gradient color space");
-        interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kOKLab;
-        break;
-    }
+    interpolation_method.visit(
+        [&](CSS::RectangularColorSpace color_space) {
+            switch (color_space) {
+            case CSS::RectangularColorSpace::Srgb:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kSRGB;
+                break;
+            case CSS::RectangularColorSpace::SrgbLinear:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kSRGBLinear;
+                break;
+            case CSS::RectangularColorSpace::Lab:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kLab;
+                break;
+            case CSS::RectangularColorSpace::Oklab:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kOKLab;
+                break;
+            case CSS::RectangularColorSpace::DisplayP3:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kDisplayP3;
+                break;
+            case CSS::RectangularColorSpace::A98Rgb:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kA98RGB;
+                break;
+            case CSS::RectangularColorSpace::ProphotoRgb:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kProphotoRGB;
+                break;
+            case CSS::RectangularColorSpace::Rec2020:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kRec2020;
+                break;
+            case CSS::RectangularColorSpace::DisplayP3Linear:
+            case CSS::RectangularColorSpace::XyzD50:
+            case CSS::RectangularColorSpace::XyzD65:
+                dbgln("FIXME: Unsupported gradient color space");
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kOKLab;
+                break;
+            case CSS::RectangularColorSpace::Xyz:
+                // NB: Xyz should have been canonicalized to XyzD65 at parse time
+                VERIFY_NOT_REACHED();
+            }
+        },
+        [&](CSS::ColorInterpolationMethodStyleValue::PolarColorInterpolationMethod const& color_space) {
+            switch (color_space.color_space) {
+            case CSS::PolarColorSpace::Hsl:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kHSL;
+                break;
+            case CSS::PolarColorSpace::Hwb:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kHWB;
+                break;
+            case CSS::PolarColorSpace::Lch:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kLCH;
+                break;
+            case CSS::PolarColorSpace::Oklch:
+                interpolation.fColorSpace = SkGradientShader::Interpolation::ColorSpace::kOKLCH;
+                break;
+            }
 
-    switch (interpolation_method.hue_method) {
-    case CSS::HueMethod::Shorter:
-        interpolation.fHueMethod = SkGradientShader::Interpolation::HueMethod::kShorter;
-        break;
-    case CSS::HueMethod::Longer:
-        interpolation.fHueMethod = SkGradientShader::Interpolation::HueMethod::kLonger;
-        break;
-    case CSS::HueMethod::Increasing:
-        interpolation.fHueMethod = SkGradientShader::Interpolation::HueMethod::kIncreasing;
-        break;
-    case CSS::HueMethod::Decreasing:
-        interpolation.fHueMethod = SkGradientShader::Interpolation::HueMethod::kDecreasing;
-        break;
-    }
+            switch (color_space.hue_interpolation_method) {
+            case CSS::HueInterpolationMethod::Shorter:
+                interpolation.fHueMethod = SkGradientShader::Interpolation::HueMethod::kShorter;
+                break;
+            case CSS::HueInterpolationMethod::Longer:
+                interpolation.fHueMethod = SkGradientShader::Interpolation::HueMethod::kLonger;
+                break;
+            case CSS::HueInterpolationMethod::Increasing:
+                interpolation.fHueMethod = SkGradientShader::Interpolation::HueMethod::kIncreasing;
+                break;
+            case CSS::HueInterpolationMethod::Decreasing:
+                interpolation.fHueMethod = SkGradientShader::Interpolation::HueMethod::kDecreasing;
+                break;
+            }
+        });
 
     interpolation.fInPremul = SkGradientShader::Interpolation::InPremul::kYes;
 
@@ -325,98 +339,26 @@ void DisplayListPlayerSkia::paint_linear_gradient(PaintLinearGradient const& com
     surface().canvas().drawRect(to_skia_rect(rect), paint);
 }
 
-static void add_spread_distance_to_border_radius(int& border_radius, int spread_distance)
-{
-    if (border_radius == 0 || spread_distance == 0)
-        return;
-
-    // https://drafts.csswg.org/css-backgrounds/#shadow-shape
-    // To preserve the box’s shape when spread is applied, the corner radii of the shadow are also increased (decreased,
-    // for inner shadows) from the border-box (padding-box) radii by adding (subtracting) the spread distance (and flooring
-    // at zero). However, in order to create a sharper corner when the border radius is small (and thus ensure continuity
-    // between round and sharp corners), when the border radius is less than the spread distance (or in the case of an inner
-    // shadow, less than the absolute value of a negative spread distance), the spread distance is first multiplied by the
-    // proportion 1 + (r-1)^3, where r is the ratio of the border radius to the spread distance, in calculating the corner
-    // radii of the spread shadow shape.
-    if (border_radius > AK::abs(spread_distance)) {
-        border_radius += spread_distance;
-    } else {
-        auto r = (float)border_radius / AK::abs(spread_distance);
-        border_radius += spread_distance * (1 + AK::pow(r - 1, 3.0f));
-    }
-}
-
 void DisplayListPlayerSkia::paint_outer_box_shadow(PaintOuterBoxShadow const& command)
 {
-    auto const& outer_box_shadow_params = command.box_shadow_params;
-    auto const& color = outer_box_shadow_params.color;
-    auto const& spread_distance = outer_box_shadow_params.spread_distance;
-    auto const& blur_radius = outer_box_shadow_params.blur_radius;
-
-    auto content_rrect = to_skia_rrect(outer_box_shadow_params.device_content_rect, outer_box_shadow_params.corner_radii);
-
-    auto shadow_rect = outer_box_shadow_params.device_content_rect;
-    shadow_rect.inflate(spread_distance, spread_distance, spread_distance, spread_distance);
-    auto offset_x = outer_box_shadow_params.offset_x;
-    auto offset_y = outer_box_shadow_params.offset_y;
-    shadow_rect.translate_by(offset_x, offset_y);
-
-    auto add_spread_distance_to_corner_radius = [&](auto& corner_radius) {
-        add_spread_distance_to_border_radius(corner_radius.horizontal_radius, spread_distance);
-        add_spread_distance_to_border_radius(corner_radius.vertical_radius, spread_distance);
-    };
-
-    auto corner_radii = outer_box_shadow_params.corner_radii;
-    add_spread_distance_to_corner_radius(corner_radii.top_left);
-    add_spread_distance_to_corner_radius(corner_radii.top_right);
-    add_spread_distance_to_corner_radius(corner_radii.bottom_right);
-    add_spread_distance_to_corner_radius(corner_radii.bottom_left);
+    auto content_rrect = to_skia_rrect(command.device_content_rect, command.content_corner_radii);
 
     auto& canvas = surface().canvas();
     canvas.save();
     canvas.clipRRect(content_rrect, SkClipOp::kDifference, true);
     SkPaint paint;
     paint.setAntiAlias(true);
-    paint.setColor(to_skia_color(color));
-    paint.setMaskFilter(SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, blur_radius / 2));
-    auto shadow_rounded_rect = to_skia_rrect(shadow_rect, corner_radii);
+    paint.setColor(to_skia_color(command.color));
+    paint.setMaskFilter(SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, command.blur_radius / 2));
+    auto shadow_rounded_rect = to_skia_rrect(command.shadow_rect, command.shadow_corner_radii);
     canvas.drawRRect(shadow_rounded_rect, paint);
     canvas.restore();
 }
 
 void DisplayListPlayerSkia::paint_inner_box_shadow(PaintInnerBoxShadow const& command)
 {
-    auto const& outer_box_shadow_params = command.box_shadow_params;
-    auto color = outer_box_shadow_params.color;
-    auto device_content_rect = outer_box_shadow_params.device_content_rect;
-    auto offset_x = outer_box_shadow_params.offset_x;
-    auto offset_y = outer_box_shadow_params.offset_y;
-    auto blur_radius = outer_box_shadow_params.blur_radius;
-    auto spread_distance = outer_box_shadow_params.spread_distance;
-    auto const& corner_radii = outer_box_shadow_params.corner_radii;
-
-    auto outer_shadow_rect = device_content_rect.translated({ offset_x, offset_y });
-    auto inner_shadow_rect = outer_shadow_rect.inflated(-spread_distance, -spread_distance, -spread_distance, -spread_distance);
-    outer_shadow_rect.inflate(
-        blur_radius + offset_y,
-        blur_radius + abs(offset_x),
-        blur_radius + abs(offset_y),
-        blur_radius + offset_x);
-
-    auto inner_rect_corner_radii = corner_radii;
-
-    auto add_spread_distance_to_corner_radius = [&](auto& corner_radius) {
-        add_spread_distance_to_border_radius(corner_radius.horizontal_radius, -spread_distance);
-        add_spread_distance_to_border_radius(corner_radius.vertical_radius, -spread_distance);
-    };
-
-    add_spread_distance_to_corner_radius(inner_rect_corner_radii.top_left);
-    add_spread_distance_to_corner_radius(inner_rect_corner_radii.top_right);
-    add_spread_distance_to_corner_radius(inner_rect_corner_radii.bottom_right);
-    add_spread_distance_to_corner_radius(inner_rect_corner_radii.bottom_left);
-
-    auto outer_rect = to_skia_rrect(outer_shadow_rect, corner_radii);
-    auto inner_rect = to_skia_rrect(inner_shadow_rect, inner_rect_corner_radii);
+    auto outer_rect = to_skia_rrect(command.outer_shadow_rect, command.content_corner_radii);
+    auto inner_rect = to_skia_rrect(command.inner_shadow_rect, command.inner_shadow_corner_radii);
 
     SkPath outer_path;
     outer_path.addRRect(outer_rect);
@@ -431,10 +373,10 @@ void DisplayListPlayerSkia::paint_inner_box_shadow(PaintInnerBoxShadow const& co
     auto& canvas = surface().canvas();
     SkPaint path_paint;
     path_paint.setAntiAlias(true);
-    path_paint.setColor(to_skia_color(color));
-    path_paint.setMaskFilter(SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, blur_radius / 2));
+    path_paint.setColor(to_skia_color(command.color));
+    path_paint.setMaskFilter(SkMaskFilter::MakeBlur(kNormal_SkBlurStyle, command.blur_radius / 2));
     canvas.save();
-    canvas.clipRRect(to_skia_rrect(device_content_rect, corner_radii), true);
+    canvas.clipRRect(to_skia_rrect(command.device_content_rect, command.content_corner_radii), true);
     canvas.drawPath(result_path, path_paint);
     canvas.restore();
 }
@@ -542,7 +484,7 @@ SkPaint DisplayListPlayerSkia::paint_style_to_skia_paint(Painting::SVGPaintServe
         if (tile_size.is_empty())
             return {};
 
-        auto tile_surface = Gfx::PaintingSurface::create_with_size(m_context, tile_size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
+        auto tile_surface = Gfx::PaintingSurface::create_with_size(tile_size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
 
         execute_display_list_into_surface(*pattern->tile_display_list(), *tile_surface);
 

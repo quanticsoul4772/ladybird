@@ -10,6 +10,7 @@
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/AbstractImageStyleValue.h>
 #include <LibWeb/CSS/StyleValues/BorderRadiusStyleValue.h>
+#include <LibWeb/CSS/StyleValues/CustomIdentStyleValue.h>
 #include <LibWeb/CSS/StyleValues/IntegerStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/CSS/StyleValues/LengthStyleValue.h>
@@ -608,9 +609,9 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
 
     // NOTE: color must be set after color-scheme to ensure currentColor can be resolved in other properties (e.g. background-color).
     // NOTE: color must be set after font_size as `CalculatedStyleValue`s can rely on it being set for resolving lengths.
-    computed_values.set_color(computed_style.color_or_fallback(CSS::PropertyID::Color, CSS::ColorResolutionContext::for_layout_node_with_style(*this), CSS::InitialValues::color()));
+    computed_values.set_color(computed_style.color(CSS::PropertyID::Color, CSS::ColorResolutionContext::for_layout_node_with_style(*this)));
     // NOTE: Currently there are still discussions about `accentColor` and `currentColor` interactions, so the line below might need changing in the future
-    computed_values.set_accent_color(computed_style.color_or_fallback(CSS::PropertyID::AccentColor, CSS::ColorResolutionContext::for_layout_node_with_style(*this), CSS::SystemColor::accent_color(color_scheme)));
+    computed_values.set_accent_color(computed_style.accent_color(CSS::ColorResolutionContext::for_layout_node_with_style(*this)));
     // NOTE: This color resolution context must be created after we set color above so that currentColor resolves correctly
     // FIXME: We should resolve colors to their absolute forms at compute time (i.e. by implementing the relevant absolutized methods)
     auto color_resolution_context = CSS::ColorResolutionContext::for_layout_node_with_style(*this);
@@ -624,7 +625,7 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
 
     computed_values.set_background_layers(move(background_layers));
 
-    computed_values.set_background_color(computed_style.color_or_fallback(CSS::PropertyID::BackgroundColor, color_resolution_context, CSS::InitialValues::background_color()));
+    computed_values.set_background_color(computed_style.color(CSS::PropertyID::BackgroundColor, color_resolution_context));
     computed_values.set_background_color_clip(computed_style.background_color_clip());
 
     computed_values.set_box_sizing(computed_style.box_sizing());
@@ -658,16 +659,12 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     computed_values.set_backdrop_filter(computed_style.backdrop_filter());
     computed_values.set_filter(computed_style.filter());
 
-    computed_values.set_flood_color(computed_style.color_or_fallback(CSS::PropertyID::FloodColor, color_resolution_context, CSS::InitialValues::flood_color()));
+    computed_values.set_flood_color(computed_style.color(CSS::PropertyID::FloodColor, color_resolution_context));
     computed_values.set_flood_opacity(computed_style.flood_opacity());
 
     computed_values.set_justify_content(computed_style.justify_content());
     computed_values.set_justify_items(computed_style.justify_items());
     computed_values.set_justify_self(computed_style.justify_self());
-
-    auto accent_color = computed_style.accent_color(*this);
-    if (accent_color.has_value())
-        computed_values.set_accent_color(accent_color.value());
 
     computed_values.set_align_content(computed_style.align_content());
     computed_values.set_align_items(computed_style.align_items());
@@ -676,6 +673,11 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     computed_values.set_appearance(computed_style.appearance());
 
     computed_values.set_position(computed_style.position());
+
+    // https://drafts.csswg.org/css-anchor-position-1/#position-anchor
+    auto const& position_anchor_value = computed_style.property(CSS::PropertyID::PositionAnchor);
+    if (position_anchor_value.is_custom_ident())
+        computed_values.set_position_anchor(position_anchor_value.as_custom_ident().custom_ident());
 
     computed_values.set_text_align(computed_style.text_align());
     computed_values.set_text_justify(computed_style.text_justify());
@@ -707,6 +709,7 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     computed_values.set_image_rendering(computed_style.image_rendering());
     computed_values.set_pointer_events(computed_style.pointer_events());
     computed_values.set_text_decoration_line(computed_style.text_decoration_line());
+    computed_values.set_text_decoration_skip_ink(computed_style.text_decoration_skip_ink());
     computed_values.set_text_decoration_style(computed_style.text_decoration_style());
     computed_values.set_text_transform(computed_style.text_transform());
 
@@ -718,13 +721,10 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
         const_cast<CSS::AbstractImageStyleValue&>(*m_list_style_image).load_any_resources(document());
     }
 
-    // FIXME: The default text decoration color value is `currentcolor`, but since we can't resolve that easily,
-    //        we just manually grab the value from `color`. This makes it dependent on `color` being
-    //        specified first, so it's far from ideal.
-    computed_values.set_text_decoration_color(computed_style.color_or_fallback(CSS::PropertyID::TextDecorationColor, color_resolution_context, computed_values.color()));
+    computed_values.set_text_decoration_color(computed_style.color(CSS::PropertyID::TextDecorationColor, color_resolution_context));
     computed_values.set_text_decoration_thickness(computed_style.text_decoration_thickness());
 
-    computed_values.set_webkit_text_fill_color(computed_style.color_or_fallback(CSS::PropertyID::WebkitTextFillColor, color_resolution_context, computed_values.color()));
+    computed_values.set_webkit_text_fill_color(computed_style.color(CSS::PropertyID::WebkitTextFillColor, color_resolution_context));
 
     computed_values.set_text_shadow(computed_style.text_shadow(*this));
 
@@ -774,10 +774,8 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     }
 
     auto do_border_style = [&](CSS::BorderData& border, CSS::PropertyID width_property, CSS::PropertyID color_property, CSS::PropertyID style_property) {
-        // FIXME: The default border color value is `currentcolor`, but since we can't resolve that easily,
-        //        we just manually grab the value from `color`. This makes it dependent on `color` being
-        //        specified first, so it's far from ideal.
-        border.color = computed_style.color_or_fallback(color_property, color_resolution_context, computed_values.color());
+        // FIXME: Support <image-1d>
+        border.color = computed_style.color(color_property, color_resolution_context);
         border.line_style = computed_style.line_style(style_property);
 
         // If the border-style corresponding to a given border-width is none or hidden, then the used width is 0.
@@ -843,7 +841,7 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
     else if (stroke.is_url())
         computed_values.set_stroke(CSS::SVGPaint(stroke.as_url().url(), extract_paint_fallback_color(stroke.as_url())));
 
-    computed_values.set_stop_color(computed_style.color_or_fallback(CSS::PropertyID::StopColor, color_resolution_context, CSS::InitialValues::stop_color()));
+    computed_values.set_stop_color(computed_style.color(CSS::PropertyID::StopColor, color_resolution_context));
 
     auto const& stroke_width = computed_style.property(CSS::PropertyID::StrokeWidth);
     // FIXME: Converting to pixels isn't really correct - values should be in "user units"
@@ -933,17 +931,17 @@ void NodeWithStyle::apply_style(CSS::ComputedProperties const& computed_style)
         if (values_list.size() == 2
             && values_list[0]->is_keyword() && values_list[0]->as_keyword().keyword() == CSS::Keyword::Auto
             && values_list[1]->is_ratio()) {
-            computed_values.set_aspect_ratio({ true, values_list[1]->as_ratio().ratio() });
+            computed_values.set_aspect_ratio({ true, values_list[1]->as_ratio().resolved() });
         }
     } else if (aspect_ratio.is_keyword() && aspect_ratio.as_keyword().keyword() == CSS::Keyword::Auto) {
         computed_values.set_aspect_ratio({ true, {} });
     } else if (aspect_ratio.is_ratio()) {
         // https://drafts.csswg.org/css-sizing-4/#aspect-ratio
         // If the <ratio> is degenerate, the property instead behaves as auto.
-        if (aspect_ratio.as_ratio().ratio().is_degenerate())
+        if (aspect_ratio.as_ratio().resolved().is_degenerate())
             computed_values.set_aspect_ratio({ true, {} });
         else
-            computed_values.set_aspect_ratio({ false, aspect_ratio.as_ratio().ratio() });
+            computed_values.set_aspect_ratio({ false, aspect_ratio.as_ratio().resolved() });
     }
 
     computed_values.set_touch_action(computed_style.touch_action());
@@ -1116,6 +1114,7 @@ void NodeWithStyle::reset_table_box_computed_values_used_by_wrapper_to_init_valu
 
     auto& mutable_computed_values = this->mutable_computed_values();
     mutable_computed_values.set_position(CSS::InitialValues::position());
+    mutable_computed_values.set_position_anchor(CSS::InitialValues::position_anchor());
     mutable_computed_values.set_float(CSS::InitialValues::float_());
     mutable_computed_values.set_clear(CSS::InitialValues::clear());
     mutable_computed_values.set_inset(CSS::InitialValues::inset());
@@ -1138,6 +1137,7 @@ void NodeWithStyle::transfer_table_box_computed_values_to_wrapper_computed_value
     else
         mutable_wrapper_computed_values.set_display(CSS::Display::from_short(CSS::Display::Short::FlowRoot));
     mutable_wrapper_computed_values.set_position(computed_values().position());
+    mutable_wrapper_computed_values.set_position_anchor(computed_values().position_anchor());
     mutable_wrapper_computed_values.set_inset(computed_values().inset());
     mutable_wrapper_computed_values.set_float(computed_values().float_());
     mutable_wrapper_computed_values.set_clear(computed_values().clear());
@@ -1247,7 +1247,7 @@ CSS::UserSelect Node::user_select_used_value() const
     // textual content, such as textarea.
     auto* form_control = as_if<HTML::FormAssociatedTextControlElement>(dom_node());
     // FIXME: Check if this needs to exclude input elements with types such as color or range, and if so, which ones exactly.
-    if ((dom_node() && dom_node()->is_editing_host()) || (form_control && form_control->is_mutable())) {
+    if ((dom_node() && dom_node()->is_editing_host()) || (form_control && form_control->text_control_to_html_element().is_mutable())) {
         return CSS::UserSelect::Contain;
     } else if (computed_value == CSS::UserSelect::Auto) {
         // The used value of 'auto' is determined as follows:
@@ -1436,8 +1436,12 @@ bool NodeWithStyleAndBoxModelMetrics::should_create_inline_continuation() const
     if (is<SVG::SVGForeignObjectElement>(parent()->dom_node()))
         return false;
 
-    // SVG related boxes should never be split.
-    if (is_svg_box() || is_svg_svg_box() || is_svg_foreign_object_box())
+    // Non-root SVG elements and foreign object boxes should never be split.
+    if (is_svg_box() || is_svg_foreign_object_box())
+        return false;
+
+    // Nested SVG roots should never be split, but a top-level SVG root inside an HTML inline element should be.
+    if (is_svg_svg_box() && (parent()->is_svg_box() || parent()->is_svg_svg_box()))
         return false;
 
     // Replaced boxes with children (e.g. media elements with shadow DOM controls)

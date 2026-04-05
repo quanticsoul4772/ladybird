@@ -1,4 +1,7 @@
 set(SOURCES
+    Calendar.cpp
+    Calendars/AdjustedEraCalendar.cpp
+    Calendars/ChineseDangiCalendar.cpp
     CharacterTypes.cpp
     Collator.cpp
     CurrencyCode.cpp
@@ -24,8 +27,11 @@ set(GENERATED_SOURCES ${CURRENT_LIB_GENERATED})
 
 ladybird_lib(LibUnicode unicode)
 
-find_package(ICU 78 REQUIRED COMPONENTS data i18n uc)
+find_package(ICU 78.2 EXACT REQUIRED COMPONENTS data i18n uc)
 target_link_libraries(LibUnicode PRIVATE ICU::i18n ICU::uc ICU::data)
+
+import_rust_crate(MANIFEST_PATH Rust/Cargo.toml CRATE_NAME libunicode_rust FFI_HEADER RustFFI.h)
+target_link_libraries(LibUnicode PRIVATE libunicode_rust)
 
 # FIXME: Add support for building LibGfx in sanitize
 #   lld-link: error: /failifmismatch: mismatch detected for 'annotate_string':

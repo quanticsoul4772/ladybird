@@ -155,12 +155,23 @@ ErrorOr<int> anon_create([[maybe_unused]] size_t size, [[maybe_unused]] int opti
     static size_t shared_memory_id = 0;
 
     auto name = ByteString::formatted("/shm-{}-{}", getpid(), shared_memory_id++);
-    fd = shm_open(name.characters(), O_RDWR | O_CREAT | options, 0600);
+    // Passing O_CLOEXEC to shm_open in the oflag argument isn't POSIX-compliant and is known to be rejected
+    // in macOS 26.4+. So we filter it out here, and instead set FD_CLOEXEC via fcntl after opening.
+    fd = shm_open(name.characters(), O_RDWR | O_CREAT | (options & ~O_CLOEXEC), 0600);
 
     if (shm_unlink(name.characters()) == -1) {
         auto saved_errno = errno;
-        TRY(close(fd));
+        if (fd >= 0)
+            TRY(close(fd));
         return Error::from_errno(saved_errno);
+    }
+
+    if (fd >= 0 && (options & O_CLOEXEC)) {
+        if (::fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
+            auto saved_errno = errno;
+            TRY(close(fd));
+            return Error::from_errno(saved_errno);
+        }
     }
 #endif
     if (fd < 0)
@@ -408,8 +419,6 @@ ErrorOr<void> symlink(StringView target, StringView link_path)
 
 ErrorOr<void> mkdir(StringView path, mode_t mode)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
     ByteString path_string = path;
     if (::mkdir(path_string.characters(), mode) < 0)
         return Error::from_syscall("mkdir"sv, errno);
@@ -418,9 +427,6 @@ ErrorOr<void> mkdir(StringView path, mode_t mode)
 
 ErrorOr<void> chdir(StringView path)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString path_string = path;
     if (::chdir(path_string.characters()) < 0)
         return Error::from_syscall("chdir"sv, errno);
@@ -429,9 +435,6 @@ ErrorOr<void> chdir(StringView path)
 
 ErrorOr<void> rmdir(StringView path)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString path_string = path;
     if (::rmdir(path_string.characters()) < 0)
         return Error::from_syscall("rmdir"sv, errno);
@@ -448,9 +451,6 @@ ErrorOr<int> mkstemp(Span<char> pattern)
 
 ErrorOr<void> rename(StringView old_path, StringView new_path)
 {
-    if (old_path.is_null() || new_path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString old_path_string = old_path;
     ByteString new_path_string = new_path;
     if (::rename(old_path_string.characters(), new_path_string.characters()) < 0)
@@ -460,9 +460,6 @@ ErrorOr<void> rename(StringView old_path, StringView new_path)
 
 ErrorOr<void> unlink(StringView path)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString path_string = path;
     if (::unlink(path_string.characters()) < 0)
         return Error::from_syscall("unlink"sv, errno);
@@ -471,15 +468,8 @@ ErrorOr<void> unlink(StringView path)
 
 ErrorOr<void> utimensat(int fd, StringView path, struct timespec const times[2], int flag)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
-    StringBuilder builder;
-    TRY(builder.try_append(path));
-    TRY(builder.try_append('\0'));
-
-    // Note the explicit null terminators above.
-    if (::utimensat(fd, builder.string_view().characters_without_null_termination(), times, flag) < 0)
+    ByteString path_string = path;
+    if (::utimensat(fd, path_string.characters(), times, flag) < 0)
         return Error::from_syscall("utimensat"sv, errno);
     return {};
 }
@@ -660,9 +650,6 @@ ErrorOr<Array<int, 2>> pipe2(int flags)
 
 ErrorOr<void> access(StringView pathname, int mode, int flags)
 {
-    if (pathname.is_null())
-        return Error::from_syscall("access"sv, EFAULT);
-
     ByteString path_string = pathname;
     (void)flags;
 

@@ -15,7 +15,6 @@
 #include <LibWeb/IndexedDB/IDBObjectStore.h>
 #include <LibWeb/IndexedDB/IDBRequest.h>
 #include <LibWeb/IndexedDB/IDBTransaction.h>
-#include <LibWeb/IndexedDB/Internal/IDBRequestObserver.h>
 
 namespace Web::IndexedDB {
 
@@ -26,8 +25,8 @@ IDBRequest::~IDBRequest() = default;
 IDBRequest::IDBRequest(JS::Realm& realm, IDBRequestSource source)
     : EventTarget(realm)
     , m_source(source)
+    , m_uuid(Crypto::generate_random_uuid())
 {
-    m_uuid = MUST(Crypto::generate_random_uuid());
 }
 
 void IDBRequest::initialize(JS::Realm& realm)
@@ -52,8 +51,13 @@ void IDBRequest::visit_edges(Visitor& visitor)
         [&](auto const& object) { visitor.visit(object); });
 
     visitor.visit(m_error);
+}
 
-    visitor.visit(m_request_observers_being_notified);
+DOM::EventTarget* IDBRequest::get_parent(DOM::Event const&)
+{
+    // https://w3c.github.io/IndexedDB/#request-construct
+    // A request’s get the parent algorithm returns the request’s transaction.
+    return m_transaction.ptr();
 }
 
 // https://w3c.github.io/IndexedDB/#dom-idbrequest-onsuccess
@@ -110,26 +114,6 @@ WebIDL::CallbackType* IDBRequest::onerror()
         return JS::js_undefined();
 
     return m_result;
-}
-
-void IDBRequest::register_request_observer(Badge<IDBRequestObserver>, IDBRequestObserver& request_observer)
-{
-    auto result = m_request_observers.set(request_observer);
-    VERIFY(result == AK::HashSetResult::InsertedNewEntry);
-}
-
-void IDBRequest::unregister_request_observer(Badge<IDBRequestObserver>, IDBRequestObserver& request_observer)
-{
-    bool was_removed = m_request_observers.remove(request_observer);
-    VERIFY(was_removed);
-}
-
-void IDBRequest::set_processed(bool processed)
-{
-    m_processed = processed;
-    notify_each_request_observer([](IDBRequestObserver const& request_observer) {
-        return request_observer.request_processed_changed_observer();
-    });
 }
 
 }

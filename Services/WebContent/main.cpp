@@ -11,11 +11,12 @@
 #include <LibCore/Process.h>
 #include <LibCore/Resource.h>
 #include <LibCore/System.h>
-#include <LibCore/SystemServerTakeover.h>
 #include <LibCrypto/OpenSSLForward.h>
 #include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Font/PathFontProvider.h>
+#include <LibGfx/SkiaBackendContext.h>
 #include <LibIPC/ConnectionFromClient.h>
+#include <LibIPC/TransportHandle.h>
 #include <LibJS/Bytecode/Interpreter.h>
 #include <LibMain/Main.h>
 #include <LibRequests/RequestClient.h>
@@ -38,13 +39,15 @@
 #include <LibWebView/Utilities.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/PageClient.h>
-#include <WebContent/PageHost.h>
 #include <WebContent/WebDriverConnection.h>
 
 #include <openssl/thread.h>
 
 #if defined(AK_OS_MACOS)
-#    include <LibCore/Platform/ProcessStatisticsMach.h>
+#    include <LibIPC/Transport.h>
+#    include <LibIPC/TransportBootstrapMach.h>
+#else
+#    include <LibIPC/SingleServer.h>
 #endif
 
 #if defined(AK_OS_WINDOWS)
@@ -53,17 +56,62 @@
 
 #include <SDL3/SDL_init.h>
 
+#if !defined(AK_OS_WINDOWS)
+#    include <signal.h>
+static void crash_signal_handler(int signo)
+{
+    char const* name;
+    switch (signo) {
+    case SIGSEGV:
+        name = "SIGSEGV";
+        break;
+    case SIGBUS:
+        name = "SIGBUS";
+        break;
+    case SIGFPE:
+        name = "SIGFPE";
+        break;
+    case SIGABRT:
+        name = "SIGABRT";
+        break;
+    case SIGILL:
+        name = "SIGILL";
+        break;
+    default:
+        name = "unknown";
+        break;
+    }
+    warnln("\n\033[31;1mCRASH\033[0m: Received signal {} ({})", name, signo);
+    dump_backtrace(2, 100);
+    exit(128 + signo);
+}
+
+static void install_crash_signal_handlers()
+{
+    struct sigaction sa;
+    sa.sa_handler = crash_signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND;
+    sigaction(SIGSEGV, &sa, nullptr);
+    sigaction(SIGBUS, &sa, nullptr);
+    sigaction(SIGFPE, &sa, nullptr);
+    sigaction(SIGABRT, &sa, nullptr);
+    sigaction(SIGILL, &sa, nullptr);
+}
+#endif
+
 static ErrorOr<void> load_content_filters(StringView config_path);
 
-static ErrorOr<void> initialize_resource_loader(GC::Heap&, int request_server_socket, WebContent::ConnectionFromClient* webcontent_client);
-static ErrorOr<void> reinitialize_resource_loader(IPC::File const& image_decoder_socket, WebContent::ConnectionFromClient* webcontent_client);
-
-static ErrorOr<void> initialize_image_decoder(int image_decoder_socket);
-static ErrorOr<void> reinitialize_image_decoder(IPC::File const& image_decoder_socket);
+static ErrorOr<void> connect_to_resource_loader(GC::Heap& heap, IPC::TransportHandle const& handle);
+static ErrorOr<void> connect_to_image_decoder(IPC::TransportHandle const& handle);
 
 ErrorOr<int> ladybird_main(Main::Arguments arguments)
 {
     AK::set_rich_debug_enabled(true);
+
+#if !defined(AK_OS_WINDOWS)
+    install_crash_signal_handlers();
+#endif
 
 #if defined(AK_OS_WINDOWS)
     // NOTE: We need this here otherwise SDL inits COM in the APARTMENTTHREADED model which we don't want as we need to
@@ -89,15 +137,12 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     auto config_path = ByteString::formatted("{}/ladybird/default-config", WebView::s_ladybird_resource_root);
     StringView mach_server_name {};
     Vector<ByteString> certificates;
-    int request_server_socket { -1 };
-    int image_decoder_socket { -1 };
     bool enable_test_mode = false;
     bool expose_experimental_interfaces = false;
     bool expose_internals_object = false;
     bool wait_for_debugger = false;
     bool log_all_js_exceptions = false;
-    // FIXME: Temporarily disable site isolation by default due to IPC race condition
-    bool disable_site_isolation = true;
+    bool disable_site_isolation = false;
     bool enable_idl_tracing = false;
     bool enable_http_memory_cache = false;
     bool force_cpu_painting = false;
@@ -113,8 +158,6 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     args_parser.add_option(command_line, "Browser process command line", "command-line", 0, "command_line");
     args_parser.add_option(executable_path, "Browser process executable path", "executable-path", 0, "executable_path");
     args_parser.add_option(config_path, "Ladybird configuration path", "config-path", 0, "config_path");
-    args_parser.add_option(request_server_socket, "File descriptor of the socket for the RequestServer connection", "request-server-socket", 'r', "request_server_socket");
-    args_parser.add_option(image_decoder_socket, "File descriptor of the socket for the ImageDecoder connection", "image-decoder-socket", 'i', "image_decoder_socket");
     args_parser.add_option(enable_test_mode, "Enable test mode", "test-mode");
     args_parser.add_option(expose_experimental_interfaces, "Expose experimental IDL interfaces", "expose-experimental-interfaces");
     args_parser.add_option(expose_internals_object, "Expose internals object", "expose-internals-object");
@@ -158,7 +201,12 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     Web::set_browser_process_executable_path(executable_path);
 
     // Always use the CPU backend for tests, as the GPU backend is not deterministic
-    WebContent::PageClient::set_use_skia_painter(force_cpu_painting ? WebContent::PageClient::UseSkiaPainter::CPUBackend : WebContent::PageClient::UseSkiaPainter::GPUBackendIfAvailable);
+    if (force_cpu_painting) {
+        WebContent::PageClient::set_use_skia_painter(WebContent::PageClient::UseSkiaPainter::CPUBackend);
+    } else {
+        Gfx::SkiaBackendContext::initialize_gpu_backend();
+        WebContent::PageClient::set_use_skia_painter(WebContent::PageClient::UseSkiaPainter::GPUBackendIfAvailable);
+    }
 
     WebContent::PageClient::set_is_headless(is_headless);
 
@@ -177,16 +225,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
             VERIFY_NOT_REACHED();
     }
 
-#if defined(AK_OS_MACOS)
-    if (!mach_server_name.is_empty()) {
-        auto server_port = Core::Platform::register_with_mach_server(mach_server_name);
-        Web::Painting::BackingStoreManager::set_browser_mach_port(move(server_port));
-    }
-#endif
-
     OPENSSL_TRY(OSSL_set_max_threads(nullptr, Core::System::hardware_concurrency()));
-
-    TRY(initialize_image_decoder(image_decoder_socket));
 
     Web::HTML::Window::set_enable_test_mode(enable_test_mode);
     Web::HTML::Window::set_internals_object_exposed(expose_internals_object);
@@ -198,13 +237,6 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
 
     if (collect_garbage_on_every_allocation)
         Web::Bindings::main_thread_vm().heap().set_should_collect_on_every_allocation(true);
-
-    // TODO: Mach IPC
-
-    auto webcontent_socket = TRY(Core::take_over_socket_from_system_server("WebContent"sv));
-    auto webcontent_client = WebContent::ConnectionFromClient::construct(make<IPC::Transport>(move(webcontent_socket)));
-
-    TRY(initialize_resource_loader(Web::Bindings::main_thread_vm().heap(), request_server_socket, webcontent_client.ptr()));
 
     if (log_all_js_exceptions) {
         JS::set_log_all_js_exceptions(true);
@@ -218,13 +250,23 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     if (maybe_content_filter_error.is_error())
         dbgln("Failed to load content filters: {}", maybe_content_filter_error.error());
 
-    webcontent_client->on_request_server_connection = [&, wc_ptr = webcontent_client.ptr()](auto const& socket_file) {
-        if (auto result = reinitialize_resource_loader(socket_file, wc_ptr); result.is_error())
-            dbgln("Failed to reinitialize resource loader: {}", result.error());
+#if defined(AK_OS_MACOS)
+    auto browser_port = TRY(Core::MachPort::look_up_from_bootstrap_server(ByteString { mach_server_name }));
+    auto transport_ports = TRY(IPC::bootstrap_transport_from_server_port(browser_port));
+    auto webcontent_client = WebContent::ConnectionFromClient::construct(
+        make<IPC::Transport>(move(transport_ports.receive_right), move(transport_ports.send_right)));
+#else
+    auto webcontent_client = TRY(IPC::take_over_accepted_client_from_system_server<WebContent::ConnectionFromClient>(mach_server_name));
+#endif
+
+    auto& heap = Web::Bindings::main_thread_vm().heap();
+    webcontent_client->on_request_server_connection = [&heap](auto const& handle) {
+        if (auto result = connect_to_resource_loader(heap, handle); result.is_error())
+            dbgln("Failed to connect to resource loader: {}", result.error());
     };
-    webcontent_client->on_image_decoder_connection = [&](auto const& socket_file) {
-        if (auto result = reinitialize_image_decoder(socket_file); result.is_error())
-            dbgln("Failed to reinitialize image decoder: {}", result.error());
+    webcontent_client->on_image_decoder_connection = [](auto const& handle) {
+        if (auto result = connect_to_image_decoder(handle); result.is_error())
+            dbgln("Failed to connect to image decoder: {}", result.error());
     };
 
     return event_loop.exec();
@@ -254,67 +296,32 @@ static ErrorOr<void> load_content_filters(StringView config_path)
     return {};
 }
 
-ErrorOr<void> initialize_resource_loader(GC::Heap& heap, int request_server_socket, WebContent::ConnectionFromClient* webcontent_client)
+ErrorOr<void> connect_to_resource_loader(GC::Heap& heap, IPC::TransportHandle const& handle)
 {
-    // TODO: Mach IPC
-    auto socket = TRY(Core::LocalSocket::adopt_fd(request_server_socket));
-    TRY(socket->set_blocking(true));
-
-    auto request_client = TRY(try_make_ref_counted<Requests::RequestClient>(make<IPC::Transport>(move(socket))));
+    auto transport = TRY(handle.create_transport());
+    auto request_client = TRY(try_make_ref_counted<Requests::RequestClient>(move(transport)));
 #ifdef AK_OS_WINDOWS
     auto response = request_client->send_sync<Messages::RequestServer::InitTransport>(Core::System::getpid());
     request_client->transport().set_peer_pid(response->peer_pid());
 #endif
-
-    // TODO: Traffic alert callback for Sentinel integration would go here
-    // once RequestClient supports on_traffic_alert callback
-    (void)webcontent_client;
-
-    Web::ResourceLoader::initialize(heap, move(request_client));
+    if (Web::ResourceLoader::is_initialized())
+        Web::ResourceLoader::the().set_client(move(request_client));
+    else
+        Web::ResourceLoader::initialize(heap, move(request_client));
     return {};
 }
 
-ErrorOr<void> reinitialize_resource_loader(IPC::File const& request_server_socket, WebContent::ConnectionFromClient* webcontent_client)
+ErrorOr<void> connect_to_image_decoder(IPC::TransportHandle const& handle)
 {
-    // TODO: Mach IPC
-    auto socket = TRY(Core::LocalSocket::adopt_fd(request_server_socket.take_fd()));
-    TRY(socket->set_blocking(true));
-
-    auto request_client = TRY(try_make_ref_counted<Requests::RequestClient>(make<IPC::Transport>(move(socket))));
-
-    // TODO: Traffic alert callback for Sentinel integration would go here
-    // once RequestClient supports on_traffic_alert callback
-    (void)webcontent_client;
-
-    Web::ResourceLoader::the().set_client(move(request_client));
-
-    return {};
-}
-
-ErrorOr<void> initialize_image_decoder(int image_decoder_socket)
-{
-    // TODO: Mach IPC
-    auto socket = TRY(Core::LocalSocket::adopt_fd(image_decoder_socket));
-    TRY(socket->set_blocking(true));
-
-    auto new_client = TRY(try_make_ref_counted<ImageDecoderClient::Client>(make<IPC::Transport>(move(socket))));
+    auto transport = TRY(handle.create_transport());
+    auto new_client = TRY(try_make_ref_counted<ImageDecoderClient::Client>(move(transport)));
 #ifdef AK_OS_WINDOWS
     auto response = new_client->send_sync<Messages::ImageDecoderServer::InitTransport>(Core::System::getpid());
     new_client->transport().set_peer_pid(response->peer_pid());
 #endif
-
-    Web::Platform::ImageCodecPlugin::install(*new WebView::ImageCodecPlugin(move(new_client)));
-    return {};
-}
-
-ErrorOr<void> reinitialize_image_decoder(IPC::File const& image_decoder_socket)
-{
-    // TODO: Mach IPC
-    auto socket = TRY(Core::LocalSocket::adopt_fd(image_decoder_socket.take_fd()));
-    TRY(socket->set_blocking(true));
-
-    auto new_client = TRY(try_make_ref_counted<ImageDecoderClient::Client>(make<IPC::Transport>(move(socket))));
-    static_cast<WebView::ImageCodecPlugin&>(Web::Platform::ImageCodecPlugin::the()).set_client(move(new_client));
-
+    if (Web::Platform::ImageCodecPlugin::is_initialized())
+        static_cast<WebView::ImageCodecPlugin&>(Web::Platform::ImageCodecPlugin::the()).set_client(move(new_client));
+    else
+        Web::Platform::ImageCodecPlugin::install(*new WebView::ImageCodecPlugin(move(new_client)));
     return {};
 }

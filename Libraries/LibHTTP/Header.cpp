@@ -6,6 +6,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/AllOf.h>
+#include <AK/AnyOf.h>
 #include <AK/GenericLexer.h>
 #include <AK/QuickSort.h>
 #include <LibHTTP/HTTP.h>
@@ -13,7 +15,6 @@
 #include <LibHTTP/Method.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
-#include <LibRegex/Regex.h>
 #include <LibTextCodec/Decoder.h>
 #include <LibTextCodec/Encoder.h>
 
@@ -24,17 +25,19 @@ Header Header::isomorphic_encode(StringView name, StringView value)
     return { TextCodec::isomorphic_encode(name), TextCodec::isomorphic_encode(value) };
 }
 
+// https://www.rfc-editor.org/rfc/rfc9110.html#name-recipient-requirements
 static Optional<Vector<ByteString>> extract_token_headers(ByteString const& value)
 {
-    auto parts = value.split(',', SplitBehavior::Nothing);
-    for (auto& part : parts) {
-        part = part.trim(HTTP_WHITESPACE, TrimMode::Both);
-        if (part.is_empty())
+    Vector<ByteString> result;
+    for (auto& part : value.split(',', SplitBehavior::Nothing)) {
+        auto trimmed = part.trim(HTTP_WHITESPACE, TrimMode::Both);
+        if (trimmed.is_empty())
+            continue;
+        if (!is_header_name(trimmed))
             return {};
-        if (!is_header_name(part))
-            return {};
+        result.append(move(trimmed));
     }
-    return parts;
+    return result;
 }
 
 // https://fetch.spec.whatwg.org/#extract-header-values
@@ -80,8 +83,7 @@ Optional<Vector<ByteString>> Header::extract_header_values() const
 bool is_header_name(StringView header_name)
 {
     // A header name is a byte sequence that matches the field-name token production.
-    Regex<ECMA262Parser> regex { R"~~~(^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$)~~~" };
-    return regex.has_match(header_name);
+    return !header_name.is_empty() && all_of(header_name, is_http_token_code_point);
 }
 
 // https://fetch.spec.whatwg.org/#header-value

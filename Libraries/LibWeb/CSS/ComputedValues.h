@@ -12,7 +12,6 @@
 #include <AK/Optional.h>
 #include <LibGfx/FontCascadeList.h>
 #include <LibGfx/ScalingMode.h>
-#include <LibWeb/CSS/CalculatedOr.h>
 #include <LibWeb/CSS/Clip.h>
 #include <LibWeb/CSS/ColumnCount.h>
 #include <LibWeb/CSS/CounterStyle.h>
@@ -171,7 +170,9 @@ public:
     static TextAlign text_align() { return TextAlign::Start; }
     static TextJustify text_justify() { return TextJustify::Auto; }
     static Positioning position() { return Positioning::Static; }
+    static Optional<FlyString> position_anchor() { return {}; }
     static TextDecorationLine text_decoration_line() { return TextDecorationLine::None; }
+    static TextDecorationSkipInk text_decoration_skip_ink() { return TextDecorationSkipInk::Auto; }
     static TextDecorationStyle text_decoration_style() { return TextDecorationStyle::Solid; }
     static TextTransform text_transform() { return TextTransform::None; }
     static TextOverflow text_overflow() { return TextOverflow::Clip; }
@@ -538,12 +539,14 @@ public:
     TextUnderlinePosition text_underline_position() const { return m_inherited.text_underline_position; }
     Vector<TextDecorationLine> const& text_decoration_line() const { return m_noninherited.text_decoration_line; }
     TextDecorationThickness const& text_decoration_thickness() const { return m_noninherited.text_decoration_thickness; }
+    TextDecorationSkipInk text_decoration_skip_ink() const { return m_inherited.text_decoration_skip_ink; }
     TextDecorationStyle text_decoration_style() const { return m_noninherited.text_decoration_style; }
     Color text_decoration_color() const { return m_noninherited.text_decoration_color; }
     TextTransform text_transform() const { return m_inherited.text_transform; }
     TextOverflow text_overflow() const { return m_noninherited.text_overflow; }
     Vector<ShadowData> const& text_shadow() const { return m_inherited.text_shadow; }
     Positioning position() const { return m_noninherited.position; }
+    Optional<FlyString> const& position_anchor() const { return m_noninherited.position_anchor; }
     WhiteSpaceCollapse white_space_collapse() const { return m_inherited.white_space_collapse; }
     WhiteSpaceTrimData white_space_trim() const { return m_noninherited.white_space_trim; }
     WordBreak word_break() const { return m_inherited.word_break; }
@@ -741,6 +744,7 @@ protected:
         TextJustify text_justify { InitialValues::text_justify() };
         TextTransform text_transform { InitialValues::text_transform() };
         TextWrapMode text_wrap_mode { InitialValues::text_wrap_mode() };
+        TextDecorationSkipInk text_decoration_skip_ink { InitialValues::text_decoration_skip_ink() };
         TextUnderlinePosition text_underline_position { InitialValues::text_underline_position() };
         Variant<Length, double> tab_size { InitialValues::tab_size() };
         TextIndentData text_indent { InitialValues::text_indent() };
@@ -785,6 +789,7 @@ protected:
         Clear clear { InitialValues::clear() };
         TextOverflow text_overflow { InitialValues::text_overflow() };
         Positioning position { InitialValues::position() };
+        Optional<FlyString> position_anchor { InitialValues::position_anchor() };
         Optional<int> z_index;
         Display display_before_box_type_transformation { InitialValues::display() };
         Clip clip { InitialValues::clip() };
@@ -966,6 +971,7 @@ public:
     void set_text_justify(TextJustify text_justify) { m_inherited.text_justify = text_justify; }
     void set_text_decoration_line(Vector<TextDecorationLine> value) { m_noninherited.text_decoration_line = move(value); }
     void set_text_decoration_thickness(TextDecorationThickness value) { m_noninherited.text_decoration_thickness = move(value); }
+    void set_text_decoration_skip_ink(TextDecorationSkipInk value) { m_inherited.text_decoration_skip_ink = value; }
     void set_text_decoration_style(TextDecorationStyle value) { m_noninherited.text_decoration_style = value; }
     void set_text_decoration_color(Color value) { m_noninherited.text_decoration_color = value; }
     void set_text_transform(TextTransform value) { m_inherited.text_transform = value; }
@@ -977,6 +983,7 @@ public:
     void set_text_underline_position(TextUnderlinePosition value) { m_inherited.text_underline_position = value; }
     void set_webkit_text_fill_color(Color value) { m_inherited.webkit_text_fill_color = value; }
     void set_position(Positioning position) { m_noninherited.position = position; }
+    void set_position_anchor(Optional<FlyString> value) { m_noninherited.position_anchor = move(value); }
     void set_white_space_collapse(WhiteSpaceCollapse value) { m_inherited.white_space_collapse = value; }
     void set_white_space_trim(WhiteSpaceTrimData value) { m_noninherited.white_space_trim = value; }
     void set_word_spacing(CSSPixels value) { m_inherited.word_spacing = value; }

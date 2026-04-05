@@ -7,14 +7,46 @@
 
 #include <AK/Checked.h>
 #include <AK/NonnullOwnPtr.h>
+#include <AK/ScopeGuard.h>
 #include <AK/Types.h>
 #include <LibCore/Socket.h>
 #include <LibCore/System.h>
+#include <LibIPC/Attachment.h>
+#include <LibIPC/File.h>
 #include <LibIPC/Limits.h>
+#include <LibIPC/TransportHandle.h>
 #include <LibIPC/TransportSocket.h>
 #include <LibThreading/Thread.h>
 
 namespace IPC {
+
+ErrorOr<NonnullOwnPtr<TransportSocket>> TransportSocket::from_socket(NonnullOwnPtr<Core::LocalSocket> socket)
+{
+    return make<TransportSocket>(move(socket));
+}
+
+ErrorOr<TransportSocket::Paired> TransportSocket::create_paired()
+{
+    int fds[2] {};
+    TRY(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, fds));
+
+    ArmedScopeGuard guard_fd_0 { [&] { MUST(Core::System::close(fds[0])); } };
+    ArmedScopeGuard guard_fd_1 { [&] { MUST(Core::System::close(fds[1])); } };
+
+    auto socket0 = TRY(Core::LocalSocket::adopt_fd(fds[0]));
+    guard_fd_0.disarm();
+    TRY(socket0->set_close_on_exec(true));
+    TRY(socket0->set_blocking(false));
+
+    TRY(Core::System::set_close_on_exec(fds[1], true));
+    guard_fd_1.disarm();
+
+    // Local side gets a full transport; remote side is just a handle containing the raw fd for transfer to another process.
+    return Paired {
+        make<TransportSocket>(move(socket0)),
+        TransportHandle { File::adopt_fd(fds[1]) },
+    };
+}
 
 void SendQueue::enqueue_message(ReadonlyBytes header, ReadonlyBytes payload, Vector<int>&& fds)
 {
@@ -50,16 +82,20 @@ void SendQueue::discard(size_t bytes_count, size_t fds_count)
 TransportSocket::TransportSocket(NonnullOwnPtr<Core::LocalSocket> socket)
     : m_socket(move(socket))
 {
+    // Disable the socket's built-in notifier. TransportSocket uses its own pipe-based notification mechanism on the IO
+    // thread, so this notifier is unused. Otherwise, when the socket reaches EOF, this notifier is disabled from the IO
+    // thread. In the Qt UI, this causes QSocketNotifier destruction to be deferred. If the socket is closed before the
+    // deferred destruction runs, Qt detects an invalid socket and prints a warning.
+    m_socket->set_notifications_enabled(false);
+
     (void)Core::System::setsockopt(m_socket->fd().value(), SOL_SOCKET, SO_SNDBUF, &SOCKET_BUFFER_SIZE, sizeof(SOCKET_BUFFER_SIZE));
     (void)Core::System::setsockopt(m_socket->fd().value(), SOL_SOCKET, SO_RCVBUF, &SOCKET_BUFFER_SIZE, sizeof(SOCKET_BUFFER_SIZE));
 
     m_send_queue = adopt_ref(*new SendQueue);
 
-    {
-        auto fds = MUST(Core::System::pipe2(O_CLOEXEC | O_NONBLOCK));
-        m_wakeup_io_thread_read_fd = adopt_ref(*new AutoCloseFileDescriptor(fds[0]));
-        m_wakeup_io_thread_write_fd = adopt_ref(*new AutoCloseFileDescriptor(fds[1]));
-    }
+    auto fds = MUST(Core::System::pipe2(O_CLOEXEC | O_NONBLOCK));
+    m_wakeup_io_thread_read_fd = adopt_ref(*new AutoCloseFileDescriptor(fds[0]));
+    m_wakeup_io_thread_write_fd = adopt_ref(*new AutoCloseFileDescriptor(fds[1]));
 
     {
         auto fds = MUST(Core::System::pipe2(O_CLOEXEC | O_NONBLOCK));
@@ -138,6 +174,7 @@ intptr_t TransportSocket::io_thread_loop()
     VERIFY(m_io_thread_state == IOThreadState::Stopped);
     m_peer_eof = true;
     m_incoming_cv.broadcast();
+    notify_read_available();
     return 0;
 }
 
@@ -160,6 +197,14 @@ void TransportSocket::stop_io_thread(IOThreadState desired_state)
     wake_io_thread();
     if (m_io_thread && m_io_thread->needs_to_be_joined())
         (void)m_io_thread->join();
+}
+
+void TransportSocket::notify_read_available()
+{
+    if (!m_notify_hook_write_fd)
+        return;
+    Array<u8, 1> bytes = { 0 };
+    (void)Core::System::write(m_notify_hook_write_fd->value(), bytes);
 }
 
 void TransportSocket::set_up_read_hook(Function<void()> hook)
@@ -224,9 +269,9 @@ struct MessageHeader {
     u32 fd_count { 0 };
 };
 
-void TransportSocket::post_message(Vector<u8> const& bytes_to_write, Vector<NonnullRefPtr<AutoCloseFileDescriptor>> const& fds)
+void TransportSocket::post_message(Vector<u8> const& bytes_to_write, Vector<Attachment>& attachments)
 {
-    auto num_fds_to_transfer = fds.size();
+    auto num_fds_to_transfer = attachments.size();
 
     MessageHeader header {
         .type = MessageHeader::Type::Payload,
@@ -234,17 +279,15 @@ void TransportSocket::post_message(Vector<u8> const& bytes_to_write, Vector<Nonn
         .fd_count = static_cast<u32>(num_fds_to_transfer),
     };
 
-    {
-        Threading::MutexLocker locker(m_fds_retained_until_received_by_peer_mutex);
-        for (auto const& fd : fds)
-            m_fds_retained_until_received_by_peer.enqueue(fd);
-    }
-
     auto raw_fds = Vector<int, 1> {};
     if (num_fds_to_transfer > 0) {
         raw_fds.ensure_capacity(num_fds_to_transfer);
-        for (auto const& owned_fd : fds) {
-            raw_fds.unchecked_append(owned_fd->value());
+        Threading::MutexLocker locker(m_fds_retained_until_received_by_peer_mutex);
+        for (auto& attachment : attachments) {
+            int fd = attachment.to_fd();
+            auto auto_fd = adopt_ref(*new AutoCloseFileDescriptor(fd));
+            raw_fds.unchecked_append(auto_fd->value());
+            m_fds_retained_until_received_by_peer.enqueue(move(auto_fd));
         }
     }
 
@@ -341,13 +384,13 @@ void TransportSocket::read_incoming_messages()
             m_peer_eof = true;
             break;
         }
-        if (m_unprocessed_fds.size() + received_fds.size() > MAX_UNPROCESSED_FDS) {
+        if (m_unprocessed_attachments.size() + received_fds.size() > MAX_UNPROCESSED_FDS) {
             dbgln("TransportSocket: Unprocessed FDs would exceed {}, disconnecting peer", MAX_UNPROCESSED_FDS);
             m_peer_eof = true;
             break;
         }
         for (auto const& fd : received_fds) {
-            m_unprocessed_fds.enqueue(File::adopt_fd(fd));
+            m_unprocessed_attachments.enqueue(Attachment::from_fd(fd));
         }
     }
 
@@ -372,7 +415,7 @@ void TransportSocket::read_incoming_messages()
             message_size += sizeof(MessageHeader);
             if (message_size.has_overflow() || message_size.value() > m_unprocessed_bytes.size() - index)
                 break;
-            if (header.fd_count > m_unprocessed_fds.size())
+            if (header.fd_count > m_unprocessed_attachments.size())
                 break;
             auto message = make<Message>();
             received_fd_count += header.fd_count;
@@ -382,7 +425,7 @@ void TransportSocket::read_incoming_messages()
                 break;
             }
             for (size_t i = 0; i < header.fd_count; ++i)
-                message->fds.enqueue(m_unprocessed_fds.dequeue());
+                message->attachments.enqueue(m_unprocessed_attachments.dequeue());
             if (message->bytes.try_append(m_unprocessed_bytes.data() + index + sizeof(MessageHeader), header.payload_size).is_error()) {
                 dbgln("TransportSocket: Failed to allocate message buffer for payload_size {}", header.payload_size);
                 m_peer_eof = true;
@@ -448,11 +491,6 @@ void TransportSocket::read_incoming_messages()
         m_unprocessed_bytes.clear();
     }
 
-    auto notify_read_available = [&] {
-        Array<u8, 1> bytes = { 0 };
-        (void)Core::System::write(m_notify_hook_write_fd->value(), bytes);
-    };
-
     if (!batch.is_empty()) {
         Threading::MutexLocker locker(m_incoming_mutex);
         m_incoming_messages.extend(move(batch));
@@ -478,15 +516,11 @@ TransportSocket::ShouldShutdown TransportSocket::read_as_many_messages_as_possib
     return m_peer_eof ? ShouldShutdown::Yes : ShouldShutdown::No;
 }
 
-ErrorOr<int> TransportSocket::release_underlying_transport_for_transfer()
+ErrorOr<TransportHandle> TransportSocket::release_for_transfer()
 {
     stop_io_thread(IOThreadState::SendPendingMessagesAndStop);
-    return m_socket->release_fd();
-}
-
-ErrorOr<IPC::File> TransportSocket::clone_for_transfer()
-{
-    return IPC::File::clone_fd(m_socket->fd().value());
+    auto fd = TRY(m_socket->release_fd());
+    return TransportHandle { File::adopt_fd(fd) };
 }
 
 }

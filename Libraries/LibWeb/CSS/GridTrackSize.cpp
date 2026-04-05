@@ -185,10 +185,10 @@ GridMinMax GridMinMax::absolutized(ComputationContext const& context) const
     };
 }
 
-GridRepeat::GridRepeat(GridRepeatType grid_repeat_type, GridTrackSizeList&& grid_track_size_list, size_t repeat_count)
+GridRepeat::GridRepeat(GridRepeatType grid_repeat_type, GridTrackSizeList&& grid_track_size_list, RefPtr<StyleValue const> repeat_count)
     : m_type(grid_repeat_type)
     , m_grid_track_size_list(move(grid_track_size_list))
-    , m_repeat_count(repeat_count)
+    , m_repeat_count(move(repeat_count))
 {
 }
 
@@ -208,7 +208,7 @@ void GridRepeat::serialize(StringBuilder& builder, SerializationMode mode) const
         builder.append("auto-fill"sv);
         break;
     case GridRepeatType::Fixed:
-        builder.appendff("{}", m_repeat_count);
+        m_repeat_count->serialize(builder, mode);
         break;
     default:
         VERIFY_NOT_REACHED();
@@ -230,7 +230,7 @@ GridRepeat GridRepeat::absolutized(ComputationContext const& context) const
     return GridRepeat {
         m_type,
         m_grid_track_size_list.absolutized(context),
-        m_repeat_count,
+        m_repeat_count ? RefPtr<StyleValue const> { m_repeat_count->absolutized(context) } : nullptr,
     };
 }
 
@@ -351,6 +351,15 @@ GridTrackSizeList GridTrackSizeList::absolutized(ComputationContext const& conte
             });
     }
     return result;
+}
+
+bool GridTrackSizeList::is_computationally_independent() const
+{
+    return all_of(m_list, [](auto const& item) {
+        return item.visit(
+            [](ExplicitGridTrack const& track) { return track.is_computationally_independent(); },
+            [](GridLineNames const&) { return true; });
+    });
 }
 
 }

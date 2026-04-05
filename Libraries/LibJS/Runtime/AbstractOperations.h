@@ -28,8 +28,6 @@
 
 namespace JS {
 
-class FunctionDeclaration;
-
 GC::Ref<DeclarativeEnvironment> new_declarative_environment(Environment&);
 JS_API GC::Ref<ObjectEnvironment> new_object_environment(Object&, bool is_with_environment, Environment*);
 GC::Ref<FunctionEnvironment> new_function_environment(ECMAScriptFunctionObject&, Object* new_target);
@@ -106,15 +104,12 @@ struct EvalDeclarationData {
     Vector<Utf16FlyString> var_scoped_names;
 
     Vector<Utf16FlyString> annex_b_candidate_names;
-    Vector<NonnullRefPtr<FunctionDeclaration>> annex_b_function_declarations;
 
     struct LexicalBinding {
         Utf16FlyString name;
         bool is_constant { false };
     };
     Vector<LexicalBinding> lexical_bindings;
-
-    static EvalDeclarationData create(VM&, Program const&, bool strict);
 };
 
 ThrowCompletionOr<void> eval_declaration_instantiation(VM& vm, EvalDeclarationData&, Environment* variable_environment, Environment* lexical_environment, PrivateEnvironment* private_environment, bool strict);
@@ -351,12 +346,6 @@ auto remainder(Crypto::BigInteger auto const& x, Crypto::BigInteger auto const& 
     VERIFY(!y.is_zero());
     return x.divided_by(y).remainder;
 }
-
-// 14.3 The Year-Week Record Specification Type, https://tc39.es/proposal-temporal/#sec-year-week-record-specification-type
-struct YearWeek {
-    Optional<u8> week;
-    Optional<i32> year;
-};
 
 // 14.5.1.1 ToIntegerIfIntegral ( argument ), https://tc39.es/proposal-temporal/#sec-tointegerifintegral
 template<typename... Args>

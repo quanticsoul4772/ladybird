@@ -19,6 +19,7 @@
 #include <LibWeb/DOM/ParentNode.h>
 #include <LibWeb/DOM/PseudoElement.h>
 #include <LibWeb/DOM/QualifiedName.h>
+#include <LibWeb/DOM/RequestFullscreenError.h>
 #include <LibWeb/DOM/Slottable.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/HTML/AttributeNames.h>
@@ -42,6 +43,7 @@ struct ShadowRootInit {
     Bindings::SlotAssignmentMode slot_assignment { Bindings::SlotAssignmentMode::Named };
     bool clonable = false;
     bool serializable = false;
+    Optional<GC::Ptr<HTML::CustomElementRegistry>> custom_element_registry {};
 };
 
 struct GetHTMLOptions {
@@ -194,7 +196,7 @@ public:
     ReadonlySpan<FlyString> part_names() const { return m_parts; }
 
     WebIDL::ExceptionOr<GC::Ref<ShadowRoot>> attach_shadow(ShadowRootInit init);
-    WebIDL::ExceptionOr<void> attach_a_shadow_root(Bindings::ShadowRootMode mode, bool clonable, bool serializable, bool delegates_focus, Bindings::SlotAssignmentMode slot_assignment);
+    WebIDL::ExceptionOr<void> attach_a_shadow_root(Bindings::ShadowRootMode mode, bool clonable, bool serializable, bool delegates_focus, Bindings::SlotAssignmentMode slot_assignment, GC::Ptr<HTML::CustomElementRegistry> registry);
     GC::Ptr<ShadowRoot> shadow_root_for_bindings() const;
 
     WebIDL::ExceptionOr<bool> matches(StringView selectors) const;
@@ -271,6 +273,9 @@ public:
     };
     GC::Ref<WebIDL::Promise> request_fullscreen(FullscreenRequester = FullscreenRequester::Bindings);
 
+    RequestFullscreenError is_element_allowed_to_enter_fullscreen(FullscreenRequester) const;
+    bool is_element_ready_for_fullscreen() const;
+
     void set_fullscreen_flag(bool is_fullscreen) { m_fullscreen_flag = is_fullscreen; }
     bool is_fullscreen_element() const { return m_fullscreen_flag; }
 
@@ -284,7 +289,11 @@ public:
     WebIDL::ExceptionOr<void> set_outer_html(TrustedTypes::TrustedHTMLOrString const&);
 
     bool is_focused() const;
-    bool is_active() const;
+    bool is_the_active_element() const;
+
+    bool is_being_activated() const;
+    virtual void set_being_activated(bool);
+
     bool is_target() const;
     bool is_document_element() const;
 
@@ -296,8 +305,6 @@ public:
     void set_custom_property_data(Optional<CSS::PseudoElement>, RefPtr<CSS::CustomPropertyData const>);
     [[nodiscard]] RefPtr<CSS::CustomPropertyData const> custom_property_data(Optional<CSS::PseudoElement>) const;
 
-    // FIXME: None of these flags ever get unset should this element's style change so that it no longer relies on these
-    //        things - doing so would potentially improve performance by avoiding unnecessary style invalidations.
     bool style_uses_attr_css_function() const { return m_style_uses_attr_css_function; }
     void set_style_uses_attr_css_function() { m_style_uses_attr_css_function = true; }
     bool style_uses_var_css_function() const { return m_style_uses_var_css_function; }
@@ -310,6 +317,10 @@ public:
 
         m_style_uses_tree_counting_function = true;
     }
+    bool style_uses_if_css_function() const { return m_style_uses_if_css_function; }
+    void set_style_uses_if_css_function() { m_style_uses_if_css_function = true; }
+    bool style_uses_inherit_css_function() const { return m_style_uses_inherit_css_function; }
+    void set_style_uses_inherit_css_function() { m_style_uses_inherit_css_function = true; }
 
     bool child_style_uses_tree_counting_function() const { return m_child_style_uses_tree_counting_function; }
     void set_child_style_uses_tree_counting_function() { m_child_style_uses_tree_counting_function = true; }
@@ -505,18 +516,29 @@ public:
     bool affected_by_indirect_sibling_combinator() const { return m_affected_by_indirect_sibling_combinator; }
     void set_affected_by_indirect_sibling_combinator(bool value) { m_affected_by_indirect_sibling_combinator = value; }
 
-    bool affected_by_sibling_position_or_count_pseudo_class() const { return m_affected_by_sibling_position_or_count_pseudo_class; }
-    void set_affected_by_sibling_position_or_count_pseudo_class(bool value) { m_affected_by_sibling_position_or_count_pseudo_class = value; }
+    bool affected_by_first_child_pseudo_class() const { return m_affected_by_first_child_pseudo_class; }
+    void set_affected_by_first_child_pseudo_class(bool value) { m_affected_by_first_child_pseudo_class = value; }
 
-    bool affected_by_nth_child_pseudo_class() const { return m_affected_by_nth_child_pseudo_class; }
-    void set_affected_by_nth_child_pseudo_class(bool value) { m_affected_by_nth_child_pseudo_class = value; }
+    bool affected_by_last_child_pseudo_class() const { return m_affected_by_last_child_pseudo_class; }
+    void set_affected_by_last_child_pseudo_class(bool value) { m_affected_by_last_child_pseudo_class = value; }
+
+    bool affected_by_forward_positional_pseudo_class() const { return m_affected_by_forward_positional_pseudo_class; }
+    void set_affected_by_forward_positional_pseudo_class(bool value) { m_affected_by_forward_positional_pseudo_class = value; }
+
+    bool affected_by_backward_positional_pseudo_class() const { return m_affected_by_backward_positional_pseudo_class; }
+    void set_affected_by_backward_positional_pseudo_class(bool value) { m_affected_by_backward_positional_pseudo_class = value; }
 
     size_t sibling_invalidation_distance() const { return m_sibling_invalidation_distance; }
     void set_sibling_invalidation_distance(size_t value) { m_sibling_invalidation_distance = value; }
 
-    bool style_affected_by_structural_changes() const
+    bool affected_by_forward_structural_changes() const
     {
-        return affected_by_direct_sibling_combinator() || affected_by_indirect_sibling_combinator() || affected_by_sibling_position_or_count_pseudo_class() || affected_by_nth_child_pseudo_class();
+        return affected_by_direct_sibling_combinator() || affected_by_indirect_sibling_combinator() || affected_by_first_child_pseudo_class() || affected_by_forward_positional_pseudo_class();
+    }
+
+    bool affected_by_backward_structural_changes() const
+    {
+        return affected_by_last_child_pseudo_class() || affected_by_backward_positional_pseudo_class();
     }
 
     i32 number_of_owned_list_items() const;
@@ -560,6 +582,9 @@ public:
 
     GC::Ref<WebIDL::Promise> request_pointer_lock(Optional<PointerLockOptions>);
 
+    GC::Ptr<HTML::CustomElementRegistry> custom_element_registry() const { return m_custom_element_registry; }
+    void set_custom_element_registry(GC::Ptr<HTML::CustomElementRegistry> registry) { m_custom_element_registry = registry; }
+
 protected:
     Element(Document&, DOM::QualifiedName);
     virtual void initialize(JS::Realm&) override;
@@ -568,7 +593,7 @@ protected:
     virtual void removed_from(Node* old_parent, Node& old_root) override;
     virtual void moved_from(GC::Ptr<Node> old_parent) override;
 
-    virtual void children_changed(ChildrenChangedMetadata const*) override;
+    virtual void children_changed(ChildrenChangedMetadata const&) override;
     virtual i32 default_tab_index_value() const;
 
     // https://dom.spec.whatwg.org/#concept-element-attributes-change-ext
@@ -581,6 +606,7 @@ protected:
     virtual bool id_reference_exists(String const&) const override;
 
     CustomElementState custom_element_state() const { return m_custom_element_state; }
+    GC::Ptr<HTML::CustomElementDefinition> custom_element_definition() const { return m_custom_element_definition; }
 
     void play_or_cancel_animations_after_display_property_change();
 
@@ -589,18 +615,7 @@ private:
 
     void invalidate_style_after_attribute_change(FlyString const& attribute_name, Optional<String> const& old_value, Optional<String> const& new_value);
 
-    enum class RequestFullscreenError : u8 {
-        False,
-        ElementReadyCheckFailed,
-        UnsupportedElement,
-        NoTransientUserActivation,
-        ElementNodeDocIsNotPendingDoc
-    };
-    static Utf16String request_fullscreen_error_to_string(RequestFullscreenError);
-
     void exit_fullscreen_on_element_removal();
-    RequestFullscreenError is_element_allowed_to_enter_fullscreen(FullscreenRequester) const;
-    bool is_element_ready_for_fullscreen() const;
 
     WebIDL::ExceptionOr<GC::Ptr<Node>> insert_adjacent(StringView where, GC::Ref<Node> node);
 
@@ -651,6 +666,9 @@ private:
     // NOTE: See the structs at the top of this header.
     OwnPtr<CustomElementReactionQueue> m_custom_element_reaction_queue;
 
+    // https://dom.spec.whatwg.org/#element-custom-element-registry
+    GC::Ptr<HTML::CustomElementRegistry> m_custom_element_registry;
+
     // https://dom.spec.whatwg.org/#concept-element-custom-element-definition
     GC::Ptr<HTML::CustomElementDefinition> m_custom_element_definition;
 
@@ -671,18 +689,23 @@ private:
 
     CSSPixelPoint m_scroll_offset;
 
+    bool m_is_being_activated : 1 { false };
     bool m_in_top_layer : 1 { false };
     bool m_rendered_in_top_layer : 1 { false };
     bool m_style_uses_attr_css_function : 1 { false };
     bool m_style_uses_var_css_function : 1 { false };
     bool m_style_uses_tree_counting_function : 1 { false };
+    bool m_style_uses_if_css_function : 1 { false };
+    bool m_style_uses_inherit_css_function : 1 { false };
     bool m_child_style_uses_tree_counting_function : 1 { false };
     bool m_affected_by_has_pseudo_class_in_subject_position : 1 { false };
     bool m_affected_by_has_pseudo_class_in_non_subject_position : 1 { false };
     bool m_affected_by_direct_sibling_combinator : 1 { false };
     bool m_affected_by_indirect_sibling_combinator : 1 { false };
-    bool m_affected_by_sibling_position_or_count_pseudo_class : 1 { false };
-    bool m_affected_by_nth_child_pseudo_class : 1 { false };
+    bool m_affected_by_first_child_pseudo_class : 1 { false };
+    bool m_affected_by_last_child_pseudo_class : 1 { false };
+    bool m_affected_by_forward_positional_pseudo_class : 1 { false };
+    bool m_affected_by_backward_positional_pseudo_class : 1 { false };
     bool m_affected_by_has_pseudo_class_with_relative_selector_that_has_sibling_combinator : 1 { false };
     bool m_fullscreen_flag : 1 { false };
 
