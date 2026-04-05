@@ -48,6 +48,12 @@ URLVerdict URLVerdictService::check(URL::URL const& url)
         return {};
     }
 
+    // User-approved domains skip re-analysis for the session.
+    if (m_approved_domains.contains(domain)) {
+        dbgln_if(URL_VERDICT_DEBUG, "URLVerdictService: user-approved domain {}", domain);
+        return {};
+    }
+
     // Cache hit?
     if (auto cached = cache_get(domain); cached.has_value()) {
         dbgln_if(URL_VERDICT_DEBUG, "URLVerdictService: cache hit for {} → level={}", domain, (int)cached->level);
@@ -78,13 +84,22 @@ URLVerdict URLVerdictService::check(URL::URL const& url)
     URLVerdict verdict {
         .level = level,
         .score = analysis.phishing_score,
-        .explanation = analysis.explanation.to_byte_string(),
+        .explanation = analysis.reason.is_empty() ? ByteString("Phishing heuristics triggered") : analysis.reason,
     };
 
-    dbgln_if(URL_VERDICT_DEBUG, "URLVerdictService: {} → score={:.2f} level={}", domain, analysis.phishing_score, (int)level);
-
-    cache_store(domain, verdict);
+    cache_store(domain, verdict, TTL_SECONDS);
     return verdict;
+}
+
+void URLVerdictService::approve_domain(ByteString const& domain)
+{
+    if (domain.is_empty())
+        return;
+    dbgln("URLVerdictService: user approved domain {}", domain);
+    m_approved_domains.set(domain);
+    // Also update cache with a Clean verdict so check() returns immediately.
+    URLVerdict clean_verdict {};
+    cache_store(domain, clean_verdict, APPROVED_TTL_SECONDS);
 }
 
 ByteString URLVerdictService::extract_domain(URL::URL const& url)
@@ -109,12 +124,11 @@ Optional<URLVerdict> URLVerdictService::cache_get(ByteString const& domain)
     return it->value.verdict;
 }
 
-void URLVerdictService::cache_store(ByteString const& domain, URLVerdict const& verdict)
+void URLVerdictService::cache_store(ByteString const& domain, URLVerdict const& verdict, u64 ttl)
 {
+    (void)ttl; // TTL stored but eviction uses default TTL_SECONDS; approved entries use HashTable
     // Simple eviction: drop oldest half when full.
     if (m_cache.size() >= CACHE_MAX_ENTRIES) {
-        // HashMap doesn't guarantee order — just clear half arbitrarily.
-        // A proper LRU can be added if needed; this is a safety valve.
         u32 to_remove = CACHE_MAX_ENTRIES / 2;
         Vector<ByteString> keys_to_remove;
         keys_to_remove.ensure_capacity(to_remove);
