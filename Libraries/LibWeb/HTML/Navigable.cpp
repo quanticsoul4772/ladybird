@@ -2075,7 +2075,9 @@ void Navigable::begin_navigation(NavigateParams params)
     }
 
     // AD-HOC: Tell the UI that we started loading.
+    // Route URL through Sentinel C2Detector (DGA analysis) before rendering.
     if (is_top_level_traversable()) {
+        active_browsing_context()->page().client().page_did_load_url(url);
         active_browsing_context()->page().client().page_did_start_loading(url, false);
     }
 
