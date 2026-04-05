@@ -20,6 +20,7 @@
 #include <LibWebView/Forward.h>
 #include <LibWebView/StorageSetResult.h>
 #include <Services/Sentinel/FingerprintingDetector.h>
+#include <WebContent/C2ThreatMonitor.h>
 #include <WebContent/FormMonitor.h>
 #include <WebContent/Forward.h>
 
@@ -244,6 +245,7 @@ private:
 
     OwnPtr<FormMonitor> m_form_monitor;
     mutable OwnPtr<Sentinel::FingerprintingDetector> m_fingerprinting_detector;
+    OwnPtr<C2ThreatMonitor> m_c2_monitor;
 };
 
 }
