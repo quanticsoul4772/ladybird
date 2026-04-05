@@ -12,8 +12,9 @@ set(TEST_SOURCES
     # TestFlowInspector.cpp  # Moved to Services/Sentinel/CMakeLists.txt
     # TestGracefulDegradation.cpp
     # TestHealthCheck.cpp
+    TestURLVerdictService.cpp
 )
 
 foreach(source IN LISTS TEST_SOURCES)
-    ladybird_test("${source}" LIBS sentinelservice LibDatabase LibFileSystem LibThreading)
+    ladybird_test("${source}" LIBS sentinelservice webcontent LibURL LibDatabase LibFileSystem LibThreading)
 endforeach()
