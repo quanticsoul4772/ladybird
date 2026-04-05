@@ -1,0 +1,110 @@
+name: Auto-merge Upstream
+on:
+  schedule:
+    - cron: "0 7 * * 2"   # Tuesdays 7 AM UTC (day after sync check)
+  workflow_dispatch:
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/LadybirdBrowser/ladybird.git
+          git fetch upstream master
+
+      - name: Check divergence
+        id: check
+        run: |
+          BEHIND=$(git rev-list HEAD..upstream/master --count)
+          UPSTREAM_SHA=$(git rev-parse --short upstream/master)
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+          echo "upstream_sha=$UPSTREAM_SHA" >> $GITHUB_OUTPUT
+          echo "Fork is $BEHIND commits behind upstream ($UPSTREAM_SHA)"
+
+      - name: Attempt clean merge
+        id: merge
+        if: ${{ fromJSON(steps.check.outputs.behind) > 0 }}
+        run: |
+          if git merge --no-ff upstream/master; then
+            echo "result=success" >> $GITHUB_OUTPUT
+          else
+            CONFLICTS=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+            echo "result=conflicts" >> $GITHUB_OUTPUT
+            echo "conflicts=$CONFLICTS" >> $GITHUB_OUTPUT
+            git merge --abort
+          fi
+
+      - name: Push merge commit
+        if: steps.merge.outputs.result == 'success'
+        run: |
+          git push origin master
+          echo "Pushed merge of upstream@${{ steps.check.outputs.upstream_sha }}"
+
+      - name: Open conflict issue
+        if: steps.merge.outputs.result == 'conflicts'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CONFLICTS="${{ steps.merge.outputs.conflicts }}"
+          BEHIND="${{ steps.check.outputs.behind }}"
+          UPSTREAM_SHA="${{ steps.check.outputs.upstream_sha }}"
+          DATE=$(date -u +%Y-%m-%d)
+
+          cat > /tmp/conflict-body.md << EOF
+          ## Manual merge required
+
+          Auto-merge of upstream@${UPSTREAM_SHA} failed due to conflicts.
+
+          **Behind**: ${BEHIND} commits
+          **Detected**: ${DATE}
+
+          ## Conflicting files
+          \`\`\`
+          ${CONFLICTS}
+          \`\`\`
+
+          ## Known fork-sensitive files
+          These files have fork-specific hooks that conflict most often:
+          - LibWeb/WebGL/WebGLRenderingContextBase.cpp
+          - LibWeb/HTML/HTMLCanvasElement.cpp
+          - LibWeb/Page/Page.cpp / Page.h
+          - LibIPC/Limits.h
+
+          ## How to resolve
+          \`\`\`bash
+          git clone https://github.com/quanticsoul4772/ladybird.git
+          cd ladybird
+          git remote add upstream https://github.com/LadybirdBrowser/ladybird.git
+          git fetch upstream
+          git merge upstream/master
+          # Resolve conflicts in the files listed above
+          # Re-verify fork hooks after merging WebGL/Page/HTML files
+          git push origin master
+          \`\`\`
+          EOF
+
+          EXISTING=$(gh issue list --label maintenance --state open \
+            --search "Manual merge required" --json number -q ".[0].number" 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" \
+              --body "Still blocked as of ${DATE}. Upstream: ${UPSTREAM_SHA}. Conflicts: ${CONFLICTS}"
+          else
+            gh issue create \
+              --title "Manual merge required: conflicts with upstream@${UPSTREAM_SHA}" \
+              --body-file /tmp/conflict-body.md \
+              --label "maintenance"
+          fi
