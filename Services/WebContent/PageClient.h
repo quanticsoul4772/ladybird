@@ -19,6 +19,7 @@
 #include <LibWeb/StorageAPI/StorageEndpoint.h>
 #include <LibWebView/Forward.h>
 #include <LibWebView/StorageSetResult.h>
+#include <Services/Sentinel/DNSAnalyzer.h>
 #include <Services/Sentinel/FingerprintingDetector.h>
 #include <WebContent/C2ThreatMonitor.h>
 #include <WebContent/FormMonitor.h>
@@ -151,6 +152,7 @@ private:
     virtual void page_did_request_link_context_menu(Web::CSSPixelPoint, URL::URL const&, ByteString const& target, unsigned modifiers) override;
     virtual void page_did_request_image_context_menu(Web::CSSPixelPoint, URL::URL const&, ByteString const& target, unsigned modifiers, Optional<Gfx::Bitmap const*>) override;
     virtual void page_did_request_media_context_menu(Web::CSSPixelPoint, ByteString const& target, unsigned modifiers, Web::Page::MediaContextMenu const&) override;
+    virtual void page_did_load_url(URL::URL const&) override;
     virtual void page_did_start_loading(URL::URL const&, bool) override;
     virtual void page_did_create_new_document(Web::DOM::Document&) override;
     virtual void page_did_change_active_document_in_top_level_browsing_context(Web::DOM::Document&) override;
@@ -246,6 +248,7 @@ private:
     OwnPtr<FormMonitor> m_form_monitor;
     mutable OwnPtr<Sentinel::FingerprintingDetector> m_fingerprinting_detector;
     OwnPtr<C2ThreatMonitor> m_c2_monitor;
+    OwnPtr<Sentinel::DNSAnalyzer> m_dns_analyzer;
 };
 
 }
