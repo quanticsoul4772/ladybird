@@ -8,6 +8,7 @@
 #include <AK/ByteString.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
+#include <AK/HashTable.h>
 #include <AK/Optional.h>
 #include <AK/String.h>
 #include <LibURL/URL.h>
@@ -46,6 +47,14 @@ public:
     // Always returns a valid verdict (never propagates analyzer errors).
     URLVerdict check(URL::URL const& url);
 
+    // Mark a domain as user-approved — stores a Clean verdict with max TTL.
+    // Called when the user clicks "Proceed Anyway" on a warning page.
+    void approve_domain(ByteString const& domain);
+
+    // Returns lowercase hostname from URL, or empty string on failure.
+    // Public so ConnectionFromClient can extract domain for approve_domain().
+    static ByteString extract_domain(URL::URL const& url);
+
     // Bypass the feature gate (for testing).
     void set_enabled(bool enabled) { m_enabled = enabled; }
     bool is_enabled() const { return m_enabled; }
@@ -56,7 +65,8 @@ private:
     // Domain-keyed LRU cache: key = lowercase eTLD+1, value = cached verdict.
     // Entries expire after TTL_SECONDS.
     static constexpr u32 CACHE_MAX_ENTRIES = 1000;
-    static constexpr u64 TTL_SECONDS = 300; // 5 minutes
+    static constexpr u64 TTL_SECONDS = 300;        // 5 minutes
+    static constexpr u64 APPROVED_TTL_SECONDS = 3600; // 1 hour for user approvals
 
     struct CacheEntry {
         URLVerdict verdict;
@@ -64,12 +74,10 @@ private:
     };
 
     Optional<URLVerdict> cache_get(ByteString const& domain);
-    void cache_store(ByteString const& domain, URLVerdict const&);
-
-    // Returns lowercase hostname from URL, or empty string on failure.
-    static ByteString extract_domain(URL::URL const& url);
+    void cache_store(ByteString const& domain, URLVerdict const&, u64 ttl = TTL_SECONDS);
 
     HashMap<ByteString, CacheEntry> m_cache;
+    HashTable<ByteString> m_approved_domains; // Persists for session lifetime
     bool m_enabled { true };
 };
 
