@@ -2,6 +2,7 @@ include(audio)
 include(SDL3)
 
 set(SOURCES
+    C2ThreatMonitor.cpp
     ConnectionFromClient.cpp
     ConsoleGlobalEnvironmentExtensions.cpp
     DevToolsConsoleClient.cpp
