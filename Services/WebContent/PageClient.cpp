@@ -100,6 +100,16 @@ PageClient::PageClient(PageHost& owner, u64 id)
         dbgln("C2ThreatMonitor initialized successfully");
     }
 
+    // Initialize DNSAnalyzer for pre-render DGA (domain generation algorithm) detection.
+    auto dns_result = Sentinel::DNSAnalyzer::create();
+    if (dns_result.is_error()) {
+        dbgln("Warning: Failed to create DNSAnalyzer: {}", dns_result.error());
+        dbgln("Pre-render DGA detection will be disabled for this page");
+    } else {
+        m_dns_analyzer = dns_result.release_value();
+        dbgln("DNSAnalyzer initialized successfully");
+    }
+
     // Initialize FormMonitor with PolicyGraph for persistent credential protection
     // Check for test environment database path override
     auto db_path_env = getenv("LADYBIRD_SENTINEL_DB");
@@ -386,6 +396,25 @@ void PageClient::page_did_click_link(URL::URL const& url, ByteString const& targ
 void PageClient::page_did_middle_click_link(URL::URL const& url, ByteString const& target, unsigned modifiers)
 {
     client().async_did_middle_click_link(m_id, url, target, modifiers);
+}
+
+void PageClient::page_did_load_url(URL::URL const& url)
+{
+    // Pre-render DGA check: analyze the domain before the page loads.
+    // Fail-open: if m_dns_analyzer wasn't initialized, skip silently.
+    if (m_dns_analyzer) {
+        auto host = url.host();
+        auto domain = host.has<String>() ? host.get<String>() : String {};
+        if (!domain.is_empty()) {
+            auto result = m_dns_analyzer->analyze_dga(domain);
+            if (!result.is_error()) {
+                auto analysis = result.release_value();
+                if (analysis.is_dga && analysis.confidence > 0.7f) {
+                    dbgln("Sentinel DGA alert: {} (confidence {:.2f}) — {}", domain, analysis.confidence, analysis.explanation);
+                }
+            }
+        }
+    }
 }
 
 void PageClient::page_did_start_loading(URL::URL const& url, bool is_redirect)
