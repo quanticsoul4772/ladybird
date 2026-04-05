@@ -37,6 +37,7 @@ extern "C" {
 #include <LibWeb/WebGL/Extensions/WebGLDrawBuffers.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContextBase.h>
+#include <LibWeb/Page/Page.h>
 
 #include <core/SkCanvas.h>
 #include <core/SkColorSpace.h>
@@ -170,6 +171,8 @@ static HashMap<String, Extension, AK::ASCIICaseInsensitiveStringTraits> s_availa
 
 Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    canvas_for_binding()->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getSupportedExtensions"sv);
     auto opengl_extensions = context().get_supported_opengl_extensions();
     Vector<String> webgl_extensions;
 
@@ -199,6 +202,8 @@ Optional<Vector<String>> WebGLRenderingContextBase::get_supported_extensions()
 
 JS::Object* WebGLRenderingContextBase::get_extension(String const& name)
 {
+    // Track potential fingerprinting (Milestone 0.4 Phase 4)
+    canvas_for_binding()->document().page().client().page_did_call_fingerprinting_api("webgl"sv, "getExtension"sv);
     // Returns an object if, and only if, name is an ASCII case-insensitive match [HTML] for one of the names returned
     // from getSupportedExtensions; otherwise, returns null. The object returned from getExtension contains any constants
     // or functions provided by the extension. A returned object may have no constants or functions if the extension does
