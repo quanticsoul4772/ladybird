@@ -59,6 +59,7 @@
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWebView/Attribute.h>
 #include <LibWebView/ViewImplementation.h>
+#include <LibURL/Parser.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/PageClient.h>
 #include <WebContent/PageHost.h>
@@ -179,6 +180,36 @@ void ConnectionFromClient::load_url(u64 page_id, URL::URL url)
     auto page = this->page(page_id);
     if (!page.has_value()) {
         dbgln("WebContent::load_url: ERROR - page_id {} not found!", page_id);
+        return;
+    }
+
+    // Handle sentinel://approve?url=<encoded> — user clicked "Proceed Anyway"
+    // on a phishing warning page. Approve the domain and redirect to the real URL.
+    if (url.scheme() == "sentinel") {
+        if (url.serialize_path() == "/approve") {
+            auto query = url.query();
+            if (query.has_value()) {
+                // Extract `url=` param from query string.
+                // LibURL doesn't expose query param parsing; do it manually.
+                auto query_str = query.value();
+                auto url_param_prefix = "url="sv;
+                auto pos = query_str.bytes_as_string_view().find(url_param_prefix);
+                if (pos.has_value()) {
+                    auto encoded = query_str.bytes_as_string_view().substring_view(
+                        pos.value() + url_param_prefix.length());
+                    auto decoded_str = URL::percent_decode(encoded);
+                    auto target_url = URL::Parser::basic_parse(decoded_str);
+                    if (target_url.has_value() && target_url->is_valid()) {
+                        auto domain = URLVerdictService::extract_domain(*target_url);
+                        URLVerdictService::the().approve_domain(domain);
+                        dbgln("WebContent::load_url: sentinel approval for {}, navigating", domain);
+                        page->page().load(*target_url);
+                        return;
+                    }
+                }
+            }
+        }
+        // Unknown sentinel:// path — ignore silently (fail-open).
         return;
     }
 
