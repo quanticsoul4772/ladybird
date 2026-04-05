@@ -46,6 +46,7 @@ public:
     using Uint32List = Variant<GC::Root<JS::Uint32Array>, Vector<WebIDL::UnsignedLong>>;
 
     virtual OpenGLContext& context() = 0;
+    virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const = 0;
 
     bool is_context_lost() const;
 
