@@ -37,6 +37,7 @@
 #include <LibWebView/SentinelConfig.h>
 #include <LibWebView/SiteIsolation.h>
 #include <LibWebView/ViewImplementation.h>
+#include <WebContent/C2ThreatMonitor.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/DevToolsConsoleClient.h>
 #include <WebContent/PageClient.h>
@@ -87,6 +88,16 @@ PageClient::PageClient(PageHost& owner, u64 id)
     } else {
         m_fingerprinting_detector = detector_result.release_value();
         dbgln("Fingerprinting detector initialized successfully");
+    }
+
+    // Initialize C2ThreatMonitor for post-load beaconing detection.
+    auto c2_result = C2ThreatMonitor::create();
+    if (c2_result.is_error()) {
+        dbgln("Warning: Failed to create C2ThreatMonitor: {}", c2_result.error());
+        dbgln("C2 beaconing detection will be disabled for this page");
+    } else {
+        m_c2_monitor = c2_result.release_value();
+        dbgln("C2ThreatMonitor initialized successfully");
     }
 
     // Initialize FormMonitor with PolicyGraph for persistent credential protection
@@ -407,6 +418,11 @@ void PageClient::page_did_change_active_document_in_top_level_browsing_context(W
 void PageClient::page_did_finish_loading(URL::URL const& url)
 {
     client().async_did_finish_loading(m_id, url);
+
+    // Record navigation for C2 beaconing analysis.
+    // Fail-open: if m_c2_monitor wasn't initialized, skip silently.
+    if (m_c2_monitor)
+        m_c2_monitor->record_navigation(url);
 }
 
 void PageClient::page_did_finish_test(String const& text)
