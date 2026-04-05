@@ -72,4 +72,8 @@ check_cxx_source_compiles([=[
 unset(CMAKE_REQUIRED_FLAGS)
 unset(CMAKE_REQUIRED_LIBRARIES)
 
+
+# URL verdict check via Sentinel PhishingURLAnalyzer (pre-load, in-process)
+ladybird_option(ENABLE_URL_VERDICT_CHECK OFF CACHE BOOL "Enable pre-load URL phishing check via Sentinel")
+
 include(${CMAKE_CURRENT_LIST_DIR}/lagom_install_options.cmake)
