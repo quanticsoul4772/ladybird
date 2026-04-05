@@ -33,37 +33,43 @@ jobs:
         id: hooks
         run: |
           OVERLAP=$(git diff HEAD upstream/master --name-only | grep -E "(LibWeb/HTML|LibWeb/WebGL|LibWeb/DOM|LibWeb/Page|AK/Format|LibIPC/Limits)" || echo "none")
-          echo "overlap=$OVERLAP" >> $GITHUB_OUTPUT
-          echo "Files needing manual review: $OVERLAP"
+          # Store as single line for GitHub output
+          OVERLAP_ONELINE=$(echo "$OVERLAP" | tr '\n' ' ')
+          echo "overlap=$OVERLAP_ONELINE" >> $GITHUB_OUTPUT
+          echo "Files needing manual review: $OVERLAP_ONELINE"
 
       - name: Open issue if drift > 100 commits
-        if: ${{ steps.diverge.outputs.behind > 100 }}
+        if: ${{ fromJSON(steps.diverge.outputs.behind) > 100 }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          BEHIND="${{ steps.diverge.outputs.behind }}"
+          AHEAD="${{ steps.diverge.outputs.ahead }}"
+          OVERLAP="${{ steps.hooks.outputs.overlap }}"
+
           # Check if an open sync issue already exists
-          EXISTING=$(gh issue list --label maintenance --state open --search "Upstream drift" --json number -q ".[0].number")
+          EXISTING=$(gh issue list --label maintenance --state open --search "Upstream drift" --json number -q ".[0].number" 2>/dev/null || echo "")
           if [ -n "$EXISTING" ]; then
             echo "Issue #$EXISTING already open, updating comment"
-            gh issue comment "$EXISTING" --body "Still ${{ steps.diverge.outputs.behind }} commits behind as of $(date -u +%Y-%m-%d). Hook-overlap files: ${{ steps.hooks.outputs.overlap }}"
+            gh issue comment "$EXISTING" --body "Still ${BEHIND} commits behind as of $(date -u +%Y-%m-%d). Hook-overlap files: ${OVERLAP}"
           else
             gh issue create \
-              --title "Upstream drift: ${{ steps.diverge.outputs.behind }} commits behind LadybirdBrowser" \
+              --title "Upstream drift: ${BEHIND} commits behind LadybirdBrowser" \
               --body "## Auto-detected upstream drift
 
-**Behind**: ${{ steps.diverge.outputs.behind }} commits
-**Ahead**: ${{ steps.diverge.outputs.ahead }} commits (fork-specific work)
+**Behind**: ${BEHIND} commits
+**Ahead**: ${AHEAD} commits (fork-specific work)
 **Detected**: $(date -u +%Y-%m-%d)
 
 ## Files requiring manual review after merge
 These files have fork-specific hooks that may conflict with upstream changes:
 
-```
-${{ steps.hooks.outputs.overlap }}
-```
+\`\`\`
+${OVERLAP}
+\`\`\`
 
 ## How to sync
-```bash
+\`\`\`bash
 git clone https://github.com/quanticsoul4772/ladybird.git
 cd ladybird
 git remote add upstream https://github.com/LadybirdBrowser/ladybird.git
@@ -71,13 +77,13 @@ git fetch upstream
 git merge upstream/master
 # Resolve conflicts, paying special attention to hook-overlap files above
 git push origin master
-```
+\`\`\`
 
 ## Hook files to check after merge
-- LibWeb/WebGL/WebGLRenderingContextBase.cpp — fingerprinting hooks in get_supported_extensions/get_extension
+- LibWeb/WebGL/WebGLRenderingContextBase.cpp — fingerprinting hooks
 - LibWeb/HTML/HTMLCanvasElement.cpp — fingerprinting hook in to_data_url
-- LibWeb/Page/Page.cpp — user interaction recording in handle_mousedown
+- LibWeb/Page/Page.cpp — user interaction recording
 - LibWeb/Page/Page.h — user interaction + fullscreen fields
-- LibIPC/Limits.h — fork security constants (namespace collision risk)" \
+- LibIPC/Limits.h — fork security constants" \
               --label "maintenance"
           fi
