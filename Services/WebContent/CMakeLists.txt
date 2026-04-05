@@ -10,6 +10,7 @@ set(SOURCES
     PageHost.cpp
     WebContentConsoleClient.cpp
     WebDriverConnection.cpp
+    URLVerdictService.cpp
     WebUIConnection.cpp
 )
 
