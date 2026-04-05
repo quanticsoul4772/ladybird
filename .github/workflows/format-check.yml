@@ -1,0 +1,70 @@
+name: Format Check
+on:
+  push:
+    paths:
+      - '**/*.cpp'
+      - '**/*.h'
+      - '**/*.mm'
+  pull_request:
+    paths:
+      - '**/*.cpp'
+      - '**/*.h'
+      - '**/*.mm'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-format:
+    name: clang-format (changed files only)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Install clang-format-18
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-format-18
+          sudo ln -sf /usr/bin/clang-format-18 /usr/local/bin/clang-format
+          clang-format --version
+
+      - name: Check formatting on changed files
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            CHANGED=$(git diff --name-only "$BASE" HEAD -- '*.cpp' '*.h' '*.mm' 2>/dev/null || true)
+          else
+            CHANGED=$(git diff --name-only HEAD~1 HEAD -- '*.cpp' '*.h' '*.mm' 2>/dev/null || true)
+          fi
+
+          if [ -z "$CHANGED" ]; then
+            echo "No C++ files changed — skipping format check"
+            exit 0
+          fi
+
+          echo "Checking format on changed files:"
+          echo "$CHANGED"
+          echo ""
+
+          FAILED=0
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            [ -f "$file" ] || continue
+            if ! clang-format --dry-run --Werror "$file" 2>/dev/null; then
+              echo "NEEDS FORMAT: $file"
+              FAILED=1
+            fi
+          done <<< "$CHANGED"
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo ""
+            echo "Fix: run clang-format -i on the files above, then push again."
+            echo "Quick fix: clang-format -i \$(git diff --name-only HEAD~1 HEAD | grep -E '\.(cpp|h|mm)$')"
+            exit 1
+          fi
+
+          echo "All changed files are properly formatted."
