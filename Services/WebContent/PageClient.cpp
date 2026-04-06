@@ -124,7 +124,7 @@ PageClient::PageClient(PageHost& owner, u64 id)
         if (home) {
             db_path = ByteString::formatted("{}/.local/share/Ladybird/PolicyGraph/policies.db", home);
         } else {
-            db_path = "/tmp/sentinel/policies.db"sv;  // Fallback
+            db_path = "/tmp/sentinel/policies.db"sv; // Fallback
         }
     }
 
@@ -776,7 +776,7 @@ void PageClient::page_did_submit_form(Web::HTML::HTMLFormElement& form, String c
             // Check if this submission has been blocked by user
             if (m_form_monitor->is_blocked_submission(alert->form_origin, alert->action_origin)) {
                 dbgln("FormMonitor: BLOCKED submission from {} to {} (user previously blocked this)",
-                      alert->form_origin, alert->action_origin);
+                    alert->form_origin, alert->action_origin);
                 // NOTE: Form has already been submitted by the browser at this point.
                 // We log the blocking but can't prevent the actual HTTP request.
                 // Future enhancement: Prevent submission earlier in the pipeline.
@@ -810,8 +810,7 @@ void PageClient::page_did_submit_form(Web::HTML::HTMLFormElement& form, String c
                 alert->uses_https,
                 alert->has_password_field,
                 alert->is_cross_origin,
-                description
-            );
+                description);
 
             dbgln("FormMonitor: Sent credential exfiltration alert via IPC");
         }
