@@ -4,9 +4,9 @@
  */
 
 #include "FileEncryption.h"
+#include <AK/Random.h>
 #include <LibCore/File.h>
 #include <LibCrypto/Cipher/AES.h>
-#include <LibCrypto/SecureRandom.h>
 
 namespace Sentinel::Quarantine {
 
@@ -14,7 +14,7 @@ ErrorOr<ByteBuffer> FileEncryption::generate_encryption_key()
 {
     // Generate 256-bit (32-byte) key using cryptographically secure random
     auto key = TRY(ByteBuffer::create_uninitialized(KEY_SIZE));
-    Crypto::fill_with_secure_random(key.bytes());
+    fill_with_random(key.bytes());
     return key;
 }
 
@@ -22,7 +22,7 @@ ErrorOr<ByteBuffer> FileEncryption::generate_iv()
 {
     // Generate 128-bit (16-byte) initialization vector using secure random
     auto iv = TRY(ByteBuffer::create_uninitialized(IV_SIZE));
-    Crypto::fill_with_secure_random(iv.bytes());
+    fill_with_random(iv.bytes());
     return iv;
 }
 
