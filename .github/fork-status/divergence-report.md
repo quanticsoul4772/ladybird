@@ -1,11 +1,16 @@
 # Fork Divergence Report
 
-**Date**: 2026-04-05
-**Fork**: quanticsoul4772/ladybird @ dc57be93e9
-**Upstream**: LadybirdBrowser/ladybird @ cfe7ddc805
-**Behind**: 0 commits | **Ahead**: 183 commits
+**Date**: 2026-04-06
+**Fork**: quanticsoul4772/ladybird @ aeb76e332e
+**Upstream**: LadybirdBrowser/ladybird @ a2e735b94c
+**Behind**: 4 commits | **Ahead**: 206 commits
 
-## Files diverged from upstream by subsystem (11644 total)
+## Files diverged from upstream by subsystem (11678 total)
+
+### .clang-format (1 files)
+```
+.clang-format
+```
 
 ### .claude (209 files)
 ```
@@ -220,9 +225,10 @@
 .claude/workflows/security-critical-changes.md
 ```
 
-### .github (20 files)
+### .github (21 files)
 ```
 .github/actions/setup/action.yml
+.github/fork-status/divergence-report.md
 .github/workflows/auto-merge.yml
 .github/workflows/ci.yml
 .github/workflows/dev-container.yml
@@ -281,7 +287,7 @@ Base/res/ladybird/sentinel/rules/web-threats.yar
 CLAUDE.md
 ```
 
-### Libraries (82 files)
+### Libraries (92 files)
 ```
 Libraries/LibCore/CMakeLists.txt
 Libraries/LibCore/CircuitBreaker.cpp
@@ -325,6 +331,10 @@ Libraries/LibWeb/ARIA/AccessibleNameCalculation.h
 Libraries/LibWeb/ARIA/ReferenceResolution.cpp
 Libraries/LibWeb/ARIA/ReferenceResolution.h
 Libraries/LibWeb/CMakeLists.txt
+Libraries/LibWeb/CSS/Parser/MediaParsing.cpp
+Libraries/LibWeb/CSS/Parser/Parser.cpp
+Libraries/LibWeb/CSS/StyleValues/CalculatedStyleValue.cpp
+Libraries/LibWeb/CSS/StyleValues/CalculatedStyleValue.h
 Libraries/LibWeb/DOM/AccessibilityTreeNode.cpp
 Libraries/LibWeb/DOM/AccessibilityTreeNode.h
 Libraries/LibWeb/DOM/Element.cpp
@@ -334,12 +344,15 @@ Libraries/LibWeb/HTML/HTMLFormElement.cpp
 Libraries/LibWeb/HTML/HTMLInputElement.cpp
 Libraries/LibWeb/HTML/HTMLInputElement.h
 Libraries/LibWeb/HTML/History.cpp
+Libraries/LibWeb/HTML/Navigable.cpp
 Libraries/LibWeb/HTML/Navigator.cpp
 Libraries/LibWeb/HTML/NavigatorConcurrentHardware.cpp
 Libraries/LibWeb/HTML/NavigatorConcurrentHardware.h
 Libraries/LibWeb/HTML/NavigatorID.cpp
 Libraries/LibWeb/HTML/NavigatorLanguage.cpp
 Libraries/LibWeb/HTML/NavigatorLanguage.h
+Libraries/LibWeb/HTML/WindowOrWorkerGlobalScope.cpp
+Libraries/LibWeb/HTML/WorkerAgentParent.cpp
 Libraries/LibWeb/Loader/ResourceLoader.cpp
 Libraries/LibWeb/Page/Page.cpp
 Libraries/LibWeb/Page/Page.h
@@ -354,6 +367,9 @@ Libraries/LibWeb/WebGL/WebGLRenderingContext.h
 Libraries/LibWeb/WebGL/WebGLRenderingContextBase.cpp
 Libraries/LibWeb/WebGL/WebGLRenderingContextBase.h
 Libraries/LibWeb/WebGL/WebGLRenderingContextImpl.cpp
+Libraries/LibWeb/Worker/WebWorkerClient.cpp
+Libraries/LibWeb/Worker/WebWorkerClient.h
+Libraries/LibWeb/Worker/WebWorkerClient.ipc
 Libraries/LibWebView/Application.cpp
 Libraries/LibWebView/Application.h
 Libraries/LibWebView/CMakeLists.txt
@@ -367,8 +383,9 @@ Libraries/LibWebView/WebUI/SecurityUI.cpp
 Libraries/LibWebView/WebUI/SecurityUI.h
 ```
 
-### Meta (5 files)
+### Meta (6 files)
 ```
+Meta/CMake/cmake_options.cmake
 Meta/Lagom/Fuzzers/FuzzIPC.cpp
 Meta/Lagom/Fuzzers/FuzzWebContentIPC.cpp
 Meta/Lagom/Fuzzers/fuzzers.cmake
@@ -381,7 +398,7 @@ Meta/check-string-safety.sh
 README.md
 ```
 
-### Services (208 files)
+### Services (214 files)
 ```
 Services/CMakeLists.txt
 Services/ImageDecoder/ConnectionFromClient.cpp
@@ -582,6 +599,8 @@ Services/Sentinel/assets/malware_analyzer.wasm
 Services/Sentinel/main.cpp
 Services/Sentinel/rules/default.yar
 Services/Sentinel/verify-test-harness.sh
+Services/WebContent/C2ThreatMonitor.cpp
+Services/WebContent/C2ThreatMonitor.h
 Services/WebContent/CMakeLists.txt
 Services/WebContent/ConnectionFromClient.cpp
 Services/WebContent/ConnectionFromClient.h
@@ -589,8 +608,12 @@ Services/WebContent/FormMonitor.cpp
 Services/WebContent/FormMonitor.h
 Services/WebContent/PageClient.cpp
 Services/WebContent/PageClient.h
+Services/WebContent/URLVerdictService.cpp
+Services/WebContent/URLVerdictService.h
 Services/WebContent/WebContentClient.ipc
 Services/WebContent/WebContentServer.ipc
+Services/WebWorker/PageHost.cpp
+Services/WebWorker/PageHost.h
 ```
 
 ### TASK_2_COMPLETION_REPORT.md (1 files)
@@ -613,7 +636,7 @@ THREAT_SCORING_ENHANCEMENT_REPORT.md
 THREAT_SCORING_QUICK_REFERENCE.md
 ```
 
-### Tests (10983 files)
+### Tests (10998 files)
 ```
 Tests/CMakeLists.txt
 Tests/COVERAGE_AUDIT.md
@@ -632,6 +655,7 @@ Tests/LibIPC/TestIPFSVerifier.cpp
 Tests/LibIPC/TestNetworkIdentity.cpp
 Tests/LibIPC/TestProxyValidation.cpp
 Tests/LibWasm/CMakeLists.txt
+Tests/LibWeb/TestConfig.ini
 Tests/LibWeb/Text/TestConfig.ini
 Tests/LibWeb/Text/expected/credential-protection-autofill-blocking.txt
 Tests/LibWeb/Text/expected/credential-protection-exfiltration-detection.txt
@@ -641,6 +665,11 @@ Tests/LibWeb/Text/expected/css-content-utf8-arrow.txt
 Tests/LibWeb/Text/expected/navigation/history-edge-cases-back-forward.txt
 Tests/LibWeb/Text/expected/navigation/history-same-document-edge-cases.txt
 Tests/LibWeb/Text/expected/sandbox/download-scanning.txt
+Tests/LibWeb/Text/expected/wpt-import/html/semantics/embedded-content/the-img-element/sizes/parse-a-sizes-attribute-display-none.txt
+Tests/LibWeb/Text/expected/wpt-import/html/semantics/embedded-content/the-img-element/sizes/parse-a-sizes-attribute-quirks-mode.txt
+Tests/LibWeb/Text/expected/wpt-import/html/semantics/embedded-content/the-img-element/sizes/parse-a-sizes-attribute-standards-mode.txt
+Tests/LibWeb/Text/expected/wpt-import/html/semantics/embedded-content/the-img-element/sizes/parse-a-sizes-attribute-width-1000px.txt
+Tests/LibWeb/Text/expected/wpt-import/workers/Worker_ErrorEvent_type.txt
 Tests/LibWeb/Text/input/credential-protection-autofill-blocking.html
 Tests/LibWeb/Text/input/credential-protection-exfiltration-detection.html
 Tests/LibWeb/Text/input/credential-protection-legitimate-login.html
@@ -656,6 +685,14 @@ Tests/LibWeb/Text/input/sandbox/TEST_DELIVERABLE.md
 Tests/LibWeb/Text/input/sandbox/download-scanning.html
 Tests/LibWeb/Text/input/sandbox/verify-test.sh
 Tests/LibWeb/Text/input/scroll-into-view-element-container.html
+Tests/LibWeb/Text/input/wpt-import/html/semantics/embedded-content/the-img-element/sizes/parse-a-sizes-attribute-display-none.html
+Tests/LibWeb/Text/input/wpt-import/html/semantics/embedded-content/the-img-element/sizes/parse-a-sizes-attribute-quirks-mode.html
+Tests/LibWeb/Text/input/wpt-import/html/semantics/embedded-content/the-img-element/sizes/parse-a-sizes-attribute-standards-mode.html
+Tests/LibWeb/Text/input/wpt-import/html/semantics/embedded-content/the-img-element/sizes/parse-a-sizes-attribute-width-1000px.html
+Tests/LibWeb/Text/input/wpt-import/html/semantics/embedded-content/the-img-element/sizes/support/parse-a-sizes-attribute.js
+Tests/LibWeb/Text/input/wpt-import/html/semantics/embedded-content/the-img-element/sizes/support/sizes-iframed-body.js
+Tests/LibWeb/Text/input/wpt-import/workers/Worker_ErrorEvent_type.htm
+Tests/LibWeb/Text/input/wpt-import/workers/support/ErrorEvent.js
 Tests/Manual/FormMonitor/README.md
 Tests/Manual/FormMonitor/test-form-crossorigin.html
 Tests/Manual/FormMonitor/test-form-fieldtypes.html
@@ -11598,6 +11635,7 @@ Tests/Sentinel/TestPolicyGraphSQLInjection.cpp
 Tests/Sentinel/TestQuarantineIDValidation.cpp
 Tests/Sentinel/TestQuarantinePathTraversal.cpp
 Tests/Sentinel/TestSentinelServerFileAccess.cpp
+Tests/Sentinel/TestURLVerdictService.cpp
 ```
 
 ### Tools (15 files)
