@@ -1,11 +1,11 @@
 # Fork Divergence Report
 
-**Date**: 2026-04-27
-**Fork**: quanticsoul4772/ladybird @ 6f448658c1
-**Upstream**: LadybirdBrowser/ladybird @ 37130e7300
-**Behind**: 669 commits | **Ahead**: 212 commits
+**Date**: 2026-05-04
+**Fork**: quanticsoul4772/ladybird @ a65bd3ff55
+**Upstream**: LadybirdBrowser/ladybird @ 63c8f6761b
+**Behind**: 868 commits | **Ahead**: 213 commits
 
-## Files diverged from upstream by subsystem (14615 total)
+## Files diverged from upstream by subsystem (14949 total)
 
 ### .clang-format (1 files)
 ```
@@ -225,15 +225,16 @@
 .claude/workflows/security-critical-changes.md
 ```
 
-### .devcontainer (4 files)
+### .devcontainer (5 files)
 ```
 .devcontainer/devcontainer.json
 .devcontainer/features/ladybird/install-fedora.sh
 .devcontainer/features/ladybird/install-ubuntu.sh
 .devcontainer/features/vcpkg-cache/install.sh
+.devcontainer/fedora-ci/devcontainer.json
 ```
 
-### .github (26 files)
+### .github (27 files)
 ```
 .github/actions/cache-restore/action.yml
 .github/actions/cache-save/action.yml
@@ -241,6 +242,7 @@
 .github/dependabot.yml
 .github/fork-status/divergence-report.md
 .github/workflows/auto-merge.yml
+.github/workflows/ci-image.yml
 .github/workflows/ci.yml
 .github/workflows/dev-container.yml
 .github/workflows/flatpak-template.yml
@@ -273,8 +275,9 @@
 .gn
 ```
 
-### AK (28 files)
+### AK (32 files)
 ```
+AK/BitStream.h
 AK/Bitmap.h
 AK/BumpAllocator.h
 AK/ByteBuffer.h
@@ -286,6 +289,9 @@ AK/FlyString.h
 AK/Format.cpp
 AK/Format.h
 AK/HashTable.h
+AK/JsonParser.cpp
+AK/JsonParser.h
+AK/JsonValue.h
 AK/MemoryStream.cpp
 AK/MemoryStream.h
 AK/NumericLimits.h
@@ -305,7 +311,7 @@ AK/kmalloc.cpp
 AK/kmalloc.h
 ```
 
-### Base (25 files)
+### Base (26 files)
 ```
 Base/res/icons/16x16/tor-onion.png
 Base/res/icons/16x16/tor-onion.svg
@@ -321,6 +327,7 @@ Base/res/ladybird/about-pages/settings/browsing-behavior.js
 Base/res/ladybird/about-pages/settings/privacy.js
 Base/res/ladybird/about-pages/version.html
 Base/res/ladybird/about-pages/webui.css
+Base/res/ladybird/pdfjs/pdfjs-ladybird-transport.mjs
 Base/res/ladybird/policy-templates/allow_trusted.json
 Base/res/ladybird/policy-templates/block_executables.json
 Base/res/ladybird/policy-templates/block_hash.json
@@ -366,9 +373,10 @@ Documentation/GtkFrontend.md
 Documentation/RequestServerWireLogging.md
 ```
 
-### Libraries (1805 files)
+### Libraries (1951 files)
 ```
 Libraries/LibCompress/CMakeLists.txt
+Libraries/LibCompress/Lzw.h
 Libraries/LibCore/AnonymousBuffer.cpp
 Libraries/LibCore/AnonymousBufferWindows.cpp
 Libraries/LibCore/CMakeLists.txt
@@ -379,10 +387,14 @@ Libraries/LibCore/EventLoop.h
 Libraries/LibCore/EventLoopImplementation.h
 Libraries/LibCore/EventLoopImplementationWindows.cpp
 Libraries/LibCore/EventLoopImplementationWindows.h
+Libraries/LibCore/EventSwift.h
+Libraries/LibCore/Forward.h
+Libraries/LibCore/NetworkResponse.h
 Libraries/LibCore/RateLimiter.cpp
 Libraries/LibCore/RateLimiter.h
 Libraries/LibCore/RetryPolicy.cpp
 Libraries/LibCore/RetryPolicy.h
+Libraries/LibCore/SharedCircularQueue.h
 Libraries/LibCore/Socket.cpp
 Libraries/LibCore/Socket.h
 Libraries/LibCore/SocketWindows.cpp
@@ -395,6 +407,8 @@ Libraries/LibDatabase/CMakeLists.txt
 Libraries/LibDatabase/Database.cpp
 Libraries/LibFileSystem/FileSystem.cpp
 Libraries/LibGC/CMakeLists.txt
+Libraries/LibGC/Heap.cpp
+Libraries/LibGC/Heap.h
 Libraries/LibGfx/Bitmap.cpp
 Libraries/LibGfx/BoundingBox.h
 Libraries/LibGfx/CMakeLists.txt
@@ -411,7 +425,10 @@ Libraries/LibGfx/Font/WOFF2/Loader.h
 Libraries/LibGfx/FontCascadeList.cpp
 Libraries/LibGfx/FontCascadeList.h
 Libraries/LibGfx/Forward.h
+Libraries/LibGfx/ImageFormats/BooleanDecoder.cpp
+Libraries/LibGfx/ImageFormats/BooleanDecoder.h
 Libraries/LibGfx/ImageFormats/ImageDecoder.cpp
+Libraries/LibGfx/ImageFormats/WebPWriter.cpp
 Libraries/LibGfx/ImmutableBitmap.cpp
 Libraries/LibGfx/ImmutableBitmap.h
 Libraries/LibGfx/PainterSkia.cpp
@@ -445,6 +462,9 @@ Libraries/LibIPC/BufferedIPCReader.h
 Libraries/LibIPC/BufferedIPCWriter.cpp
 Libraries/LibIPC/BufferedIPCWriter.h
 Libraries/LibIPC/CMakeLists.txt
+Libraries/LibIPC/Concepts.h
+Libraries/LibIPC/Decoder.h
+Libraries/LibIPC/Encoder.h
 Libraries/LibIPC/File.cpp
 Libraries/LibIPC/FileWindows.cpp
 Libraries/LibIPC/IPFSAPIClient.cpp
@@ -467,6 +487,7 @@ Libraries/LibIPC/ProxyValidator.cpp
 Libraries/LibIPC/ProxyValidator.h
 Libraries/LibIPC/RateLimiter.h
 Libraries/LibIPC/SafeMath.h
+Libraries/LibIPC/TransportHandle.cpp
 Libraries/LibIPC/TransportMachPort.cpp
 Libraries/LibIPC/TransportMachPort.h
 Libraries/LibIPC/TransportSocket.cpp
@@ -495,6 +516,9 @@ Libraries/LibJS/Bytecode/Interpreter.cpp
 Libraries/LibJS/Bytecode/Interpreter.h
 Libraries/LibJS/Bytecode/PropertyNameIterator.cpp
 Libraries/LibJS/Bytecode/PropertyNameIterator.h
+Libraries/LibJS/Bytecode/StringTable.h
+Libraries/LibJS/Bytecode/Validator.cpp
+Libraries/LibJS/Bytecode/Validator.h
 Libraries/LibJS/BytecodeDef/src/lib.rs
 Libraries/LibJS/CMakeLists.txt
 Libraries/LibJS/Console.cpp
@@ -512,6 +536,8 @@ Libraries/LibJS/Runtime/AsyncFunctionDriverWrapper.h
 Libraries/LibJS/Runtime/AsyncGenerator.cpp
 Libraries/LibJS/Runtime/AsyncGenerator.h
 Libraries/LibJS/Runtime/CommonPropertyNames.h
+Libraries/LibJS/Runtime/CompletionCell.cpp
+Libraries/LibJS/Runtime/CompletionCell.h
 Libraries/LibJS/Runtime/Date.h
 Libraries/LibJS/Runtime/ECMAScriptFunctionObject.cpp
 Libraries/LibJS/Runtime/ECMAScriptFunctionObject.h
@@ -542,6 +568,10 @@ Libraries/LibJS/Runtime/Object.h
 Libraries/LibJS/Runtime/ObjectPrototype.cpp
 Libraries/LibJS/Runtime/PrimitiveString.cpp
 Libraries/LibJS/Runtime/PrimitiveString.h
+Libraries/LibJS/Runtime/Promise.cpp
+Libraries/LibJS/Runtime/Promise.h
+Libraries/LibJS/Runtime/PromiseResolvingFunction.cpp
+Libraries/LibJS/Runtime/PromiseResolvingFunction.h
 Libraries/LibJS/Runtime/Realm.h
 Libraries/LibJS/Runtime/RegExpConstructor.cpp
 Libraries/LibJS/Runtime/RegExpConstructor.h
@@ -557,7 +587,10 @@ Libraries/LibJS/Runtime/StringConstructor.h
 Libraries/LibJS/Runtime/StringObject.cpp
 Libraries/LibJS/Runtime/StringPrototype.cpp
 Libraries/LibJS/Runtime/Temporal/Calendar.cpp
+Libraries/LibJS/Runtime/Temporal/DurationPrototype.cpp
+Libraries/LibJS/Runtime/TypedArray.cpp
 Libraries/LibJS/Runtime/TypedArray.h
+Libraries/LibJS/Runtime/TypedArrayPrototype.cpp
 Libraries/LibJS/Runtime/Utf16String.h
 Libraries/LibJS/Runtime/VM.cpp
 Libraries/LibJS/Runtime/VM.h
@@ -570,7 +603,9 @@ Libraries/LibJS/Rust/src/bytecode/basic_block.rs
 Libraries/LibJS/Rust/src/bytecode/codegen.rs
 Libraries/LibJS/Rust/src/bytecode/ffi.rs
 Libraries/LibJS/Rust/src/bytecode/generator.rs
+Libraries/LibJS/Rust/src/bytecode/mod.rs
 Libraries/LibJS/Rust/src/bytecode/operand.rs
+Libraries/LibJS/Rust/src/bytecode/validator.rs
 Libraries/LibJS/Rust/src/lexer.rs
 Libraries/LibJS/Rust/src/lib.rs
 Libraries/LibJS/Rust/src/parser.rs
@@ -628,7 +663,11 @@ Libraries/LibTest/JavaScriptTestRunner.h
 Libraries/LibTest/JavaScriptTestRunnerMain.cpp
 Libraries/LibTest/LiveDisplay.h
 Libraries/LibTest/TestRunner.h
+Libraries/LibTextCodec/Decoder.cpp
+Libraries/LibTextCodec/Decoder.h
+Libraries/LibTextCodec/Forward.h
 Libraries/LibThreading/CMakeLists.txt
+Libraries/LibURL/URL.cpp
 Libraries/LibURL/URL.h
 Libraries/LibUnicode/CMakeLists.txt
 Libraries/LibUnicode/CharacterTypes.cpp
@@ -685,6 +724,7 @@ Libraries/LibWeb/CSS/CSSCounterStyleRule.idl
 Libraries/LibWeb/CSS/CSSFontFaceDescriptors.cpp
 Libraries/LibWeb/CSS/CSSFontFaceDescriptors.idl
 Libraries/LibWeb/CSS/CSSFontFaceRule.cpp
+Libraries/LibWeb/CSS/CSSFontFaceRule.h
 Libraries/LibWeb/CSS/CSSFontFaceRule.idl
 Libraries/LibWeb/CSS/CSSFontFeatureValuesMap.h
 Libraries/LibWeb/CSS/CSSFontFeatureValuesRule.cpp
@@ -732,6 +772,7 @@ Libraries/LibWeb/CSS/CSSMathValue.idl
 Libraries/LibWeb/CSS/CSSMatrixComponent.cpp
 Libraries/LibWeb/CSS/CSSMatrixComponent.idl
 Libraries/LibWeb/CSS/CSSMediaRule.cpp
+Libraries/LibWeb/CSS/CSSMediaRule.h
 Libraries/LibWeb/CSS/CSSMediaRule.idl
 Libraries/LibWeb/CSS/CSSNamespaceRule.cpp
 Libraries/LibWeb/CSS/CSSNamespaceRule.idl
@@ -778,6 +819,7 @@ Libraries/LibWeb/CSS/CSSSupportsRule.idl
 Libraries/LibWeb/CSS/CSSTransformComponent.cpp
 Libraries/LibWeb/CSS/CSSTransformComponent.idl
 Libraries/LibWeb/CSS/CSSTransformValue.cpp
+Libraries/LibWeb/CSS/CSSTransformValue.h
 Libraries/LibWeb/CSS/CSSTransformValue.idl
 Libraries/LibWeb/CSS/CSSTransition.cpp
 Libraries/LibWeb/CSS/CSSTransition.idl
@@ -789,6 +831,7 @@ Libraries/LibWeb/CSS/CSSUnparsedValue.cpp
 Libraries/LibWeb/CSS/CSSUnparsedValue.idl
 Libraries/LibWeb/CSS/CSSVariableReferenceValue.cpp
 Libraries/LibWeb/CSS/CSSVariableReferenceValue.idl
+Libraries/LibWeb/CSS/CascadeOrigin.h
 Libraries/LibWeb/CSS/CascadedProperties.cpp
 Libraries/LibWeb/CSS/CascadedProperties.h
 Libraries/LibWeb/CSS/ColorFunctionDescriptor.cpp
@@ -804,7 +847,10 @@ Libraries/LibWeb/CSS/CounterStyleDefinition.h
 Libraries/LibWeb/CSS/CustomPropertyData.cpp
 Libraries/LibWeb/CSS/CustomPropertyData.h
 Libraries/LibWeb/CSS/CustomPropertyRegistration.h
+Libraries/LibWeb/CSS/Display.cpp
+Libraries/LibWeb/CSS/Display.h
 Libraries/LibWeb/CSS/ElementCSSInlineStyle.idl
+Libraries/LibWeb/CSS/Fetch.cpp
 Libraries/LibWeb/CSS/Flex.cpp
 Libraries/LibWeb/CSS/Flex.h
 Libraries/LibWeb/CSS/FontComputer.cpp
@@ -826,6 +872,42 @@ Libraries/LibWeb/CSS/GridTrackSize.cpp
 Libraries/LibWeb/CSS/GridTrackSize.h
 Libraries/LibWeb/CSS/Interpolation.cpp
 Libraries/LibWeb/CSS/Interpolation.h
+Libraries/LibWeb/CSS/Invalidation/AdoptedStyleSheetInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/AdoptedStyleSheetInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/AttributeInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/AttributeInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/CustomElementInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/CustomElementInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/ElementStateInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/ElementStateInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/EmbeddedContentInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/EmbeddedContentInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/FormControlInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/FormControlInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/HasMutationFeatureCollector.cpp
+Libraries/LibWeb/CSS/Invalidation/HasMutationFeatureCollector.h
+Libraries/LibWeb/CSS/Invalidation/HasMutationInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/HasMutationInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/InvalidationSetMatcher.cpp
+Libraries/LibWeb/CSS/Invalidation/InvalidationSetMatcher.h
+Libraries/LibWeb/CSS/Invalidation/LanguageInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/LanguageInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/LinkInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/LinkInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/MediaQueryInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/MediaQueryInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/NodeInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/NodeInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/PartInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/PartInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/PseudoClassInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/PseudoClassInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/SlotInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/SlotInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/StructuralMutationInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/StructuralMutationInvalidator.h
+Libraries/LibWeb/CSS/Invalidation/StyleInvalidator.cpp
+Libraries/LibWeb/CSS/Invalidation/StyleInvalidator.h
 Libraries/LibWeb/CSS/InvalidationSet.cpp
 Libraries/LibWeb/CSS/InvalidationSet.h
 Libraries/LibWeb/CSS/Keywords.json
@@ -848,6 +930,8 @@ Libraries/LibWeb/CSS/Parser/Parser.cpp
 Libraries/LibWeb/CSS/Parser/Parser.h
 Libraries/LibWeb/CSS/Parser/PropertyParsing.cpp
 Libraries/LibWeb/CSS/Parser/RuleParsing.cpp
+Libraries/LibWeb/CSS/Parser/RustTokenizer.cpp
+Libraries/LibWeb/CSS/Parser/RustTokenizer.h
 Libraries/LibWeb/CSS/Parser/SelectorParsing.cpp
 Libraries/LibWeb/CSS/Parser/SyntaxParsing.cpp
 Libraries/LibWeb/CSS/Parser/Token.cpp
@@ -904,6 +988,8 @@ Libraries/LibWeb/CSS/StyleValues/CounterStyleStyleValue.cpp
 Libraries/LibWeb/CSS/StyleValues/CounterStyleStyleValue.h
 Libraries/LibWeb/CSS/StyleValues/CounterStyleValue.cpp
 Libraries/LibWeb/CSS/StyleValues/DimensionStyleValue.cpp
+Libraries/LibWeb/CSS/StyleValues/DisplayStyleValue.cpp
+Libraries/LibWeb/CSS/StyleValues/DisplayStyleValue.h
 Libraries/LibWeb/CSS/StyleValues/FilterValueListStyleValue.cpp
 Libraries/LibWeb/CSS/StyleValues/FitContentStyleValue.h
 Libraries/LibWeb/CSS/StyleValues/FontVariantAlternatesFunctionStyleValue.cpp
@@ -916,6 +1002,8 @@ Libraries/LibWeb/CSS/StyleValues/HWBColorStyleValue.cpp
 Libraries/LibWeb/CSS/StyleValues/HWBColorStyleValue.h
 Libraries/LibWeb/CSS/StyleValues/ImageSetStyleValue.cpp
 Libraries/LibWeb/CSS/StyleValues/ImageSetStyleValue.h
+Libraries/LibWeb/CSS/StyleValues/ImageStyleValue.cpp
+Libraries/LibWeb/CSS/StyleValues/ImageStyleValue.h
 Libraries/LibWeb/CSS/StyleValues/KeywordStyleValue.cpp
 Libraries/LibWeb/CSS/StyleValues/LCHLikeColorStyleValue.cpp
 Libraries/LibWeb/CSS/StyleValues/LCHLikeColorStyleValue.h
@@ -942,9 +1030,11 @@ Libraries/LibWeb/CSS/TransitionEvent.cpp
 Libraries/LibWeb/CSS/TransitionEvent.idl
 Libraries/LibWeb/CSS/ValueType.cpp
 Libraries/LibWeb/CSS/ValueType.h
+Libraries/LibWeb/CSS/ValueTypes.json
 Libraries/LibWeb/CSS/VisualViewport.cpp
 Libraries/LibWeb/CSS/VisualViewport.idl
 Libraries/LibWeb/Clipboard/Clipboard.cpp
+Libraries/LibWeb/Clipboard/Clipboard.h
 Libraries/LibWeb/Clipboard/Clipboard.idl
 Libraries/LibWeb/Clipboard/ClipboardEvent.cpp
 Libraries/LibWeb/Clipboard/ClipboardEvent.idl
@@ -990,12 +1080,14 @@ Libraries/LibWeb/DOM/AbstractRange.cpp
 Libraries/LibWeb/DOM/AbstractRange.idl
 Libraries/LibWeb/DOM/AccessibilityTreeNode.cpp
 Libraries/LibWeb/DOM/AccessibilityTreeNode.h
+Libraries/LibWeb/DOM/AdoptedStyleSheets.cpp
 Libraries/LibWeb/DOM/Attr.cpp
 Libraries/LibWeb/DOM/Attr.idl
 Libraries/LibWeb/DOM/CDATASection.cpp
 Libraries/LibWeb/DOM/CDATASection.idl
 Libraries/LibWeb/DOM/CharacterData.cpp
 Libraries/LibWeb/DOM/CharacterData.idl
+Libraries/LibWeb/DOM/ChildNode.idl
 Libraries/LibWeb/DOM/Comment.cpp
 Libraries/LibWeb/DOM/Comment.idl
 Libraries/LibWeb/DOM/CustomEvent.cpp
@@ -1049,6 +1141,7 @@ Libraries/LibWeb/DOM/ShadowRoot.cpp
 Libraries/LibWeb/DOM/ShadowRoot.h
 Libraries/LibWeb/DOM/ShadowRoot.idl
 Libraries/LibWeb/DOM/Slottable.cpp
+Libraries/LibWeb/DOM/Slottable.idl
 Libraries/LibWeb/DOM/StaticRange.cpp
 Libraries/LibWeb/DOM/StaticRange.idl
 Libraries/LibWeb/DOM/StyleInvalidationReason.h
@@ -1065,7 +1158,16 @@ Libraries/LibWeb/DOMURL/DOMURL.idl
 Libraries/LibWeb/DOMURL/Origin.cpp
 Libraries/LibWeb/DOMURL/URLSearchParams.cpp
 Libraries/LibWeb/DOMURL/URLSearchParamsIterator.cpp
+Libraries/LibWeb/Editing/Internal/Algorithms.cpp
 Libraries/LibWeb/Encoding/TextDecoder.cpp
+Libraries/LibWeb/Encoding/TextDecoder.h
+Libraries/LibWeb/Encoding/TextDecoder.idl
+Libraries/LibWeb/Encoding/TextDecoderCommon.cpp
+Libraries/LibWeb/Encoding/TextDecoderCommon.h
+Libraries/LibWeb/Encoding/TextDecoderCommon.idl
+Libraries/LibWeb/Encoding/TextDecoderStream.cpp
+Libraries/LibWeb/Encoding/TextDecoderStream.h
+Libraries/LibWeb/Encoding/TextDecoderStream.idl
 Libraries/LibWeb/Encoding/TextEncoder.cpp
 Libraries/LibWeb/Encoding/TextEncoder.h
 Libraries/LibWeb/Encoding/TextEncoder.idl
@@ -1085,9 +1187,13 @@ Libraries/LibWeb/EventTiming/PerformanceEventTiming.idl
 Libraries/LibWeb/Fetch/Body.idl
 Libraries/LibWeb/Fetch/BodyInit.idl
 Libraries/LibWeb/Fetch/Enums.cpp
+Libraries/LibWeb/Fetch/Fetching/FetchedDataReceiver.cpp
+Libraries/LibWeb/Fetch/Fetching/FetchedDataReceiver.h
 Libraries/LibWeb/Fetch/Fetching/Fetching.cpp
 Libraries/LibWeb/Fetch/Headers.cpp
 Libraries/LibWeb/Fetch/HeadersIterator.cpp
+Libraries/LibWeb/Fetch/Infrastructure/HTTP/Bodies.cpp
+Libraries/LibWeb/Fetch/Infrastructure/HTTP/Bodies.h
 Libraries/LibWeb/Fetch/Request.cpp
 Libraries/LibWeb/Fetch/Request.h
 Libraries/LibWeb/Fetch/Request.idl
@@ -1179,6 +1285,7 @@ Libraries/LibWeb/HTML/CommandEvent.idl
 Libraries/LibWeb/HTML/CustomElements/CustomElementDefinition.h
 Libraries/LibWeb/HTML/CustomElements/CustomElementRegistry.cpp
 Libraries/LibWeb/HTML/CustomElements/CustomElementRegistry.idl
+Libraries/LibWeb/HTML/CustomElements/CustomStateSet.cpp
 Libraries/LibWeb/HTML/CustomElements/CustomStateSet.h
 Libraries/LibWeb/HTML/DOMParser.cpp
 Libraries/LibWeb/HTML/DOMParser.idl
@@ -1218,11 +1325,13 @@ Libraries/LibWeb/HTML/HTMLAreaElement.idl
 Libraries/LibWeb/HTML/HTMLAudioElement.cpp
 Libraries/LibWeb/HTML/HTMLAudioElement.idl
 Libraries/LibWeb/HTML/HTMLBRElement.cpp
+Libraries/LibWeb/HTML/HTMLBRElement.h
 Libraries/LibWeb/HTML/HTMLBRElement.idl
 Libraries/LibWeb/HTML/HTMLBaseElement.cpp
 Libraries/LibWeb/HTML/HTMLBaseElement.h
 Libraries/LibWeb/HTML/HTMLBaseElement.idl
 Libraries/LibWeb/HTML/HTMLBodyElement.cpp
+Libraries/LibWeb/HTML/HTMLBodyElement.h
 Libraries/LibWeb/HTML/HTMLBodyElement.idl
 Libraries/LibWeb/HTML/HTMLButtonElement.cpp
 Libraries/LibWeb/HTML/HTMLButtonElement.idl
@@ -1243,6 +1352,7 @@ Libraries/LibWeb/HTML/HTMLDialogElement.idl
 Libraries/LibWeb/HTML/HTMLDirectoryElement.cpp
 Libraries/LibWeb/HTML/HTMLDirectoryElement.idl
 Libraries/LibWeb/HTML/HTMLDivElement.cpp
+Libraries/LibWeb/HTML/HTMLDivElement.h
 Libraries/LibWeb/HTML/HTMLDivElement.idl
 Libraries/LibWeb/HTML/HTMLDocument.cpp
 Libraries/LibWeb/HTML/HTMLDocument.idl
@@ -1250,10 +1360,12 @@ Libraries/LibWeb/HTML/HTMLElement.cpp
 Libraries/LibWeb/HTML/HTMLElement.h
 Libraries/LibWeb/HTML/HTMLElement.idl
 Libraries/LibWeb/HTML/HTMLEmbedElement.cpp
+Libraries/LibWeb/HTML/HTMLEmbedElement.h
 Libraries/LibWeb/HTML/HTMLEmbedElement.idl
 Libraries/LibWeb/HTML/HTMLFieldSetElement.cpp
 Libraries/LibWeb/HTML/HTMLFieldSetElement.idl
 Libraries/LibWeb/HTML/HTMLFontElement.cpp
+Libraries/LibWeb/HTML/HTMLFontElement.h
 Libraries/LibWeb/HTML/HTMLFontElement.idl
 Libraries/LibWeb/HTML/HTMLFormControlsCollection.cpp
 Libraries/LibWeb/HTML/HTMLFormControlsCollection.idl
@@ -1266,22 +1378,27 @@ Libraries/LibWeb/HTML/HTMLFrameElement.idl
 Libraries/LibWeb/HTML/HTMLFrameSetElement.cpp
 Libraries/LibWeb/HTML/HTMLFrameSetElement.idl
 Libraries/LibWeb/HTML/HTMLHRElement.cpp
+Libraries/LibWeb/HTML/HTMLHRElement.h
 Libraries/LibWeb/HTML/HTMLHRElement.idl
 Libraries/LibWeb/HTML/HTMLHeadElement.cpp
 Libraries/LibWeb/HTML/HTMLHeadElement.idl
 Libraries/LibWeb/HTML/HTMLHeadingElement.cpp
+Libraries/LibWeb/HTML/HTMLHeadingElement.h
 Libraries/LibWeb/HTML/HTMLHeadingElement.idl
 Libraries/LibWeb/HTML/HTMLHtmlElement.cpp
 Libraries/LibWeb/HTML/HTMLHtmlElement.idl
+Libraries/LibWeb/HTML/HTMLHyperlinkElementUtils.cpp
 Libraries/LibWeb/HTML/HTMLIFrameElement.cpp
 Libraries/LibWeb/HTML/HTMLIFrameElement.h
 Libraries/LibWeb/HTML/HTMLIFrameElement.idl
 Libraries/LibWeb/HTML/HTMLImageElement.cpp
+Libraries/LibWeb/HTML/HTMLImageElement.h
 Libraries/LibWeb/HTML/HTMLImageElement.idl
 Libraries/LibWeb/HTML/HTMLInputElement.cpp
 Libraries/LibWeb/HTML/HTMLInputElement.h
 Libraries/LibWeb/HTML/HTMLInputElement.idl
 Libraries/LibWeb/HTML/HTMLLIElement.cpp
+Libraries/LibWeb/HTML/HTMLLIElement.h
 Libraries/LibWeb/HTML/HTMLLIElement.idl
 Libraries/LibWeb/HTML/HTMLLabelElement.cpp
 Libraries/LibWeb/HTML/HTMLLabelElement.idl
@@ -1293,6 +1410,7 @@ Libraries/LibWeb/HTML/HTMLLinkElement.idl
 Libraries/LibWeb/HTML/HTMLMapElement.cpp
 Libraries/LibWeb/HTML/HTMLMapElement.idl
 Libraries/LibWeb/HTML/HTMLMarqueeElement.cpp
+Libraries/LibWeb/HTML/HTMLMarqueeElement.h
 Libraries/LibWeb/HTML/HTMLMarqueeElement.idl
 Libraries/LibWeb/HTML/HTMLMediaElement.cpp
 Libraries/LibWeb/HTML/HTMLMediaElement.h
@@ -1307,8 +1425,10 @@ Libraries/LibWeb/HTML/HTMLMeterElement.idl
 Libraries/LibWeb/HTML/HTMLModElement.cpp
 Libraries/LibWeb/HTML/HTMLModElement.idl
 Libraries/LibWeb/HTML/HTMLOListElement.cpp
+Libraries/LibWeb/HTML/HTMLOListElement.h
 Libraries/LibWeb/HTML/HTMLOListElement.idl
 Libraries/LibWeb/HTML/HTMLObjectElement.cpp
+Libraries/LibWeb/HTML/HTMLObjectElement.h
 Libraries/LibWeb/HTML/HTMLObjectElement.idl
 Libraries/LibWeb/HTML/HTMLOptGroupElement.cpp
 Libraries/LibWeb/HTML/HTMLOptGroupElement.h
@@ -1323,12 +1443,14 @@ Libraries/LibWeb/HTML/HTMLOrSVGElement.idl
 Libraries/LibWeb/HTML/HTMLOutputElement.cpp
 Libraries/LibWeb/HTML/HTMLOutputElement.idl
 Libraries/LibWeb/HTML/HTMLParagraphElement.cpp
+Libraries/LibWeb/HTML/HTMLParagraphElement.h
 Libraries/LibWeb/HTML/HTMLParagraphElement.idl
 Libraries/LibWeb/HTML/HTMLParamElement.cpp
 Libraries/LibWeb/HTML/HTMLParamElement.idl
 Libraries/LibWeb/HTML/HTMLPictureElement.cpp
 Libraries/LibWeb/HTML/HTMLPictureElement.idl
 Libraries/LibWeb/HTML/HTMLPreElement.cpp
+Libraries/LibWeb/HTML/HTMLPreElement.h
 Libraries/LibWeb/HTML/HTMLPreElement.idl
 Libraries/LibWeb/HTML/HTMLProgressElement.cpp
 Libraries/LibWeb/HTML/HTMLProgressElement.idl
@@ -1353,16 +1475,22 @@ Libraries/LibWeb/HTML/HTMLStyleElement.cpp
 Libraries/LibWeb/HTML/HTMLStyleElement.h
 Libraries/LibWeb/HTML/HTMLStyleElement.idl
 Libraries/LibWeb/HTML/HTMLTableCaptionElement.cpp
+Libraries/LibWeb/HTML/HTMLTableCaptionElement.h
 Libraries/LibWeb/HTML/HTMLTableCaptionElement.idl
 Libraries/LibWeb/HTML/HTMLTableCellElement.cpp
+Libraries/LibWeb/HTML/HTMLTableCellElement.h
 Libraries/LibWeb/HTML/HTMLTableCellElement.idl
 Libraries/LibWeb/HTML/HTMLTableColElement.cpp
+Libraries/LibWeb/HTML/HTMLTableColElement.h
 Libraries/LibWeb/HTML/HTMLTableColElement.idl
 Libraries/LibWeb/HTML/HTMLTableElement.cpp
+Libraries/LibWeb/HTML/HTMLTableElement.h
 Libraries/LibWeb/HTML/HTMLTableElement.idl
 Libraries/LibWeb/HTML/HTMLTableRowElement.cpp
+Libraries/LibWeb/HTML/HTMLTableRowElement.h
 Libraries/LibWeb/HTML/HTMLTableRowElement.idl
 Libraries/LibWeb/HTML/HTMLTableSectionElement.cpp
+Libraries/LibWeb/HTML/HTMLTableSectionElement.h
 Libraries/LibWeb/HTML/HTMLTableSectionElement.idl
 Libraries/LibWeb/HTML/HTMLTemplateElement.cpp
 Libraries/LibWeb/HTML/HTMLTemplateElement.idl
@@ -1375,6 +1503,7 @@ Libraries/LibWeb/HTML/HTMLTitleElement.idl
 Libraries/LibWeb/HTML/HTMLTrackElement.cpp
 Libraries/LibWeb/HTML/HTMLTrackElement.idl
 Libraries/LibWeb/HTML/HTMLUListElement.cpp
+Libraries/LibWeb/HTML/HTMLUListElement.h
 Libraries/LibWeb/HTML/HTMLUListElement.idl
 Libraries/LibWeb/HTML/HTMLUnknownElement.cpp
 Libraries/LibWeb/HTML/HTMLUnknownElement.idl
@@ -1441,6 +1570,8 @@ Libraries/LibWeb/HTML/Parser/HTMLParser.cpp
 Libraries/LibWeb/HTML/Parser/HTMLParser.h
 Libraries/LibWeb/HTML/Parser/HTMLTokenizer.cpp
 Libraries/LibWeb/HTML/Parser/HTMLTokenizer.h
+Libraries/LibWeb/HTML/Parser/IncrementalDocumentParser.cpp
+Libraries/LibWeb/HTML/Parser/IncrementalDocumentParser.h
 Libraries/LibWeb/HTML/Parser/ParserScriptingMode.h
 Libraries/LibWeb/HTML/Parser/SpeculativeHTMLParser.cpp
 Libraries/LibWeb/HTML/Parser/SpeculativeHTMLParser.h
@@ -1465,6 +1596,7 @@ Libraries/LibWeb/HTML/RenderingThread.h
 Libraries/LibWeb/HTML/Scripting/ClassicScript.cpp
 Libraries/LibWeb/HTML/Scripting/ClassicScript.h
 Libraries/LibWeb/HTML/Scripting/Environments.cpp
+Libraries/LibWeb/HTML/Scripting/Environments.h
 Libraries/LibWeb/HTML/Scripting/ExceptionReporter.cpp
 Libraries/LibWeb/HTML/Scripting/Fetching.cpp
 Libraries/LibWeb/HTML/Scripting/ModuleScript.cpp
@@ -1499,6 +1631,7 @@ Libraries/LibWeb/HTML/ToggleEvent.idl
 Libraries/LibWeb/HTML/TrackEvent.cpp
 Libraries/LibWeb/HTML/TrackEvent.idl
 Libraries/LibWeb/HTML/TraversableNavigable.cpp
+Libraries/LibWeb/HTML/TraversableNavigable.h
 Libraries/LibWeb/HTML/UniversalGlobalScope.cpp
 Libraries/LibWeb/HTML/UniversalGlobalScope.idl
 Libraries/LibWeb/HTML/UserActivation.cpp
@@ -1576,6 +1709,7 @@ Libraries/LibWeb/IntersectionObserver/IntersectionObserverEntry.cpp
 Libraries/LibWeb/IntersectionObserver/IntersectionObserverEntry.idl
 Libraries/LibWeb/IntersectionObserver/IntersectionObserverRegistration.h
 Libraries/LibWeb/Layout/BlockFormattingContext.cpp
+Libraries/LibWeb/Layout/BlockFormattingContext.h
 Libraries/LibWeb/Layout/FlexFormattingContext.cpp
 Libraries/LibWeb/Layout/FormattingContext.cpp
 Libraries/LibWeb/Layout/FormattingContext.h
@@ -1583,6 +1717,7 @@ Libraries/LibWeb/Layout/GridFormattingContext.cpp
 Libraries/LibWeb/Layout/GridFormattingContext.h
 Libraries/LibWeb/Layout/InlineFormattingContext.cpp
 Libraries/LibWeb/Layout/LayoutState.cpp
+Libraries/LibWeb/Layout/LayoutState.h
 Libraries/LibWeb/Layout/LineBoxFragment.h
 Libraries/LibWeb/Layout/LineBuilder.cpp
 Libraries/LibWeb/Layout/ListItemMarkerBox.cpp
@@ -1591,12 +1726,19 @@ Libraries/LibWeb/Layout/Node.h
 Libraries/LibWeb/Layout/TableFormattingContext.cpp
 Libraries/LibWeb/Layout/TextNode.cpp
 Libraries/LibWeb/Layout/TextNode.h
+Libraries/LibWeb/Layout/TreeBuilder.cpp
+Libraries/LibWeb/Layout/TreeBuilder.h
 Libraries/LibWeb/Layout/VideoBox.cpp
 Libraries/LibWeb/Loader/GeneratedPagesLoader.cpp
 Libraries/LibWeb/Loader/GeneratedPagesLoader.h
 Libraries/LibWeb/Loader/ResourceLoader.cpp
 Libraries/LibWeb/MathML/MathMLElement.cpp
+Libraries/LibWeb/MathML/MathMLElement.h
 Libraries/LibWeb/MathML/MathMLElement.idl
+Libraries/LibWeb/MathML/MathMLMiElement.cpp
+Libraries/LibWeb/MathML/MathMLMiElement.h
+Libraries/LibWeb/MathML/MathMLMspaceElement.cpp
+Libraries/LibWeb/MathML/MathMLMspaceElement.h
 Libraries/LibWeb/MediaCapabilitiesAPI/MediaCapabilities.cpp
 Libraries/LibWeb/MediaCapabilitiesAPI/MediaCapabilities.idl
 Libraries/LibWeb/MediaCapture/MediaDeviceInfo.cpp
@@ -1647,6 +1789,8 @@ Libraries/LibWeb/Page/Page.cpp
 Libraries/LibWeb/Page/Page.h
 Libraries/LibWeb/Page/SharedBackingStore.cpp
 Libraries/LibWeb/Page/SharedBackingStore.h
+Libraries/LibWeb/Painting/AccumulatedVisualContext.cpp
+Libraries/LibWeb/Painting/AccumulatedVisualContext.h
 Libraries/LibWeb/Painting/BackgroundPainting.cpp
 Libraries/LibWeb/Painting/BackingStoreManager.cpp
 Libraries/LibWeb/Painting/DisplayList.cpp
@@ -1657,6 +1801,7 @@ Libraries/LibWeb/Painting/NavigableContainerViewportPaintable.cpp
 Libraries/LibWeb/Painting/Paintable.cpp
 Libraries/LibWeb/Painting/PaintableBox.cpp
 Libraries/LibWeb/Painting/PaintableBox.h
+Libraries/LibWeb/Painting/PaintableFragment.cpp
 Libraries/LibWeb/Painting/PaintableWithLines.cpp
 Libraries/LibWeb/Painting/ReplacedElementCommon.cpp
 Libraries/LibWeb/Painting/ReplacedElementCommon.h
@@ -1689,6 +1834,11 @@ Libraries/LibWeb/ResizeObserver/ResizeObserverSize.cpp
 Libraries/LibWeb/ResizeObserver/ResizeObserverSize.h
 Libraries/LibWeb/ResourceTiming/PerformanceResourceTiming.h
 Libraries/LibWeb/ResourceTiming/PerformanceResourceTiming.idl
+Libraries/LibWeb/Rust/Cargo.toml
+Libraries/LibWeb/Rust/build.rs
+Libraries/LibWeb/Rust/cbindgen.toml
+Libraries/LibWeb/Rust/src/css_tokenizer.rs
+Libraries/LibWeb/Rust/src/lib.rs
 Libraries/LibWeb/SVG/SVGAElement.cpp
 Libraries/LibWeb/SVG/SVGAElement.idl
 Libraries/LibWeb/SVG/SVGAnimatedEnumeration.cpp
@@ -1709,11 +1859,13 @@ Libraries/LibWeb/SVG/SVGAnimationElement.cpp
 Libraries/LibWeb/SVG/SVGAnimationElement.h
 Libraries/LibWeb/SVG/SVGAnimationElement.idl
 Libraries/LibWeb/SVG/SVGCircleElement.cpp
+Libraries/LibWeb/SVG/SVGCircleElement.h
 Libraries/LibWeb/SVG/SVGCircleElement.idl
 Libraries/LibWeb/SVG/SVGClipPathElement.cpp
 Libraries/LibWeb/SVG/SVGClipPathElement.idl
 Libraries/LibWeb/SVG/SVGComponentTransferFunctionElement.cpp
 Libraries/LibWeb/SVG/SVGComponentTransferFunctionElement.idl
+Libraries/LibWeb/SVG/SVGDecodedImageData.h
 Libraries/LibWeb/SVG/SVGDefsElement.cpp
 Libraries/LibWeb/SVG/SVGDescElement.cpp
 Libraries/LibWeb/SVG/SVGDescElement.idl
@@ -1806,6 +1958,7 @@ Libraries/LibWeb/SVG/SVGScriptElement.cpp
 Libraries/LibWeb/SVG/SVGScriptElement.h
 Libraries/LibWeb/SVG/SVGScriptElement.idl
 Libraries/LibWeb/SVG/SVGStopElement.cpp
+Libraries/LibWeb/SVG/SVGStopElement.h
 Libraries/LibWeb/SVG/SVGStopElement.idl
 Libraries/LibWeb/SVG/SVGStyleElement.cpp
 Libraries/LibWeb/SVG/SVGStyleElement.h
@@ -2175,13 +2328,14 @@ Libraries/LibXML/CMakeLists.txt
 Libraries/RustAllocator.rs
 ```
 
-### Meta (305 files)
+### Meta (326 files)
 ```
 Meta/CMake/all_the_debug_macros.cmake
 Meta/CMake/audio.cmake
 Meta/CMake/check_for_dependencies.cmake
 Meta/CMake/cmake_options.cmake
 Meta/CMake/code_generators.cmake
+Meta/CMake/compile_options.cmake
 Meta/CMake/flatpak/cargo-sources.json
 Meta/CMake/flatpak/org.ladybird.Ladybird.json
 Meta/CMake/gui_framework.cmake
@@ -2201,6 +2355,9 @@ Meta/CMake/vcpkg/overlay-ports/gtk/vcpkg.json
 Meta/CMake/vcpkg/overlay-ports/highway/portfile.cmake
 Meta/CMake/vcpkg/overlay-ports/highway/usage
 Meta/CMake/vcpkg/overlay-ports/highway/vcpkg.json
+Meta/CMake/vcpkg/overlay-ports/pdfjs/0001-ladybird-embed.patch
+Meta/CMake/vcpkg/overlay-ports/pdfjs/portfile.cmake
+Meta/CMake/vcpkg/overlay-ports/pdfjs/vcpkg.json
 Meta/CMake/vcpkg/overlay-ports/wayland-protocols/cross-build.diff
 Meta/CMake/vcpkg/overlay-ports/wayland-protocols/portfile.cmake
 Meta/CMake/vcpkg/overlay-ports/wayland-protocols/vcpkg.json
@@ -2209,9 +2366,14 @@ Meta/CMake/vcpkg/overlay-ports/wayland/portfile.cmake
 Meta/CMake/vcpkg/overlay-ports/wayland/vcpkg.json
 Meta/CMake/vulkan.cmake
 Meta/CMake/wasm_spec_tests.cmake
+Meta/Docker/ci/Dockerfile
+Meta/Docker/ci/VERSION
+Meta/Generators/generate_dom_tree.py
 Meta/Generators/generate_ipc_definitions.py
 Meta/Generators/generate_libjs_bytecode_def_derived.py
+Meta/Generators/generate_libwasm_spec_test.py
 Meta/Generators/generate_libwasm_spec_test.sh
+Meta/Generators/generate_libweb_aria_roles.py
 Meta/Generators/generate_libweb_css_descriptors.py
 Meta/Generators/generate_libweb_css_enums.py
 Meta/Generators/generate_libweb_css_environment_variables.py
@@ -2225,6 +2387,9 @@ Meta/Generators/generate_libweb_css_pseudo_element.py
 Meta/Generators/generate_libweb_css_style_properties.py
 Meta/Generators/generate_libweb_css_transform_functions.py
 Meta/Generators/generate_libweb_css_units.py
+Meta/Generators/generate_libweb_css_value_types_parsing.py
+Meta/Generators/generate_libweb_html_named_character_references.py
+Meta/Generators/generate_window_or_worker_interfaces.py
 Meta/Lagom/BuildFuzzers.sh
 Meta/Lagom/Fuzzers/FuzzIPC.cpp
 Meta/Lagom/Fuzzers/FuzzJs.cpp
@@ -2240,6 +2405,7 @@ Meta/Lagom/Tools/CodeGenerators/LibWeb/BindingsGenerator/IDLGenerators.h
 Meta/Lagom/Tools/CodeGenerators/LibWeb/BindingsGenerator/Namespaces.h
 Meta/Lagom/Tools/CodeGenerators/LibWeb/BindingsGenerator/main.cpp
 Meta/Lagom/Tools/CodeGenerators/LibWeb/CMakeLists.txt
+Meta/Lagom/Tools/CodeGenerators/LibWeb/GenerateAriaRoles.cpp
 Meta/Lagom/Tools/CodeGenerators/LibWeb/GenerateCSSDescriptors.cpp
 Meta/Lagom/Tools/CodeGenerators/LibWeb/GenerateCSSEnums.cpp
 Meta/Lagom/Tools/CodeGenerators/LibWeb/GenerateCSSEnvironmentVariable.cpp
@@ -2253,6 +2419,7 @@ Meta/Lagom/Tools/CodeGenerators/LibWeb/GenerateCSSPseudoElement.cpp
 Meta/Lagom/Tools/CodeGenerators/LibWeb/GenerateCSSStyleProperties.cpp
 Meta/Lagom/Tools/CodeGenerators/LibWeb/GenerateCSSTransformFunctions.cpp
 Meta/Lagom/Tools/CodeGenerators/LibWeb/GenerateCSSUnits.cpp
+Meta/Lagom/Tools/CodeGenerators/LibWeb/GenerateNamedCharacterReferences.cpp
 Meta/Lagom/Tools/CodeGenerators/LibWeb/GenerateWindowOrWorkerInterfaces.cpp
 Meta/Lagom/Tools/IPCMagicLinter/CMakeLists.txt
 Meta/Lagom/Tools/IPCMagicLinter/main.cpp
@@ -2269,10 +2436,17 @@ Meta/Linters/lint_ipc.py
 Meta/Linters/lint_prettier.sh
 Meta/Linters/lint_python.sh
 Meta/Linters/lint_shell_scripts.sh
+Meta/Utils/CSSGrammar/Parser/component_values.py
+Meta/Utils/CSSGrammar/Parser/grammar_node.py
+Meta/Utils/CSSGrammar/Parser/parser.py
+Meta/Utils/CSSGrammar/Parser/token.py
+Meta/Utils/CSSGrammar/Parser/tokenizer.py
+Meta/Utils/CSSGrammar/generator.py
 Meta/Utils/build_vcpkg.py
 Meta/Utils/host_platform.py
 Meta/Utils/lexer.py
 Meta/Utils/utils.py
+Meta/Utils/webidl_parser.py
 Meta/WPT.sh
 Meta/check-debug-flags.sh
 Meta/check-flatpak.py
@@ -2489,7 +2663,7 @@ Meta/wasm_unimplemented_tests.txt
 README.md
 ```
 
-### Services (226 files)
+### Services (228 files)
 ```
 Services/CMakeLists.txt
 Services/ImageDecoder/ConnectionFromClient.cpp
@@ -2710,12 +2884,14 @@ Services/WebContent/URLVerdictService.cpp
 Services/WebContent/URLVerdictService.h
 Services/WebContent/WebContentClient.ipc
 Services/WebContent/WebContentServer.ipc
+Services/WebContent/WebDriverConnection.cpp
 Services/WebContent/main.cpp
 Services/WebWorker/CMakeLists.txt
 Services/WebWorker/ConnectionFromClient.cpp
 Services/WebWorker/ConnectionFromClient.h
 Services/WebWorker/PageHost.cpp
 Services/WebWorker/PageHost.h
+Services/WebWorker/WorkerHost.cpp
 Services/WebWorker/WorkerHost.h
 ```
 
@@ -2739,10 +2915,11 @@ THREAT_SCORING_ENHANCEMENT_REPORT.md
 THREAT_SCORING_QUICK_REFERENCE.md
 ```
 
-### Tests (11787 files)
+### Tests (11944 files)
 ```
 Tests/AK/TestFlyString.cpp
 Tests/AK/TestHashMap.cpp
+Tests/AK/TestJSON.cpp
 Tests/AK/TestSinglyLinkedList.cpp
 Tests/AK/TestString.cpp
 Tests/AK/TestTime.cpp
@@ -2759,6 +2936,7 @@ Tests/Integration/test_network_monitoring.sh
 Tests/LibCore/CMakeLists.txt
 Tests/LibCore/TestCircuitBreaker.cpp
 Tests/LibCore/TestLibCoreAnonymousBuffer.cpp
+Tests/LibCore/TestLibCoreSharedSingleProducerCircularQueue.cpp
 Tests/LibCore/TestRetryPolicy.cpp
 Tests/LibCrypto/CMakeLists.txt
 Tests/LibCrypto/TestConstantTimeComparison.cpp
@@ -2967,7 +3145,12 @@ Tests/LibJS/Runtime/builtins/RegExp/RegExp.js
 Tests/LibJS/Runtime/builtins/RegExp/RegExp.legacy.js
 Tests/LibJS/Runtime/builtins/RegExp/RegExp.prototype.exec.js
 Tests/LibJS/Runtime/builtins/String/String.prototype.split.js
+Tests/LibJS/Runtime/builtins/Temporal/Duration/Duration.prototype.round.js
+Tests/LibJS/Runtime/builtins/Temporal/Duration/Duration.prototype.total.js
 Tests/LibJS/Runtime/builtins/Temporal/PlainDate/PlainDate.from.js
+Tests/LibJS/Runtime/builtins/TypedArray/TypedArray.prototype.subarray.js
+Tests/LibJS/Runtime/builtins/TypedArray/indexed-access-array-buffer-cache.js
+Tests/LibJS/Runtime/builtins/TypedArray/typed-array-limits.js
 Tests/LibJS/Runtime/builtins/WeakRef/WeakRef.prototype.deref.js
 Tests/LibJS/Runtime/functions/function-TypeError.js
 Tests/LibJS/Runtime/indexed-access-stress.js
@@ -2984,6 +3167,8 @@ Tests/LibJS/test-js.cpp
 Tests/LibJS/test-primitive-string.cpp
 Tests/LibMedia/TestCICP.cpp
 Tests/LibRegex/TestRegex.cpp
+Tests/LibTextCodec/TestTextDecoders.cpp
+Tests/LibURL/TestURL.cpp
 Tests/LibWasm/CMakeLists.txt
 Tests/LibWeb/Assets/HashSansNoSpace.woff
 Tests/LibWeb/Assets/av1-with-data-track.mp4
@@ -3036,25 +3221,49 @@ Tests/LibWeb/Crash/HTML/range-input-type-changed.html
 Tests/LibWeb/Crash/HTML/remove-iframe-in-pagehide-of-navigating-parent.html
 Tests/LibWeb/Crash/HTML/video-corrupt-source-fetch-completion.html
 Tests/LibWeb/Crash/HTML/video-with-data-track.html
+Tests/LibWeb/Crash/IndexedDB/many-open-requests.html
+Tests/LibWeb/Crash/Layout/intersection-observer-content-visibility-hidden-stale-paintable.html
+Tests/LibWeb/Crash/Layout/intersection-observer-details-descendants-slot-stale-paintable.html
+Tests/LibWeb/Crash/Layout/intersection-observer-shadow-host-display-none-stale-paintable.html
 Tests/LibWeb/Crash/Layout/text-overflow-ellipsis-atomic-inline.html
+Tests/LibWeb/Crash/SVG/gradient-stop-color-with-undefined-var.html
 Tests/LibWeb/Fixtures/http-test-server.py
 Tests/LibWeb/Layout/expected/block-and-inline/atomic-inline-with-calculated-vertical-align.txt
 Tests/LibWeb/Layout/expected/calc-with-fr.txt
+Tests/LibWeb/Layout/expected/details-closed.txt
+Tests/LibWeb/Layout/expected/details-open.txt
+Tests/LibWeb/Layout/expected/details-summary-default-ua-style.txt
 Tests/LibWeb/Layout/expected/flex/text-input-stretches-in-column-flex.txt
 Tests/LibWeb/Layout/expected/grid/nested-grid-limited-contribution-fit-content-row.txt
+Tests/LibWeb/Layout/expected/inline-flex-baseline-with-wrapped-hidden-text.txt
 Tests/LibWeb/Layout/expected/input-max-height-border-box.txt
 Tests/LibWeb/Layout/expected/input-min-height-border-box.txt
+Tests/LibWeb/Layout/expected/inside-list-item-content-offset.txt
+Tests/LibWeb/Layout/expected/layout-tree-update/content-visibility-hidden-clears-internal-svg-resource-subtree.txt
+Tests/LibWeb/Layout/expected/layout-tree-update/content-visibility-hidden-preserves-svg-resource-subtree.txt
+Tests/LibWeb/Layout/expected/layout-tree-update/content-visibility-hidden-rebuilds-internal-svg-resource-subtree.txt
+Tests/LibWeb/Layout/expected/list-marker-rtl.txt
 Tests/LibWeb/Layout/expected/min-content-width-with-min-width-zero-descendant.txt
+Tests/LibWeb/Layout/expected/pdf-viewer.txt
 Tests/LibWeb/Layout/expected/quirks/input-in-pre-quirks-mode.txt
 Tests/LibWeb/Layout/expected/select-innerhtml-optgroup-selected-option.txt
 Tests/LibWeb/Layout/expected/table-caption-auto-height.txt
+Tests/LibWeb/Layout/expected/table-replaced-child-percentage-height-in-auto-table.txt
+Tests/LibWeb/Layout/expected/table/align-is-inherited.txt
 Tests/LibWeb/Layout/expected/table/table-caption-inline-width.txt
 Tests/LibWeb/Layout/expected/table/top-caption-with-padding.txt
 Tests/LibWeb/Layout/input/block-and-inline/atomic-inline-with-calculated-vertical-align.html
 Tests/LibWeb/Layout/input/flex/text-input-stretches-in-column-flex.html
 Tests/LibWeb/Layout/input/grid/nested-grid-limited-contribution-fit-content-row.html
+Tests/LibWeb/Layout/input/inline-flex-baseline-with-wrapped-hidden-text.html
+Tests/LibWeb/Layout/input/layout-tree-update/content-visibility-hidden-clears-internal-svg-resource-subtree.html
+Tests/LibWeb/Layout/input/layout-tree-update/content-visibility-hidden-preserves-svg-resource-subtree.html
+Tests/LibWeb/Layout/input/layout-tree-update/content-visibility-hidden-rebuilds-internal-svg-resource-subtree.html
+Tests/LibWeb/Layout/input/list-marker-rtl.html
 Tests/LibWeb/Layout/input/min-content-width-with-min-width-zero-descendant.html
+Tests/LibWeb/Layout/input/pdf-viewer.pdf
 Tests/LibWeb/Layout/input/select-innerhtml-optgroup-selected-option.html
+Tests/LibWeb/Layout/input/table/align-is-inherited.html
 Tests/LibWeb/Layout/input/table/table-caption-inline-width.html
 Tests/LibWeb/Ref/expected/css-image-set-background-calc-resolution-ref.html
 Tests/LibWeb/Ref/expected/css-image-set-background-resolution-ref.html
@@ -3066,7 +3275,9 @@ Tests/LibWeb/Ref/expected/css/css-counter/counter-style-invalidation-list-style-
 Tests/LibWeb/Ref/expected/css/css-counter/counter-style-override-of-predefined-counter-style-persisted-into-descendent-scopes-ref.html
 Tests/LibWeb/Ref/expected/css/css-counter/counter-style-rule-modification-content-ref.html
 Tests/LibWeb/Ref/expected/css/css-counter/counter-style-shadow-tree-override-ref.html
+Tests/LibWeb/Ref/expected/typed-om-display-none-ref.html
 Tests/LibWeb/Ref/expected/wpt-import/css/css-flexbox/flexbox-margin-auto-horiz-002-ref.xhtml
+Tests/LibWeb/Ref/expected/wpt-import/gif/reset-no-gce-ref.html
 Tests/LibWeb/Ref/input/css-image-set-background-calc-resolution.html
 Tests/LibWeb/Ref/input/css-image-set-background-resolution.html
 Tests/LibWeb/Ref/input/css-image-set-background-type.html
@@ -3077,13 +3288,18 @@ Tests/LibWeb/Ref/input/css/css-counter/counter-style-invalidation-list-style-typ
 Tests/LibWeb/Ref/input/css/css-counter/counter-style-override-of-predefined-counter-style-persisted-into-descendent-scopes.html
 Tests/LibWeb/Ref/input/css/css-counter/counter-style-rule-modification-content.html
 Tests/LibWeb/Ref/input/css/css-counter/counter-style-shadow-tree-override.html
+Tests/LibWeb/Ref/input/typed-om-display-none.html
 Tests/LibWeb/Ref/input/wpt-import/css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml
+Tests/LibWeb/Ref/input/wpt-import/gif/reset-no-gce-1.html
+Tests/LibWeb/Ref/input/wpt-import/gif/reset-no-gce.gif
 Tests/LibWeb/Screenshot/data/svg-image-document-nested-clip-path.svg
+Tests/LibWeb/Screenshot/expected/filter-drop-shadow-no-bleed-with-overflow-child.png
 Tests/LibWeb/Screenshot/expected/svg-clip-path-and-mask.png
 Tests/LibWeb/Screenshot/expected/svg-clip-path-transform.png
 Tests/LibWeb/Screenshot/expected/svg-image-document-nested-clip-path.png
 Tests/LibWeb/Screenshot/expected/video-object-fit.png
 Tests/LibWeb/Screenshot/expected/video.png
+Tests/LibWeb/Screenshot/input/filter-drop-shadow-no-bleed-with-overflow-child.html
 Tests/LibWeb/Screenshot/input/svg-clip-path-transform.html
 Tests/LibWeb/Screenshot/input/svg-image-document-nested-clip-path.html
 Tests/LibWeb/Screenshot/input/video-object-fit.html
@@ -3102,15 +3318,30 @@ Tests/LibWeb/Text/expected/HTML/HTMLVideoElement-resize-event-on-track-change.tx
 Tests/LibWeb/Text/expected/HTML/WindowOrWorkerGlobalScope-reportError.txt
 Tests/LibWeb/Text/expected/HTML/autofocus-disconnected-element-skipped.txt
 Tests/LibWeb/Text/expected/HTML/canvas-stroke-style-gradient.txt
+Tests/LibWeb/Text/expected/HTML/document-write-flush-character-insertions.txt
 Tests/LibWeb/Text/expected/HTML/drag-and-drop-element.txt
 Tests/LibWeb/Text/expected/HTML/globalThis-is-WindowProxy.txt
 Tests/LibWeb/Text/expected/HTML/image-webp-served-from-svg-url.txt
+Tests/LibWeb/Text/expected/HTML/lzw-image-without-EOI-should-still-load.txt
+Tests/LibWeb/Text/expected/HTML/parser-streams-bytes.txt
+Tests/LibWeb/Text/expected/HTML/parser-streams-crlf-split.txt
+Tests/LibWeb/Text/expected/HTML/parser-streams-external-script.txt
+Tests/LibWeb/Text/expected/HTML/parser-streams-named-character-reference-split.txt
+Tests/LibWeb/Text/expected/HTML/parser-streams-script-split.txt
+Tests/LibWeb/Text/expected/HTML/parser-streams-style-split.txt
+Tests/LibWeb/Text/expected/HTML/parser-streams-utf8-split.txt
+Tests/LibWeb/Text/expected/HTML/parser-streams-with-document-write.txt
 Tests/LibWeb/Text/expected/HTML/picture-source-mutation.txt
 Tests/LibWeb/Text/expected/HTML/speculative-html-parser/smoke-test.txt
 Tests/LibWeb/Text/expected/HTML/window-open-about-blank-inherits-opener-origin.txt
+Tests/LibWeb/Text/expected/IntersectionObserver/observe-after-load-fires-initial-callback.txt
 Tests/LibWeb/Text/expected/Messaging/MessagePort-transfer-after-close-with-queued-message.txt
+Tests/LibWeb/Text/expected/ResizeObserver/observe-after-load-fires-initial-callback.txt
+Tests/LibWeb/Text/expected/ShadowDOM/slotted-does-not-match-nested-slot.txt
 Tests/LibWeb/Text/expected/Streams/ReadableStreamBYOBReader-read-non-transferable-buffer.txt
 Tests/LibWeb/Text/expected/WebAssembly-Memory-grow-shared-stale-view.txt
+Tests/LibWeb/Text/expected/WebAssembly-Memory-typed-array-cache-edge-cases.txt
+Tests/LibWeb/Text/expected/Worker/Worker-error-event-after-gc.txt
 Tests/LibWeb/Text/expected/Worker/Worker-offscreencanvas.txt
 Tests/LibWeb/Text/expected/all-window-properties.txt
 Tests/LibWeb/Text/expected/canvas/basic.txt
@@ -3136,6 +3367,7 @@ Tests/LibWeb/Text/expected/css-has-invalidation/has-child-combinator.txt
 Tests/LibWeb/Text/expected/css-has-invalidation/has-complex-sibling-subtree-scan-insights.txt
 Tests/LibWeb/Text/expected/css-has-invalidation/has-control-no-has-with-text-insert.txt
 Tests/LibWeb/Text/expected/css-has-invalidation/has-feature-metadata-buckets.txt
+Tests/LibWeb/Text/expected/css-has-invalidation/has-featureless-and-concrete-child-list-coalescing.txt
 Tests/LibWeb/Text/expected/css-has-invalidation/has-order-insensitive-plan-merge.txt
 Tests/LibWeb/Text/expected/css-has-invalidation/has-sibling-scan-insights.txt
 Tests/LibWeb/Text/expected/css-has-invalidation/has-subsequent-sibling.txt
@@ -3144,13 +3376,17 @@ Tests/LibWeb/Text/expected/css-has-invalidation/has-with-is.txt
 Tests/LibWeb/Text/expected/css-has-invalidation/has-with-not.txt
 Tests/LibWeb/Text/expected/css-has-invalidation/insertion-triggers-has.txt
 Tests/LibWeb/Text/expected/css-has-invalidation/multiple-has-rules.txt
+Tests/LibWeb/Text/expected/css/abspos-cb-inline-relative-with-block-descendant.txt
 Tests/LibWeb/Text/expected/css/adopted-stylesheet-pending-invalidation-survives-adoption.txt
 Tests/LibWeb/Text/expected/css/calc-coverage.txt
 Tests/LibWeb/Text/expected/css/child-change-no-op-invalidation-counters.txt
 Tests/LibWeb/Text/expected/css/child-state-pseudo-invalidation.txt
+Tests/LibWeb/Text/expected/css/constructed-stylesheet-shared-cache-shadow-scope.txt
+Tests/LibWeb/Text/expected/css/cssom-style-declaration-mutation-uses-existing-rule-cache.txt
 Tests/LibWeb/Text/expected/css/custom-property-registration-document-adoption.txt
 Tests/LibWeb/Text/expected/css/custom-property-registration-invalidation.txt
 Tests/LibWeb/Text/expected/css/dir-auto-text-mutation-descendant-invalidation.txt
+Tests/LibWeb/Text/expected/css/display-math-serialization.txt
 Tests/LibWeb/Text/expected/css/fit-content-composition.txt
 Tests/LibWeb/Text/expected/css/fit-content-interpolation.txt
 Tests/LibWeb/Text/expected/css/font-face-load-dedups-same-url.txt
@@ -3172,7 +3408,10 @@ Tests/LibWeb/Text/expected/css/negative-border-radius-disallowed.txt
 Tests/LibWeb/Text/expected/css/negative-overflow-clip-margin-length-disallowed.txt
 Tests/LibWeb/Text/expected/css/no-combinators-allowed-in-compound-selector-in-pseudos.txt
 Tests/LibWeb/Text/expected/css/part-has-target.txt
+Tests/LibWeb/Text/expected/css/range-descriptor-invalid-keyword.txt
 Tests/LibWeb/Text/expected/css/shadow-host-animation-name-uses-shadow-root-keyframes.txt
+Tests/LibWeb/Text/expected/css/shadow-media-query-invalidation-stays-scoped.txt
+Tests/LibWeb/Text/expected/css/shadow-root-dirty-style-update-before-layout.txt
 Tests/LibWeb/Text/expected/css/shadow-root-host-keyframes-invalidation.txt
 Tests/LibWeb/Text/expected/css/shadow-root-host-light-dom-trailing-universal-invalidation.txt
 Tests/LibWeb/Text/expected/css/shadow-root-keyframes-shadow-local-invalidation-counters.txt
@@ -3190,7 +3429,25 @@ Tests/LibWeb/Text/expected/css/shadow-slotted-animation-name-prefers-document-ke
 Tests/LibWeb/Text/expected/css/shadow-slotted-animation-name-shared-constructable-sheet-prefers-document-keyframes.txt
 Tests/LibWeb/Text/expected/css/shadow-slotted-animation-name-uses-shadow-root-keyframes.txt
 Tests/LibWeb/Text/expected/css/slot-style-inheritance.txt
+Tests/LibWeb/Text/expected/css/stroke-dasharray-animation.txt
 Tests/LibWeb/Text/expected/css/style-attribute-no-op-invalidation-counters.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/adversarial-negation-hunt.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/attribute-class-match-set-presence.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/attribute-id-match-set-presence.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/attribute-match-set-presence-edge-cases.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/defined-concrete-triggers.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/has-concrete-argument-triggers.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/has-concrete-structural-triggers.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/has-mutation-root-filter.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/has-sibling-combinator-non-subject.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/has-structural-feature-filter.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/media-eval-adopted-sheet-counters.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/media-eval-style-element-counters.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/media-list-shadow-mutation-counters.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/rightmost-pseudo-self-invalidation-quirks.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/rightmost-pseudo-self-invalidation.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/same-parent-move-root-only.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/sibling-structural-invalidation-root-only.txt
 Tests/LibWeb/Text/expected/css/style-invalidation/structural-child-mutations.txt
 Tests/LibWeb/Text/expected/css/style-invalidation/structural-child-part-document-stress.txt
 Tests/LibWeb/Text/expected/css/style-invalidation/structural-child-part-shadow-detached-stress.txt
@@ -3233,14 +3490,18 @@ Tests/LibWeb/Text/expected/css/stylesheet-add-remove-style-invalidation-counters
 Tests/LibWeb/Text/expected/css/stylesheet-add-targeted-invalidation-shadow-root.txt
 Tests/LibWeb/Text/expected/css/stylesheet-disabled-toggle-invalidation.txt
 Tests/LibWeb/Text/expected/css/stylesheet-remove-pseudo-element-only-invalidation.txt
+Tests/LibWeb/Text/expected/css/typed-om-display-reification.txt
 Tests/LibWeb/Text/expected/display_list/svg-in-img-is-nested.txt
 Tests/LibWeb/Text/expected/font-cascade-space-fallback.txt
+Tests/LibWeb/Text/expected/hit_testing/ligature.txt
 Tests/LibWeb/Text/expected/image-decode-resolves-after-state-is-completely-available.txt
 Tests/LibWeb/Text/expected/indexeddb-gc-closes-unreachable-connection.txt
 Tests/LibWeb/Text/expected/interpolate-alpha-premultiplied.txt
 Tests/LibWeb/Text/expected/interpolation-longhand-properties.txt
+Tests/LibWeb/Text/expected/load-event-fires-with-unused-font-face.txt
 Tests/LibWeb/Text/expected/navigation/history-edge-cases-back-forward.txt
 Tests/LibWeb/Text/expected/navigation/history-same-document-edge-cases.txt
+Tests/LibWeb/Text/expected/navigation/link-click-after-replace-state-in-click-handler.txt
 Tests/LibWeb/Text/expected/navigation/top-level-navigation-not-blocked-by-connect-src.txt
 Tests/LibWeb/Text/expected/recompute-inherited-style-of-display-none-descendant.txt
 Tests/LibWeb/Text/expected/sandbox/download-scanning.txt
@@ -3252,9 +3513,17 @@ Tests/LibWeb/Text/expected/wpt-import/WebCryptoAPI/import_export/okp_importKey_f
 Tests/LibWeb/Text/expected/wpt-import/WebCryptoAPI/import_export/okp_importKey_failures_Ed448.tentative.https.any.txt
 Tests/LibWeb/Text/expected/wpt-import/WebCryptoAPI/import_export/okp_importKey_failures_X25519.https.any.txt
 Tests/LibWeb/Text/expected/wpt-import/WebCryptoAPI/import_export/okp_importKey_failures_X448.tentative.https.any.txt
+Tests/LibWeb/Text/expected/wpt-import/css/css-animations/display-interpolation.txt
+Tests/LibWeb/Text/expected/wpt-import/css/css-animations/display-none-dont-cancel.tentative.txt
+Tests/LibWeb/Text/expected/wpt-import/css/css-animations/display-none-to-display-block-dont-cancel.tentative.txt
+Tests/LibWeb/Text/expected/wpt-import/css/css-cascade/presentational-hints-cascade.txt
+Tests/LibWeb/Text/expected/wpt-import/css/css-cascade/presentational-hints-rollback.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-color/parsing/color-computed-color-mix-function.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-color/parsing/color-mix-out-of-gamut.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-color/parsing/color-valid-color-mix-function.txt
+Tests/LibWeb/Text/expected/wpt-import/css/css-display/animations/display-interpolation.txt
+Tests/LibWeb/Text/expected/wpt-import/css/css-display/display-math-on-non-mathml-elements.txt
+Tests/LibWeb/Text/expected/wpt-import/css/css-display/display-math-on-pseudo-elements-001.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-fonts/parsing/font-face-src-tech.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-grid/parsing/grid-area-computed.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-images/image-set/image-set-parsing.txt
@@ -3282,6 +3551,11 @@ Tests/LibWeb/Text/expected/wpt-import/css/selectors/focus-visible-020.txt
 Tests/LibWeb/Text/expected/wpt-import/css/selectors/invalidation/part-lang.txt
 Tests/LibWeb/Text/expected/wpt-import/custom-elements/CustomElementRegistry.txt
 Tests/LibWeb/Text/expected/wpt-import/encoding/encodeInto.any.txt
+Tests/LibWeb/Text/expected/wpt-import/encoding/streams/backpressure.any.txt
+Tests/LibWeb/Text/expected/wpt-import/encoding/streams/encode-bad-chunks.any.txt
+Tests/LibWeb/Text/expected/wpt-import/encoding/streams/invalid-realm.window.txt
+Tests/LibWeb/Text/expected/wpt-import/encoding/streams/readable-writable-properties.any.txt
+Tests/LibWeb/Text/expected/wpt-import/encoding/streams/realms.window.txt
 Tests/LibWeb/Text/expected/wpt-import/html/canvas/element/text/2d.text.font.default.txt
 Tests/LibWeb/Text/expected/wpt-import/html/canvas/element/text/2d.text.font.parse.basic.txt
 Tests/LibWeb/Text/expected/wpt-import/html/canvas/element/text/2d.text.font.parse.complex.txt
@@ -3324,6 +3598,12 @@ Tests/LibWeb/Text/expected/wpt-import/html/interaction/focus/the-autofocus-attri
 Tests/LibWeb/Text/expected/wpt-import/html/rendering/widgets/input-text-size.txt
 Tests/LibWeb/Text/expected/wpt-import/html/semantics/embedded-content/the-iframe-element/same-origin-contextual-fragment.txt
 Tests/LibWeb/Text/expected/wpt-import/html/semantics/forms/the-input-element/input-valueasnumber.txt
+Tests/LibWeb/Text/expected/wpt-import/html/syntax/parsing/html5lib_domjs-unsafe@run_type=write_single.txt
+Tests/LibWeb/Text/expected/wpt-import/html/syntax/parsing/html5lib_plain-text-unsafe-write@run_type=write_single.txt
+Tests/LibWeb/Text/expected/wpt-import/html/syntax/parsing/html5lib_plain-text-unsafe-write_single@run_type=write_single.txt
+Tests/LibWeb/Text/expected/wpt-import/html/syntax/parsing/html5lib_plain-text-unsafe@run_type=write_single.txt
+Tests/LibWeb/Text/expected/wpt-import/html/syntax/parsing/html5lib_scripted_webkit01@run_type=write_single.txt
+Tests/LibWeb/Text/expected/wpt-import/html/webappapis/dynamic-markup-insertion/document-write/iframe_003.txt
 Tests/LibWeb/Text/expected/wpt-import/html/webappapis/dynamic-markup-insertion/document-write/script_006.txt
 Tests/LibWeb/Text/expected/wpt-import/html/webappapis/dynamic-markup-insertion/document-write/script_010.txt
 Tests/LibWeb/Text/expected/wpt-import/html/webappapis/dynamic-markup-insertion/document-write/script_012.txt
@@ -3345,14 +3625,28 @@ Tests/LibWeb/Text/input/HTML/canvas-stroke-style-gradient.html
 Tests/LibWeb/Text/input/HTML/drag-and-drop-element.html
 Tests/LibWeb/Text/input/HTML/globalThis-is-WindowProxy.html
 Tests/LibWeb/Text/input/HTML/image-webp-served-from-svg-url.html
+Tests/LibWeb/Text/input/HTML/lzw-image-without-EOI-should-still-load.html
 Tests/LibWeb/Text/input/HTML/media-source-buffered.html
 Tests/LibWeb/Text/input/HTML/media-source-setup.html
+Tests/LibWeb/Text/input/HTML/parser-streams-bytes.html
+Tests/LibWeb/Text/input/HTML/parser-streams-crlf-split.html
+Tests/LibWeb/Text/input/HTML/parser-streams-external-script.html
+Tests/LibWeb/Text/input/HTML/parser-streams-named-character-reference-split.html
+Tests/LibWeb/Text/input/HTML/parser-streams-script-split.html
+Tests/LibWeb/Text/input/HTML/parser-streams-style-split.html
+Tests/LibWeb/Text/input/HTML/parser-streams-utf8-split.html
+Tests/LibWeb/Text/input/HTML/parser-streams-with-document-write.html
 Tests/LibWeb/Text/input/HTML/picture-source-mutation.html
 Tests/LibWeb/Text/input/HTML/speculative-html-parser/smoke-test.html
 Tests/LibWeb/Text/input/HTML/window-open-about-blank-inherits-opener-origin.html
+Tests/LibWeb/Text/input/IntersectionObserver/observe-after-load-fires-initial-callback.html
 Tests/LibWeb/Text/input/Messaging/MessagePort-transfer-after-close-with-queued-message.html
+Tests/LibWeb/Text/input/ResizeObserver/observe-after-load-fires-initial-callback.html
+Tests/LibWeb/Text/input/ShadowDOM/slotted-does-not-match-nested-slot.html
 Tests/LibWeb/Text/input/Streams/ReadableStreamBYOBReader-read-non-transferable-buffer.html
 Tests/LibWeb/Text/input/WebAssembly-Memory-grow-shared-stale-view.html
+Tests/LibWeb/Text/input/WebAssembly-Memory-typed-array-cache-edge-cases.html
+Tests/LibWeb/Text/input/Worker/Worker-error-event-after-gc.html
 Tests/LibWeb/Text/input/canvas/random-function.html
 Tests/LibWeb/Text/input/canvas/style-up-to-date-before-font-absolutization.html
 Tests/LibWeb/Text/input/canvas/textmetrics-actual-bounding-box-accent.html
@@ -3374,6 +3668,7 @@ Tests/LibWeb/Text/input/css-has-invalidation/has-child-combinator.html
 Tests/LibWeb/Text/input/css-has-invalidation/has-complex-sibling-subtree-scan-insights.html
 Tests/LibWeb/Text/input/css-has-invalidation/has-control-no-has-with-text-insert.html
 Tests/LibWeb/Text/input/css-has-invalidation/has-feature-metadata-buckets.html
+Tests/LibWeb/Text/input/css-has-invalidation/has-featureless-and-concrete-child-list-coalescing.html
 Tests/LibWeb/Text/input/css-has-invalidation/has-order-insensitive-plan-merge.html
 Tests/LibWeb/Text/input/css-has-invalidation/has-sibling-scan-insights.html
 Tests/LibWeb/Text/input/css-has-invalidation/has-subsequent-sibling.html
@@ -3382,12 +3677,16 @@ Tests/LibWeb/Text/input/css-has-invalidation/has-with-is.html
 Tests/LibWeb/Text/input/css-has-invalidation/has-with-not.html
 Tests/LibWeb/Text/input/css-has-invalidation/insertion-triggers-has.html
 Tests/LibWeb/Text/input/css-has-invalidation/multiple-has-rules.html
+Tests/LibWeb/Text/input/css/abspos-cb-inline-relative-with-block-descendant.html
 Tests/LibWeb/Text/input/css/adopted-stylesheet-pending-invalidation-survives-adoption.html
 Tests/LibWeb/Text/input/css/child-change-no-op-invalidation-counters.html
 Tests/LibWeb/Text/input/css/child-state-pseudo-invalidation.html
+Tests/LibWeb/Text/input/css/constructed-stylesheet-shared-cache-shadow-scope.html
+Tests/LibWeb/Text/input/css/cssom-style-declaration-mutation-uses-existing-rule-cache.html
 Tests/LibWeb/Text/input/css/custom-property-registration-document-adoption.html
 Tests/LibWeb/Text/input/css/custom-property-registration-invalidation.html
 Tests/LibWeb/Text/input/css/dir-auto-text-mutation-descendant-invalidation.html
+Tests/LibWeb/Text/input/css/display-math-serialization.html
 Tests/LibWeb/Text/input/css/fit-content-composition.html
 Tests/LibWeb/Text/input/css/fit-content-interpolation.html
 Tests/LibWeb/Text/input/css/font-face-load-dedups-same-url.html
@@ -3409,7 +3708,10 @@ Tests/LibWeb/Text/input/css/negative-border-radius-disallowed.html
 Tests/LibWeb/Text/input/css/negative-overflow-clip-margin-length-disallowed.html
 Tests/LibWeb/Text/input/css/no-combinators-allowed-in-compound-selector-in-pseudos.html
 Tests/LibWeb/Text/input/css/part-has-target.html
+Tests/LibWeb/Text/input/css/range-descriptor-invalid-keyword.html
 Tests/LibWeb/Text/input/css/shadow-host-animation-name-uses-shadow-root-keyframes.html
+Tests/LibWeb/Text/input/css/shadow-media-query-invalidation-stays-scoped.html
+Tests/LibWeb/Text/input/css/shadow-root-dirty-style-update-before-layout.html
 Tests/LibWeb/Text/input/css/shadow-root-host-keyframes-invalidation.html
 Tests/LibWeb/Text/input/css/shadow-root-host-light-dom-trailing-universal-invalidation.html
 Tests/LibWeb/Text/input/css/shadow-root-keyframes-shadow-local-invalidation-counters.html
@@ -3427,7 +3729,25 @@ Tests/LibWeb/Text/input/css/shadow-slotted-animation-name-prefers-document-keyfr
 Tests/LibWeb/Text/input/css/shadow-slotted-animation-name-shared-constructable-sheet-prefers-document-keyframes.html
 Tests/LibWeb/Text/input/css/shadow-slotted-animation-name-uses-shadow-root-keyframes.html
 Tests/LibWeb/Text/input/css/slot-style-inheritance.html
+Tests/LibWeb/Text/input/css/stroke-dasharray-animation.html
 Tests/LibWeb/Text/input/css/style-attribute-no-op-invalidation-counters.html
+Tests/LibWeb/Text/input/css/style-invalidation/adversarial-negation-hunt.html
+Tests/LibWeb/Text/input/css/style-invalidation/attribute-class-match-set-presence.html
+Tests/LibWeb/Text/input/css/style-invalidation/attribute-id-match-set-presence.html
+Tests/LibWeb/Text/input/css/style-invalidation/attribute-match-set-presence-edge-cases.html
+Tests/LibWeb/Text/input/css/style-invalidation/defined-concrete-triggers.html
+Tests/LibWeb/Text/input/css/style-invalidation/has-concrete-argument-triggers.html
+Tests/LibWeb/Text/input/css/style-invalidation/has-concrete-structural-triggers.html
+Tests/LibWeb/Text/input/css/style-invalidation/has-mutation-root-filter.html
+Tests/LibWeb/Text/input/css/style-invalidation/has-sibling-combinator-non-subject.html
+Tests/LibWeb/Text/input/css/style-invalidation/has-structural-feature-filter.html
+Tests/LibWeb/Text/input/css/style-invalidation/media-eval-adopted-sheet-counters.html
+Tests/LibWeb/Text/input/css/style-invalidation/media-eval-style-element-counters.html
+Tests/LibWeb/Text/input/css/style-invalidation/media-list-shadow-mutation-counters.html
+Tests/LibWeb/Text/input/css/style-invalidation/rightmost-pseudo-self-invalidation-quirks.html
+Tests/LibWeb/Text/input/css/style-invalidation/rightmost-pseudo-self-invalidation.html
+Tests/LibWeb/Text/input/css/style-invalidation/same-parent-move-root-only.html
+Tests/LibWeb/Text/input/css/style-invalidation/sibling-structural-invalidation-root-only.html
 Tests/LibWeb/Text/input/css/style-invalidation/structural-child-mutations.html
 Tests/LibWeb/Text/input/css/style-invalidation/structural-child-part-document-stress.html
 Tests/LibWeb/Text/input/css/style-invalidation/structural-child-part-shadow-detached-stress.html
@@ -3471,14 +3791,19 @@ Tests/LibWeb/Text/input/css/stylesheet-add-remove-style-invalidation-counters.ht
 Tests/LibWeb/Text/input/css/stylesheet-add-targeted-invalidation-shadow-root.html
 Tests/LibWeb/Text/input/css/stylesheet-disabled-toggle-invalidation.html
 Tests/LibWeb/Text/input/css/stylesheet-remove-pseudo-element-only-invalidation.html
+Tests/LibWeb/Text/input/css/typed-om-display-reification.html
 Tests/LibWeb/Text/input/font-cascade-space-fallback.html
+Tests/LibWeb/Text/input/hit_testing/ligature.html
 Tests/LibWeb/Text/input/image-decode-resolves-after-state-is-completely-available.html
 Tests/LibWeb/Text/input/indexeddb-commit-error-event-order.html
 Tests/LibWeb/Text/input/indexeddb-gc-closes-unreachable-connection.html
+Tests/LibWeb/Text/input/load-event-fires-with-unused-font-face.html
+Tests/LibWeb/Text/input/load-event-fires-with-unused-font-face.html.headers
 Tests/LibWeb/Text/input/localStorage.html
 Tests/LibWeb/Text/input/media-element-debug.html
 Tests/LibWeb/Text/input/navigation/history-edge-cases-back-forward.html
 Tests/LibWeb/Text/input/navigation/history-same-document-edge-cases.html
+Tests/LibWeb/Text/input/navigation/link-click-after-replace-state-in-click-handler.html
 Tests/LibWeb/Text/input/navigation/top-level-navigation-not-blocked-by-connect-src.html
 Tests/LibWeb/Text/input/recompute-inherited-style-of-display-none-descendant.html
 Tests/LibWeb/Text/input/sandbox/QUICK_START.md
@@ -3495,6 +3820,11 @@ Tests/LibWeb/Text/input/wpt-import/WebCryptoAPI/import_export/okp_importKey_Ed44
 Tests/LibWeb/Text/input/wpt-import/WebCryptoAPI/import_export/okp_importKey_Ed448.tentative.https.any.js
 Tests/LibWeb/Text/input/wpt-import/WebCryptoAPI/import_export/okp_importKey_failures_Ed448.tentative.https.any.html
 Tests/LibWeb/Text/input/wpt-import/WebCryptoAPI/import_export/okp_importKey_failures_Ed448.tentative.https.any.js
+Tests/LibWeb/Text/input/wpt-import/css/css-animations/display-interpolation.html
+Tests/LibWeb/Text/input/wpt-import/css/css-animations/display-none-dont-cancel.tentative.html
+Tests/LibWeb/Text/input/wpt-import/css/css-animations/display-none-to-display-block-dont-cancel.tentative.html
+Tests/LibWeb/Text/input/wpt-import/css/css-cascade/presentational-hints-cascade.html
+Tests/LibWeb/Text/input/wpt-import/css/css-cascade/presentational-hints-rollback.html
 Tests/LibWeb/Text/input/wpt-import/css/css-color/parsing/color-mix-out-of-gamut.html
 Tests/LibWeb/Text/input/wpt-import/css/css-images/image-set/image-set-parsing.html
 Tests/LibWeb/Text/input/wpt-import/css/css-shapes/parsing/shape-outside-valid-position.html
@@ -3504,6 +3834,7 @@ Tests/LibWeb/Text/input/wpt-import/css/css-shapes/shape-outside/values/shape-out
 Tests/LibWeb/Text/input/wpt-import/css/css-shapes/shape-outside/values/shape-outside-circle-011.html
 Tests/LibWeb/Text/input/wpt-import/css/css-shapes/shape-outside/values/shape-outside-ellipse-009.html
 Tests/LibWeb/Text/input/wpt-import/css/css-shapes/shape-outside/values/support/parsing-utils.js
+Tests/LibWeb/Text/input/wpt-import/css/support/60x60-green.png
 Tests/LibWeb/Text/input/wpt-import/custom-elements/CustomElementRegistry.html
 Tests/LibWeb/Text/input/wpt-import/html/canvas/element/text/2d.text.font.default.html
 Tests/LibWeb/Text/input/wpt-import/html/canvas/element/text/2d.text.font.parse.basic.html
@@ -3591,6 +3922,8 @@ Tests/Manual/FormMonitor/test-form-fieldtypes.html
 Tests/Manual/FormMonitor/test-form-index.html
 Tests/Manual/FormMonitor/test-form-insecure.html
 Tests/Manual/FormMonitor/test-form-sameorigin.html
+Tests/Meta/CMakeLists.txt
+Tests/Meta/test-css-grammar-parser.py
 Tests/Playwright/A11Y_TESTS_INDEX.md
 Tests/Playwright/CONSOLIDATION_SUMMARY.md
 Tests/Playwright/DOCKER_RESTART_INSTRUCTIONS.md
@@ -14716,6 +15049,11 @@ docs/WASMTIME_QUICK_START.md
 docs/WASMTIME_RESOURCE_LIMITS.md
 docs/WASM_MODULE_QUICK_REFERENCE.md
 docs/WASM_MODULE_SPECIFICATION.md
+```
+
+### pyproject.toml (1 files)
+```
+pyproject.toml
 ```
 
 ### rust-toolchain.toml (1 files)
