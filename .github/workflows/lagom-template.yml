@@ -93,7 +93,9 @@ jobs:
           fi
 
           if ${{ inputs.os_name == 'Linux' && inputs.build_preset == 'Sanitizer' }} ; then
-            CMAKE_OPTIONS="$CMAKE_OPTIONS -DLADYBIRD_GUI_FRAMEWORK=Gtk"
+            # Fork: use Qt instead of Gtk; plain runners get Qt from apt, while Gtk
+            # would be built from source by vcpkg without the upstream CI container.
+            CMAKE_OPTIONS="$CMAKE_OPTIONS -DLADYBIRD_GUI_FRAMEWORK=Qt"
           fi
 
           if ${{ inputs.clang_plugins }} ; then

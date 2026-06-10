@@ -18,6 +18,14 @@ inputs:
     description: 'Whether the setup is for building or linting'
     required: false
     default: 'build'
+  llvm_version:
+    description: 'LLVM/Clang version to install (fork runs on plain runners without the upstream CI container)'
+    required: false
+    default: '21'
+  gcc_version:
+    description: 'GCC version to install (fork runs on plain runners without the upstream CI container)'
+    required: false
+    default: '14'
 outputs:
   ccache_path:
     description: 'Path to the ccache directory'
