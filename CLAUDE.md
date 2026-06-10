@@ -13,6 +13,8 @@ Fork-specific features:
 
 ## Commands
 
+> **Windows host note**: Ladybird does not build natively on Windows. On this machine, run all commands below inside WSL2. If vcpkg fails with `failed to unpack tree object ... while loading libavif`, check out the vcpkg baseline commit first: `cd ~/vcpkg && git checkout b0b3de1b1a0aa4b8f2822460aa7f42f991629b3f`. See `../claudedocs/HOW_TO_BUILD_LADYBIRD_WINDOWS.md`.
+
 ### Build and Run
 ```bash
 ./Meta/ladybird.py build              # Build all targets
@@ -53,7 +55,10 @@ cmake --preset Sanitizer && cmake --build --preset Sanitizer && ctest --preset S
 ```bash
 ninja -C Build/release check-style        # clang-format check
 ninja -C Build/release lint-shell-scripts  # Shell script linting
+python3 Meta/check-style.py               # Style check without a build dir
 ```
+
+Pre-commit hooks are available via `.pre-commit-config.yaml`.
 
 ### Debugging
 ```bash
@@ -169,6 +174,8 @@ static ErrorOr<NonnullOwnPtr<MyClass>> create() { ... }
 - `class` for types with methods (private members with `m_`), `struct` for POD (public, no prefix)
 - Prefer enums over bool parameters at call sites: `AllowFooBar::Yes` not `true`
 - Curly braces may be omitted only for single-line bodies; if any branch needs braces, all branches get them
+- No commented-out code in commits
+- No contractions, slang, idioms, or jokes in user-facing strings
 
 ### Adding New Web IDL Interfaces
 1. Create `.idl` file in appropriate `LibWeb/` subdirectory
