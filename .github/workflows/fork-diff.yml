@@ -1,0 +1,87 @@
+name: Fork Diff Report
+on:
+  schedule:
+    - cron: "0 8 * * 1"   # Mondays 8 AM UTC (before sync check)
+  workflow_dispatch:
+
+jobs:
+  fork-diff:
+    name: Generate fork divergence report
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/LadybirdBrowser/ladybird.git
+          git fetch upstream master
+
+      - name: Generate divergence report
+        id: report
+        run: |
+          UPSTREAM_SHA=$(git rev-parse --short upstream/master)
+          FORK_SHA=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%d)
+          BEHIND=$(git rev-list HEAD..upstream/master --count)
+          AHEAD=$(git rev-list upstream/master..HEAD --count)
+
+          # All files that differ between fork and upstream
+          DIFF_FILES=$(git diff --name-only upstream/master HEAD)
+
+          # Build report
+          cat > /tmp/fork-diff-report.md << MDEOF
+          # Fork Divergence Report
+
+          **Date**: ${DATE}
+          **Fork**: quanticsoul4772/ladybird @ ${FORK_SHA}
+          **Upstream**: LadybirdBrowser/ladybird @ ${UPSTREAM_SHA}
+          **Behind**: ${BEHIND} commits | **Ahead**: ${AHEAD} commits
+
+          ## Files diverged from upstream by subsystem
+
+          MDEOF
+
+          # Group by top-level directory
+          declare -A groups
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            top=$(echo "$file" | cut -d'/' -f1)
+            groups["$top"]="${groups[$top]:-}${file}\n"
+          done <<< "$DIFF_FILES"
+
+          TOTAL=0
+          for key in $(echo "${!groups[@]}" | tr ' ' '\n' | sort); do
+            count=$(echo -e "${groups[$key]}" | grep -c '.' || true)
+            TOTAL=$((TOTAL + count))
+            echo "### ${key} (${count} files)" >> /tmp/fork-diff-report.md
+            echo '```' >> /tmp/fork-diff-report.md
+            echo -e "${groups[$key]}" | grep -v '^$' | sort >> /tmp/fork-diff-report.md
+            echo '```' >> /tmp/fork-diff-report.md
+            echo "" >> /tmp/fork-diff-report.md
+          done
+
+          # Insert total after header
+          sed -i "s/## Files diverged from upstream by subsystem/## Files diverged from upstream by subsystem (${TOTAL} total)/" \
+            /tmp/fork-diff-report.md
+
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+          echo "upstream_sha=$UPSTREAM_SHA" >> $GITHUB_OUTPUT
+
+      - name: Commit report to repo
+        run: |
+          mkdir -p .github/fork-status
+          cp /tmp/fork-diff-report.md .github/fork-status/divergence-report.md
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add .github/fork-status/divergence-report.md
+          if git diff --cached --quiet; then
+            echo "Report unchanged — no commit needed"
+          else
+            git commit -m "chore: update fork divergence report (${{ steps.report.outputs.date }}, ${{ steps.report.outputs.total }} files)"
+            git push origin master
+          fi

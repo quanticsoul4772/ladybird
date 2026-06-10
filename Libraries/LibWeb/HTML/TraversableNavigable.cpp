@@ -1512,15 +1512,8 @@ void TraversableNavigable::clear_the_forward_session_history()
         auto& entry_list = entry_lists.take_first();
 
         // 1. Remove every session history entry from entryList that has a step greater than step.
-        //    NOTE: According to spec, entries with "pending" step are not removed, as they don't have
-        //    a numeric step value. We use .get<int>() which will only match numeric steps.
         entry_list.remove_all_matching([step](auto& entry) {
-            // Only remove entries with numeric steps that are greater than the current step.
-            // Entries with "pending" step are left untouched (spec compliant).
-            auto const& step_variant = entry->step();
-            if (auto* entry_step = step_variant.template get_pointer<int>())
-                return *entry_step > step;
-            return false;
+            return entry->step().template get<int>() > step;
         });
 
         // 2. For each entry of entryList:

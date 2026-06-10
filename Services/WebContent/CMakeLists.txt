@@ -1,6 +1,7 @@
 include(audio)
 
 set(SOURCES
+    C2ThreatMonitor.cpp
     CompositorConnection.cpp
     ConnectionFromClient.cpp
     ConsoleGlobalEnvironmentExtensions.cpp
@@ -11,6 +12,7 @@ set(SOURCES
     WebContentCompositorHost.cpp
     WebContentConsoleClient.cpp
     WebDriverConnection.cpp
+    URLVerdictService.cpp
     WebUIConnection.cpp
 )
 

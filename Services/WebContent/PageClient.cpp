@@ -44,6 +44,7 @@
 #include <LibWebView/SentinelConfig.h>
 #include <LibWebView/SiteIsolation.h>
 #include <LibWebView/ViewImplementation.h>
+#include <WebContent/C2ThreatMonitor.h>
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/DevToolsConsoleClient.h>
 #include <WebContent/PageClient.h>
@@ -112,6 +113,26 @@ PageClient::PageClient(PageHost& owner, u64 id)
         dbgln("Fingerprinting detector initialized successfully");
     }
 
+    // Initialize C2ThreatMonitor for post-load beaconing detection.
+    auto c2_result = C2ThreatMonitor::create();
+    if (c2_result.is_error()) {
+        dbgln("Warning: Failed to create C2ThreatMonitor: {}", c2_result.error());
+        dbgln("C2 beaconing detection will be disabled for this page");
+    } else {
+        m_c2_monitor = c2_result.release_value();
+        dbgln("C2ThreatMonitor initialized successfully");
+    }
+
+    // Initialize DNSAnalyzer for pre-render DGA (domain generation algorithm) detection.
+    auto dns_result = Sentinel::DNSAnalyzer::create();
+    if (dns_result.is_error()) {
+        dbgln("Warning: Failed to create DNSAnalyzer: {}", dns_result.error());
+        dbgln("Pre-render DGA detection will be disabled for this page");
+    } else {
+        m_dns_analyzer = dns_result.release_value();
+        dbgln("DNSAnalyzer initialized successfully");
+    }
+
     // Initialize FormMonitor with PolicyGraph for persistent credential protection
     // Check for test environment database path override
     auto db_path_env = getenv("LADYBIRD_SENTINEL_DB");
@@ -126,7 +147,7 @@ PageClient::PageClient(PageHost& owner, u64 id)
         if (home) {
             db_path = ByteString::formatted("{}/.local/share/Ladybird/PolicyGraph/policies.db", home);
         } else {
-            db_path = "/tmp/sentinel/policies.db"sv;  // Fallback
+            db_path = "/tmp/sentinel/policies.db"sv; // Fallback
         }
     }
 
@@ -424,6 +445,25 @@ void PageClient::page_did_middle_click_link(URL::URL const& url, ByteString cons
     client().async_did_middle_click_link(m_id, url, target, modifiers);
 }
 
+void PageClient::page_did_load_url(URL::URL const& url)
+{
+    // Pre-render DGA check: analyze the domain before the page loads.
+    // Fail-open: if m_dns_analyzer wasn't initialized, skip silently.
+    if (m_dns_analyzer) {
+        auto host = url.host();
+        auto domain = host.has<String>() ? host.get<String>() : String {};
+        if (!domain.is_empty()) {
+            auto result = m_dns_analyzer->analyze_dga(domain);
+            if (!result.is_error()) {
+                auto analysis = result.release_value();
+                if (analysis.is_dga && analysis.confidence > 0.7f) {
+                    dbgln("Sentinel DGA alert: {} (confidence {:.2f}) — {}", domain, analysis.confidence, analysis.explanation);
+                }
+            }
+        }
+    }
+}
+
 void PageClient::page_did_start_loading(URL::URL const& url, bool is_redirect)
 {
     // Reset user interaction tracking on navigation (detect auto-submit after page load)
@@ -455,6 +495,11 @@ void PageClient::page_did_change_active_document_in_top_level_browsing_context(W
 void PageClient::page_did_finish_loading(URL::URL const& url)
 {
     client().async_did_finish_loading(m_id, url);
+
+    // Record navigation for C2 beaconing analysis.
+    // Fail-open: if m_c2_monitor wasn't initialized, skip silently.
+    if (m_c2_monitor)
+        m_c2_monitor->record_navigation(url);
 }
 
 void PageClient::page_did_finish_test(String const& text)
@@ -774,7 +819,7 @@ void PageClient::page_did_submit_form(Web::HTML::HTMLFormElement& form, String c
             // Check if this submission has been blocked by user
             if (m_form_monitor->is_blocked_submission(alert->form_origin, alert->action_origin)) {
                 dbgln("FormMonitor: BLOCKED submission from {} to {} (user previously blocked this)",
-                      alert->form_origin, alert->action_origin);
+                    alert->form_origin, alert->action_origin);
                 // NOTE: Form has already been submitted by the browser at this point.
                 // We log the blocking but can't prevent the actual HTTP request.
                 // Future enhancement: Prevent submission earlier in the pipeline.
@@ -808,8 +853,7 @@ void PageClient::page_did_submit_form(Web::HTML::HTMLFormElement& form, String c
                 alert->uses_https,
                 alert->has_password_field,
                 alert->is_cross_origin,
-                description
-            );
+                description);
 
             dbgln("FormMonitor: Sent credential exfiltration alert via IPC");
         }

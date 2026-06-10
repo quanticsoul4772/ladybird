@@ -17,7 +17,7 @@ namespace Web::HTML {
 WebIDL::UnsignedLongLong NavigatorConcurrentHardwareMixin::hardware_concurrency() const
 {
     // Track potential fingerprinting (Milestone 0.4 Phase 4)
-    auto const& window = as<HTML::Window>(HTML::current_principal_global_object());
+    auto const& window = as<HTML::Window>(HTML::current_global_object());
     window.page().client().page_did_call_fingerprinting_api("navigator"sv, "hardwareConcurrency"sv);
 
     return Core::System::hardware_concurrency();

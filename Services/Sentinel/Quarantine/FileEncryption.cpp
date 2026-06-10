@@ -4,6 +4,7 @@
  */
 
 #include "FileEncryption.h"
+#include <AK/Random.h>
 #include <LibCore/File.h>
 #include <LibCrypto/Cipher/AES.h>
 #include <AK/Random.h>

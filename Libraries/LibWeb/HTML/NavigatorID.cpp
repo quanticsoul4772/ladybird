@@ -59,7 +59,7 @@ String NavigatorIDMixin::app_version() const
 String NavigatorIDMixin::platform() const
 {
     // Track potential fingerprinting (Milestone 0.4 Phase 4)
-    auto const& window = as<HTML::Window>(HTML::current_principal_global_object());
+    auto const& window = as<HTML::Window>(HTML::current_global_object());
     window.page().client().page_did_call_fingerprinting_api("navigator"sv, "platform"sv);
 
     // Must return a string representing the platform on which the browser is executing (e.g. "MacIntel", "Win32",
@@ -96,7 +96,7 @@ String NavigatorIDMixin::product_sub() const
 String NavigatorIDMixin::user_agent() const
 {
     // Track potential fingerprinting (Milestone 0.4 Phase 4)
-    auto const& window = as<HTML::Window>(HTML::current_principal_global_object());
+    auto const& window = as<HTML::Window>(HTML::current_global_object());
     window.page().client().page_did_call_fingerprinting_api("navigator"sv, "userAgent"sv);
 
     // Must return the default `User-Agent` value.

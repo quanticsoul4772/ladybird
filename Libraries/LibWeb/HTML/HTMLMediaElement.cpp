@@ -1723,9 +1723,7 @@ void HTMLMediaElement::on_metadata_parsed()
     // 4. Update the duration attribute with the time of the last frame of the resource, if known, on the media timeline established above. If it is
     //    not known (e.g. a stream that is in principle infinite), update the duration attribute to the value positive Infinity.
     // FIXME: Handle unbounded media resources.
-    auto duration_seconds = m_playback_manager->duration().to_seconds_f64();
-    dbgln("HTMLMediaElement: Setting duration to {} seconds", duration_seconds);
-    set_duration(duration_seconds);
+    set_duration(m_playback_manager->duration().to_seconds_f64());
 
     // NB: Register the duration change handler here so that we don't set the duration when the
     //     playback manager updates the duration after parsing.
@@ -2061,17 +2059,14 @@ void HTMLMediaElement::set_ready_state(ReadyState ready_state)
 
     // When the ready state of a media element whose networkState is not NETWORK_EMPTY changes, the user agent must
     // follow the steps given below:
-    if (m_network_state == NetworkState::Empty) {
-        dbgln("HTMLMediaElement: Network state is Empty, returning early without firing events");
+    if (m_network_state == NetworkState::Empty)
         return;
-    }
 
     // 1. Apply the first applicable set of substeps from the following list:
     // -> If the previous ready state was HAVE_NOTHING, and the new ready state is HAVE_METADATA
     if (old_ready_state == ReadyState::HaveNothing && ready_state == ReadyState::HaveMetadata) {
         // Queue a media element task given the media element to fire an event named loadedmetadata at the element.
         queue_a_media_element_task([this] {
-            dbgln("HTMLMediaElement: Dispatching loadedmetadata event");
             dispatch_event(DOM::Event::create(this->realm(), HTML::EventNames::loadedmetadata));
         });
 

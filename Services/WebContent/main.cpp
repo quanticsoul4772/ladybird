@@ -142,8 +142,7 @@ ErrorOr<int> ladybird_main(Main::Arguments arguments)
     bool expose_internals_object = false;
     bool wait_for_debugger = false;
     bool log_all_js_exceptions = false;
-    // FIXME: Temporarily disable site isolation by default due to IPC race condition
-    bool disable_site_isolation = true;
+    bool disable_site_isolation = false;
     bool enable_idl_tracing = false;
     bool enable_http_memory_cache = false;
     bool force_cpu_painting = false;

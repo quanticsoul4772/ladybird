@@ -26,6 +26,7 @@
 #include <LibJS/Runtime/Date.h>
 #include <LibRequests/RequestClient.h>
 #include <LibUnicode/TimeZone.h>
+#include <LibURL/Parser.h>
 #include <LibWasm/Types.h>
 #include <LibWeb/ARIA/RoleType.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
@@ -77,6 +78,7 @@
 #include <WebContent/ConnectionFromClient.h>
 #include <WebContent/PageClient.h>
 #include <WebContent/PageHost.h>
+#include <WebContent/URLVerdictService.h>
 #include <WebContent/WebContentClientEndpoint.h>
 #include <WebContent/WebContentCompositorHost.h>
 
@@ -228,6 +230,92 @@ void ConnectionFromClient::load_url(u64 page_id, URL::URL url)
     if (!page.has_value()) {
         dbgln("WebContent::load_url: ERROR - page_id {} not found!", page_id);
         return;
+    }
+
+    // Handle sentinel://approve?url=<encoded> — user clicked "Proceed Anyway"
+    // on a phishing warning page. Approve the domain and redirect to the real URL.
+    if (url.scheme() == "sentinel") {
+        if (url.serialize_path() == "/approve") {
+            auto query = url.query();
+            if (query.has_value()) {
+                // Extract `url=` param from query string.
+                // LibURL doesn't expose query param parsing; do it manually.
+                auto query_str = query.value();
+                auto url_param_prefix = "url="sv;
+                auto pos = query_str.bytes_as_string_view().find(url_param_prefix);
+                if (pos.has_value()) {
+                    auto encoded = query_str.bytes_as_string_view().substring_view(
+                        pos.value() + url_param_prefix.length());
+                    auto decoded_str = URL::percent_decode(encoded);
+                    auto target_url = URL::Parser::basic_parse(decoded_str);
+                    if (target_url.has_value() && target_url->is_valid()) {
+                        auto domain = URLVerdictService::extract_domain(*target_url);
+                        URLVerdictService::the().approve_domain(domain);
+                        dbgln("WebContent::load_url: sentinel approval for {}, navigating", domain);
+                        page->page().load(*target_url);
+                        return;
+                    }
+                }
+            }
+        }
+        // Unknown sentinel:// path — ignore silently (fail-open).
+        return;
+    }
+
+    // Pre-load URL verdict check (Sentinel phishing heuristics).
+    // Only active when LADYBIRD_URL_VERDICT_CHECK=1 is set.
+    // Fail-open: any error or non-http/https scheme skips the check entirely.
+    static bool const verdict_enabled = []() -> bool {
+        auto const* val = getenv("LADYBIRD_URL_VERDICT_CHECK");
+        return val != nullptr && StringView(val) == "1"sv;
+    }();
+
+    if (verdict_enabled) {
+        auto scheme = url.scheme();
+        if (scheme == "http" || scheme == "https") {
+            auto verdict = URLVerdictService::the().check(url);
+            if (verdict.level >= URLThreatLevel::Suspicious) {
+                dbgln("WebContent::load_url: URLVerdict {} ({}) for {}", (u8)verdict.level, verdict.score, url);
+                auto warning_html = MUST(String::formatted(
+                    R"html(<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Security Warning</title>
+<style>
+  body {{ font-family: -apple-system, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; }}
+  .box {{ border: 2px solid #e53e3e; border-radius: 8px; padding: 24px; }}
+  h1 {{ color: #e53e3e; margin-top: 0; }}
+  .score {{ color: #888; font-size: 14px; }}
+  .proceed {{ margin-top: 16px; }}
+  a.btn {{ display: inline-block; padding: 8px 16px; border-radius: 4px; text-decoration: none; }}
+  a.back {{ background: #2b6cb0; color: white; margin-right: 8px; }}
+  a.proceed {{ background: #e53e3e; color: white; }}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>⚠ Security Warning</h1>
+  <p>This URL has been flagged by Sentinel's phishing heuristics:</p>
+  <p><strong>{}</strong></p>
+  <p class="score">Threat level: {} &nbsp;|&nbsp; Score: {:.2f} &nbsp;|&nbsp; {}</p>
+  <div class="proceed">
+    <a class="btn back" href="javascript:history.back()">Go Back (Safe)</a>
+    <a class="btn proceed" href="sentinel://approve?url={}">Proceed Anyway</a>
+  </div>
+</div>
+</body>
+</html>)html",
+                    url.serialize(),
+                    verdict.level == URLThreatLevel::Suspicious ? "Suspicious"sv
+                        : verdict.level == URLThreatLevel::Malicious ? "Malicious"sv
+                        : "Critical"sv,
+                    verdict.score,
+                    verdict.explanation,
+                    URL::percent_encode(url.serialize())
+                ));
+                page->page().load_html(warning_html.to_byte_string());
+                return;
+            }
+        }
     }
 
     dbgln("WebContent::load_url: calling page->page().load()");

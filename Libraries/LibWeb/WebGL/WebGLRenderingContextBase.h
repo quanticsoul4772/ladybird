@@ -46,6 +46,8 @@ public:
     using Uint32List = Variant<GC::Ref<JS::Uint32Array>, Vector<WebIDL::UnsignedLong>>;
 
     virtual OpenGLContext& context() = 0;
+    // NB: Used by fork fingerprinting-detection hooks to reach the canvas element's page.
+    virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const = 0;
 
     bool is_context_lost() const;
 
@@ -69,8 +71,6 @@ protected:
     bool extension_enabled(StringView extension) const;
     ReadonlySpan<WebIDL::UnsignedLong> enabled_compressed_texture_formats() const;
 
-    // NB: Used by fork fingerprinting-detection hooks to reach the canvas element's page.
-    virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const = 0;
 
     template<typename T>
     static ErrorOr<Span<T>> get_offset_span(Span<T> src_span, WebIDL::UnsignedLongLong src_offset, WebIDL::UnsignedLong src_length_override = 0)

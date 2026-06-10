@@ -1,6 +1,27 @@
 name: CI
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    paths:
+      - '**/*.cpp'
+      - '**/*.h'
+      - '**/*.mm'
+      - '**/*.swift'
+      - '**/*.cmake'
+      - '**/CMakeLists.txt'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/lagom-template.yml'
+  pull_request:
+    paths:
+      - '**/*.cpp'
+      - '**/*.h'
+      - '**/*.mm'
+      - '**/*.swift'
+      - '**/*.cmake'
+      - '**/CMakeLists.txt'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/lagom-template.yml'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}

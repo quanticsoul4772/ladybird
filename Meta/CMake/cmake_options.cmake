@@ -51,4 +51,9 @@ if (ENABLE_FUZZERS_LIBFUZZER)
     set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY CACHE STRING "Type of target to use for try_compile()" FORCE)
 endif()
 
+
+
+# URL verdict check via Sentinel PhishingURLAnalyzer (pre-load, in-process)
+ladybird_option(ENABLE_URL_VERDICT_CHECK OFF CACHE BOOL "Enable pre-load URL phishing check via Sentinel")
+
 include(${CMAKE_CURRENT_LIST_DIR}/lagom_install_options.cmake)
