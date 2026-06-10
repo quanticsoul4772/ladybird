@@ -65,7 +65,7 @@ private:
     // Domain-keyed LRU cache: key = lowercase eTLD+1, value = cached verdict.
     // Entries expire after TTL_SECONDS.
     static constexpr u32 CACHE_MAX_ENTRIES = 1000;
-    static constexpr u64 TTL_SECONDS = 300;        // 5 minutes
+    static constexpr u64 TTL_SECONDS = 300;           // 5 minutes
     static constexpr u64 APPROVED_TTL_SECONDS = 3600; // 1 hour for user approvals
 
     struct CacheEntry {

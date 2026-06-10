@@ -141,9 +141,9 @@ void URLVerdictService::cache_store(ByteString const& domain, URLVerdict const& 
             m_cache.remove(key);
     }
     m_cache.set(domain, CacheEntry {
-        .verdict = verdict,
-        .stored_at_s = static_cast<u64>(time(nullptr)),
-    });
+                            .verdict = verdict,
+                            .stored_at_s = static_cast<u64>(time(nullptr)),
+                        });
 }
 
 } // namespace WebContent

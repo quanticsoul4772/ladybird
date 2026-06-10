@@ -45,6 +45,7 @@ jobs:
         toolchain: ['GNU']
         clang_plugins: [false]
         runner_labels: ['["ubuntu-24.04"]']
+        container: ['null']
 
         include:
           - os_name: 'Linux'
@@ -53,6 +54,7 @@ jobs:
             toolchain: 'Clang'
             clang_plugins: true
             runner_labels: '["ubuntu-24.04"]'
+            container: 'null'
 
     secrets: inherit
     uses: ./.github/workflows/lagom-template.yml

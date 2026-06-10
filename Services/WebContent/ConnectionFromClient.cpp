@@ -25,8 +25,8 @@
 #include <LibJS/Runtime/ConsoleObject.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibRequests/RequestClient.h>
-#include <LibUnicode/TimeZone.h>
 #include <LibURL/Parser.h>
+#include <LibUnicode/TimeZone.h>
 #include <LibWasm/Types.h>
 #include <LibWeb/ARIA/RoleType.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
@@ -305,13 +305,12 @@ void ConnectionFromClient::load_url(u64 page_id, URL::URL url)
 </body>
 </html>)html",
                     url.serialize(),
-                    verdict.level == URLThreatLevel::Suspicious ? "Suspicious"sv
+                    verdict.level == URLThreatLevel::Suspicious      ? "Suspicious"sv
                         : verdict.level == URLThreatLevel::Malicious ? "Malicious"sv
-                        : "Critical"sv,
+                                                                     : "Critical"sv,
                     verdict.score,
                     verdict.explanation,
-                    URL::percent_encode(url.serialize())
-                ));
+                    URL::percent_encode(url.serialize())));
                 page->page().load_html(warning_html.to_byte_string());
                 return;
             }
@@ -2163,8 +2162,7 @@ void ConnectionFromClient::enable_tor(u64 page_id, ByteString circuit_id)
     // Prevents injection attacks and ensures compatibility with Tor
     if (!circuit_id.is_empty()) {
         for (char c : circuit_id) {
-            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                  (c >= '0' && c <= '9') || c == '-' || c == '_')) {
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_')) {
                 dbgln("WebContent::ConnectionFromClient::enable_tor: SECURITY: Circuit ID contains invalid character: {}", c);
                 return;
             }

@@ -71,7 +71,6 @@ protected:
     bool extension_enabled(StringView extension) const;
     ReadonlySpan<WebIDL::UnsignedLong> enabled_compressed_texture_formats() const;
 
-
     template<typename T>
     static ErrorOr<Span<T>> get_offset_span(Span<T> src_span, WebIDL::UnsignedLongLong src_offset, WebIDL::UnsignedLong src_length_override = 0)
     {

@@ -480,7 +480,11 @@ public:
     virtual void page_did_request_set_prompt_text(String const&) { }
     virtual void page_did_request_accept_dialog() { }
     virtual void page_did_request_dismiss_dialog() { }
-    virtual void page_did_receive_security_alert(ByteString const& alert_json, i32 request_id) { (void)alert_json; (void)request_id; }
+    virtual void page_did_receive_security_alert(ByteString const& alert_json, i32 request_id)
+    {
+        (void)alert_json;
+        (void)request_id;
+    }
     virtual void page_did_detect_traffic_alert(ByteString const& alert_json) { (void)alert_json; }
     virtual void page_did_call_fingerprinting_api([[maybe_unused]] StringView technique, [[maybe_unused]] StringView api_name) const { }
     virtual void page_did_submit_form([[maybe_unused]] HTML::HTMLFormElement& form, [[maybe_unused]] String const& method, [[maybe_unused]] URL::URL const& action) { }
