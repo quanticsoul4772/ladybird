@@ -12,6 +12,7 @@
 #include <AK/Error.h>
 #include <AK/HashMap.h>
 #include <AK/NonnullOwnPtr.h>
+#include <AK/OwnPtr.h>
 #include <AK/Optional.h>
 #include <AK/String.h>
 #include <AK/Time.h>

@@ -521,7 +521,7 @@ static int yara_callback([[maybe_unused]] YR_SCAN_CONTEXT* context, int message,
 
         // Extract rule metadata
         JsonObject rule_obj;
-        rule_obj.set("rule_name"sv, JsonValue(ByteString(rule->identifier)));
+        rule_obj.set("rule_name"sv, JsonValue(StringView { rule->identifier, strlen(rule->identifier) }));
 
         // Get metadata with safety limit to prevent infinite loops
         YR_META* meta = rule->metas;
@@ -531,11 +531,11 @@ static int yara_callback([[maybe_unused]] YR_SCAN_CONTEXT* context, int message,
         while (!META_IS_LAST_IN_RULE(meta) && meta_count < MAX_METADATA_ENTRIES) {
             if (meta->type == META_TYPE_STRING) {
                 if (strcmp(meta->identifier, "description") == 0)
-                    rule_obj.set("description"sv, JsonValue(ByteString(meta->string)));
+                    rule_obj.set("description"sv, JsonValue(StringView { meta->string, strlen(meta->string) }));
                 else if (strcmp(meta->identifier, "severity") == 0)
-                    rule_obj.set("severity"sv, JsonValue(ByteString(meta->string)));
+                    rule_obj.set("severity"sv, JsonValue(StringView { meta->string, strlen(meta->string) }));
                 else if (strcmp(meta->identifier, "author") == 0)
-                    rule_obj.set("author"sv, JsonValue(ByteString(meta->string)));
+                    rule_obj.set("author"sv, JsonValue(StringView { meta->string, strlen(meta->string) }));
             }
             meta++;
             meta_count++;
@@ -544,11 +544,11 @@ static int yara_callback([[maybe_unused]] YR_SCAN_CONTEXT* context, int message,
         // Handle the last metadata entry (only if we didn't hit the safety limit)
         if (meta_count < MAX_METADATA_ENTRIES && meta->type == META_TYPE_STRING) {
             if (strcmp(meta->identifier, "description") == 0)
-                rule_obj.set("description"sv, JsonValue(ByteString(meta->string)));
+                rule_obj.set("description"sv, JsonValue(StringView { meta->string, strlen(meta->string) }));
             else if (strcmp(meta->identifier, "severity") == 0)
-                rule_obj.set("severity"sv, JsonValue(ByteString(meta->string)));
+                rule_obj.set("severity"sv, JsonValue(StringView { meta->string, strlen(meta->string) }));
             else if (strcmp(meta->identifier, "author") == 0)
-                rule_obj.set("author"sv, JsonValue(ByteString(meta->string)));
+                rule_obj.set("author"sv, JsonValue(StringView { meta->string, strlen(meta->string) }));
         }
 
         match_data->rule_details.append(move(rule_obj));

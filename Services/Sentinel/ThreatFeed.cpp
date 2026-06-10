@@ -252,9 +252,9 @@ ErrorOr<void> ThreatFeed::export_threat_list(String const& file_path) const
 
     for (auto const& [hash, info] : m_threat_cache) {
         JsonObject threat;
-        threat.set("hash"sv, JsonValue(hash.to_byte_string()));
+        threat.set("hash"sv, JsonValue(hash));
 
-        ByteString category_str = "unknown"sv;
+        StringView category_str = "unknown"sv;
         switch (info.category) {
         case ThreatCategory::Malware:
             category_str = "malware"sv;
@@ -275,7 +275,7 @@ ErrorOr<void> ThreatFeed::export_threat_list(String const& file_path) const
         threat.set("severity"sv, JsonValue(info.severity));
 
         if (info.family_name.has_value())
-            threat.set("family"sv, JsonValue(info.family_name->to_byte_string()));
+            threat.set("family"sv, JsonValue(*info.family_name));
 
         threats.must_append(move(threat));
     }
@@ -337,7 +337,7 @@ ErrorOr<void> ThreatFeed::save_to_disk(String const& path) const
     metadata.set("privacy_epsilon"sv, m_privacy_epsilon);
 
     if (m_last_sync_time.has_value()) {
-        metadata.set("last_sync"sv, JsonValue(MUST(m_last_sync_time->to_string()).to_byte_string()));
+        metadata.set("last_sync"sv, JsonValue(MUST(m_last_sync_time->to_string())));
     }
 
     auto meta_path = String::formatted("{}.meta", path).release_value_but_fixme_should_propagate_errors();
