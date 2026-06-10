@@ -404,17 +404,17 @@ ErrorOr<void> Quarantine::write_metadata(
 
     // Build JSON object
     JsonObject json;
-    json.set("original_url"sv, JsonValue(metadata.original_url));
-    json.set("filename"sv, JsonValue(metadata.filename));
-    json.set("detection_time"sv, JsonValue(metadata.detection_time));
-    json.set("sha256"sv, JsonValue(metadata.sha256));
+    json.set("original_url"sv, JsonValue(metadata.original_url.view()));
+    json.set("filename"sv, JsonValue(metadata.filename.view()));
+    json.set("detection_time"sv, JsonValue(metadata.detection_time.view()));
+    json.set("sha256"sv, JsonValue(metadata.sha256.view()));
     json.set("file_size"sv, JsonValue(static_cast<u64>(metadata.file_size)));
-    json.set("quarantine_id"sv, JsonValue(metadata.quarantine_id));
+    json.set("quarantine_id"sv, JsonValue(metadata.quarantine_id.view()));
 
     // Add rule names as JSON array
     JsonArray rules_array;
     for (auto const& rule : metadata.rule_names) {
-        TRY(rules_array.append(JsonValue(rule)));
+        TRY(rules_array.append(JsonValue(rule.view())));
     }
     json.set("rule_names"sv, move(rules_array));
 

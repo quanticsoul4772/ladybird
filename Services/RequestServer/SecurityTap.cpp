@@ -269,7 +269,7 @@ ErrorOr<ByteString> SecurityTap::send_scan_request(
     // Build JSON request for Sentinel
     JsonObject request;
     request.set("action"sv, JsonValue("scan_content"sv));
-    request.set("request_id"sv, JsonValue(ByteString::formatted("download_{}", metadata.sha256)));
+    request.set("request_id"sv, JsonValue(MUST(String::formatted("download_{}", metadata.sha256))));
 
     // Base64 encode content for JSON transport
     auto content_base64 = TRY(encode_base64(content));

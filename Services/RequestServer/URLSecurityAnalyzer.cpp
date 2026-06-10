@@ -57,17 +57,17 @@ ErrorOr<ByteString> URLSecurityAnalyzer::generate_security_alert_json(URLThreatA
 {
     JsonObject alert;
     alert.set("type"sv, JsonValue("phishing_url_detected"sv));
-    alert.set("url"sv, JsonValue(url.to_byte_string()));
+    alert.set("url"sv, JsonValue(url.to_string()));
     alert.set("phishing_score"sv, JsonValue(analysis.phishing_score));
     alert.set("confidence"sv, JsonValue(analysis.confidence));
     alert.set("is_homograph_attack"sv, JsonValue(analysis.is_homograph_attack));
     alert.set("is_typosquatting"sv, JsonValue(analysis.is_typosquatting));
     alert.set("has_suspicious_tld"sv, JsonValue(analysis.has_suspicious_tld));
     alert.set("domain_entropy"sv, JsonValue(analysis.domain_entropy));
-    alert.set("explanation"sv, JsonValue(analysis.explanation.to_byte_string()));
+    alert.set("explanation"sv, JsonValue(analysis.explanation));
 
     if (!analysis.closest_legitimate_domain.is_empty())
-        alert.set("closest_legitimate_domain"sv, JsonValue(analysis.closest_legitimate_domain.to_byte_string()));
+        alert.set("closest_legitimate_domain"sv, JsonValue(analysis.closest_legitimate_domain));
 
     // Add threat level classification
     StringView threat_level_str;
