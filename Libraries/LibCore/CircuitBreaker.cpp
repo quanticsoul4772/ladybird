@@ -37,7 +37,7 @@ CircuitBreaker::CircuitBreaker(StringView name)
 
 ErrorOr<void> CircuitBreaker::check_and_update_state()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     // If circuit is open, check if we should transition to half-open
     if (m_state == State::Open) {
@@ -56,7 +56,7 @@ ErrorOr<void> CircuitBreaker::check_and_update_state()
 
 void CircuitBreaker::record_success()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     m_total_successes++;
     m_consecutive_successes++;
@@ -76,7 +76,7 @@ void CircuitBreaker::record_success()
 
 void CircuitBreaker::record_failure()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     m_total_failures++;
     m_consecutive_failures++;
@@ -141,14 +141,14 @@ bool CircuitBreaker::should_attempt_reset() const
 
 void CircuitBreaker::trip()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     dbgln("CircuitBreaker: '{}' manually tripped", m_config.name);
     transition_to(State::Open);
 }
 
 void CircuitBreaker::reset()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     dbgln("CircuitBreaker: '{}' manually reset", m_config.name);
     m_consecutive_failures = 0;
     m_consecutive_successes = 0;
@@ -157,7 +157,7 @@ void CircuitBreaker::reset()
 
 void CircuitBreaker::reset_metrics()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     m_total_failures = 0;
     m_total_successes = 0;
     m_consecutive_failures = 0;
@@ -170,13 +170,13 @@ void CircuitBreaker::reset_metrics()
 
 CircuitBreaker::State CircuitBreaker::state() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     return m_state;
 }
 
 CircuitBreaker::Metrics CircuitBreaker::get_metrics() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     Duration total_open_time {};
     if (m_state == State::Open && m_open_state_entered.seconds_since_epoch() > 0) {
@@ -201,7 +201,7 @@ CircuitBreaker::Metrics CircuitBreaker::get_metrics() const
 
 bool CircuitBreaker::is_request_allowed() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     if (m_state == State::Closed || m_state == State::HalfOpen)
         return true;

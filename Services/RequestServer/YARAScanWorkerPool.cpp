@@ -129,7 +129,7 @@ ErrorOr<void> YARAScanWorkerPool::enqueue_scan(
 
     // Update telemetry
     {
-        Threading::MutexLocker locker(m_telemetry_mutex);
+        Sync::MutexLocker locker(m_telemetry_mutex);
         m_telemetry.current_queue_depth = m_queue.size();
         if (m_telemetry.current_queue_depth > m_telemetry.max_queue_depth_seen) {
             m_telemetry.max_queue_depth_seen = m_telemetry.current_queue_depth;
@@ -152,7 +152,7 @@ void YARAScanWorkerPool::worker_thread()
 
     // Update active worker count
     {
-        Threading::MutexLocker locker(m_telemetry_mutex);
+        Sync::MutexLocker locker(m_telemetry_mutex);
         m_telemetry.active_workers++;
     }
 
@@ -172,14 +172,14 @@ void YARAScanWorkerPool::worker_thread()
 
         // Update telemetry
         {
-            Threading::MutexLocker locker(m_telemetry_mutex);
+            Sync::MutexLocker locker(m_telemetry_mutex);
             m_telemetry.current_queue_depth = m_queue.size();
         }
     }
 
     // Update active worker count
     {
-        Threading::MutexLocker locker(m_telemetry_mutex);
+        Sync::MutexLocker locker(m_telemetry_mutex);
         m_telemetry.active_workers--;
     }
 
@@ -198,7 +198,7 @@ void YARAScanWorkerPool::execute_scan(ScanRequest& request)
 
         // Update telemetry
         {
-            Threading::MutexLocker locker(m_telemetry_mutex);
+            Sync::MutexLocker locker(m_telemetry_mutex);
             m_telemetry.total_scans_timeout++;
         }
 
@@ -226,7 +226,7 @@ void YARAScanWorkerPool::execute_scan(ScanRequest& request)
 
     // Update telemetry
     {
-        Threading::MutexLocker locker(m_telemetry_mutex);
+        Sync::MutexLocker locker(m_telemetry_mutex);
         if (scan_result.is_error()) {
             m_telemetry.total_scans_failed++;
         } else {
@@ -265,7 +265,7 @@ void YARAScanWorkerPool::schedule_callback(
 
 WorkerPoolTelemetry YARAScanWorkerPool::get_telemetry() const
 {
-    Threading::MutexLocker locker(m_telemetry_mutex);
+    Sync::MutexLocker locker(m_telemetry_mutex);
     return m_telemetry;
 }
 

@@ -12,7 +12,7 @@
 #include <AK/NonnullOwnPtr.h>
 #include <AK/Time.h>
 #include <LibCore/EventLoop.h>
-#include <LibThreading/Mutex.h>
+#include <LibSync/Mutex.h>
 #include <pthread.h>
 
 namespace RequestServer {
@@ -81,7 +81,7 @@ private:
     bool m_running { false };
 
     // Telemetry (protected by mutex)
-    mutable Threading::Mutex m_telemetry_mutex;
+    mutable Sync::Mutex m_telemetry_mutex;
     WorkerPoolTelemetry m_telemetry;
 };
 

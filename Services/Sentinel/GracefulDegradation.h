@@ -12,7 +12,7 @@
 #include <AK/String.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
-#include <LibThreading/Mutex.h>
+#include <LibSync/Mutex.h>
 
 namespace Sentinel {
 
@@ -166,7 +166,7 @@ private:
     size_t m_recovery_attempt_limit { 5 }; // Give up after N recovery attempts
 
     // Thread safety
-    mutable Threading::Mutex m_mutex;
+    mutable Sync::Mutex m_mutex;
 };
 
 // Predefined service names for consistency

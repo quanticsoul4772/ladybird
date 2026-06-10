@@ -10,7 +10,7 @@
 #include <AK/Function.h>
 #include <AK/String.h>
 #include <AK/Time.h>
-#include <LibThreading/Mutex.h>
+#include <LibSync/Mutex.h>
 
 namespace Core {
 
@@ -126,7 +126,7 @@ private:
     UnixDateTime m_open_state_entered {};
 
     // Thread safety
-    mutable Threading::Mutex m_mutex;
+    mutable Sync::Mutex m_mutex;
 };
 
 // Helper function to create circuit breakers with common configurations

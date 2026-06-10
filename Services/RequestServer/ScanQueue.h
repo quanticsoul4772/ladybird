@@ -14,8 +14,8 @@
 #include <AK/String.h>
 #include <AK/Time.h>
 #include <AK/Vector.h>
-#include <LibThreading/ConditionVariable.h>
-#include <LibThreading/Mutex.h>
+#include <LibSync/ConditionVariable.h>
+#include <LibSync/Mutex.h>
 #include <Services/RequestServer/SecurityTap.h>
 
 namespace RequestServer {
@@ -57,8 +57,8 @@ public:
     static constexpr size_t MAX_QUEUE_SIZE = 100;
 
 private:
-    mutable Threading::Mutex m_mutex;
-    NonnullOwnPtr<Threading::ConditionVariable> m_condition_variable;
+    mutable Sync::Mutex m_mutex;
+    NonnullOwnPtr<Sync::ConditionVariable> m_condition_variable;
     Vector<ScanRequest> m_queue;
     bool m_shutting_down { false };
 };

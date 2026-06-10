@@ -34,7 +34,7 @@ void TokenBucketRateLimiter::refill_tokens_locked()
 
 bool TokenBucketRateLimiter::try_consume(size_t tokens)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     refill_tokens_locked();
     if (m_tokens >= tokens) {
         m_tokens -= tokens;
@@ -45,19 +45,19 @@ bool TokenBucketRateLimiter::try_consume(size_t tokens)
 
 bool TokenBucketRateLimiter::would_allow(size_t tokens) const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     return m_tokens >= tokens;
 }
 
 size_t TokenBucketRateLimiter::available_tokens() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     return m_tokens;
 }
 
 void TokenBucketRateLimiter::reset()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     m_tokens = m_capacity;
     m_last_refill = UnixDateTime::now();
 }

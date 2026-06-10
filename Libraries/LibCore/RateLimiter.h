@@ -7,7 +7,7 @@
 #pragma once
 
 #include <AK/Time.h>
-#include <LibThreading/Mutex.h>
+#include <LibSync/Mutex.h>
 
 namespace Core {
 
@@ -53,7 +53,7 @@ private:
     UnixDateTime m_last_refill;
 
     // Mutex for thread safety
-    mutable Threading::Mutex m_mutex;
+    mutable Sync::Mutex m_mutex;
 };
 
 }

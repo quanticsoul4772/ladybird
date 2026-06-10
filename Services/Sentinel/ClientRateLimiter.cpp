@@ -45,7 +45,7 @@ Core::TokenBucketRateLimiter& ClientRateLimiter::get_policy_limiter(int client_i
 
 ErrorOr<void> ClientRateLimiter::check_scan_request(int client_id)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto& limiter = get_scan_limiter(client_id);
 
@@ -62,7 +62,7 @@ ErrorOr<void> ClientRateLimiter::check_scan_request(int client_id)
 
 ErrorOr<void> ClientRateLimiter::check_policy_query(int client_id)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto& limiter = get_policy_limiter(client_id);
 
@@ -79,7 +79,7 @@ ErrorOr<void> ClientRateLimiter::check_policy_query(int client_id)
 
 ErrorOr<void> ClientRateLimiter::check_concurrent_scans(int client_id)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto current_scans = m_concurrent_scans.get(client_id).value_or(0);
 
@@ -98,7 +98,7 @@ ErrorOr<void> ClientRateLimiter::check_concurrent_scans(int client_id)
 
 void ClientRateLimiter::release_scan_slot(int client_id)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto it = m_concurrent_scans.find(client_id);
     if (it != m_concurrent_scans.end() && it->value > 0) {
@@ -108,32 +108,32 @@ void ClientRateLimiter::release_scan_slot(int client_id)
 
 size_t ClientRateLimiter::get_total_rejected() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     return m_total_rejected;
 }
 
 HashMap<int, size_t> ClientRateLimiter::get_per_client_rejected() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     return m_rejected_counts;
 }
 
 HashMap<int, size_t> ClientRateLimiter::get_concurrent_scans() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     return m_concurrent_scans;
 }
 
 void ClientRateLimiter::reset_telemetry()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     m_rejected_counts.clear();
     m_total_rejected = 0;
 }
 
 void ClientRateLimiter::reset_client(int client_id)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     // Reset scan rate limiter
     auto scan_it = m_scan_limiters.find(client_id);

@@ -76,7 +76,7 @@ AuditLogger::~AuditLogger()
 
 ErrorOr<void> AuditLogger::log_event(AuditEvent const& event)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     // Build JSON object for this event (JSON Lines format)
     JsonObject json;
@@ -328,7 +328,7 @@ ErrorOr<void> AuditLogger::log_access_denied(
 
 AuditLogger::Statistics AuditLogger::get_statistics() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     return Statistics {
         .total_events_logged = m_total_events_logged,
@@ -363,7 +363,7 @@ ErrorOr<void> AuditLogger::check_and_rotate_log()
 
 ErrorOr<void> AuditLogger::rotate_log()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     // Flush any pending events first
     TRY(flush());

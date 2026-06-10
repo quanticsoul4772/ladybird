@@ -10,7 +10,7 @@
 namespace RequestServer {
 
 ScanQueue::ScanQueue()
-    : m_condition_variable(make<Threading::ConditionVariable>(m_mutex))
+    : m_condition_variable(make<Sync::ConditionVariable>(m_mutex))
 {
 }
 
@@ -21,7 +21,7 @@ ScanQueue::~ScanQueue()
 
 ErrorOr<void> ScanQueue::enqueue(ScanRequest request)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     // Check if queue is full
     if (m_queue.size() >= MAX_QUEUE_SIZE) {
@@ -50,7 +50,7 @@ ErrorOr<void> ScanQueue::enqueue(ScanRequest request)
 
 Optional<ScanRequest> ScanQueue::dequeue()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     // Wait until queue has items or we're shutting down
     // This blocks efficiently using a condition variable instead of spinning
@@ -72,13 +72,13 @@ Optional<ScanRequest> ScanQueue::dequeue()
 
 size_t ScanQueue::size() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     return m_queue.size();
 }
 
 void ScanQueue::shutdown()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     m_shutting_down = true;
     // Wake all waiting threads so they can exit
     m_condition_variable->broadcast();
@@ -86,7 +86,7 @@ void ScanQueue::shutdown()
 
 bool ScanQueue::is_shutting_down() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     return m_shutting_down;
 }
 

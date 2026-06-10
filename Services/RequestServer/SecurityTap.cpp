@@ -14,7 +14,6 @@
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Socket.h>
-#include <LibThreading/BackgroundAction.h>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 
@@ -527,27 +526,12 @@ void SecurityTap::async_inspect_download(
         return;
     }
 
-    // Fallback: Use Threading::BackgroundAction if worker pool not available
-    // This preserves backward compatibility
-    DownloadMetadata metadata_copy = metadata;
-    auto content_buffer_result = ByteBuffer::copy(content);
-    if (content_buffer_result.is_error()) {
-        Core::EventLoop::current().deferred_invoke([callback = move(callback), error = content_buffer_result.release_error()]() mutable {
-            callback(move(error));
-        });
-        return;
-    }
-    auto content_buffer = content_buffer_result.release_value();
-
-    [[maybe_unused]] auto action = Threading::BackgroundAction<ScanResult>::construct(
-        [this, metadata_copy = move(metadata_copy), content_buffer = move(content_buffer)](auto&) -> ErrorOr<ScanResult> {
-            return inspect_download(metadata_copy, content_buffer.bytes());
-        },
-        [callback = move(callback)](ScanResult result) -> ErrorOr<void> {
-            callback(move(result));
-            return {};
-        }
-    );
+    // Worker pool unavailable (create() guarantees one, so this should not happen) - fail-open
+    // NB: The old Threading::BackgroundAction fallback was removed when upstream dropped that API.
+    dbgln("SecurityTap: Worker pool unavailable, allowing download without scan");
+    Core::EventLoop::current().deferred_invoke([callback = move(callback)]() mutable {
+        callback(ScanResult { .is_threat = false, .alert_json = {} });
+    });
 }
 
 Optional<SecurityTap::WorkerPoolTelemetry> SecurityTap::get_worker_pool_telemetry() const

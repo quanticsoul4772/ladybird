@@ -21,7 +21,7 @@ void GracefulDegradation::set_service_state(
     String reason,
     FallbackStrategy fallback)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto now = UnixDateTime::now();
     auto old_state = ServiceState::Healthy;
@@ -107,7 +107,7 @@ void GracefulDegradation::set_service_state(
 
 GracefulDegradation::ServiceState GracefulDegradation::get_service_state(String const& service_name) const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto it = m_service_failures.find(service_name);
     if (it == m_service_failures.end())
@@ -118,13 +118,13 @@ GracefulDegradation::ServiceState GracefulDegradation::get_service_state(String 
 
 GracefulDegradation::DegradationLevel GracefulDegradation::get_system_degradation_level() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     return calculate_system_level();
 }
 
 Vector<String> GracefulDegradation::get_degraded_services() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     Vector<String> degraded;
     for (auto const& [name, failure] : m_service_failures) {
@@ -137,7 +137,7 @@ Vector<String> GracefulDegradation::get_degraded_services() const
 
 Vector<String> GracefulDegradation::get_failed_services() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     Vector<String> failed;
     for (auto const& [name, failure] : m_service_failures) {
@@ -150,7 +150,7 @@ Vector<String> GracefulDegradation::get_failed_services() const
 
 Vector<GracefulDegradation::ServiceFailure> GracefulDegradation::get_all_service_failures() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     Vector<ServiceFailure> failures;
     for (auto const& [_, failure] : m_service_failures) {
@@ -163,7 +163,7 @@ Vector<GracefulDegradation::ServiceFailure> GracefulDegradation::get_all_service
 
 bool GracefulDegradation::should_use_fallback(String const& service_name) const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto it = m_service_failures.find(service_name);
     if (it == m_service_failures.end())
@@ -175,7 +175,7 @@ bool GracefulDegradation::should_use_fallback(String const& service_name) const
 
 Optional<GracefulDegradation::FallbackStrategy> GracefulDegradation::get_fallback_strategy(String const& service_name) const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto it = m_service_failures.find(service_name);
     if (it == m_service_failures.end())
@@ -186,7 +186,7 @@ Optional<GracefulDegradation::FallbackStrategy> GracefulDegradation::get_fallbac
 
 Optional<String> GracefulDegradation::get_fallback_reason(String const& service_name) const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto it = m_service_failures.find(service_name);
     if (it == m_service_failures.end())
@@ -205,7 +205,7 @@ void GracefulDegradation::mark_service_recovered(String service_name)
 
 void GracefulDegradation::attempt_recovery(String const& service_name)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto failure_opt = m_service_failures.get(service_name);
     if (!failure_opt.has_value()) {
@@ -232,7 +232,7 @@ void GracefulDegradation::attempt_recovery(String const& service_name)
 
 bool GracefulDegradation::is_recovery_in_progress(String const& service_name) const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto it = m_service_failures.find(service_name);
     if (it == m_service_failures.end())
@@ -247,7 +247,7 @@ bool GracefulDegradation::is_recovery_in_progress(String const& service_name) co
 
 void GracefulDegradation::enable_auto_recovery(String service_name, bool enabled)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto it = m_service_failures.find(service_name);
     if (it != m_service_failures.end()) {
@@ -272,7 +272,7 @@ void GracefulDegradation::enable_auto_recovery(String service_name, bool enabled
 
 bool GracefulDegradation::is_auto_recovery_enabled(String const& service_name) const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto it = m_service_failures.find(service_name);
     if (it == m_service_failures.end())
@@ -283,21 +283,21 @@ bool GracefulDegradation::is_auto_recovery_enabled(String const& service_name) c
 
 void GracefulDegradation::register_degradation_callback(DegradationCallback callback)
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     m_callbacks.append(move(callback));
     dbgln("GracefulDegradation: Registered degradation callback (total: {})", m_callbacks.size());
 }
 
 void GracefulDegradation::clear_degradation_callbacks()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
     m_callbacks.clear();
     dbgln("GracefulDegradation: Cleared all degradation callbacks");
 }
 
 GracefulDegradation::DegradationMetrics GracefulDegradation::get_metrics() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     size_t healthy = 0, degraded = 0, failed = 0, critical = 0;
 
@@ -334,7 +334,7 @@ GracefulDegradation::DegradationMetrics GracefulDegradation::get_metrics() const
 
 void GracefulDegradation::reset_metrics()
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     m_total_failures = 0;
     m_total_recoveries = 0;
@@ -352,7 +352,7 @@ void GracefulDegradation::reset_metrics()
 
 GracefulDegradation::HealthStatus GracefulDegradation::get_health_status() const
 {
-    Threading::MutexLocker locker(m_mutex);
+    Sync::MutexLocker locker(m_mutex);
 
     auto level = calculate_system_level();
     Vector<String> degraded_list, failed_list;

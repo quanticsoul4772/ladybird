@@ -10,7 +10,7 @@
 #include <AK/HashMap.h>
 #include <AK/NonnullOwnPtr.h>
 #include <LibCore/RateLimiter.h>
-#include <LibThreading/Mutex.h>
+#include <LibSync/Mutex.h>
 
 namespace Sentinel {
 
@@ -93,7 +93,7 @@ private:
     size_t m_total_rejected { 0 };
 
     // Mutex for thread safety
-    mutable Threading::Mutex m_mutex;
+    mutable Sync::Mutex m_mutex;
 };
 
 }

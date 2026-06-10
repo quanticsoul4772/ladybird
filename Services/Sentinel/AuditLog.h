@@ -15,7 +15,7 @@
 #include <AK/Vector.h>
 #include <LibCore/File.h>
 #include <LibCore/MappedFile.h>
-#include <LibThreading/Mutex.h>
+#include <LibSync/Mutex.h>
 
 namespace Sentinel {
 
@@ -141,7 +141,7 @@ private:
     size_t m_buffer_size { 100 };  // Flush after 100 events
 
     // Thread safety
-    mutable Threading::Mutex m_mutex;
+    mutable Sync::Mutex m_mutex;
 
     // Statistics
     mutable size_t m_total_events_logged { 0 };
