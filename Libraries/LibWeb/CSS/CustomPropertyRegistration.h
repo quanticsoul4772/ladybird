@@ -6,8 +6,9 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
 #include <AK/RefPtr.h>
+#include <AK/Utf16FlyString.h>
+#include <LibWeb/CSS/StyleValues/StyleValue.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::CSS {
@@ -17,7 +18,7 @@ namespace Web::CSS {
 // like a real property. It’s a struct consisting of:
 struct CustomPropertyRegistration {
     // - a property name (a custom property name string)
-    FlyString property_name;
+    Utf16FlyString property_name;
 
     // - a syntax (a syntax string)
     String syntax;
@@ -30,5 +31,20 @@ struct CustomPropertyRegistration {
     //       See https://drafts.css-houdini.org/css-properties-values-api/#register-a-custom-property
     RefPtr<StyleValue const> initial_value;
 };
+
+inline bool operator==(CustomPropertyRegistration const& a, CustomPropertyRegistration const& b)
+{
+    if (a.property_name != b.property_name)
+        return false;
+    if (a.syntax != b.syntax)
+        return false;
+    if (a.inherit != b.inherit)
+        return false;
+    if (a.initial_value.ptr() == b.initial_value.ptr())
+        return true;
+    if (!a.initial_value || !b.initial_value)
+        return false;
+    return a.initial_value->equals(*b.initial_value);
+}
 
 }

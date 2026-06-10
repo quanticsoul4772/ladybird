@@ -25,6 +25,7 @@ public:
     [[nodiscard]] u64 selectedness_update_index() const { return m_selectedness_update_index; }
 
     Utf16String value() const;
+    virtual Utf16String form_value() const override { return value(); }
     void set_value(Utf16String const&);
 
     Utf16String text() const;
@@ -63,8 +64,9 @@ private:
     virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
 
     virtual void inserted() override;
-    virtual void removed_from(Node* old_parent, Node& old_root) override;
-    virtual void children_changed(ChildrenChangedMetadata const*) override;
+    virtual void removed_from(IsSubtreeRoot, Node* old_ancestor, Node& old_root) override;
+    virtual void moved_from(IsSubtreeRoot, GC::Ptr<Node> old_ancestor) override;
+    virtual void children_changed(ChildrenChangedMetadata const&) override;
 
     void ask_for_a_reset();
     void update_selection_label();

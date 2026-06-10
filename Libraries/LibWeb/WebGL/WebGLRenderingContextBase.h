@@ -6,9 +6,10 @@
 
 #pragma once
 
-#include <LibGfx/BitmapExportResult.h>
+#include <LibGfx/BitmapExport.h>
 #include <LibJS/Runtime/DataView.h>
 #include <LibJS/Runtime/TypedArray.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/WebGL/Types.h>
 #include <LibWeb/WebIDL/Buffers.h>
@@ -34,26 +35,41 @@ static constexpr int BROWSER_DEFAULT_WEBGL = 0x9244;
 static constexpr int MAX_CLIENT_WAIT_TIMEOUT_WEBGL = 0x9247;
 
 // NOTE: This is the Variant created by the IDL wrapper generator, and needs to be updated accordingly.
-using TexImageSource = Variant<GC::Root<HTML::ImageBitmap>, GC::Root<HTML::ImageData>, GC::Root<HTML::HTMLImageElement>, GC::Root<HTML::HTMLCanvasElement>, GC::Root<HTML::OffscreenCanvas>, GC::Root<HTML::HTMLVideoElement>>;
+using TexImageSource = Variant<GC::Ref<HTML::ImageBitmap>, GC::Ref<HTML::ImageData>, GC::Ref<HTML::HTMLImageElement>, GC::Ref<HTML::HTMLCanvasElement>, GC::Ref<HTML::OffscreenCanvas>, GC::Ref<HTML::HTMLVideoElement>>;
 
 class WebGLRenderingContextBase : public Bindings::PlatformObject {
     WEB_NON_IDL_PLATFORM_OBJECT(WebGLRenderingContextBase, Bindings::PlatformObject);
 
 public:
-    using Float32List = Variant<GC::Root<JS::Float32Array>, Vector<float>>;
-    using Int32List = Variant<GC::Root<JS::Int32Array>, Vector<WebIDL::Long>>;
-    using Uint32List = Variant<GC::Root<JS::Uint32Array>, Vector<WebIDL::UnsignedLong>>;
+    using Float32List = Variant<GC::Ref<JS::Float32Array>, Vector<float>>;
+    using Int32List = Variant<GC::Ref<JS::Int32Array>, Vector<WebIDL::Long>>;
+    using Uint32List = Variant<GC::Ref<JS::Uint32Array>, Vector<WebIDL::UnsignedLong>>;
 
     virtual OpenGLContext& context() = 0;
+
+    bool is_context_lost() const;
+
+    bool xr_compatible() const { return m_xr_compatible; }
+    void set_xr_compatible(bool xr_compatible) { m_xr_compatible = xr_compatible; }
+
+    // https://immersive-web.github.io/webxr/#dom-webglrenderingcontextbase-makexrcompatible
+    GC::Ref<WebIDL::Promise> make_xr_compatible();
+
+    Optional<Vector<String>> get_supported_extensions();
+    JS::Object* get_extension(String const& name);
+
+    void enable_compressed_texture_format(WebIDL::UnsignedLong format);
 
 protected:
     WebGLRenderingContextBase(JS::Realm&);
 
-    virtual bool ext_texture_filter_anisotropic_extension_enabled() const = 0;
-    virtual bool angle_instanced_arrays_extension_enabled() const = 0;
-    virtual bool oes_standard_derivatives_extension_enabled() const = 0;
-    virtual bool webgl_draw_buffers_extension_enabled() const = 0;
-    virtual ReadonlySpan<WebIDL::UnsignedLong> enabled_compressed_texture_formats() const = 0;
+    virtual void visit_edges(Cell::Visitor&) override;
+
+    // FIXME: Make this and any another instance of extension names a FlyString, similarly to HTML::TagNames
+    bool extension_enabled(StringView extension) const;
+    ReadonlySpan<WebIDL::UnsignedLong> enabled_compressed_texture_formats() const;
+
+    // NB: Used by fork fingerprinting-detection hooks to reach the canvas element's page.
     virtual GC::Ref<HTML::HTMLCanvasElement> canvas_for_binding() const = 0;
 
     template<typename T>
@@ -71,31 +87,23 @@ protected:
     }
 
     template<typename T>
-    static ErrorOr<Span<T>> get_offset_span(GC::Ref<WebIDL::BufferableObjectBase> src_data, WebIDL::UnsignedLongLong src_offset, WebIDL::UnsignedLong src_length_override = 0)
+    static ErrorOr<Span<T>> get_offset_span(WebIDL::BufferSource src_data, WebIDL::UnsignedLongLong src_offset, WebIDL::UnsignedLong src_length_override = 0)
     {
-        auto buffer_size = src_data->byte_length();
+        auto buffer_size = src_data.byte_length();
         if (buffer_size % sizeof(T) != 0) [[unlikely]]
             return Error::from_errno(EINVAL);
 
-        auto raw_object = src_data->raw_object();
-
-        if (auto* array_buffer = as_if<JS::ArrayBuffer>(*raw_object)) {
-            return TRY(get_offset_span(array_buffer->buffer().span(), src_offset, src_length_override)).reinterpret<T>();
-        }
-
-        if (auto* data_view = as_if<JS::DataView>(*raw_object)) {
-            return TRY(get_offset_span(data_view->viewed_array_buffer()->buffer().span(), src_offset, src_length_override)).reinterpret<T>();
-        }
-
-        // NOTE: This has to be done because src_offset is the number of elements to offset by, not the number of bytes.
-#define __JS_ENUMERATE(ClassName, snake_name, PrototypeName, ConstructorName, Type)                         \
-    if (auto* typed_array = as_if<JS::ClassName>(*raw_object)) {                                            \
-        return TRY(get_offset_span(typed_array->data(), src_offset, src_length_override)).reinterpret<T>(); \
-    }
-        JS_ENUMERATE_TYPED_ARRAYS
-#undef __JS_ENUMERATE
-
-        VERIFY_NOT_REACHED();
+        return src_data.buffer_source().visit(
+            [&](GC::Ref<JS::ArrayBuffer> array_buffer) -> ErrorOr<Span<T>> {
+                return TRY(get_offset_span(array_buffer->span(), src_offset, src_length_override)).template reinterpret<T>();
+            },
+            [&](GC::Ref<JS::DataView> data_view) -> ErrorOr<Span<T>> {
+                return TRY(get_offset_span(data_view->viewed_array_buffer()->span(), src_offset, src_length_override)).template reinterpret<T>();
+            },
+            [&](auto const& typed_array) -> ErrorOr<Span<T>> {
+                // NOTE: src_offset is the number of elements to offset by, not the number of bytes.
+                return TRY(get_offset_span(typed_array->data(), src_offset, src_length_override)).template reinterpret<T>();
+            });
     }
 
     static ErrorOr<Span<float>> span_from_float32_list(Float32List& float32_list, WebIDL::UnsignedLongLong src_offset, WebIDL::UnsignedLong src_length_override = 0)
@@ -104,7 +112,7 @@ protected:
             auto& vector = float32_list.get<Vector<float>>();
             return get_offset_span(vector.span(), src_offset, src_length_override);
         }
-        auto& buffer = float32_list.get<GC::Root<JS::Float32Array>>();
+        auto& buffer = float32_list.get<GC::Ref<JS::Float32Array>>();
         return get_offset_span(buffer->data(), src_offset, src_length_override);
     }
 
@@ -114,7 +122,7 @@ protected:
             auto& vector = int32_list.get<Vector<int>>();
             return get_offset_span(vector.span(), src_offset, src_length_override);
         }
-        auto& buffer = int32_list.get<GC::Root<JS::Int32Array>>();
+        auto& buffer = int32_list.get<GC::Ref<JS::Int32Array>>();
         return get_offset_span(buffer->data(), src_offset, src_length_override);
     }
 
@@ -124,7 +132,7 @@ protected:
             auto& vector = uint32_list.get<Vector<u32>>();
             return get_offset_span(vector.span(), src_offset, src_length_override);
         }
-        auto& buffer = uint32_list.get<GC::Root<JS::Uint32Array>>();
+        auto& buffer = uint32_list.get<GC::Ref<JS::Uint32Array>>();
         return get_offset_span(buffer->data(), src_offset, src_length_override);
     }
 
@@ -166,6 +174,19 @@ protected:
 
 private:
     GLenum m_error { 0 };
+
+    // https://registry.khronos.org/webgl/specs/latest/2.0/#webgl-context-lost-flag
+    // Each WebGLRenderingContext and WebGL2RenderingContext has a webgl context lost flag, which is initially unset.
+    bool m_context_lost { false };
+
+    // https://immersive-web.github.io/webxr/#xr-compatible
+    bool m_xr_compatible { false };
+
+    Vector<WebIDL::UnsignedLong> m_enabled_compressed_texture_formats;
+
+    // Extensions
+    // "Multiple calls to getExtension with the same extension string, taking into account case-insensitive comparison, must return the same object as long as the extension is enabled."
+    HashMap<String, GC::Ref<JS::Object>, AK::ASCIICaseInsensitiveStringTraits> m_enabled_extensions;
 };
 
 }

@@ -1,5 +1,5 @@
 name: 'Setup action'
-description: 'Sets up the dependencies for the CI VM'
+description: 'Sets up shared CI tooling'
 author: 'Andrew Kaster <akaster@serenityos.org>'
 inputs:
   os:
@@ -11,37 +11,52 @@ inputs:
     required: true
     default: 'x86_64'
   toolchain:
-    description: 'Toolchain to set up'
+    description: 'Toolchain to use'
     required: true
     default: 'Clang'
-  gcc_version:
-    description: 'GCC version to install'
-    required: false
-    default: '14'
-  llvm_version:
-    description: 'LLVM version to install'
-    required: false
-    default: '21'
   type:
     description: 'Whether the setup is for building or linting'
     required: false
     default: 'build'
-
 outputs:
-  gcc_version:
-    description: 'The installed GCC version'
-    value: ${{ steps.export-versions.outputs.gcc_version }}
-  llvm_version:
-    description: 'The installed LLVM version'
-    value: ${{ steps.export-versions.outputs.llvm_version }}
+  ccache_path:
+    description: 'Path to the ccache directory'
+    value: ${{ steps.workspace.outputs.ccache_path }}
+  vcpkg_cache_path:
+    description: 'Path to the vcpkg binary cache'
+    value: ${{ steps.workspace.outputs.vcpkg_cache_path }}
 
 runs:
   using: "composite"
   steps:
+    - name: 'Set workspace environment'
+      id: 'workspace'
+      shell: bash
+      run: |
+        echo "LADYBIRD_SOURCE_DIR=${GITHUB_WORKSPACE}" >> "$GITHUB_ENV"
+        echo "CCACHE_DIR=${GITHUB_WORKSPACE}/.ccache" >> "$GITHUB_ENV"
+        echo "VCPKG_ROOT=${GITHUB_WORKSPACE}/Build/vcpkg" >> "$GITHUB_ENV"
+        echo "ccache_path=${GITHUB_WORKSPACE}/.ccache" >> "$GITHUB_OUTPUT"
+        echo "vcpkg_cache_path=${GITHUB_WORKSPACE}/Build/caches/vcpkg-binary-cache" >> "$GITHUB_OUTPUT"
+        echo "GIT_CONFIG_GLOBAL=${RUNNER_TEMP}/gitconfig" >> "$GITHUB_ENV"
+        git config --file "${RUNNER_TEMP}/gitconfig" --add safe.directory "${GITHUB_WORKSPACE}"
+        mkdir -p "${RUNNER_TEMP}/pip-cache"
+        echo "PIP_CACHE_DIR=${RUNNER_TEMP}/pip-cache" >> "$GITHUB_ENV"
+
     - uses: actions/setup-python@v6
+      if: ${{ inputs.os != 'Linux' }}
       with:
         python-version: 3.12
         cache: 'pip'
+
+    # actions/setup-python can fail to find its tool-cache pip inside job containers.
+    - name: 'Set up Python environment'
+      if: ${{ inputs.os == 'Linux' }}
+      shell: bash
+      run: |
+        python3 -m venv "${RUNNER_TEMP}/ladybird-python"
+        echo "${RUNNER_TEMP}/ladybird-python/bin" >> "$GITHUB_PATH"
+        echo "pythonLocation=${RUNNER_TEMP}/ladybird-python" >> "$GITHUB_ENV"
 
     - name: 'Install Python dependencies'
       shell: bash
@@ -51,7 +66,7 @@ runs:
         if ${{ inputs.type == 'build' }} ; then
           pip3 install pyyaml requests six
         else
-          pip3 install ruff
+          pip3 install pyright ruff
         fi
 
     - name: Install apt repositories
@@ -167,7 +182,7 @@ runs:
             ccache \
             coreutils \
             libtool \
-            llvm@${{ inputs.llvm_version }} \
+            llvm@21 \
             nasm \
             ninja \
             pkg-config \
@@ -175,7 +190,7 @@ runs:
             unzip
 
     - name: 'Install Rust toolchain'
-      if: ${{ inputs.os != 'Windows' }}
+      if: ${{ inputs.os == 'macOS' || inputs.os == 'Android' }}
       uses: dtolnay/rust-toolchain@stable
 
     - name: 'Install wasm-tools'
@@ -207,23 +222,14 @@ runs:
         fi
         rm "${FILENAME}"
 
-        echo "${{ github.workspace }}/${NAME}" >> $GITHUB_PATH
+        echo "${GITHUB_WORKSPACE}/${NAME}" >> $GITHUB_PATH
 
     - name: 'Set required environment variables'
       if: ${{ inputs.os == 'Linux' && inputs.arch == 'arm64' }}
-      uses: actions/github-script@v7
-      with:
-        script: |
-          core.exportVariable('VCPKG_FORCE_SYSTEM_BINARIES', '1')
+      shell: bash
+      run: echo "VCPKG_FORCE_SYSTEM_BINARIES=1" >> "$GITHUB_ENV"
 
     - name: 'Install vcpkg'
       if: ${{ inputs.type == 'build' }}
       shell: bash
-      run: ./Toolchain/BuildVcpkg.py
-
-    - name: 'Export installed versions'
-      id: 'export-versions'
-      shell: bash
-      run: |
-        echo "gcc_version=${{ inputs.gcc_version }}" >> "$GITHUB_OUTPUT"
-        echo "llvm_version=${{ inputs.llvm_version }}" >> "$GITHUB_OUTPUT"
+      run: ./Meta/Utils/build_vcpkg.py

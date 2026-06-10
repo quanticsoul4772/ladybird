@@ -1,37 +1,3 @@
-#import <Animations/DocumentTimeline.idl>
-#import <CSS/FontFaceSet.idl>
-#import <CSS/StyleSheetList.idl>
-#import <DOM/CDATASection.idl>
-#import <DOM/Comment.idl>
-#import <DOM/DOMImplementation.idl>
-#import <DOM/DocumentFragment.idl>
-#import <DOM/DocumentOrShadowRoot.idl>
-#import <DOM/DocumentType.idl>
-#import <DOM/Element.idl>
-#import <DOM/Event.idl>
-#import <DOM/EventHandler.idl>
-#import <DOM/HTMLCollection.idl>
-#import <DOM/Node.idl>
-#import <DOM/NodeFilter.idl>
-#import <DOM/NodeIterator.idl>
-#import <DOM/NodeList.idl>
-#import <DOM/ParentNode.idl>
-#import <DOM/ProcessingInstruction.idl>
-#import <DOM/Range.idl>
-#import <DOM/Text.idl>
-#import <DOM/TreeWalker.idl>
-#import <Fullscreen/DocumentExtensions.idl>
-#import <HTML/HTMLAllCollection.idl>
-#import <HTML/HTMLElement.idl>
-#import <HTML/HTMLHeadElement.idl>
-#import <HTML/HTMLScriptElement.idl>
-#import <HTML/Location.idl>
-#import <Selection/Selection.idl>
-#import <TrustedTypes/TrustedHTML.idl>
-#import <ViewTransition/ViewTransition.idl>
-#import <XPath/XPathResult.idl>
-#import <XPath/XPathExpression.idl>
-
 // https://dom.spec.whatwg.org/#document
 // https://html.spec.whatwg.org/multipage/dom.html#the-document-object
 [Exposed=Window, LegacyOverrideBuiltins]
@@ -110,7 +76,7 @@ interface Document : Node {
     Range createRange();
     Event createEvent(DOMString interface);
 
-    [CEReactions, NewObject] Node importNode(Node node, optional boolean deep = false);
+    [CEReactions, NewObject] Node importNode(Node node, optional (boolean or ImportNodeOptions) options = false);
     [CEReactions, ImplementedAs=adopt_node_binding] Node adoptNode(Node node);
 
     readonly attribute DOMString compatMode;
@@ -137,12 +103,13 @@ interface Document : Node {
 
     [CEReactions] attribute DOMString designMode;
 
-    // https://www.w3.org/TR/web-animations-1/#extensions-to-the-document-interface
+    // https://drafts.csswg.org/web-animations-1/#extensions-to-the-document-interface
     readonly attribute DocumentTimeline timeline;
 
     // https://drafts.csswg.org/cssom-view/#extensions-to-the-document-interface
     Element? elementFromPoint(double x, double y);
     sequence<Element> elementsFromPoint(double x, double y);
+    CaretPosition? caretPositionFromPoint(double x, double y, optional CaretPositionFromPointOptions options = {});
     readonly attribute Element? scrollingElement;
 
     // https://w3c.github.io/editing/docs/execCommand/
@@ -154,28 +121,36 @@ interface Document : Node {
     boolean queryCommandSupported(DOMString commandId);
     DOMString queryCommandValue(DOMString commandId);
 
-    // XPath
-    [NewObject] XPathExpression createExpression(DOMString expression, optional XPathNSResolver? resolver = null);
-    XPathResult evaluate(DOMString expression, Node contextNode, optional XPathNSResolver? resolver = null, optional unsigned short type = 0, optional XPathResult? result = null);
-    Node createNSResolver(Node nodeResolver); // legacy
-
     // special event handler IDL attributes that only apply to Document objects
     [LegacyLenientThis] attribute EventHandler onreadystatechange;
     attribute EventHandler onvisibilitychange;
 
     // https://drafts.csswg.org/css-view-transitions-1/#additions-to-document-api
-    ViewTransition startViewTransition(optional ViewTransitionUpdateCallback updateCallback);
+    [Experimental] ViewTransition startViewTransition(optional ViewTransitionUpdateCallback updateCallback);
 
-    // https://www.w3.org/TR/SVG2/struct.html#InterfaceDocumentExtensions
+    // https://w3c.github.io/svgwg/svg2-draft/struct.html#InterfaceDocumentExtensions
     readonly attribute SVGSVGElement? rootElement;
     
     // https://w3c.github.io/pointerlock/#extensions-to-the-document-interface
     undefined exitPointerLock();
 };
 
+dictionary CaretPositionFromPointOptions {
+    sequence<ShadowRoot> shadowRoots = [];
+};
+
+// https://dom.spec.whatwg.org/#dictdef-elementcreationoptions
 dictionary ElementCreationOptions {
+    CustomElementRegistry? customElementRegistry;
     DOMString is;
 };
+
+// https://dom.spec.whatwg.org/#dictdef-importnodeoptions
+dictionary ImportNodeOptions {
+    CustomElementRegistry customElementRegistry;
+    boolean selfOnly = false;
+};
+
 Document includes ParentNode;
 Document includes GlobalEventHandlers;
 Document includes DocumentOrShadowRoot;

@@ -7,16 +7,15 @@
 
 #include <LibGfx/Quad.h>
 #include <LibWeb/Painting/DisplayListRecorder.h>
+#include <LibWeb/Painting/HitTestDisplayList.h>
 #include <LibWeb/Painting/SVGPathPaintable.h>
 #include <LibWeb/Painting/SVGSVGPaintable.h>
 
 namespace Web::Painting {
 
-GC_DEFINE_ALLOCATOR(SVGPathPaintable);
-
-GC::Ref<SVGPathPaintable> SVGPathPaintable::create(Layout::SVGGraphicsBox const& layout_box)
+NonnullRefPtr<SVGPathPaintable> SVGPathPaintable::create(Layout::SVGGraphicsBox const& layout_box)
 {
-    return layout_box.heap().allocate<SVGPathPaintable>(layout_box);
+    return adopt_ref(*new SVGPathPaintable(layout_box));
 }
 
 SVGPathPaintable::SVGPathPaintable(Layout::SVGGraphicsBox const& layout_box)
@@ -30,14 +29,19 @@ void SVGPathPaintable::reset_for_relayout()
     m_computed_path.clear();
 }
 
-TraversalDecision SVGPathPaintable::hit_test(CSSPixelPoint position, HitTestType type, Function<TraversalDecision(HitTestResult)> const& callback) const
+Optional<CSSPixelRect> SVGPathPaintable::clip_path_geometry_bounds(Gfx::AffineTransform const& additional_transform) const
 {
-    if (!computed_path().has_value())
-        return TraversalDecision::Continue;
-    auto transformed_bounding_box = computed_transforms().svg_to_css_pixels_transform().map_to_quad(computed_path()->bounding_box());
-    if (!transformed_bounding_box.contains(position.to_type<float>()))
-        return TraversalDecision::Continue;
-    return SVGGraphicsPaintable::hit_test(position, type, callback);
+    if (!contributes_to_clip_path() || !computed_path().has_value())
+        return {};
+
+    auto const* svg_node = layout_box().first_ancestor_of_type<Layout::SVGSVGBox>();
+    if (!svg_node || !svg_node->paintable_box())
+        return {};
+
+    auto path = computed_path()->copy_transformed(computed_transforms().svg_to_css_pixels_transform(additional_transform));
+    path.offset(svg_node->paintable_box()->absolute_rect().location().to_type<float>());
+
+    return path.bounding_box().to_type<CSSPixels>();
 }
 
 static Gfx::WindingRule to_gfx_winding_rule(SVG::FillRule fill_rule)
@@ -54,8 +58,15 @@ static Gfx::WindingRule to_gfx_winding_rule(SVG::FillRule fill_rule)
 
 void SVGPathPaintable::paint(DisplayListRecordingContext& context, PaintPhase phase) const
 {
-    if (!is_visible() || !computed_path().has_value())
+    if (!computed_path().has_value())
         return;
+
+    if (context.draw_svg_geometry_for_clip_path()) {
+        if (!contributes_to_clip_path())
+            return;
+    } else if (!is_visible()) {
+        return;
+    }
 
     SVGGraphicsPaintable::paint(context, phase);
 
@@ -200,6 +211,29 @@ void SVGPathPaintable::paint(DisplayListRecordingContext& context, PaintPhase ph
             break;
         }
     }
+}
+
+void SVGPathPaintable::record_hit_test_items(DisplayListRecordingContext& context, PaintPhase phase) const
+{
+    if (phase != PaintPhase::Foreground)
+        return;
+
+    auto* hit_test_display_list = context.hit_test_display_list();
+    if (!hit_test_display_list)
+        return;
+
+    if (!computed_path().has_value())
+        return;
+
+    if (computed_values().visibility() != CSS::Visibility::Visible || !visible_for_hit_testing())
+        return;
+
+    auto transformed_path = computed_path()->copy_transformed(computed_transforms().svg_to_css_pixels_transform());
+    auto bounding_box = transformed_path.bounding_box().to_type<CSSPixels>();
+    if (bounding_box.is_empty())
+        return;
+
+    hit_test_display_list->append_box(*this, const_cast<SVGPathPaintable&>(*this), bounding_box, accumulated_visual_context_index(), {});
 }
 
 }

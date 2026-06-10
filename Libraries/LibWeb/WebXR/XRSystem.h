@@ -7,17 +7,11 @@
 #pragma once
 
 #include <LibWeb/Bindings/PlatformObject.h>
-#include <LibWeb/Bindings/XRSystemPrototype.h>
+#include <LibWeb/Bindings/XRSystem.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::WebXR {
-
-// https://immersive-web.github.io/webxr/#dictdef-xrsessioninit
-struct XRSessionInit {
-    Optional<Vector<String>> required_features;
-    Optional<Vector<String>> optional_features;
-};
 
 // https://immersive-web.github.io/webxr/#xrsystem-interface
 class XRSystem final : public DOM::EventTarget {
@@ -32,7 +26,7 @@ public:
     GC::Ref<WebIDL::Promise> is_session_supported(Bindings::XRSessionMode) const;
 
     // https://immersive-web.github.io/webxr/#dom-xrsystem-requestsession
-    GC::Ref<WebIDL::Promise> request_session(Bindings::XRSessionMode, XRSessionInit);
+    GC::Ref<WebIDL::Promise> request_session(Bindings::XRSessionMode, Bindings::XRSessionInit const&);
 
     void set_pending_immersive_session(bool pending_immersive_session) { m_pending_immersive_session = pending_immersive_session; }
 

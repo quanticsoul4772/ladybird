@@ -4,11 +4,10 @@
 
 Qt6 development packages, nasm, additional build tools, and a C++23 capable compiler are required.
 
-A Rust toolchain is also required for building the JavaScript engine. You can install it via
-[rustup](https://rustup.rs/) or your system's package manager.
+A Rust toolchain is also required. You can install it via [rustup](https://rustup.rs/).
 
 We currently use gcc-14 and clang-21 in our CI pipeline. If these versions are not available on your system, see
-[`Meta/find_compiler.py`](../Meta/find_compiler.py) for the minimum compatible version.
+[`find_compiler.py`](../Meta/Utils/find_compiler.py) for the minimum compatible version.
 
 CMake 3.30 or newer must be available in $PATH.
 
@@ -18,7 +17,7 @@ CMake 3.30 or newer must be available in $PATH.
 
 <!-- Note: If you change something here, please also change it in the `devcontainer/devcontainer.json` file. -->
 ```bash
-sudo apt install autoconf autoconf-archive automake build-essential ccache cmake curl fonts-liberation2 git libdrm-dev libgl1-mesa-dev libtool nasm ninja-build pkg-config python3-venv qt6-base-dev qt6-tools-dev-tools qt6-wayland tar unzip zip
+sudo apt install autoconf autoconf-archive automake build-essential ccache cmake curl fonts-liberation2 git libdrm-dev libgl1-mesa-dev libncurses-dev libtool nasm ninja-build pkg-config python3-venv qt6-base-dev qt6-tools-dev-tools qt6-wayland tar unzip zip
 ```
 
 #### CMake 3.30 or newer:
@@ -88,13 +87,13 @@ sudo pacman -S libpulse
 ### Fedora or derivatives:
 
 ```
-sudo dnf install autoconf-archive automake ccache cmake curl git libdrm-devel liberation-sans-fonts libglvnd-devel libtool nasm ninja-build patchelf perl-FindBin perl-IPC-Cmd perl-lib perl-Time-Piece qt6-qtbase-devel qt6-qttools-devel qt6-qtwayland-devel tar unzip zip zlib-ng-compat-static
+sudo dnf install autoconf-archive automake ccache cmake curl git libdrm-devel liberation-sans-fonts libglvnd-devel libtool nasm ncurses-devel ninja-build patchelf perl-FindBin perl-IPC-Cmd perl-lib perl-Time-Piece qt6-qtbase-devel qt6-qttools-devel qt6-qtwayland-devel tar unzip zip zlib-ng-compat-static
 ```
 
 ### openSUSE:
 
 ```
-sudo zypper install autoconf-archive automake ccache cmake curl gcc14 gcc14-c++ git liberation-fonts libglvnd-devel libtool nasm ninja qt6-base-devel qt6-tools-devel qt6-wayland-devel tar unzip zip
+sudo zypper install autoconf-archive automake ccache cmake curl gcc14 gcc14-c++ git liberation-fonts libglvnd-devel libtool nasm ncurses-devel ninja qt6-base-devel qt6-tools-devel qt6-wayland-devel tar unzip zip
 ```
 
 If one or more of the base repository packages are flagged as having an out-of-date version during the build process, you may need add the `devel:tools:building` repository. For example, on Leap 15.6, the `autoconf` package might be version 2.69, whereas the `gperf` package requires 2.70 to build.
@@ -140,7 +139,7 @@ This virtual environment can be created once and reused in future shell sessions
 
 ```
 sudo xbps-install -Su # (optional) ensure packages are up to date to avoid "Transaction aborted due to unresolved dependencies."
-sudo xbps-install -S git bash gcc python3 curl cmake libtool zip unzip linux-headers make pkg-config autoconf automake autoconf-archive nasm MesaLib-devel ninja qt6-base-devel qt6-tools-devel qt6-wayland-devel
+sudo xbps-install -S git bash gcc python3 curl cmake libtool zip unzip linux-headers make pkg-config autoconf automake autoconf-archive nasm ncurses-devel MesaLib-devel ninja qt6-base-devel qt6-tools-devel qt6-wayland-devel
 ```
 
 ### NixOS or with Nix:
@@ -212,8 +211,11 @@ Or, download a version of Gradle >= 8.0.0, and run the ``gradlew`` program in ``
 ### FreeBSD
 
 ```
-pkg install autoconf-archive automake autoconf bash cmake curl gmake gn libdrm libtool libxcb libxkbcommon libX11 libXrender libXi nasm ninja patchelf pkgconf python3 qt6-base unzip zip
+pkg install autoconf-archive automake autoconf bash cmake ccache curl gmake gn libdrm libtool libxcb libxkbcommon libX11 libXrender libXi nasm ninja patchelf pkgconf python3 qt6-base tar unzip zip
 ```
+> [!NOTE]
+> `zip`, `unzip`, and `tar` are required by the vcpkg bootstrap step. If any of these are missing,
+> the build will fail with a Python `CalledProcessError` traceback rather than a clear error message.
 
 ## Build steps
 
@@ -253,17 +255,38 @@ If you want to run other applications, such as the JS REPL or the WebAssembly RE
 Ladybird will be built with one of the following browser frontends, depending on the platform:
 * [AppKit](https://developer.apple.com/documentation/appkit?language=objc) - The native UI on macOS.
 * [Qt](https://doc.qt.io/qt-6/) - The UI used on all other platforms.
+* [GTK 4](https://docs.gtk.org/gtk4/) - An alternative UI on Linux (experimental).
 * [Android UI](https://developer.android.com/develop/ui) - The native UI on Android.
 
-The Qt UI is available on platforms where it is not the default as well (except on Android). To build the
-Qt UI, install the Qt dependencies for your platform, and enable the Qt UI via CMake:
+You can pick the UI using the `LADYBIRD_GUI_FRAMEWORK` option, or the `--gui` argument to ladybird.py.
+For example, to force building with the Qt UI:
 
 ```bash
 # From /path/to/ladybird
-cmake --preset default -DENABLE_QT=ON
+cmake --preset Release -DLADYBIRD_GUI_FRAMEWORK=Qt
+# Or
+./Meta/ladybird.py run --gui=Qt
 ```
 
-To re-disable the Qt UI, run the above command with `-DENABLE_QT=OFF`.
+#### Additional prerequisites for the GTK UI
+
+Building with `LADYBIRD_GUI_FRAMEWORK=Gtk` requires additional system packages, as some vcpkg
+dependencies (e.g. gettext) need to be rebuilt from source:
+
+**Debian/Ubuntu:**
+```bash
+sudo apt install bison libxkbcommon-dev
+```
+
+**Arch Linux/Manjaro:**
+```bash
+sudo pacman -S bison
+```
+
+**Fedora:**
+```bash
+sudo dnf install bison
+```
 
 ### Build error messages you may encounter
 
@@ -280,7 +303,7 @@ error: building skia:x64-linux failed with: BUILD_FAILED
 Elapsed time to handle skia:x64-linux: 1.6 s
 
 -- Running vcpkg install - failed
-CMake Error at Toolchain/Tarballs/vcpkg/scripts/buildsystems/vcpkg.cmake:899 (message):
+CMake Error at Build/vcpkg/scripts/buildsystems/vcpkg.cmake:899 (message):
   vcpkg install failed.  See logs for more information:
   Build/release/vcpkg-manifest-install.log
 Call Stack (most recent call first):
@@ -305,7 +328,7 @@ to CMAKE_INSTALL_PREFIX. If it is not, things will break.
 
 ### Custom CMake build directory
 
-The script Meta/ladybird.py and the default preset in CMakePresets.json both define a build directory of
+The script Meta/ladybird.py and the Release preset in CMakePresets.json both define a build directory of
 `Build/release`. For distribution purposes, or when building multiple configurations, it may be useful to create a custom
 CMake build directory.
 
@@ -317,9 +340,9 @@ compiler (see [Build Prerequisites](BuildInstructionsLadybird.md#build-prerequis
 CMAKE_CXX_COMPILER cmake options.
 
 ```
-cmake --preset default -B MyBuildDir
+cmake --preset Release -B MyBuildDir
 # optionally, add -DCMAKE_CXX_COMPILER=<suitable compiler> -DCMAKE_C_COMPILER=<matching c compiler>
-cmake --build --preset default MyBuildDir
+cmake --build --preset Release MyBuildDir
 ninja -C MyBuildDir run-ladybird
 ```
 
@@ -331,7 +354,7 @@ If you wish to reduce the number of parallel link jobs, you may use the LAGOM_LI
 to set a maximum limit for the number of parallel link jobs.
 
 ```
-cmake --preset default -B MyBuildDir -DLAGOM_LINK_POOL_SIZE=2
+cmake --preset Release -B MyBuildDir -DLAGOM_LINK_POOL_SIZE=2
 ```
 
 ### Running manually
@@ -356,15 +379,6 @@ open -W --stdout $(tty) --stderr $(tty) ./Build/release/bin/Ladybird.app
 # Or to launch with arguments:
 open -W --stdout $(tty) --stderr $(tty) ./Build/release/bin/Ladybird.app --args https://ladybird.dev
 ```
-
-### Experimental GN build
-
-There is an experimental GN build for Ladybird. It is not officially supported, but it is kept up to date on a best-effort
-basis by interested contributors. See the [GN build instructions](../Meta/gn/README.md) for more information.
-
-In general, the GN build organizes ninja rules in a more compact way than the CMake build, and it may be faster on some systems.
-GN also allows building host and cross-targets in the same build directory, which is useful for managing dependencies on host tools when
-cross-compiling to other platforms.
 
 ### Debugging with CLion
 

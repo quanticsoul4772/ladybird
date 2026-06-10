@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/HTMLAudioElementPrototype.h>
+#include <LibWeb/Bindings/HTMLAudioElement.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/HTML/HTMLAudioElement.h>
@@ -37,9 +37,9 @@ void HTMLAudioElement::adjust_computed_style(CSS::ComputedProperties& style)
         style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::None)));
 }
 
-GC::Ptr<Layout::Node> HTMLAudioElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+RefPtr<Layout::Node> HTMLAudioElement::create_layout_node(CSS::ComputedProperties const& style)
 {
-    return heap().allocate<Layout::AudioBox>(document(), *this, style);
+    return make_ref_counted<Layout::AudioBox>(document(), *this, style);
 }
 
 Layout::AudioBox* HTMLAudioElement::layout_node()

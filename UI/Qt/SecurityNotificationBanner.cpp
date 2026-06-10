@@ -10,6 +10,7 @@
 
 #include <QHBoxLayout>
 #include <QPainter>
+#include <QStyle>
 #include <QVBoxLayout>
 
 namespace Ladybird {
@@ -229,17 +230,18 @@ QColor SecurityNotificationBanner::background_color_for_type(NotificationType ty
 
 QIcon SecurityNotificationBanner::icon_for_type(NotificationType type) const
 {
+    // NB: Upstream removed the 16x16 PNG icon set; use Qt standard icons instead.
     switch (type) {
     case NotificationType::Block:
-        return load_icon_from_uri("resource://icons/16x16/error.png"sv);
+        return style()->standardIcon(QStyle::SP_MessageBoxCritical);
     case NotificationType::Quarantine:
-        return load_icon_from_uri("resource://icons/16x16/spoof.png"sv);
+        return style()->standardIcon(QStyle::SP_MessageBoxWarning);
     case NotificationType::PolicyCreated:
-        return load_icon_from_uri("resource://icons/16x16/settings.png"sv);
+        return style()->standardIcon(QStyle::SP_DialogApplyButton);
     case NotificationType::RuleUpdated:
-        return load_icon_from_uri("resource://icons/16x16/settings.png"sv);
+        return style()->standardIcon(QStyle::SP_MessageBoxInformation);
     default:
-        return load_icon_from_uri("resource://icons/16x16/download.png"sv);
+        return style()->standardIcon(QStyle::SP_ArrowDown);
     }
 }
 

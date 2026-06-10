@@ -9,12 +9,19 @@
 #include <AK/SourceLocation.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Encoder.h>
+#include <LibWeb/Bindings/ExceptionOrUtils.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/Clipboard/SystemClipboard.h>
+#include <LibWeb/Compositor/CompositorHost.h>
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/Range.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Bodies.h>
+#include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/EventLoop/EventLoop.h>
+#include <LibWeb/HTML/EventNames.h>
+#include <LibWeb/HTML/HTMLIFrameElement.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/HTMLMediaElement.h>
 #include <LibWeb/HTML/HTMLSelectElement.h>
@@ -23,6 +30,7 @@
 #include <LibWeb/HTML/SelectedFile.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/HTML/Window.h>
+#include <LibWeb/Loader/ContentBlocker.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/Selection/Selection.h>
@@ -43,6 +51,33 @@ Page::Page(GC::Ref<PageClient> client)
 
 Page::~Page() = default;
 
+bool Page::has_compositor_host() const
+{
+    return m_client->compositor_host();
+}
+
+void Page::ensure_compositor_host()
+{
+    if (!m_client->supports_compositor())
+        return;
+
+    m_client->ensure_compositor_host();
+}
+
+Compositor::CompositorHost& Page::compositor_host()
+{
+    auto* compositor_host = m_client->compositor_host();
+    VERIFY(compositor_host);
+    return *compositor_host;
+}
+
+Compositor::CompositorHost const& Page::compositor_host() const
+{
+    auto const* compositor_host = m_client->compositor_host();
+    VERIFY(compositor_host);
+    return *compositor_host;
+}
+
 void Page::visit_edges(JS::Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
@@ -51,6 +86,16 @@ void Page::visit_edges(JS::Cell::Visitor& visitor)
     visitor.visit(m_window_rect_observer);
     visitor.visit(m_on_pending_dialog_closed);
     visitor.visit(m_pending_clipboard_requests);
+    m_pending_fullscreen_operations.for_each([&](auto const& operation) {
+        operation.visit([&](PendingFullscreenEnter const& enter_operation) {
+                visitor.visit(enter_operation.element);
+                visitor.visit(enter_operation.pending_doc);
+                visitor.visit(enter_operation.promise); },
+            [&](PendingFullscreenExit const& exit_operation) {
+                visitor.visit(exit_operation.doc);
+                visitor.visit(exit_operation.promise);
+            });
+    });
 }
 
 HTML::Navigable& Page::focused_navigable()
@@ -85,6 +130,31 @@ void Page::load_html(StringView html)
         .source_document = *top_level_traversable()->active_document(),
         .document_resource = String::from_utf8(html).release_value_but_fixme_should_propagate_errors(),
         .user_involvement = HTML::UserNavigationInvolvement::BrowserUI });
+}
+
+void Page::load_html(StringView html, URL::URL const& url)
+{
+    // FIXME: #23909 Figure out why GC threshold does not stay low when repeatedly loading html from the WebView
+    heap().collect_garbage();
+
+    auto document = top_level_traversable()->active_document();
+    auto& realm = document->realm();
+    auto html_string = String::from_utf8(html).release_value_but_fixme_should_propagate_errors();
+
+    auto response = Fetch::Infrastructure::Response::create(realm.vm());
+    response->url_list().append(url);
+    response->header_list()->append({ "Content-Type"sv, "text/html"sv });
+    response->set_body(Fetch::Infrastructure::byte_sequence_as_body(realm, html_string.bytes()));
+
+    HTML::Navigable::NavigateParams params { .url = url,
+        .source_document = *document,
+        .response = response,
+        .user_involvement = HTML::UserNavigationInvolvement::BrowserUI };
+
+    if (url == URL::about_srcdoc())
+        params.document_resource = move(html_string);
+
+    (void)top_level_traversable()->navigate(move(params));
 }
 
 void Page::reload()
@@ -146,6 +216,9 @@ CSSPixelRect Page::web_exposed_available_screen_area() const
 
 CSS::PreferredColorScheme Page::preferred_color_scheme() const
 {
+    if (m_preferred_color_scheme_override_for_testing.has_value())
+        return *m_preferred_color_scheme_override_for_testing;
+
     auto preferred_color_scheme = m_client->preferred_color_scheme();
 
     if (preferred_color_scheme == CSS::PreferredColorScheme::Auto)
@@ -239,11 +312,11 @@ EventResult Page::handle_mouseup(DevicePixelPoint position, DevicePixelPoint scr
     return top_level_traversable()->event_handler().handle_mouseup(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers);
 }
 
-EventResult Page::handle_mousedown(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers)
+EventResult Page::handle_mousedown(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, int click_count)
 {
     // Record user interaction for security features (e.g., detecting auto-submit attacks)
     record_user_interaction();
-    return top_level_traversable()->event_handler().handle_mousedown(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers);
+    return top_level_traversable()->event_handler().handle_mousedown(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers, click_count);
 }
 
 EventResult Page::handle_mousemove(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned buttons, unsigned modifiers)
@@ -256,19 +329,18 @@ EventResult Page::handle_mouseleave()
     return top_level_traversable()->event_handler().handle_mouseleave();
 }
 
-EventResult Page::handle_mousewheel(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, DevicePixels wheel_delta_x, DevicePixels wheel_delta_y)
+UniqueNodeID Page::node_id_at_position(DevicePixelPoint position)
 {
-    return top_level_traversable()->event_handler().handle_mousewheel(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers, wheel_delta_x.value(), wheel_delta_y.value());
+    auto node = top_level_traversable()->event_handler().target_node_for_mouse_position(device_to_css_point(position));
+    if (!node)
+        return 0;
+
+    return node->unique_id();
 }
 
-EventResult Page::handle_doubleclick(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers)
+EventResult Page::handle_mousewheel(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, double wheel_delta_x, double wheel_delta_y, bool async_scroll_performed_default_action, Optional<AsyncScrollOperation>* async_scroll_operation)
 {
-    return top_level_traversable()->event_handler().handle_doubleclick(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers);
-}
-
-EventResult Page::handle_tripleclick(DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers)
-{
-    return top_level_traversable()->event_handler().handle_tripleclick(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers);
+    return top_level_traversable()->event_handler().handle_mousewheel(device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers, wheel_delta_x, wheel_delta_y, async_scroll_performed_default_action, async_scroll_operation);
 }
 
 EventResult Page::handle_drag_and_drop_event(DragEvent::Type type, DevicePixelPoint position, DevicePixelPoint screen_position, unsigned button, unsigned buttons, unsigned modifiers, Vector<HTML::SelectedFile> files)
@@ -276,16 +348,16 @@ EventResult Page::handle_drag_and_drop_event(DragEvent::Type type, DevicePixelPo
     return top_level_traversable()->event_handler().handle_drag_and_drop_event(type, device_to_css_point(position), device_to_css_point(screen_position), button, buttons, modifiers, move(files));
 }
 
-EventResult Page::handle_pinch_event(DevicePixelPoint position, double scale)
+EventResult Page::handle_pinch_event(DevicePixelPoint position, unsigned modifiers, double scale)
 {
-    return top_level_traversable()->event_handler().handle_pinch_event(device_to_css_point(position), scale);
+    return top_level_traversable()->event_handler().handle_pinch_event(device_to_css_point(position), modifiers, scale);
 }
 
-EventResult Page::handle_keydown(UIEvents::KeyCode key, unsigned modifiers, u32 code_point, bool repeat)
+EventResult Page::handle_keydown(UIEvents::KeyCode key, unsigned modifiers, u32 code_point, bool repeat, bool should_insert_text)
 {
     // Record user interaction for security features (e.g., detecting auto-submit attacks)
     record_user_interaction();
-    return focused_navigable().event_handler().handle_keydown(key, modifiers, code_point, repeat);
+    return focused_navigable().event_handler().handle_keydown(key, modifiers, code_point, repeat, should_insert_text);
 }
 
 EventResult Page::handle_keyup(UIEvents::KeyCode key, unsigned modifiers, u32 code_point, bool repeat)
@@ -298,11 +370,51 @@ void Page::handle_sdl_input_events()
     top_level_traversable()->event_handler().handle_sdl_input_events();
 }
 
+void Page::invalidate_compositor_wheel_event_listener_state()
+{
+    ++m_wheel_event_listener_state_generation;
+
+    if (!m_async_scrolling_enabled || !top_level_traversable_is_initialized() || !top_level_traversable()->has_compositor_context())
+        return;
+
+    top_level_traversable()->compositor_context().invalidate_wheel_event_listener_state(m_wheel_event_listener_state_generation);
+}
+
+void Page::update_needs_beforeunload_check()
+{
+    auto needs_beforeunload_check = [&] {
+        if (!top_level_traversable_is_initialized())
+            return true;
+
+        auto top_level_traversable = this->top_level_traversable();
+        auto active_document = top_level_traversable->active_document();
+        if (!active_document)
+            return true;
+        if (active_document->navigable() != top_level_traversable.ptr())
+            return true;
+
+        for (auto const& navigable : active_document->inclusive_descendant_navigables()) {
+            auto window = navigable->active_window();
+            if (window && window->has_event_listener(HTML::EventNames::beforeunload))
+                return true;
+        }
+
+        return false;
+    }();
+
+    if (m_needs_beforeunload_check == needs_beforeunload_check)
+        return;
+
+    m_needs_beforeunload_check = needs_beforeunload_check;
+    client().page_did_change_needs_beforeunload_check(m_needs_beforeunload_check);
+}
+
 void Page::set_top_level_traversable(GC::Ref<HTML::TraversableNavigable> navigable)
 {
     VERIFY(!m_top_level_traversable); // Replacement is not allowed!
     VERIFY(&navigable->page() == this);
     m_top_level_traversable = navigable;
+    update_needs_beforeunload_check();
 }
 
 bool Page::top_level_traversable_is_initialized() const
@@ -334,7 +446,7 @@ void Page::did_update_window_rect()
 template<typename ResponseType>
 static ResponseType spin_event_loop_until_dialog_closed(PageClient& client, Optional<ResponseType>& response, SourceLocation location = SourceLocation::current())
 {
-    auto& event_loop = Web::HTML::current_principal_settings_object().responsible_event_loop();
+    auto& event_loop = Web::HTML::current_settings_object().responsible_event_loop();
     auto pause_handle = event_loop.pause();
 
     Web::Platform::EventLoopPlugin::the().spin_until(GC::create_function(event_loop.heap(), [&]() {
@@ -557,9 +669,14 @@ void Page::for_each_media_element(Callback&& callback)
 
 void Page::update_all_media_element_video_sinks()
 {
-    for_each_media_element([](auto& media_element) {
+    bool should_request_another_frame = false;
+    for_each_media_element([&](auto& media_element) {
         media_element.update_video_frame_and_timeline();
+        should_request_another_frame = true;
     });
+
+    if (should_request_another_frame)
+        client().request_frame();
 }
 
 void Page::register_canvas_element(Badge<HTML::HTMLCanvasElement>, UniqueNodeID canvas_id)
@@ -587,6 +704,13 @@ void Page::present_all_canvas_element_surfaces()
 {
     for_each_canvas_element([](auto& canvas_element) {
         canvas_element.present();
+    });
+}
+
+void Page::republish_all_canvas_element_surfaces()
+{
+    for_each_canvas_element([](auto& canvas_element) {
+        canvas_element.republish_compositor_surface();
     });
 }
 
@@ -689,12 +813,41 @@ GC::Ptr<HTML::HTMLMediaElement> Page::media_context_menu_element()
 void Page::set_user_style(String source)
 {
     m_user_style_sheet_source = source;
-    if (top_level_traversable_is_initialized() && top_level_traversable()->active_document()) {
-        auto& document = *top_level_traversable()->active_document();
+    invalidate_user_style();
+}
+
+void Page::set_content_blocking_enabled(bool enabled)
+{
+    auto& blocker = ContentBlocker::the();
+    if (blocker.filtering_enabled() == enabled)
+        return;
+
+    auto has_cosmetic_rules = blocker.has_cosmetic_rules();
+    blocker.set_filtering_enabled(enabled);
+    if (has_cosmetic_rules)
+        invalidate_user_style();
+}
+
+void Page::invalidate_user_style()
+{
+    if (!top_level_traversable_is_initialized() || !top_level_traversable()->active_document())
+        return;
+
+    auto invalidate_document = [](DOM::Document& document) {
+        document.invalidate_content_blocker_style_sheet();
         document.style_scope().invalidate_rule_cache();
         document.for_each_shadow_root([](auto& shadow_root) {
-            shadow_root.style_scope().invalidate_rule_cache();
+            shadow_root.invalidate_style(DOM::StyleInvalidationReason::StyleSheetReplace);
         });
+        document.invalidate_style(DOM::StyleInvalidationReason::StyleSheetReplace);
+    };
+
+    auto& active_document = *top_level_traversable()->active_document();
+    invalidate_document(active_document);
+
+    for (auto& navigable : active_document.descendant_navigables()) {
+        if (auto document = navigable->active_document())
+            invalidate_document(*document);
     }
 }
 
@@ -792,7 +945,7 @@ Page::FindInPageResult Page::perform_find_in_page_query(FindInPageQuery const& q
         }
     }
 
-    update_find_in_page_selection(all_matches);
+    update_find_in_page_selection(all_matches, query.clear_selection_on_no_match);
 
     return Page::FindInPageResult {
         .current_match_index = m_find_in_page_match_index,
@@ -837,10 +990,13 @@ Page::FindInPageResult Page::find_in_page_previous_match()
     return result;
 }
 
-void Page::update_find_in_page_selection(Vector<GC::Root<DOM::Range>> matches)
+void Page::update_find_in_page_selection(Vector<GC::Root<DOM::Range>> matches, ClearSelectionOnNoMatch clear_selection_on_no_match)
 {
-    if (matches.is_empty())
+    if (matches.is_empty()) {
+        if (clear_selection_on_no_match == ClearSelectionOnNoMatch::Yes)
+            clear_selection();
         return;
+    }
 
     clear_selection();
 
@@ -857,12 +1013,215 @@ void Page::update_find_in_page_selection(Vector<GC::Root<DOM::Range>> matches)
     selection->add_range(*current_range);
 
     if (auto element = common_ancestor_container->parent_element()) {
-        DOM::ScrollIntoViewOptions scroll_options;
+        Bindings::ScrollIntoViewOptions scroll_options;
         scroll_options.block = Bindings::ScrollLogicalPosition::Nearest;
         scroll_options.inline_ = Bindings::ScrollLogicalPosition::Nearest;
         scroll_options.behavior = Bindings::ScrollBehavior::Instant;
         (void)element->scroll_into_view(scroll_options);
     }
+}
+
+void Page::enqueue_fullscreen_enter(GC::Ref<DOM::Element> element, GC::Ref<DOM::Document> pending_doc, DOM::RequestFullscreenError error, GC::Ref<WebIDL::Promise> promise)
+{
+    m_pending_fullscreen_operations.enqueue(PendingFullscreenEnter { element, pending_doc, error, promise });
+    // NOTE: Processing is deferred because the spec says "run the remaining steps in parallel",
+    //       meaning the caller's synchronous JS should complete before we process the operation.
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(heap(), [this]() {
+        process_pending_fullscreen_operations();
+    }));
+}
+
+void Page::enqueue_fullscreen_exit(GC::Ref<DOM::Document> doc, bool resize, GC::Ref<WebIDL::Promise> promise)
+{
+    m_pending_fullscreen_operations.enqueue(PendingFullscreenExit { doc, resize, promise });
+    // NOTE: Processing is deferred because the spec says "run the remaining steps in parallel",
+    //       meaning the caller's synchronous JS should complete before we process the operation.
+    Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(heap(), [this]() {
+        process_pending_fullscreen_operations();
+    }));
+}
+
+void Page::process_pending_fullscreen_operations()
+{
+    // FIXME: The Fullscreen API interacts with the top-level traversable's viewport. With site-isolation,
+    //        an iframe's content process won't have direct access to this Page, so fullscreen operations
+    //        will need to be routed through IPC to the top-level process.
+
+    // NOTE: Resolving/rejecting promises during processing may trigger JS microtasks that re-enter
+    //       this function (e.g., JS calls exitFullscreen() after a requestFullscreen() promise resolves).
+    //       The outer call's while loop will pick up newly enqueued items.
+    if (m_processing_fullscreen_operations)
+        return;
+    m_processing_fullscreen_operations = true;
+    ScopeGuard guard = [this] { m_processing_fullscreen_operations = false; };
+
+    while (!m_pending_fullscreen_operations.is_empty()) {
+        auto& front = m_pending_fullscreen_operations.head();
+
+        auto processed = front.visit(
+            [&](PendingFullscreenEnter& enter) -> bool {
+                // https://fullscreen.spec.whatwg.org/#dom-element-requestfullscreen
+
+                // 8. If error is false, then resize pendingDoc's node navigable's top-level traversable's
+                //    active document's viewport's dimensions, optionally taking into account
+                //    options["navigationUI"]:
+                if (enter.error == DOM::RequestFullscreenError::False) {
+                    if (m_viewport_is_fullscreen == ViewportIsFullscreen::No) {
+                        if (!m_fullscreen_ipc_sent_to_ui) {
+                            m_client->page_did_request_fullscreen_window();
+                            m_fullscreen_ipc_sent_to_ui = true;
+                        }
+                        // NB: Stop processing here and wait for a change in the fullscreen state if we aren't
+                        //     in the desired state yet.
+                        return false;
+                    }
+
+                    // 9. If any of the following conditions are false, then set error to true:
+                    //    * This's node document is pendingDoc.
+                    //    * The fullscreen element ready check for this returns true.
+                    if (enter.element->owner_document() != enter.pending_doc.ptr())
+                        enter.error = DOM::RequestFullscreenError::ElementNodeDocIsNotPendingDoc;
+                    else if (!enter.element->is_element_ready_for_fullscreen())
+                        enter.error = DOM::RequestFullscreenError::ElementReadyCheckFailed;
+                }
+
+                auto& realm = enter.element->realm();
+                HTML::TemporaryExecutionContext context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
+
+                // 10. If error is true:
+                if (enter.error != DOM::RequestFullscreenError::False) {
+                    // 1. Append (fullscreenerror, this) to pendingDoc's list of pending fullscreen events.
+                    enter.pending_doc->append_pending_fullscreen_change(DOM::PendingFullscreenEvent::Type::Error, enter.element);
+
+                    // 2. Reject promise with a TypeError exception and terminate these steps.
+                    WebIDL::reject_promise(realm, enter.promise, JS::TypeError::create(realm, DOM::request_fullscreen_error_to_string(enter.error)));
+                    return true;
+                }
+
+                // 11. Let fullscreenElements be an ordered set initially consisting of this.
+                auto fullscreen_elements = realm.heap().allocate<GC::HeapVector<GC::Ref<DOM::Element>>>();
+                fullscreen_elements->elements().append(enter.element);
+
+                // 12. While true:
+                while (true) {
+                    // 1. Let last be the last item of fullscreenElements.
+                    auto last = fullscreen_elements->elements().last();
+
+                    // 2. Let container be last's node navigable's container.
+                    auto container = last->navigable()->container();
+
+                    // 3. If container is null, then break.
+                    if (!container)
+                        break;
+
+                    // 4. Append container to fullscreenElements.
+                    fullscreen_elements->elements().append(*container);
+                }
+
+                // 13. For each element in fullscreenElements:
+                for (auto& element : fullscreen_elements->elements()) {
+                    // 1. Let doc be element's node document.
+                    auto& doc = element->document();
+
+                    // 2. If element is doc's fullscreen element, continue.
+                    if (doc.fullscreen_element() == element)
+                        continue;
+
+                    // 3. If element is this and this is an iframe element, then set element's iframe fullscreen flag.
+                    if (element == enter.element && is<HTML::HTMLIFrameElement>(*enter.element))
+                        as<HTML::HTMLIFrameElement>(*element).set_iframe_fullscreen_flag(true);
+
+                    // 4. Fullscreen element within doc.
+                    doc.fullscreen_element_within_doc(element);
+
+                    // 5. Append (fullscreenchange, element) to doc's list of pending fullscreen events.
+                    doc.append_pending_fullscreen_change(DOM::PendingFullscreenEvent::Type::Change, element);
+                }
+
+                // 14. Resolve promise with undefined
+                WebIDL::resolve_promise(realm, enter.promise, JS::js_undefined());
+                return true;
+            },
+            [&](PendingFullscreenExit& exit) -> bool {
+                auto& realm = exit.doc->realm();
+                HTML::TemporaryExecutionContext context(realm, HTML::TemporaryExecutionContext::CallbacksEnabled::Yes);
+
+                // https://fullscreen.spec.whatwg.org/#exit-fullscreen
+
+                // FIXME: 9. Run the fully unlock the screen orientation steps with doc.
+
+                // 10. If resize is true, resize doc's viewport to its "normal" dimensions.
+                if (exit.resize && m_viewport_is_fullscreen == ViewportIsFullscreen::Yes) {
+                    if (!m_fullscreen_ipc_sent_to_ui) {
+                        m_client->page_did_request_exit_fullscreen();
+                        m_fullscreen_ipc_sent_to_ui = true;
+                    }
+                    // NB: Stop processing here and wait for a change in the fullscreen state if we aren't
+                    //     in the desired state yet.
+                    return false;
+                }
+
+                // 11. If doc's fullscreen element is null, then resolve promise with undefined and terminate these
+                //     steps.
+                if (!exit.doc->fullscreen_element()) {
+                    WebIDL::resolve_promise(realm, exit.promise, JS::js_undefined());
+                    return true;
+                }
+
+                // 12. Let exitDocs be the result of collecting documents to unfullscreen given doc.
+                auto exit_docs = exit.doc->collect_documents_to_unfullscreen();
+
+                // 13. Let descendantDocs be an ordered set consisting of doc's descendant navigables' active documents
+                //     whose fullscreen element is non-null, if any, in tree order.
+                auto descendant_docs = realm.heap().allocate<GC::HeapVector<GC::Ref<DOM::Document>>>();
+                for (auto& descendant : exit.doc->descendant_navigables()) {
+                    if (descendant->active_document()->fullscreen_element())
+                        descendant_docs->elements().append(*descendant->active_document());
+                }
+
+                // 14. For each exitDoc in exitDocs:
+                for (auto& exit_doc : exit_docs->elements()) {
+                    // 1. Append (fullscreenchange, exitDoc's fullscreen element) to exitDoc's list of pending
+                    //    fullscreen events.
+                    exit_doc->append_pending_fullscreen_change(DOM::PendingFullscreenEvent::Type::Change, *exit_doc->fullscreen_element());
+
+                    // 2. If resize is true, unfullscreen exitDoc.
+                    if (exit.resize)
+                        exit_doc->unfullscreen();
+                    // 3. Otherwise, unfullscreen exitDoc's fullscreen element.
+                    else
+                        exit_doc->unfullscreen_element(*exit_doc->fullscreen_element());
+                }
+
+                // 15. For each descendantDoc in descendantDocs:
+                for (auto& descendant_doc : descendant_docs->elements()) {
+                    // 1. Append (fullscreenchange, descendantDoc's fullscreen element) to descendantDoc's list of
+                    //    pending fullscreen events.
+                    descendant_doc->append_pending_fullscreen_change(DOM::PendingFullscreenEvent::Type::Change, *descendant_doc->fullscreen_element());
+
+                    // 2. Unfullscreen descendantDoc.
+                    descendant_doc->unfullscreen();
+                }
+
+                // 16. Resolve promise with undefined.
+                WebIDL::resolve_promise(realm, exit.promise, JS::js_undefined());
+                return true;
+            });
+
+        if (!processed)
+            break;
+
+        m_pending_fullscreen_operations.dequeue();
+    }
+}
+
+void Page::set_viewport_is_fullscreen(ViewportIsFullscreen is_fullscreen)
+{
+    if (m_viewport_is_fullscreen == is_fullscreen)
+        return;
+    m_viewport_is_fullscreen = is_fullscreen;
+    m_fullscreen_ipc_sent_to_ui = false;
+    process_pending_fullscreen_operations();
 }
 
 }

@@ -9,7 +9,6 @@
 #include <AK/Optional.h>
 #include <LibGfx/Color.h>
 #include <LibGfx/Cursor.h>
-#include <LibWeb/CSS/CalculatedOr.h>
 #include <LibWeb/CSS/Length.h>
 #include <LibWeb/CSS/StyleValues/StyleValue.h>
 #include <LibWeb/Forward.h>
@@ -34,6 +33,8 @@ public:
 
     bool properties_equal(CursorStyleValue const& other) const { return m_properties == other.m_properties; }
 
+    virtual bool is_computationally_independent() const override;
+
 private:
     CursorStyleValue(ValueComparingNonnullRefPtr<AbstractImageStyleValue const> image,
         RefPtr<StyleValue const> x,
@@ -50,13 +51,7 @@ private:
         bool operator==(Properties const&) const = default;
     } m_properties;
 
-    // Data that can affect the bitmap rendering.
-    struct CacheKey {
-        Length::ResolutionContext length_resolution_context;
-        Gfx::Color current_color;
-        bool operator==(CacheKey const&) const = default;
-    };
-    mutable Optional<CacheKey> m_cache_key;
+    mutable Optional<Color> m_cached_bitmap_color;
     mutable Optional<Gfx::ShareableBitmap> m_cached_bitmap;
 };
 

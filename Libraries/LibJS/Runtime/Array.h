@@ -38,7 +38,7 @@ public:
     template<typename T>
     static GC::Ref<Array> create_from(Realm& realm, ReadonlySpan<T> elements, Function<Value(T const&)> map_fn)
     {
-        auto values = GC::RootVector<Value> { realm.heap() };
+        GC::RootVector<Value> values;
         values.ensure_capacity(elements.size());
         for (auto const& element : elements)
             values.append(map_fn(element));
@@ -61,6 +61,15 @@ public:
     void set_is_proxy_target(bool is_proxy_target) { m_is_proxy_target = is_proxy_target; }
 
     bool default_prototype_chain_intact() const;
+
+    // Packed arrays have no holes, so the prototype chain is irrelevant:
+    // every index [0, size) is an own data property.
+    bool is_simple_packed_array() const
+    {
+        return !m_is_proxy_target
+            && !may_interfere_with_indexed_property_access()
+            && indexed_storage_kind() == IndexedStorageKind::Packed;
+    }
 
     virtual void visit_edges(Cell::Visitor& visitor) override;
 

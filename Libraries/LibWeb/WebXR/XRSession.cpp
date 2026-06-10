@@ -7,7 +7,8 @@
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/PlatformObject.h>
-#include <LibWeb/Bindings/XRSessionPrototype.h>
+#include <LibWeb/Bindings/XRSession.h>
+#include <LibWeb/Bindings/XRSessionEvent.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
@@ -62,6 +63,12 @@ void XRSession::reject_promise(JS::Realm& realm, WebIDL::Promise const& promise,
 {
     WebIDL::reject_promise(realm, promise, value);
     m_outstanding_promises.remove_first_matching([&](auto& entry) { return entry == &promise; });
+}
+
+// https://immersive-web.github.io/webxr/#dom-xrsession-updaterenderstate
+void XRSession::update_render_state(Bindings::XRRenderStateInit const&)
+{
+    dbgln("FIXME: stubbed out XRSession.updateRenderState()");
 }
 
 GC::Ref<WebIDL::Promise> XRSession::end()
@@ -120,8 +127,7 @@ void XRSession::shut_down()
 
     // 6. Queue a task that fires an XRSessionEvent named end on session.
     HTML::queue_a_task(HTML::Task::Source::Unspecified, nullptr, nullptr, GC::create_function(realm.heap(), [this, &realm]() {
-        XRSessionEventInit init;
-        init.session = this;
+        Bindings::XRSessionEventInit init { Bindings::EventInit {}, *this };
         auto event = XRSessionEvent::create(realm, HTML::EventNames::end, init);
         this->dispatch_event(event);
     }));

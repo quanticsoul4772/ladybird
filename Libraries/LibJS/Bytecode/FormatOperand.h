@@ -16,6 +16,21 @@
 
 namespace JS::Bytecode {
 
+inline ByteString format_label(StringView name, Label const& label, Bytecode::Executable const& executable)
+{
+    StringBuilder builder;
+    if (!name.is_empty())
+        builder.appendff("\033[32m{}\033[0m:", name);
+
+    auto address = label.address();
+    if (auto basic_block_index = executable.basic_block_index_for_offset(address); basic_block_index.has_value()) {
+        builder.appendff("\033[35mblock{}\033[0m", basic_block_index.value());
+        return builder.to_byte_string();
+    }
+    builder.appendff("@{:x}", address);
+    return builder.to_byte_string();
+}
+
 inline ByteString format_operand(StringView name, Operand encoded_operand, Bytecode::Executable const& executable)
 {
     StringBuilder builder;

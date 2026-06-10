@@ -6,7 +6,7 @@
 
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/TextTrackListPrototype.h>
+#include <LibWeb/Bindings/TextTrackList.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/TextTrackList.h>
 
@@ -48,6 +48,11 @@ JS::ThrowCompletionOr<Optional<JS::PropertyDescriptor>> TextTrackList::internal_
     }
 
     return Base::internal_get_own_property(property_name);
+}
+
+void TextTrackList::add_track(GC::Ref<TextTrack> text_track)
+{
+    m_text_tracks.append(text_track);
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-texttracklist-length

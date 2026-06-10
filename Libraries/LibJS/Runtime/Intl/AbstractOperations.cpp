@@ -7,6 +7,7 @@
 #include <AK/AllOf.h>
 #include <AK/CharacterTypes.h>
 #include <AK/Find.h>
+#include <AK/NeverDestroyed.h>
 #include <AK/QuickSort.h>
 #include <AK/TypeCasts.h>
 #include <LibJS/Runtime/AbstractOperations.h>
@@ -23,8 +24,8 @@
 
 namespace JS::Intl {
 
-// 6.2.1 IsStructurallyValidLanguageTag ( locale ), https://tc39.es/ecma402/#sec-isstructurallyvalidlanguagetag
-bool is_structurally_valid_language_tag(StringView locale)
+// 6.2.1 IsWellFormedLanguageTag ( locale ), https://tc39.es/ecma402/#sec-iswellformedlanguagetag
+bool is_well_formed_language_tag(StringView locale)
 {
     auto contains_duplicate_variant = [&](auto& variants) {
         if (variants.is_empty())
@@ -134,7 +135,7 @@ bool is_well_formed_currency_code(StringView currency)
 Vector<TimeZoneIdentifier> const& available_named_time_zone_identifiers()
 {
     // It is recommended that the result of AvailableNamedTimeZoneIdentifiers remains the same for the lifetime of the surrounding agent.
-    static auto named_time_zone_identifiers = []() {
+    static NeverDestroyed<Vector<TimeZoneIdentifier>> named_time_zone_identifiers { []() {
         // 1. Let identifiers be a List containing the String value of each Zone or Link name in the IANA Time Zone Database.
         auto const& identifiers = Unicode::available_time_zones();
 
@@ -184,9 +185,9 @@ Vector<TimeZoneIdentifier> const& available_named_time_zone_identifiers()
 
         // 8. Return result.
         return result;
-    }();
+    }() };
 
-    return named_time_zone_identifiers;
+    return *named_time_zone_identifiers;
 }
 
 // 6.5.2 GetAvailableNamedTimeZoneIdentifier ( timeZoneIdentifier ), https://tc39.es/ecma402/#sec-getavailablenamedtimezoneidentifier
@@ -309,8 +310,8 @@ ThrowCompletionOr<Vector<String>> canonicalize_locale_list(VM& vm, Value locales
                 tag = TRY(key_value.to_string(vm));
             }
 
-            // v. If ! IsStructurallyValidLanguageTag(tag) is false, throw a RangeError exception.
-            if (!is_structurally_valid_language_tag(tag))
+            // v. If IsWellFormedLanguageTag(tag) is false, throw a RangeError exception.
+            if (!is_well_formed_language_tag(tag))
                 return vm.throw_completion<RangeError>(ErrorType::IntlInvalidLanguageTag, tag);
 
             // vi. Let canonicalizedTag be ! CanonicalizeUnicodeLocaleId(tag).

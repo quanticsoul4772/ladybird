@@ -6,6 +6,7 @@
 
 #include "TestWebView.h"
 
+#include <LibCore/AnonymousBuffer.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/ShareableBitmap.h>
 
@@ -25,9 +26,9 @@ TestWebView::TestWebView(Core::AnonymousBuffer theme, Web::DevicePixelSize viewp
 {
 }
 
-void TestWebView::clear_content_filters()
+void TestWebView::clear_content_blockers()
 {
-    client().async_set_content_filters(m_client_state.page_index, {});
+    client().async_set_content_blockers(m_client_state.page_index, MUST(Core::AnonymousBuffer::create_with_size(0)));
 }
 
 pid_t TestWebView::web_content_pid() const
@@ -40,14 +41,16 @@ NonnullRefPtr<Core::Promise<RefPtr<Gfx::Bitmap const>>> TestWebView::take_screen
     VERIFY(!m_pending_screenshot);
 
     m_pending_screenshot = Core::Promise<RefPtr<Gfx::Bitmap const>>::construct();
-    client().async_take_document_screenshot(0);
+    client().async_take_document_screenshot(page_id());
 
     return *m_pending_screenshot;
 }
 
 void TestWebView::did_receive_screenshot(Badge<WebView::WebContentClient>, Gfx::ShareableBitmap const& screenshot)
 {
-    VERIFY(m_pending_screenshot);
+    // NOTE: The screenshot may arrive after a timeout already completed the test and cleared m_pending_screenshot.
+    if (!m_pending_screenshot)
+        return;
 
     auto pending_screenshot = move(m_pending_screenshot);
     pending_screenshot->resolve(screenshot.bitmap());
@@ -58,7 +61,8 @@ void TestWebView::on_test_complete(TestCompletion completion)
     m_pending_screenshot.clear();
     m_pending_dialog = Web::Page::PendingDialog::None;
     m_pending_prompt_text.clear();
-    client().async_set_viewport(m_client_state.page_index, viewport_size(), 1.0);
+    m_is_fullscreen = Web::ViewportIsFullscreen::No;
+    client().async_set_viewport(m_client_state.page_index, viewport_size(), 1.0, Web::ViewportIsFullscreen::No);
 
     m_test_promise->resolve(move(completion));
 }

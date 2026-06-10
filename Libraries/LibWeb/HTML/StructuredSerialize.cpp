@@ -9,6 +9,7 @@
 
 #include <AK/StdLibExtras.h>
 #include <AK/String.h>
+#include <LibCrypto/BigInt/UnsignedBigInteger.h>
 #include <LibIPC/File.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
@@ -25,25 +26,25 @@
 #include <LibJS/Runtime/StringObject.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibJS/Runtime/VM.h>
-#include <LibWeb/Bindings/DOMExceptionPrototype.h>
-#include <LibWeb/Bindings/DOMMatrixPrototype.h>
-#include <LibWeb/Bindings/DOMMatrixReadOnlyPrototype.h>
-#include <LibWeb/Bindings/DOMPointPrototype.h>
-#include <LibWeb/Bindings/DOMPointReadOnlyPrototype.h>
-#include <LibWeb/Bindings/DOMQuadPrototype.h>
-#include <LibWeb/Bindings/DOMRectPrototype.h>
-#include <LibWeb/Bindings/DOMRectReadOnlyPrototype.h>
-#include <LibWeb/Bindings/FileListPrototype.h>
-#include <LibWeb/Bindings/FilePrototype.h>
-#include <LibWeb/Bindings/ImageBitmapPrototype.h>
+#include <LibWeb/Bindings/DOMException.h>
+#include <LibWeb/Bindings/DOMMatrix.h>
+#include <LibWeb/Bindings/DOMMatrixReadOnly.h>
+#include <LibWeb/Bindings/DOMPoint.h>
+#include <LibWeb/Bindings/DOMPointReadOnly.h>
+#include <LibWeb/Bindings/DOMQuad.h>
+#include <LibWeb/Bindings/DOMRect.h>
+#include <LibWeb/Bindings/DOMRectReadOnly.h>
+#include <LibWeb/Bindings/File.h>
+#include <LibWeb/Bindings/FileList.h>
+#include <LibWeb/Bindings/ImageBitmap.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/MessagePortPrototype.h>
-#include <LibWeb/Bindings/QuotaExceededErrorPrototype.h>
-#include <LibWeb/Bindings/ReadableStreamPrototype.h>
+#include <LibWeb/Bindings/MessagePort.h>
+#include <LibWeb/Bindings/QuotaExceededError.h>
+#include <LibWeb/Bindings/ReadableStream.h>
 #include <LibWeb/Bindings/Serializable.h>
 #include <LibWeb/Bindings/Transferable.h>
-#include <LibWeb/Bindings/TransformStreamPrototype.h>
-#include <LibWeb/Bindings/WritableStreamPrototype.h>
+#include <LibWeb/Bindings/TransformStream.h>
+#include <LibWeb/Bindings/WritableStream.h>
 #include <LibWeb/Crypto/CryptoKey.h>
 #include <LibWeb/FileAPI/Blob.h>
 #include <LibWeb/FileAPI/File.h>
@@ -127,10 +128,10 @@ static WebIDL::ExceptionOr<void> serialize_array_buffer(JS::VM& vm, TransferData
 
     // 1. If IsSharedArrayBuffer(value) is true, then:
     if (array_buffer.is_shared_array_buffer()) {
-        // 1. If the current principal settings object's cross-origin isolated capability is false, then throw a "DataCloneError" DOMException.
+        // 1. If the current settings object's cross-origin isolated capability is false, then throw a "DataCloneError" DOMException.
         // NOTE: This check is only needed when serializing (and not when deserializing) as the cross-origin isolated capability cannot change
         //       over time and a SharedArrayBuffer cannot leave an agent cluster.
-        if (current_principal_settings_object().cross_origin_isolated_capability() == CanUseCrossOriginIsolatedAPIs::No)
+        if (current_settings_object().cross_origin_isolated_capability() == CanUseCrossOriginIsolatedAPIs::No)
             return WebIDL::DataCloneError::create(*vm.current_realm(), "Cannot serialize SharedArrayBuffer when cross-origin isolated"_utf16);
 
         // 2. If forStorage is true, then throw a "DataCloneError" DOMException.
@@ -143,14 +144,14 @@ static WebIDL::ExceptionOr<void> serialize_array_buffer(JS::VM& vm, TransferData
             //           [[ArrayBufferMaxByteLength]]: value.[[ArrayBufferMaxByteLength]],
             //           FIXME: [[AgentCluster]]: the surrounding agent's agent cluster }.
             data_holder.encode(ValueTag::GrowableSharedArrayBuffer);
-            data_holder.encode(array_buffer.buffer());
+            data_holder.encode(MUST(ByteBuffer::copy(array_buffer.bytes())));
             data_holder.encode(array_buffer.max_byte_length());
         } else {
             // 4. Otherwise, set serialized to { [[Type]]: "SharedArrayBuffer", [[ArrayBufferData]]: value.[[ArrayBufferData]],
             //           [[ArrayBufferByteLength]]: value.[[ArrayBufferByteLength]],
             //           FIXME: [[AgentCluster]]: the surrounding agent's agent cluster }.
             data_holder.encode(ValueTag::SharedArrayBuffer);
-            data_holder.encode(array_buffer.buffer());
+            data_holder.encode(MUST(ByteBuffer::copy(array_buffer.bytes())));
         }
     }
     // 2. Otherwise:
@@ -167,19 +168,21 @@ static WebIDL::ExceptionOr<void> serialize_array_buffer(JS::VM& vm, TransferData
         auto data_copy = TRY(JS::create_byte_data_block(vm, size));
 
         // 4. Perform CopyDataBlockBytes(dataCopy, 0, value.[[ArrayBufferData]], 0, size).
-        JS::copy_data_block_bytes(data_copy.buffer(), 0, array_buffer.buffer(), 0, size);
+        auto data_copy_bytes = data_copy.bytes();
+        auto array_buffer_bytes = array_buffer.bytes();
+        JS::copy_data_block_bytes(data_copy_bytes, 0, array_buffer_bytes, 0, size);
 
         // 5. If value has an [[ArrayBufferMaxByteLength]] internal slot, then set serialized to { [[Type]]: "ResizableArrayBuffer",
         //    [[ArrayBufferData]]: dataCopy, [[ArrayBufferByteLength]]: size, [[ArrayBufferMaxByteLength]]: value.[[ArrayBufferMaxByteLength]] }.
         if (!array_buffer.is_fixed_length()) {
             data_holder.encode(ValueTag::ResizeableArrayBuffer);
-            data_holder.encode(data_copy.buffer());
+            data_holder.encode(MUST(ByteBuffer::copy(data_copy.bytes())));
             data_holder.encode(array_buffer.max_byte_length());
         }
         // 6. Otherwise, set serialized to { [[Type]]: "ArrayBuffer", [[ArrayBufferData]]: dataCopy, [[ArrayBufferByteLength]]: size }.
         else {
             data_holder.encode(ValueTag::ArrayBuffer);
-            data_holder.encode(data_copy.buffer());
+            data_holder.encode(MUST(ByteBuffer::copy(data_copy.bytes())));
         }
     }
     return {};
@@ -264,9 +267,11 @@ public:
     }
 
     // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
-    // https://whatpr.org/html/9893/structured-data.html#structuredserializeinternal
     WebIDL::ExceptionOr<SerializationRecord> serialize(JS::Value value)
     {
+        if (m_vm.did_reach_stack_space_limit())
+            return m_vm.throw_completion<JS::InternalError>(JS::ErrorType::CallStackSizeExceeded);
+
         TransferDataEncoder serialized;
 
         // 2. If memory[value] exists, then return memory[value].
@@ -346,7 +351,7 @@ public:
             //     { [[Type]]: "RegExp", [[RegExpMatcher]]: value.[[RegExpMatcher]], [[OriginalSource]]: value.[[OriginalSource]],
             //       [[OriginalFlags]]: value.[[OriginalFlags]] }.
             else if (auto const* reg_exp_object = as_if<JS::RegExpObject>(*object)) {
-                // NOTE: A Regex<ECMA262> object is perfectly happy to be reconstructed with just the source+flags.
+                // NOTE: ECMAScriptRegex is perfectly happy to be reconstructed with just the source+flags.
                 //       In the future, we could optimize the work being done on the deserialize step by serializing
                 //       more of the internal state (the [[RegExpMatcher]] internal slot).
                 serialized.encode(ValueTag::RegExpObject);
@@ -590,6 +595,9 @@ public:
     // https://html.spec.whatwg.org/multipage/structured-data.html#structureddeserialize
     WebIDL::ExceptionOr<JS::Value> deserialize()
     {
+        if (m_vm.did_reach_stack_space_limit())
+            return m_vm.throw_completion<JS::InternalError>(JS::ErrorType::CallStackSizeExceeded);
+
         auto& realm = *m_vm.current_realm();
 
         auto tag = m_serialized.decode<ValueTag>();
@@ -984,7 +992,7 @@ private:
 };
 
 // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializewithtransfer
-WebIDL::ExceptionOr<SerializedTransferRecord> structured_serialize_with_transfer(JS::VM& vm, JS::Value value, Vector<GC::Root<JS::Object>> const& transfer_list)
+WebIDL::ExceptionOr<SerializedTransferRecord> structured_serialize_with_transfer(JS::VM& vm, JS::Value value, ReadonlySpan<GC::Ref<JS::Object>> transfer_list)
 {
     // 1. Let memory be an empty map.
     SerializationMemory memory = {};
@@ -1041,13 +1049,15 @@ WebIDL::ExceptionOr<SerializedTransferRecord> structured_serialize_with_transfer
         // 4. If transferable has an [[ArrayBufferData]] internal slot, then:
         if (array_buffer) {
             // 1. If transferable has an [[ArrayBufferMaxByteLength]] internal slot, then:
+            auto buffer_data = MUST(ByteBuffer::copy(array_buffer->bytes()));
+
             if (!array_buffer->is_fixed_length()) {
                 // 1. Set dataHolder.[[Type]] to "ResizableArrayBuffer".
                 data_holder.encode(TransferType::ResizableArrayBuffer);
 
                 // 2. Set dataHolder.[[ArrayBufferData]] to transferable.[[ArrayBufferData]].
                 // 3. Set dataHolder.[[ArrayBufferByteLength]] to transferable.[[ArrayBufferByteLength]].
-                data_holder.encode(array_buffer->buffer());
+                data_holder.encode(buffer_data);
 
                 // 4. Set dataHolder.[[ArrayBufferMaxByteLength]] to transferable.[[ArrayBufferMaxByteLength]].
                 data_holder.encode(array_buffer->max_byte_length());
@@ -1059,7 +1069,7 @@ WebIDL::ExceptionOr<SerializedTransferRecord> structured_serialize_with_transfer
 
                 // 2. Set dataHolder.[[ArrayBufferData]] to transferable.[[ArrayBufferData]].
                 // 3. Set dataHolder.[[ArrayBufferByteLength]] to transferable.[[ArrayBufferByteLength]].
-                data_holder.encode(array_buffer->buffer());
+                data_holder.encode(buffer_data);
             }
 
             // 3. Perform ? DetachArrayBuffer(transferable).
@@ -1157,7 +1167,7 @@ WebIDL::ExceptionOr<DeserializedTransferRecord> structured_deserialize_with_tran
     auto& vm = target_realm.vm();
 
     // 1. Let memory be an empty map.
-    auto memory = DeserializationMemory(vm.heap());
+    DeserializationMemory memory {};
 
     // 2. Let transferredValues be a new empty List.
     Vector<GC::Root<JS::Object>> transferred_values;
@@ -1269,7 +1279,7 @@ WebIDL::ExceptionOr<JS::Value> structured_deserialize(JS::VM& vm, SerializationR
     TemporaryExecutionContext execution_context { target_realm };
 
     if (!memory.has_value())
-        memory = DeserializationMemory { vm.heap() };
+        memory = DeserializationMemory {};
 
     TransferDataDecoder decoder { serialized };
     return structured_deserialize_internal(vm, decoder, target_realm, *memory);
@@ -1292,32 +1302,43 @@ TransferDataEncoder::TransferDataEncoder(IPC::MessageBuffer&& buffer)
 {
 }
 
+IPC::MessageBuffer const& TransferDataEncoder::buffer() const
+{
+    return m_buffer;
+}
+
+IPC::MessageBuffer TransferDataEncoder::take_buffer() const
+{
+    VERIFY(!m_buffer_has_been_taken);
+    m_buffer_has_been_taken = true;
+    return move(m_buffer);
+}
+
 void TransferDataEncoder::append(SerializationRecord&& record)
 {
+    VERIFY(!m_buffer_has_been_taken);
     MUST(m_buffer.append_data(record.data(), record.size()));
 }
 
 void TransferDataEncoder::extend(Vector<TransferDataEncoder> data_holders)
 {
     for (auto& data_holder : data_holders)
-        MUST(m_buffer.extend(move(data_holder.m_buffer)));
+        MUST(m_buffer.extend(data_holder.take_buffer()));
 }
 
 TransferDataDecoder::TransferDataDecoder(SerializationRecord const& record)
     : m_stream(record.span())
-    , m_decoder(m_stream, m_files)
+    , m_decoder(m_stream, m_attachments)
 {
 }
 
 TransferDataDecoder::TransferDataDecoder(TransferDataEncoder&& data_holder)
     : m_buffer(data_holder.take_buffer())
     , m_stream(m_buffer.data().span())
-    , m_decoder(m_stream, m_files)
+    , m_decoder(m_stream, m_attachments)
 {
-    // FIXME: The churn between IPC::File and IPC::AutoCloseFileDescriptor is pretty awkward, we should find a way to
-    //        consolidate the way we use these type.
-    for (auto& auto_fd : m_buffer.take_fds())
-        m_files.enqueue(IPC::File::adopt_fd(auto_fd->take_fd()));
+    for (auto& attachment : m_buffer.take_attachments())
+        m_attachments.enqueue(move(attachment));
 }
 
 WebIDL::ExceptionOr<ByteBuffer> TransferDataDecoder::decode_buffer(JS::Realm& realm)
@@ -1332,6 +1353,20 @@ WebIDL::ExceptionOr<ByteBuffer> TransferDataDecoder::decode_buffer(JS::Realm& re
     return buffer.release_value();
 }
 
+void TransferDataEncoder::encode_unsigned_big_integer(::Crypto::UnsignedBigInteger const& value)
+{
+    auto buffer = MUST(ByteBuffer::create_zeroed(value.byte_length()));
+    auto written = value.export_data(buffer.bytes());
+    VERIFY(written.size() == buffer.size());
+    encode(buffer);
+}
+
+WebIDL::ExceptionOr<::Crypto::UnsignedBigInteger> TransferDataDecoder::decode_unsigned_big_integer(JS::Realm& realm)
+{
+    auto buffer = TRY(decode_buffer(realm));
+    return ::Crypto::UnsignedBigInteger::import_data(buffer);
+}
+
 }
 
 namespace IPC {
@@ -1339,18 +1374,15 @@ namespace IPC {
 template<>
 ErrorOr<void> encode(Encoder& encoder, Web::HTML::TransferDataEncoder const& data_holder)
 {
-    // FIXME: The churn between IPC::File and IPC::AutoCloseFileDescriptor is pretty awkward, we should find a way to
-    //        consolidate the way we use these type.
-    Vector<IPC::File> files;
-    files.ensure_capacity(data_holder.buffer().fds().size());
+    auto buffer = data_holder.take_buffer();
+    auto data = buffer.take_data();
+    auto attachments = buffer.take_attachments();
 
-    for (auto const& auto_fd : data_holder.buffer().fds()) {
-        auto fd = const_cast<AutoCloseFileDescriptor&>(*auto_fd).take_fd();
-        files.unchecked_append(IPC::File::adopt_fd(fd));
-    }
+    TRY(encoder.encode(data));
+    TRY(encoder.encode(static_cast<u32>(attachments.size())));
+    for (auto& attachment : attachments)
+        TRY(encoder.append_attachment(move(attachment)));
 
-    TRY(encoder.encode(data_holder.buffer().data()));
-    TRY(encoder.encode(files));
     return {};
 }
 
@@ -1358,19 +1390,14 @@ template<>
 ErrorOr<Web::HTML::TransferDataEncoder> decode(Decoder& decoder)
 {
     auto data = TRY(decoder.decode<Web::HTML::SerializationRecord>());
-    auto files = TRY(decoder.decode<Vector<IPC::File>>());
+    auto attachment_count = TRY(decoder.decode<u32>());
 
-    // FIXME: The churn between IPC::File and IPC::AutoCloseFileDescriptor is pretty awkward, we should find a way to
-    //        consolidate the way we use these type.
-    MessageFileType auto_files;
-    auto_files.ensure_capacity(files.size());
+    Vector<Attachment> attachments;
+    TRY(attachments.try_ensure_capacity(attachment_count));
+    for (u32 i = 0; i < attachment_count; ++i)
+        attachments.unchecked_append(TRY(decoder.attachments().try_dequeue()));
 
-    for (auto& fd : files) {
-        auto auto_fd = adopt_ref(*new AutoCloseFileDescriptor(fd.take_fd()));
-        auto_files.unchecked_append(move(auto_fd));
-    }
-
-    IPC::MessageBuffer buffer { move(data), move(auto_files) };
+    IPC::MessageBuffer buffer { move(data), move(attachments) };
     return Web::HTML::TransferDataEncoder { move(buffer) };
 }
 

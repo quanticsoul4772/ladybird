@@ -1,8 +1,4 @@
-#import <TrustedTypes/TrustedHTML.idl>
-#import <TrustedTypes/TrustedScript.idl>
-#import <TrustedTypes/TrustedScriptURL.idl>
-
-// https://www.w3.org/TR/trusted-types/#typedefdef-trustedtype
+// https://w3c.github.io/trusted-types/dist/spec/#typedefdef-trustedtype
 typedef (TrustedHTML or TrustedScript or TrustedScriptURL) TrustedType;
 
 // https://w3c.github.io/trusted-types/dist/spec/#trusted-type-policy

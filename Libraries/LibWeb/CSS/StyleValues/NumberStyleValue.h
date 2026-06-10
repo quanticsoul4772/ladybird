@@ -24,7 +24,7 @@ public:
 
     virtual void serialize(StringBuilder&, SerializationMode) const override;
     virtual Vector<Parser::ComponentValue> tokenize() const override;
-    virtual GC::Ref<CSSStyleValue> reify(JS::Realm&, FlyString const& associated_property) const override;
+    virtual GC::Ref<CSSStyleValue> reify(JS::Realm&, Utf16FlyString const& associated_property) const override;
 
     bool equals(StyleValue const& other) const override
     {
@@ -33,6 +33,8 @@ public:
         auto const& other_number = other.as_number();
         return m_value == other_number.m_value;
     }
+
+    virtual bool is_computationally_independent() const override { return true; }
 
 private:
     explicit NumberStyleValue(double value)

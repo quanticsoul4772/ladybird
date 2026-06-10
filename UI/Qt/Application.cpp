@@ -9,15 +9,24 @@
 #include <LibRequests/RequestClient.h>
 #include <LibWebView/URL.h>
 #include <UI/Qt/Application.h>
+#include <UI/Qt/ChromeStyle.h>
 #include <UI/Qt/EventLoopImplementationQt.h>
+#if defined(AK_OS_MACOS)
+#    include <UI/Qt/MacWindow.h>
+#endif
 #include <UI/Qt/QuarantineManagerDialog.h>
 #include <UI/Qt/Settings.h>
 #include <UI/Qt/StringUtils.h>
+#include <UI/Qt/WebContentView.h>
 
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileOpenEvent>
+#include <QFormLayout>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QStandardPaths>
@@ -60,11 +69,16 @@ public:
     explicit LadybirdQApplication(Main::Arguments& arguments)
         : QApplication(arguments.argc, arguments.argv)
     {
+#if defined(AK_OS_MACOS)
+        install_appkit_event_capture();
+#endif
+        update_chrome_style();
     }
 
     virtual bool event(QEvent* event) override
     {
         auto& application = static_cast<Application&>(WebView::Application::the());
+        auto const event_type = event->type();
 
 #if defined(AK_OS_WINDOWS)
         static Optional<NativeWindowsTimeChangeEventFilter> time_change_event_filter {};
@@ -74,7 +88,7 @@ public:
         }
 #endif
 
-        switch (event->type()) {
+        switch (event_type) {
         case QEvent::FileOpen: {
             if (!application.on_open_file)
                 break;
@@ -91,52 +105,61 @@ public:
             break;
         }
 
-        return QApplication::event(event);
+        auto handled = QApplication::event(event);
+        if (event_type == QEvent::ApplicationPaletteChange || event_type == QEvent::ThemeChange)
+            update_chrome_style();
+
+        return handled;
+    }
+
+private:
+    void update_chrome_style()
+    {
+        setStyleSheet(ChromeStyle::application_style_sheet(palette()));
     }
 };
 
 Application::Application() = default;
 Application::~Application() = default;
 
-void Application::create_platform_arguments(Core::ArgsParser& args_parser)
-{
-    args_parser.add_option(m_file_scheme_urls_have_tuple_origins, "Treat file:// URLs as having tuple origins", "tuple-file-origins");
-}
-
 void Application::create_platform_options(WebView::BrowserOptions&, WebView::RequestServerOptions&, WebView::WebContentOptions& web_content_options)
 {
     web_content_options.config_path = Settings::the()->directory();
-    if (m_file_scheme_urls_have_tuple_origins)
-        URL::set_file_scheme_urls_have_tuple_origins();
 }
 
-NonnullOwnPtr<Core::EventLoop> Application::create_platform_event_loop()
+Core::EventLoop& Application::create_platform_event_loop()
 {
     if (!browser_options().headless_mode.has_value()) {
         Core::EventLoopManager::install(*new EventLoopManagerQt);
         m_application = make<LadybirdQApplication>(arguments());
     }
 
-    auto event_loop = WebView::Application::create_platform_event_loop();
+    auto& event_loop = WebView::Application::create_platform_event_loop();
 
     if (!browser_options().headless_mode.has_value())
-        static_cast<EventLoopImplementationQt&>(event_loop->impl()).set_main_loop();
+        static_cast<EventLoopImplementationQt&>(event_loop.impl()).set_main_loop();
 
     return event_loop;
 }
 
-BrowserWindow& Application::new_window(Vector<URL::URL> const& initial_urls, BrowserWindow::IsPopupWindow is_popup_window, Tab* parent_tab, Optional<u64> page_index)
+BrowserWindow& Application::new_window(Vector<URL::URL> const& initial_urls, WindowConfiguration const& configuration, BrowserWindow::IsPopupWindow is_popup_window, Tab* parent_tab, Optional<u64> page_index)
 {
     auto* window = new BrowserWindow(initial_urls, is_popup_window, parent_tab, move(page_index));
     set_active_window(*window);
-    window->show();
-    if (initial_urls.is_empty()) {
-        auto* tab = window->current_tab();
-        if (tab) {
+
+    if (initial_urls.size() == 1 && initial_urls.first() == URL::about_newtab()) {
+        if (auto* tab = window->current_tab()) {
             tab->set_url_is_hidden(true);
             tab->focus_location_editor();
         }
     }
+
+    window->set_window_rect(configuration.x, configuration.y, configuration.width, configuration.height);
+    if (configuration.maximized == true)
+        window->showMaximized();
+    else
+        window->show();
+
     window->activateWindow();
     window->raise();
     return *window;
@@ -153,6 +176,11 @@ Optional<WebView::ViewImplementation&> Application::open_blank_new_tab(Web::HTML
 {
     auto& tab = active_window().create_new_tab(activate_tab);
     return tab.view();
+}
+
+void Application::open_url_in_new_window(URL::URL const& url)
+{
+    this->new_window({ url });
 }
 
 Optional<ByteString> Application::ask_user_for_download_path(StringView file) const
@@ -226,13 +254,53 @@ void Application::on_quarantine_manager_requested() const
     dialog->show();
 }
 
-Utf16String Application::clipboard_text() const
+static QClipboard::Mode clipboard_mode(QClipboard const& clipboard, Application::ClipboardType type)
+{
+    switch (type) {
+    case WebView::Application::ClipboardType::Text:
+        return QClipboard::Clipboard;
+    case WebView::Application::ClipboardType::Selection:
+        return clipboard.supportsSelection() ? QClipboard::Selection : QClipboard::Clipboard;
+    }
+    VERIFY_NOT_REACHED();
+}
+
+bool Application::supports_clipboard_type(ClipboardType type) const
 {
     if (browser_options().headless_mode.has_value())
-        return WebView::Application::clipboard_text();
+        return WebView::Application::supports_clipboard_type(type);
+
+    switch (type) {
+    case WebView::Application::ClipboardType::Text:
+        return true;
+    case WebView::Application::ClipboardType::Selection:
+        return QGuiApplication::clipboard()->supportsSelection();
+    }
+    VERIFY_NOT_REACHED();
+}
+
+Utf16String Application::clipboard_text(ClipboardType type) const
+{
+    if (browser_options().headless_mode.has_value())
+        return WebView::Application::clipboard_text(type);
 
     auto const* clipboard = QGuiApplication::clipboard();
-    return utf16_string_from_qstring(clipboard->text());
+    auto mode = clipboard_mode(*clipboard, type);
+
+    return utf16_string_from_qstring(clipboard->text(mode));
+}
+
+void Application::set_clipboard_text(String text, ClipboardType type)
+{
+    if (browser_options().headless_mode.has_value()) {
+        WebView::Application::set_clipboard_text(text, type);
+        return;
+    }
+
+    auto* clipboard = QGuiApplication::clipboard();
+    auto mode = clipboard_mode(*clipboard, type);
+
+    clipboard->setText(qstring_from_ak_string(text), mode);
 }
 
 Vector<Web::Clipboard::SystemClipboardRepresentation> Application::clipboard_entries() const
@@ -271,6 +339,183 @@ void Application::insert_clipboard_entry(Web::Clipboard::SystemClipboardRepresen
     clipboard->setMimeData(mime_data);
 }
 
+void Application::update_tabs_display() const
+{
+    for (auto* widget : QApplication::topLevelWidgets()) {
+        if (auto* window = as_if<BrowserWindow>(widget))
+            window->update_tabs_display();
+    }
+}
+
+void Application::rebuild_bookmarks_menu() const
+{
+    for (auto* widget : QApplication::topLevelWidgets()) {
+        if (auto* window = as_if<BrowserWindow>(widget))
+            window->rebuild_bookmarks_menu();
+    }
+}
+
+void Application::update_reopen_recently_closed_actions() const
+{
+    for (auto* widget : QApplication::topLevelWidgets()) {
+        if (auto* window = as_if<BrowserWindow>(widget))
+            window->update_reopen_recently_closed_action();
+    }
+}
+
+void Application::show_bookmark_context_menu(Gfx::IntPoint content_position, Optional<WebView::BookmarkItem const&> item, Optional<String const&> target_folder_id)
+{
+    if (auto* active_tab = this->active_tab()) {
+        auto position = active_tab->view().mapToGlobal(QPoint { content_position.x(), content_position.y() });
+        active_tab->bookmarks_bar().show_context_menu(position, item, target_folder_id);
+    }
+}
+
+Optional<Application::BookmarkID> Application::bookmark_item_id_for_context_menu() const
+{
+    if (auto* active_tab = this->active_tab()) {
+        auto const& bookmarks_bar = active_tab->bookmarks_bar();
+
+        return Application::BookmarkID {
+            .id = bookmarks_bar.selected_bookmark_menu_item_id(),
+            .target_folder_id = bookmarks_bar.selected_bookmark_menu_target_folder_id(),
+        };
+    }
+
+    return {};
+}
+
+template<typename PromiseType>
+static NonnullRefPtr<PromiseType> display_add_or_edit_bookmark_dialog(
+    QWidget* parent,
+    QString const& dialog_title,
+    Optional<URL::URL const&> current_url,
+    Optional<String const&> current_title)
+{
+    auto promise = PromiseType::construct();
+
+    auto* dialog = new QDialog(parent);
+    dialog->resize(400, dialog->height());
+    dialog->setWindowTitle(dialog_title);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    auto* url_edit = new QLineEdit(dialog);
+    auto* title_edit = new QLineEdit(dialog);
+
+    if (current_url.has_value())
+        url_edit->setText(qstring_from_ak_string(current_url->serialize()));
+    if (current_title.has_value())
+        title_edit->setText(qstring_from_ak_string(*current_title));
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+
+    auto* layout = new QFormLayout(dialog);
+    layout->addRow("URL:", url_edit);
+    layout->addRow("Title:", title_edit);
+    layout->addRow(buttons);
+
+    QObject::connect(dialog, &QDialog::finished, [promise, url_edit = QPointer { url_edit }, title_edit = QPointer { title_edit }](auto result) {
+        if (result != QDialog::Accepted || !url_edit || !title_edit) {
+            promise->reject(Error::from_errno(ECANCELED));
+            return;
+        }
+
+        auto url = WebView::sanitize_url(ak_string_from_qstring(url_edit->text()));
+        if (!url.has_value()) {
+            promise->reject(Error::from_errno(EINVAL));
+            return;
+        }
+
+        Optional<String> title;
+        if (auto title_text = ak_string_from_qstring(title_edit->text()); !title_text.is_empty())
+            title = move(title_text);
+
+        promise->resolve(WebView::BookmarkItem::Bookmark {
+            .url = url.release_value(),
+            .title = move(title),
+            .favicon_base64_png = {},
+        });
+    });
+
+    dialog->open();
+    return promise;
+}
+
+NonnullRefPtr<Application::BookmarkPromise> Application::display_add_bookmark_dialog() const
+{
+    Optional<URL::URL> current_url;
+    Optional<String> current_title;
+
+    if (auto view = active_web_view(); view.has_value()) {
+        current_url = view->url();
+        current_title = view->title().to_utf8();
+    }
+
+    return display_add_or_edit_bookmark_dialog<BookmarkPromise>(active_tab(), "Add Bookmark", current_url, current_title);
+}
+
+NonnullRefPtr<Application::BookmarkPromise> Application::display_edit_bookmark_dialog(WebView::BookmarkItem::Bookmark const& current_bookmark) const
+{
+    return display_add_or_edit_bookmark_dialog<BookmarkPromise>(active_tab(), "Edit Bookmark", current_bookmark.url, current_bookmark.title);
+}
+
+template<typename PromiseType>
+static NonnullRefPtr<PromiseType> display_add_or_edit_bookmark_folder_dialog(
+    QWidget* parent,
+    QString const& dialog_title,
+    Optional<String const&> current_title)
+{
+    auto promise = PromiseType::construct();
+
+    auto* dialog = new QDialog(parent);
+    dialog->resize(400, dialog->height());
+    dialog->setWindowTitle(dialog_title);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    auto* title_edit = new QLineEdit(dialog);
+    if (current_title.has_value())
+        title_edit->setText(qstring_from_ak_string(*current_title));
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, dialog);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+
+    auto* layout = new QFormLayout(dialog);
+    layout->addRow("Title:", title_edit);
+    layout->addRow(buttons);
+
+    QObject::connect(dialog, &QDialog::finished, [promise, title_edit = QPointer { title_edit }](auto result) {
+        if (result != QDialog::Accepted || !title_edit) {
+            promise->reject(Error::from_errno(ECANCELED));
+            return;
+        }
+
+        Optional<String> title;
+        if (auto title_text = ak_string_from_qstring(title_edit->text()); !title_text.is_empty())
+            title = move(title_text);
+
+        promise->resolve(WebView::BookmarkItem::Folder {
+            .title = move(title),
+            .children = {},
+        });
+    });
+
+    dialog->open();
+    return promise;
+}
+
+NonnullRefPtr<Application::BookmarkFolderPromise> Application::display_add_bookmark_folder_dialog() const
+{
+    return display_add_or_edit_bookmark_folder_dialog<BookmarkFolderPromise>(active_tab(), "Add Folder", {});
+}
+
+NonnullRefPtr<Application::BookmarkFolderPromise> Application::display_edit_bookmark_folder_dialog(WebView::BookmarkItem::Folder const& current_folder) const
+{
+    return display_add_or_edit_bookmark_folder_dialog<BookmarkFolderPromise>(active_tab(), "Edit Folder", current_folder.title);
+}
+
 void Application::on_devtools_enabled() const
 {
     WebView::Application::on_devtools_enabled();
@@ -285,6 +530,11 @@ void Application::on_devtools_disabled() const
 
     if (m_active_window)
         m_active_window->on_devtools_disabled();
+}
+
+void Application::on_recently_closed_entries_changed() const
+{
+    update_reopen_recently_closed_actions();
 }
 
 }

@@ -117,13 +117,11 @@ Optional<Vector<ColorStopListElement>> Parser::parse_linear_color_stop_list(Toke
     //   <linear-color-stop> , [ <linear-color-hint>? , <linear-color-stop> ]#
     return parse_color_stop_list(
         tokens,
-        [&](auto& it) { return parse_length_percentage_value(it); });
+        [&](auto& it) { return parse_length_percentage_value(it, infinite_range, infinite_range); });
 }
 
 Optional<Vector<ColorStopListElement>> Parser::parse_angular_color_stop_list(TokenStream<ComponentValue>& tokens)
 {
-    auto context_guard = push_temporary_value_parsing_context(SpecialContext::AngularColorStopList);
-
     // <angular-color-stop-list> =
     //   <angular-color-stop> , [ <angular-color-hint>? , <angular-color-stop> ]#
     return parse_color_stop_list(
@@ -138,103 +136,8 @@ Optional<Vector<ColorStopListElement>> Parser::parse_angular_color_stop_list(Tok
                 }
             }
 
-            return parse_angle_percentage_value(it);
+            return parse_angle_percentage_value(it, infinite_range, infinite_range);
         });
-}
-
-Optional<InterpolationMethod> Parser::parse_interpolation_method(TokenStream<ComponentValue>& tokens)
-{
-    // <color-interpolation-method> = in [ <rectangular-color-space> | <polar-color-space> <hue-interpolation-method>? ]
-
-    auto transaction = tokens.begin_transaction();
-
-    if (!tokens.consume_a_token().is_ident("in"sv))
-        return {};
-
-    tokens.discard_whitespace();
-    auto first_value = tokens.consume_a_token();
-    if (!first_value.is(Token::Type::Ident))
-        return {};
-
-    auto color_space_name = first_value.token().ident();
-    GradientSpace color_space;
-    bool polar_space = false;
-
-    if (color_space_name.equals_ignoring_ascii_case("srgb"sv)) {
-        color_space = GradientSpace::sRGB;
-    } else if (color_space_name.equals_ignoring_ascii_case("srgb-linear"sv)) {
-        color_space = GradientSpace::sRGBLinear;
-    } else if (color_space_name.equals_ignoring_ascii_case("display-p3"sv)) {
-        color_space = GradientSpace::DisplayP3;
-    } else if (color_space_name.equals_ignoring_ascii_case("a98-rgb"sv)) {
-        color_space = GradientSpace::A98RGB;
-    } else if (color_space_name.equals_ignoring_ascii_case("prophoto-rgb"sv)) {
-        color_space = GradientSpace::ProPhotoRGB;
-    } else if (color_space_name.equals_ignoring_ascii_case("rec2020"sv)) {
-        color_space = GradientSpace::Rec2020;
-    } else if (color_space_name.equals_ignoring_ascii_case("lab"sv)) {
-        color_space = GradientSpace::Lab;
-    } else if (color_space_name.equals_ignoring_ascii_case("oklab"sv)) {
-        color_space = GradientSpace::OKLab;
-    } else if (color_space_name.equals_ignoring_ascii_case("xyz-d50"sv)) {
-        color_space = GradientSpace::XYZD50;
-    } else if (color_space_name.equals_ignoring_ascii_case("xyz-d65"sv)
-        || color_space_name.equals_ignoring_ascii_case("xyz"sv)) {
-        color_space = GradientSpace::XYZD65;
-    } else {
-        polar_space = true;
-        if (color_space_name.equals_ignoring_ascii_case("hsl"sv)) {
-            color_space = GradientSpace::HSL;
-        } else if (color_space_name.equals_ignoring_ascii_case("hwb"sv)) {
-            color_space = GradientSpace::HWB;
-        } else if (color_space_name.equals_ignoring_ascii_case("lch"sv)) {
-            color_space = GradientSpace::LCH;
-        } else if (color_space_name.equals_ignoring_ascii_case("oklch"sv)) {
-            color_space = GradientSpace::OKLCH;
-        } else {
-            return {};
-        }
-    }
-
-    Optional<HueMethod> hue_method;
-    if (polar_space) {
-        [&]() {
-            auto hue_transaction = transaction.create_child();
-
-            tokens.discard_whitespace();
-            auto second_value = tokens.consume_a_token();
-            if (!second_value.is(Token::Type::Ident))
-                return;
-
-            auto hue_method_name = second_value.token().ident();
-            if (hue_method_name.equals_ignoring_ascii_case("shorter"sv)) {
-                hue_method = HueMethod::Shorter;
-            } else if (hue_method_name.equals_ignoring_ascii_case("longer"sv)) {
-                hue_method = HueMethod::Longer;
-            } else if (hue_method_name.equals_ignoring_ascii_case("increasing"sv)) {
-                hue_method = HueMethod::Increasing;
-            } else if (hue_method_name.equals_ignoring_ascii_case("decreasing"sv)) {
-                hue_method = HueMethod::Decreasing;
-            } else {
-                return;
-            }
-
-            tokens.discard_whitespace();
-            if (!tokens.consume_a_token().is_ident("hue"sv))
-                return;
-
-            hue_transaction.commit();
-        }();
-    }
-
-    transaction.commit();
-
-    InterpolationMethod interpolation_method;
-    interpolation_method.color_space = color_space;
-    if (hue_method.has_value())
-        interpolation_method.hue_method = hue_method.value();
-
-    return interpolation_method;
 }
 
 RefPtr<LinearGradientStyleValue const> Parser::parse_linear_gradient_function(TokenStream<ComponentValue>& outer_tokens)
@@ -298,13 +201,13 @@ RefPtr<LinearGradientStyleValue const> Parser::parse_linear_gradient_function(To
         return token.token().ident().equals_ignoring_ascii_case("to"sv);
     };
 
-    auto maybe_interpolation_method = parse_interpolation_method(tokens);
+    auto maybe_interpolation_method = parse_color_interpolation_method_value(tokens);
     tokens.discard_whitespace();
 
     auto const& first_param = tokens.next_token();
-    if (auto maybe_angle = parse_angle_value(tokens)) {
+    if (auto maybe_angle = parse_angle_value(tokens, infinite_range)) {
         gradient_direction = maybe_angle.release_nonnull();
-    } else if (first_param.is(Token::Type::Number) && first_param.token().number().value() == 0) {
+    } else if (first_param.is(Token::Type::Number) && first_param.token().number_value() == 0) {
         // <zero>
         tokens.discard_a_token(); // <zero>
         gradient_direction = { AngleStyleValue::create(Angle::make_degrees(0)) };
@@ -355,16 +258,16 @@ RefPtr<LinearGradientStyleValue const> Parser::parse_linear_gradient_function(To
         has_direction_param = false;
     }
 
-    if (!maybe_interpolation_method.has_value()) {
+    if (!maybe_interpolation_method) {
         tokens.discard_whitespace();
-        maybe_interpolation_method = parse_interpolation_method(tokens);
+        maybe_interpolation_method = parse_color_interpolation_method_value(tokens);
     }
 
     tokens.discard_whitespace();
     if (!tokens.has_next_token())
         return nullptr;
 
-    if ((has_direction_param || maybe_interpolation_method.has_value()) && !tokens.consume_a_token().is(Token::Type::Comma))
+    if ((has_direction_param || maybe_interpolation_method) && !tokens.consume_a_token().is(Token::Type::Comma))
         return nullptr;
 
     auto color_stops = parse_linear_color_stop_list(tokens);
@@ -372,7 +275,7 @@ RefPtr<LinearGradientStyleValue const> Parser::parse_linear_gradient_function(To
         return nullptr;
 
     transaction.commit();
-    return LinearGradientStyleValue::create(move(gradient_direction), move(*color_stops), gradient_type, repeating_gradient, maybe_interpolation_method);
+    return LinearGradientStyleValue::create(move(gradient_direction), move(*color_stops), gradient_type, repeating_gradient, move(maybe_interpolation_method));
 }
 
 RefPtr<ConicGradientStyleValue const> Parser::parse_conic_gradient_function(TokenStream<ComponentValue>& outer_tokens)
@@ -403,7 +306,7 @@ RefPtr<ConicGradientStyleValue const> Parser::parse_conic_gradient_function(Toke
 
     RefPtr<StyleValue const> from_angle;
     RefPtr<PositionStyleValue const> at_position;
-    Optional<InterpolationMethod> maybe_interpolation_method;
+    RefPtr<StyleValue const> maybe_interpolation_method;
 
     // conic-gradient( [ [ [ from [ <angle> | <zero> ] ]? [ at <position> ]? ] || <color-interpolation-method> ]? , <angular-color-stop-list> )
     NonnullRawPtr<ComponentValue const> token = tokens.next_token();
@@ -422,9 +325,9 @@ RefPtr<ConicGradientStyleValue const> Parser::parse_conic_gradient_function(Toke
             // from [ <angle> | <zero> ]
             if (from_angle || at_position)
                 return nullptr;
-            if (auto maybe_angle = parse_angle_value(tokens)) {
+            if (auto maybe_angle = parse_angle_value(tokens, infinite_range)) {
                 from_angle = maybe_angle.release_nonnull();
-            } else if (auto peek_token = tokens.next_token(); peek_token.is(Token::Type::Number) && peek_token.token().number().value() == 0) {
+            } else if (auto peek_token = tokens.next_token(); peek_token.is(Token::Type::Number) && peek_token.token().number_value() == 0) {
                 tokens.discard_a_token(); // 0
                 from_angle = AngleStyleValue::create(Angle::make_degrees(0));
             } else {
@@ -440,10 +343,10 @@ RefPtr<ConicGradientStyleValue const> Parser::parse_conic_gradient_function(Toke
             at_position = move(position);
         } else if (token->token().ident().equals_ignoring_ascii_case("in"sv)) {
             // <color-interpolation-method>
-            if (maybe_interpolation_method.has_value())
+            if (maybe_interpolation_method)
                 return nullptr;
-            maybe_interpolation_method = parse_interpolation_method(tokens);
-            if (!maybe_interpolation_method.has_value())
+            maybe_interpolation_method = parse_color_interpolation_method_value(tokens);
+            if (!maybe_interpolation_method)
                 return nullptr;
         } else {
             break;
@@ -457,7 +360,7 @@ RefPtr<ConicGradientStyleValue const> Parser::parse_conic_gradient_function(Toke
     tokens.discard_whitespace();
     if (!tokens.has_next_token())
         return nullptr;
-    if ((from_angle || at_position || maybe_interpolation_method.has_value()) && !tokens.consume_a_token().is(Token::Type::Comma))
+    if ((from_angle || at_position || maybe_interpolation_method) && !tokens.consume_a_token().is(Token::Type::Comma))
         return nullptr;
 
     auto color_stops = parse_angular_color_stop_list(tokens);
@@ -468,7 +371,7 @@ RefPtr<ConicGradientStyleValue const> Parser::parse_conic_gradient_function(Toke
         at_position = PositionStyleValue::create_center();
 
     transaction.commit();
-    return ConicGradientStyleValue::create(move(from_angle), at_position.release_nonnull(), move(*color_stops), repeating_gradient, maybe_interpolation_method);
+    return ConicGradientStyleValue::create(move(from_angle), at_position.release_nonnull(), move(*color_stops), repeating_gradient, move(maybe_interpolation_method));
 }
 
 RefPtr<RadialGradientStyleValue const> Parser::parse_radial_gradient_function(TokenStream<ComponentValue>& outer_tokens)
@@ -526,7 +429,7 @@ RefPtr<RadialGradientStyleValue const> Parser::parse_radial_gradient_function(To
         return {};
     };
 
-    auto maybe_interpolation_method = parse_interpolation_method(tokens);
+    auto maybe_interpolation_method = parse_color_interpolation_method_value(tokens);
     tokens.discard_whitespace();
 
     {
@@ -573,12 +476,12 @@ RefPtr<RadialGradientStyleValue const> Parser::parse_radial_gradient_function(To
     }
 
     tokens.discard_whitespace();
-    if (!maybe_interpolation_method.has_value()) {
-        maybe_interpolation_method = parse_interpolation_method(tokens);
+    if (!maybe_interpolation_method) {
+        maybe_interpolation_method = parse_color_interpolation_method_value(tokens);
         tokens.discard_whitespace();
     }
 
-    if (maybe_interpolation_method.has_value())
+    if (maybe_interpolation_method)
         expect_comma = true;
 
     if (!tokens.has_next_token())
@@ -595,7 +498,7 @@ RefPtr<RadialGradientStyleValue const> Parser::parse_radial_gradient_function(To
         at_position = PositionStyleValue::create_center();
 
     transaction.commit();
-    return RadialGradientStyleValue::create(ending_shape, size, at_position.release_nonnull(), move(*color_stops), repeating_gradient, maybe_interpolation_method);
+    return RadialGradientStyleValue::create(ending_shape, size, at_position.release_nonnull(), move(*color_stops), repeating_gradient, move(maybe_interpolation_method));
 }
 
 }

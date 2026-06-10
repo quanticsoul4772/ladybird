@@ -5,7 +5,7 @@
  */
 
 #include <LibJS/Runtime/PropertyKey.h>
-#include <LibWeb/Bindings/HTMLAllCollectionPrototype.h>
+#include <LibWeb/Bindings/HTMLAllCollection.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
@@ -86,7 +86,7 @@ static bool is_all_named_element(DOM::Element const& element)
 
 GC::RootVector<GC::Ref<DOM::Element>> HTMLAllCollection::collect_matching_elements() const
 {
-    GC::RootVector<GC::Ref<DOM::Element>> elements(m_root->heap());
+    GC::RootVector<GC::Ref<DOM::Element>> elements;
     if (m_scope == Scope::Descendants) {
         m_root->for_each_in_subtree_of_type<DOM::Element>([&](auto& element) {
             if (m_filter(element))

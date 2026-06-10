@@ -21,14 +21,14 @@ public:
 
     virtual size_t length() const override;
     virtual String item(size_t index) const override;
-    virtual WebIDL::ExceptionOr<void> set_property(FlyString const& property, StringView value, StringView priority) override;
-    virtual WebIDL::ExceptionOr<String> remove_property(FlyString const& property) override;
-    virtual String get_property_value(FlyString const& property) const override;
-    virtual StringView get_property_priority(FlyString const& property) const override;
+    virtual WebIDL::ExceptionOr<void> set_property(Utf16FlyString const& property, StringView value, StringView priority) override;
+    virtual WebIDL::ExceptionOr<String> remove_property(Utf16FlyString const& property) override;
+    virtual String get_property_value(Utf16FlyString const& property) const override;
+    virtual StringView get_property_priority(Utf16FlyString const& property) const override;
 
     Vector<Descriptor> const& descriptors() const { return m_descriptors; }
-    RefPtr<StyleValue const> descriptor(DescriptorID) const;
-    RefPtr<StyleValue const> descriptor_or_initial_value(DescriptorID) const;
+    RefPtr<StyleValue const> descriptor(DescriptorNameAndID const&) const;
+    RefPtr<StyleValue const> descriptor_or_initial_value(DescriptorNameAndID const&) const;
     virtual String serialized() const override;
 
     virtual WebIDL::ExceptionOr<void> set_css_text(StringView) override;
@@ -37,15 +37,13 @@ protected:
     CSSDescriptors(JS::Realm&, AtRuleID, Vector<Descriptor>);
 
 private:
-    bool set_a_css_declaration(DescriptorID, NonnullRefPtr<StyleValue const>, Important);
-
-    virtual void visit_edges(Visitor&) override;
+    bool set_a_css_declaration(DescriptorNameAndID const&, NonnullRefPtr<StyleValue const>, Important);
 
     AtRuleID m_at_rule_id;
     Vector<Descriptor> m_descriptors;
 };
 
-bool is_shorthand(AtRuleID, DescriptorID);
-void for_each_expanded_longhand(AtRuleID, DescriptorID, RefPtr<StyleValue const>, Function<void(DescriptorID, RefPtr<StyleValue const>)>);
+bool is_shorthand(AtRuleID, DescriptorNameAndID const&);
+void for_each_expanded_longhand(AtRuleID, DescriptorNameAndID const&, RefPtr<StyleValue const>, Function<void(DescriptorNameAndID const&, RefPtr<StyleValue const>)>);
 
 }

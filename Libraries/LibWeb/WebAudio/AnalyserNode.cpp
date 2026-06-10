@@ -10,7 +10,7 @@
 #include <AK/Vector.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/TypedArray.h>
-#include <LibWeb/Bindings/AnalyserNodePrototype.h>
+#include <LibWeb/Bindings/AnalyserNode.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Page/Page.h>
@@ -22,7 +22,7 @@ namespace Web::WebAudio {
 
 GC_DEFINE_ALLOCATOR(AnalyserNode);
 
-AnalyserNode::AnalyserNode(JS::Realm& realm, GC::Ref<BaseAudioContext> context, AnalyserOptions const& options)
+AnalyserNode::AnalyserNode(JS::Realm& realm, GC::Ref<BaseAudioContext> context, Bindings::AnalyserOptions const& options)
     : AudioNode(realm, context)
     , m_fft_size(options.fft_size)
     , m_max_decibels(options.max_decibels)
@@ -33,7 +33,7 @@ AnalyserNode::AnalyserNode(JS::Realm& realm, GC::Ref<BaseAudioContext> context, 
 
 AnalyserNode::~AnalyserNode() = default;
 
-WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> AnalyserNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, AnalyserOptions const& options)
+WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> AnalyserNode::create(JS::Realm& realm, GC::Ref<BaseAudioContext> context, Bindings::AnalyserOptions const& options)
 {
     return construct_impl(realm, context, options);
 }
@@ -137,7 +137,7 @@ Vector<f32> AnalyserNode::current_frequency_data()
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-getfloatfrequencydata
-WebIDL::ExceptionOr<void> AnalyserNode::get_float_frequency_data(GC::Root<WebIDL::BufferSource> const& array)
+WebIDL::ExceptionOr<void> AnalyserNode::get_float_frequency_data(GC::Ref<JS::Float32Array> array)
 {
     // Track potential fingerprinting (Milestone 0.4 Phase 4)
     auto const& window = as<HTML::Window>(HTML::relevant_global_object(*this));
@@ -152,22 +152,17 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_float_frequency_data(GC::Root<WebIDL
     // quantum as a previous call, the current frequency data is not updated with the same data. Instead, the
     // previously computed data is returned.
 
-    auto& vm = this->vm();
-
-    if (!is<JS::Float32Array>(*array->raw_object()))
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "Float32Array");
-    auto& output_array = static_cast<JS::Float32Array&>(*array->raw_object());
-
-    size_t floats_to_write = min(output_array.data().size(), frequency_bin_count());
+    auto output_data = array->data();
+    size_t floats_to_write = min(output_data.size(), static_cast<size_t>(frequency_bin_count()));
     for (size_t i = 0; i < floats_to_write; i++) {
-        output_array.data()[i] = frequency_data[i];
+        output_data[i] = frequency_data[i];
     }
 
     return {};
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-getbytefrequencydata
-WebIDL::ExceptionOr<void> AnalyserNode::get_byte_frequency_data(GC::Root<WebIDL::BufferSource> const& array)
+WebIDL::ExceptionOr<void> AnalyserNode::get_byte_frequency_data(GC::Ref<JS::Uint8Array> array)
 {
     // Track potential fingerprinting (Milestone 0.4 Phase 4)
     auto const& window = as<HTML::Window>(HTML::relevant_global_object(*this));
@@ -203,17 +198,17 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_byte_frequency_data(GC::Root<WebIDL:
     // Write the current frequency data into array. If array’s byte length is less than frequencyBinCount,
     // the excess elements will be dropped. If array’s byte length is greater than the frequencyBinCount ,
     // the excess elements will be ignored. The most recent fftSize frames are used in computing the frequency data.
-    auto& output_buffer = array->viewed_array_buffer()->buffer();
-    size_t bytes_to_write = min(array->byte_length(), frequency_bin_count());
+    auto output_data = array->data();
+    size_t bytes_to_write = min(output_data.size(), static_cast<size_t>(frequency_bin_count()));
 
     for (size_t i = 0; i < bytes_to_write; i++)
-        output_buffer[i] = byte_data[i];
+        output_data[i] = byte_data[i];
 
     return {};
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-getfloattimedomaindata
-WebIDL::ExceptionOr<void> AnalyserNode::get_float_time_domain_data(GC::Root<WebIDL::BufferSource> const& array)
+WebIDL::ExceptionOr<void> AnalyserNode::get_float_time_domain_data(GC::Ref<JS::Float32Array> array)
 {
     // Write the current time-domain data (waveform data) into array. If array has fewer elements than the
     // value of fftSize, the excess elements will be dropped. If array has more elements than the value of
@@ -221,22 +216,17 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_float_time_domain_data(GC::Root<WebI
 
     Vector<f32> time_domain_data = current_time_domain_data();
 
-    auto& vm = this->vm();
-
-    if (!is<JS::Float32Array>(*array->raw_object()))
-        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "Float32Array");
-    auto& output_array = static_cast<JS::Float32Array&>(*array->raw_object());
-
-    size_t floats_to_write = min(output_array.data().size(), frequency_bin_count());
+    auto output_data = array->data();
+    size_t floats_to_write = min(output_data.size(), static_cast<size_t>(fft_size()));
     for (size_t i = 0; i < floats_to_write; i++) {
-        output_array.data()[i] = time_domain_data[i];
+        output_data[i] = time_domain_data[i];
     }
 
     return {};
 }
 
 // https://webaudio.github.io/web-audio-api/#dom-analysernode-getbytetimedomaindata
-WebIDL::ExceptionOr<void> AnalyserNode::get_byte_time_domain_data(GC::Root<WebIDL::BufferSource> const& array)
+WebIDL::ExceptionOr<void> AnalyserNode::get_byte_time_domain_data(GC::Ref<JS::Uint8Array> array)
 {
     // Write the current time-domain data (waveform data) into array. If array’s byte length is less than
     // fftSize, the excess elements will be dropped. If array’s byte length is greater than the fftSize,
@@ -256,11 +246,11 @@ WebIDL::ExceptionOr<void> AnalyserNode::get_byte_time_domain_data(GC::Root<WebID
         byte_data.unchecked_append(static_cast<u8>(x));
     }
 
-    auto& output_buffer = array->viewed_array_buffer()->buffer();
-    size_t bytes_to_write = min(array->byte_length(), fft_size());
+    auto output_data = array->data();
+    size_t bytes_to_write = min(output_data.size(), static_cast<size_t>(fft_size()));
 
     for (size_t i = 0; i < bytes_to_write; i++)
-        output_buffer[i] = byte_data[i];
+        output_data[i] = byte_data[i];
 
     return {};
 }
@@ -311,7 +301,7 @@ WebIDL::ExceptionOr<void> AnalyserNode::set_smoothing_time_constant(double smoot
     return {};
 }
 
-WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> AnalyserNode::construct_impl(JS::Realm& realm, GC::Ref<BaseAudioContext> context, AnalyserOptions const& options)
+WebIDL::ExceptionOr<GC::Ref<AnalyserNode>> AnalyserNode::construct_impl(JS::Realm& realm, GC::Ref<BaseAudioContext> context, Bindings::AnalyserOptions const& options)
 {
     if (options.min_decibels >= options.max_decibels)
         return WebIDL::IndexSizeError::create(realm, "Analyser node minDecibels greater than maxDecibels"_utf16);

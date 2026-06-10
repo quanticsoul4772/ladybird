@@ -19,13 +19,14 @@
 #include <AK/Tuple.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
-#include <LibJS/Bytecode/Interpreter.h>
-#include <LibJS/Lexer.h>
-#include <LibJS/Parser.h>
+#include <LibJS/ParserError.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/JSONObject.h>
+#include <LibJS/Runtime/Reference.h>
 #include <LibJS/Runtime/TypedArray.h>
+#include <LibJS/Runtime/VM.h>
+#include <LibJS/Runtime/ValueInlines.h>
 #include <LibJS/Runtime/WeakMap.h>
 #include <LibJS/Runtime/WeakSet.h>
 #include <LibJS/Script.h>
@@ -148,8 +149,8 @@ extern IntermediateRunFileResult (*g_run_file)(ByteString const&, JS::Realm&, JS
 
 class TestRunner : public ::Test::TestRunner {
 public:
-    TestRunner(ByteString test_root, ByteString common_path, bool print_times, bool print_progress, bool print_json, bool detailed_json)
-        : ::Test::TestRunner(move(test_root), print_times, print_progress, print_json, detailed_json)
+    TestRunner(ByteString test_root, ByteString common_path, bool print_times, bool print_progress, bool print_json, bool detailed_json, bool print_each_test)
+        : ::Test::TestRunner(move(test_root), print_times, print_progress, print_json, detailed_json, print_each_test)
         , m_common_path(move(common_path))
     {
         g_test_root = m_test_root;
@@ -388,15 +389,18 @@ inline JSFileResult TestRunner::run_file_test(ByteString const& test_path)
     auto test_script = result.release_value();
 
     g_vm->push_execution_context(global_execution_context);
-    MUST(g_vm->bytecode_interpreter().run(*test_script));
+    MUST(g_vm->run(*test_script));
     g_vm->pop_execution_context();
 
     auto file_script = parse_script(test_path, *realm);
     JS::ThrowCompletionOr<JS::Value> top_level_result { JS::js_undefined() };
-    if (file_script.is_error())
+    if (file_script.is_error()) {
+        m_counts.suites_failed++;
+        m_counts.files_total++;
         return { test_path, file_script.error() };
+    }
     g_vm->push_execution_context(global_execution_context);
-    top_level_result = g_vm->bytecode_interpreter().run(file_script.value());
+    top_level_result = g_vm->run(file_script.value());
     g_vm->pop_execution_context();
 
     g_vm->push_execution_context(global_execution_context);
@@ -412,9 +416,9 @@ inline JSFileResult TestRunner::run_file_test(ByteString const& test_path)
     // Collect logged messages
     auto user_output = MUST(realm->global_object().get("__UserOutput__"_utf16_fly_string));
 
-    auto& arr = user_output.as_array();
-    for (auto& entry : arr.indexed_properties()) {
-        auto message = MUST(arr.get(entry.index()));
+    auto& arr = user_output.as_array_exotic_object();
+    for (u32 i = 0; i < arr.indexed_array_like_size(); ++i) {
+        auto message = MUST(arr.get(i));
         file_result.logged_messages.append(message.to_string_without_side_effects().to_byte_string());
     }
 

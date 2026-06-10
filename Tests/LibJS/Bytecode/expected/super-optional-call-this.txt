@@ -1,51 +1,84 @@
-JS bytecode executable ""
-[   0]    0: GetLexicalEnvironment dst:reg4
-[   8]       CreateLexicalEnvironment dst:reg5, parent:reg4, capacity:0
-[  18]       CreateVariable identifier:Base, is_immutable:true, is_global:false, is_strict:false
-[  28]       SetLexicalEnvironment environment:reg4
-[  30]       NewClass dst:reg6, class_environment:reg5, class_blueprint_index:0, element_keys:[element_keys:String("method")]
-[  58]       InitializeLexicalBinding identifier:Base, src:reg6
-[  70]       CreateLexicalEnvironment dst:reg5, parent:reg4, capacity:0
-[  80]       CreateVariable identifier:Foo, is_immutable:true, is_global:false, is_strict:false
-[  90]       GetGlobal dst:reg6, identifier:Base
-[  a0]       SetLexicalEnvironment environment:reg4
-[  a8]       NewClass dst:reg7, super_class:reg6, class_environment:reg5, class_blueprint_index:1, element_keys:[element_keys:String("method")]
-[  d0]       InitializeLexicalBinding identifier:Foo, src:reg7
-[  e8]       GetGlobal dst:reg7, identifier:Foo
-[  f8]       CallConstruct dst:reg6, callee:reg7, Foo
-[ 110]       GetById dst:reg7, base:reg6, property:method
-[ 128]       Call dst:reg5, callee:reg7, this_value:reg6, <object>.method
-[ 148]       End value:reg5
+$1f56e90a super-optional-call-this.js:1:1
+  Registers: 8
+  Blocks:    1
+  Constants:
+    [0] = String("method")
+    [1] = Undefined
 
-JS bytecode executable "Foo"
-[   0]    0: GetLexicalEnvironment dst:reg4
-[   8]       CreateVariable identifier:args, is_immutable:false, is_global:false, is_strict:false
-[  18]       CreateRestParams dst:arg0, rest_index:0
-[  28]       InitializeLexicalBinding identifier:args, src:arg0
-[  40]       GetBinding dst:reg5, identifier:args
-[  58]       SuperCallWithArgumentArray dst:reg6, arguments:reg5, is_synthetic:true
-[  68]       Return value:reg6
+block0:
+  [   0] GetLexicalEnvironment dst:reg4
+  [   8] CreateLexicalEnvironment dst:reg5, parent:reg4, capacity:0, is_catch_environment:false
+  [  20] CreateVariable `Base`, is_immutable:true, is_global:false, is_strict:true
+  [  30] SetLexicalEnvironment environment:reg4
+  [  38] NewClass dst:reg6, class_environment:reg5, class_blueprint_index:0, element_keys:[element_keys:String("method")]
+  [  60] DynamicInitializeLexicalBinding `Base`, src:reg6
+  [  70] CreateLexicalEnvironment dst:reg6, parent:reg4, capacity:0, is_catch_environment:false
+  [  88] CreateVariable `Foo`, is_immutable:true, is_global:false, is_strict:true
+  [  98] GetGlobal dst:reg5, `Base`
+  [  a8] SetLexicalEnvironment environment:reg4
+  [  b0] NewClass dst:reg7, super_class:reg5, class_environment:reg6, class_blueprint_index:1, element_keys:[element_keys:String("method")]
+  [  d8] DynamicInitializeLexicalBinding `Foo`, src:reg7
+  [  e8] GetGlobal dst:reg5, `Foo`
+  [  f8] CallConstruct dst:reg6, callee:reg5, Foo
+  [ 110] GetById dst:reg5, base:reg6, `method`
+  [ 128] Call dst:reg7, callee:reg5, this_value:reg6, <object>.method
+  [ 148] End value:reg7
 
-JS bytecode executable "Base"
-[   0]    0: GetLexicalEnvironment dst:reg4
-[   8]       End value:Undefined
 
-JS bytecode executable "method"
-[   0]    0: GetLexicalEnvironment dst:reg4
-[   8]       Mov dst:reg5, src:Undefined
-[  18]       ResolveThisBinding
-[  20]       ResolveSuperBase dst:reg7
-[  28]       GetByIdWithThis dst:reg8, base:reg7, property:method, this_value:this
-[  40]       Mov dst:reg5, src:this
-[  50]       Mov dst:reg6, src:reg8
-[  60]       JumpNullish condition:reg6, true_target:@70, false_target:@88
-[  70]    1: Mov dst:reg6, src:Undefined
-[  80]    2: Return value:reg6
-[  88]    3: NewArray dst:reg7
-[  98]       CallWithArgumentArray dst:reg6, callee:reg6, this_value:reg5, arguments:reg7
-[  b0]       Mov dst:reg5, src:Undefined
-[  c0]       Return value:reg6
+Foo$fbafd3fe super-optional-call-this.js:4:1
+  Registers: 8
+  Blocks:    1
 
-JS bytecode executable "method"
-[   0]    0: GetLexicalEnvironment dst:reg4
-[   8]       End value:Undefined
+block0:
+  [   0] CreateVariable `args`, is_immutable:false, is_global:false, is_strict:false
+  [  10] CreateRestParams dst:arg0, rest_index:0
+  [  20] InitializeLexicalBinding `args`, src:arg0
+  [  38] GetSuperConstructor dst:reg5
+  [  40] GetBinding dst:reg6, `args`
+  [  58] SuperCallWithArgumentArray dst:reg7, super_constructor:reg5, arguments:reg6, is_synthetic:true
+  [  70] Return value:reg7
+
+
+Base$a461b108
+  Registers: 5
+  Blocks:    1
+  Constants:
+    [0] = Undefined
+
+block0:
+  [   0] End value:Undefined
+
+
+method$25bff8b5 super-optional-call-this.js:6:9
+  Registers: 9
+  Blocks:    3
+  Constants:
+    [0] = Undefined
+
+block0:
+  [   0] Mov dst:reg5, src:Undefined
+  [  10] ResolveThisBinding
+  [  18] ResolveSuperBase dst:reg7
+  [  20] GetByIdWithThis dst:reg8, base:reg7, `method`, this_value:this
+  [  38] Mov2 dst1:reg5, src1:this, dst2:reg6, src2:reg8
+  [  50] JumpNullish condition:reg6, true_target:block1, false_target:block2
+
+block1:
+  [  60] Mov dst:reg6, src:Undefined
+  [  70] Return value:reg6
+
+block2:
+  [  78] NewArray dst:reg7
+  [  88] CallWithArgumentArray dst:reg6, callee:reg6, this_value:reg5, arguments:reg7
+  [  a0] Mov dst:reg5, src:Undefined
+  [  b0] Return value:reg6
+
+
+method$6c22ae6a
+  Registers: 5
+  Blocks:    1
+  Constants:
+    [0] = Undefined
+
+block0:
+  [   0] End value:Undefined

@@ -6,7 +6,7 @@
 
 #include <LibJS/Runtime/ValueInlines.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/TreeWalkerPrototype.h>
+#include <LibWeb/Bindings/TreeWalker.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/NodeFilter.h>
 #include <LibWeb/DOM/TreeWalker.h>
@@ -243,12 +243,9 @@ JS::ThrowCompletionOr<GC::Ptr<Node>> TreeWalker::next_node()
 }
 
 // https://dom.spec.whatwg.org/#concept-traversal-filter
-JS::Object* TreeWalker::filter() const
+GC::Ptr<NodeFilter> TreeWalker::filter() const
 {
-    if (!m_filter)
-        return nullptr;
-
-    return m_filter->callback().callback;
+    return m_filter;
 }
 
 // https://dom.spec.whatwg.org/#concept-node-filter

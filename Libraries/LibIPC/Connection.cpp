@@ -97,7 +97,7 @@ ConnectionBase::PeerEOF ConnectionBase::drain_messages_from_peer()
 {
     bool parse_error = false;
     auto schedule_shutdown = m_transport->read_as_many_messages_as_possible_without_blocking([&](auto&& raw_message) {
-        if (auto message = try_parse_message(raw_message.bytes, raw_message.fds)) {
+        if (auto message = try_parse_message(raw_message.bytes, raw_message.attachments)) {
             m_unprocessed_messages.append(message.release_nonnull());
         } else {
             dbgln("Failed to parse IPC message {:hex-dump}", raw_message.bytes);
@@ -128,6 +128,8 @@ ConnectionBase::PeerEOF ConnectionBase::drain_messages_from_peer()
 
 OwnPtr<IPC::Message> ConnectionBase::wait_for_specific_endpoint_message_impl(u32 endpoint_magic, int message_id)
 {
+    bool peer_disconnected_during_wait = false;
+
     for (;;) {
         // Double check we don't already have the event waiting for us.
         // Otherwise we might end up blocked for a while for no reason.
@@ -143,24 +145,29 @@ OwnPtr<IPC::Message> ConnectionBase::wait_for_specific_endpoint_message_impl(u32
             break;
 
         wait_for_transport_to_become_readable();
-        if (drain_messages_from_peer() == PeerEOF::Yes)
+        if (drain_messages_from_peer() == PeerEOF::Yes) {
+            peer_disconnected_during_wait = true;
             break;
+        }
     }
 
     dbgln("Failed to receive message_id: {}", message_id);
 
     if (!m_unprocessed_messages.is_empty()) {
-        m_transport->close();
-
         dbgln("Transport shutdown with unprocessed messages left: {}", m_unprocessed_messages.size());
         for (size_t i = 0; i < m_unprocessed_messages.size(); ++i) {
             auto& message = m_unprocessed_messages[i];
             dbgln(" Message {:03} is: {:2}-{}", i, message->message_id(), message->message_name());
         }
+    }
 
-        dbgln("Handling remaining messages before returning to caller");
-        handle_messages();
-        dbgln("Messages handled, returning to caller");
+    if (peer_disconnected_during_wait) {
+        // Don't dispatch any remaining queued messages here. wait_for_specific_endpoint_message_impl can be entered
+        // from any sync IPC call — including from inside a constructor whose members are still being initialized. (See
+        // issue #9582. PageHost's constructor issues a sync IPC before ConnectionFromClient::m_page_host has been
+        // assigned.) Re-entering arbitrary handlers from here can hit uninitialized state and crash. shutdown() closes
+        // the transport and calls die(). That exits processes cleanly — the same as queued close_server message would.
+        shutdown();
     }
 
     return {};

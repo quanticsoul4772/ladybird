@@ -54,17 +54,6 @@ void Settings::set_is_maximized(bool is_maximized)
     m_qsettings->setValue("is_maximized", is_maximized);
 }
 
-bool Settings::show_menubar()
-{
-    return m_qsettings->value("show_menubar", false).toBool();
-}
-
-void Settings::set_show_menubar(bool show_menubar)
-{
-    m_qsettings->setValue("show_menubar", show_menubar);
-    emit show_menubar_changed(show_menubar);
-}
-
 bool Settings::network_monitoring_enabled()
 {
     return m_qsettings->value("network_monitoring_enabled", true).toBool();

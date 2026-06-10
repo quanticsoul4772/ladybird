@@ -20,6 +20,9 @@ Application::Application(Optional<ByteString> ladybird_binary_path)
 {
     if (auto ladybird_source_dir = Core::Environment::get("LADYBIRD_SOURCE_DIR"sv); ladybird_source_dir.has_value())
         test_root_path = LexicalPath::join(*ladybird_source_dir, "Tests"sv, "LibWeb"sv).string();
+
+    if (Core::Environment::has("CLAUDECODE"sv) || Core::Environment::has("CODEX_SANDBOX"sv))
+        quiet = true;
 }
 
 Application::~Application()
@@ -36,7 +39,6 @@ void Application::create_platform_arguments(Core::ArgsParser& args_parser)
     args_parser.add_option(test_globs, "Only run tests matching the given glob", "filter", 'f', "glob");
     args_parser.add_option(python_executable_path, "Path to python3", "python-executable", 'P', "path");
     args_parser.add_option(dump_gc_graph, "Dump GC graph", "dump-gc-graph", 'G');
-    args_parser.add_option(debug_timeouts, "Capture backtrace on timeouts (see test-dumps html -> Timeouts -> stderr)", "debug-timeouts");
     args_parser.add_option(fail_fast, "Abort on first failure/timeout/crash (offers debugger attach on timeout)", "fail-fast");
 
     args_parser.add_option(repeat_count, "Repeat all matched tests N times", "repeat", 0, "n");

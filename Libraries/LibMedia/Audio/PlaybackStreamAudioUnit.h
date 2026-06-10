@@ -18,13 +18,17 @@ class AudioState;
 
 class PlaybackStreamAudioUnit final : public PlaybackStream {
 public:
-    static ErrorOr<NonnullRefPtr<PlaybackStream>> create(OutputState initial_output_state, u32 target_latency_ms, SampleSpecificationCallback&&, AudioDataRequestCallback&&);
+    static NonnullRefPtr<CreatePromise> create(OutputState initial_output_state, u32 target_latency_ms, AudioDataRequestCallback&&);
+
+    virtual SampleSpecification sample_specification() const override;
 
     virtual void set_underrun_callback(Function<void()>) override;
 
     virtual NonnullRefPtr<Core::ThreadedPromise<AK::Duration>> resume() override;
     virtual NonnullRefPtr<Core::ThreadedPromise<void>> drain_buffer_and_suspend() override;
     virtual NonnullRefPtr<Core::ThreadedPromise<void>> discard_buffer_and_suspend() override;
+
+    virtual void notify_data_available() override;
 
     virtual AK::Duration total_time_played() const override;
 

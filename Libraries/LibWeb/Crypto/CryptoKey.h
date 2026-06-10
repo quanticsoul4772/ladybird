@@ -12,7 +12,7 @@
 #include <LibCrypto/PK/RSA.h>
 #include <LibGC/Ptr.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/CryptoKeyPrototype.h>
+#include <LibWeb/Bindings/CryptoKey.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Bindings/Serializable.h>
@@ -27,7 +27,7 @@ class CryptoKey final
     GC_DECLARE_ALLOCATOR(CryptoKey);
 
 public:
-    using InternalKeyData = Variant<ByteBuffer, Bindings::JsonWebKey, ::Crypto::PK::RSAPublicKey, ::Crypto::PK::RSAPrivateKey, ::Crypto::PK::ECPublicKey, ::Crypto::PK::ECPrivateKey, ::Crypto::PK::MLDSAPublicKey, ::Crypto::PK::MLDSAPrivateKey, ::Crypto::PK::MLKEMPublicKey, ::Crypto::PK::MLKEMPrivateKey>;
+    using InternalKeyData = Variant<ByteBuffer, JsonWebKey, ::Crypto::PK::RSAPublicKey, ::Crypto::PK::RSAPrivateKey, ::Crypto::PK::ECPublicKey, ::Crypto::PK::ECPrivateKey, ::Crypto::PK::MLDSAPublicKey, ::Crypto::PK::MLDSAPrivateKey, ::Crypto::PK::MLKEMPublicKey, ::Crypto::PK::MLKEMPrivateKey>;
 
     static constexpr bool OVERRIDES_FINALIZE = true;
 
@@ -36,14 +36,14 @@ public:
 
     bool extractable() const { return m_extractable; }
     Bindings::KeyType type() const { return m_type; }
-    JS::Object const* algorithm() const { return m_algorithm; }
-    JS::Object const* usages() const { return m_usages; }
+    JS::Object const* algorithm() const { return m_algorithm_cached; }
+    JS::Object const* usages() const { return m_usages_cached; }
 
-    Vector<Bindings::KeyUsage> internal_usages() const { return m_key_usages; }
+    Vector<Bindings::KeyUsage> internal_usages() const { return m_usages; }
 
     void set_extractable(bool extractable) { m_extractable = extractable; }
     void set_type(Bindings::KeyType type) { m_type = type; }
-    void set_algorithm(GC::Ref<Object> algorithm) { m_algorithm = algorithm; }
+    void set_algorithm(GC::Ref<Object> algorithm) { m_algorithm_cached = algorithm; }
     void set_usages(Vector<Bindings::KeyUsage>);
 
     InternalKeyData const& handle() const { return m_key_data; }
@@ -62,10 +62,10 @@ private:
 
     Bindings::KeyType m_type;
     bool m_extractable { false };
-    GC::Ref<Object> m_algorithm;
-    GC::Ref<Object> m_usages;
+    GC::Ref<Object> m_algorithm_cached;
+    GC::Ref<Object> m_usages_cached;
 
-    Vector<Bindings::KeyUsage> m_key_usages;
+    Vector<Bindings::KeyUsage> m_usages;
     InternalKeyData m_key_data; // [[handle]]
     mutable String m_algorithm_name;
 };

@@ -8,7 +8,7 @@
 
 #include <AK/OwnPtr.h>
 #include <LibGfx/Forward.h>
-#include <LibWeb/Bindings/ImageBitmapPrototype.h>
+#include <LibWeb/Bindings/ImageBitmap.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Bindings/Serializable.h>
 #include <LibWeb/Bindings/Transferable.h>
@@ -17,7 +17,7 @@
 
 namespace Web::HTML {
 
-using ImageBitmapSource = FlattenVariant<CanvasImageSource, Variant<GC::Root<FileAPI::Blob>, GC::Root<ImageData>>>;
+using ImageBitmapSource = FlattenVariant<CanvasImageSource, Variant<GC::Ref<FileAPI::Blob>, GC::Ref<ImageData>>>;
 
 // https://html.spec.whatwg.org/multipage/imagebitmap-and-animations.html#imagebitmapoptions
 struct ImageBitmapOptions {
@@ -65,6 +65,7 @@ private:
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
+    virtual size_t external_memory_size() const override;
 
     WebIDL::UnsignedLong m_width = 0;
     WebIDL::UnsignedLong m_height = 0;

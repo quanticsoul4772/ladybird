@@ -27,6 +27,11 @@ public:
 
     bool properties_equal(TupleStyleValue const& other) const { return m_tuple == other.m_tuple; }
 
+    virtual bool is_computationally_independent() const override
+    {
+        return all_of(m_tuple, [](auto& value) { return !value || value->is_computationally_independent(); });
+    }
+
     struct Indices {
         struct FontVariantEastAsian {
             static constexpr size_t Variant = 0;
@@ -47,6 +52,16 @@ public:
             static constexpr size_t Fraction = 2;
             static constexpr size_t Ordinal = 3;
             static constexpr size_t SlashedZero = 4;
+        };
+
+        struct ScrollFunction {
+            static constexpr size_t Scroller = 0;
+            static constexpr size_t Axis = 1;
+        };
+
+        struct ViewFunction {
+            static constexpr size_t Axis = 0;
+            static constexpr size_t Inset = 1;
         };
     };
 

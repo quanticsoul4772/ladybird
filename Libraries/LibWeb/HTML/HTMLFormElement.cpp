@@ -10,7 +10,7 @@
 #include <AK/StringBuilder.h>
 #include <LibTextCodec/Decoder.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
-#include <LibWeb/Bindings/HTMLFormElementPrototype.h>
+#include <LibWeb/Bindings/HTMLFormElement.h>
 #include <LibWeb/DOM/DOMTokenList.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
@@ -98,16 +98,6 @@ WebIDL::ExceptionOr<void> HTMLFormElement::implicitly_submit_form()
     return {};
 }
 
-// https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-fs-novalidate
-static bool novalidate_state(HTMLElement const& element)
-{
-    // The no-validate state of an element is true if the element is a submit button and the element's formnovalidate
-    // attribute is present, or if the element's form owner's novalidate attribute is present, and false otherwise.
-    if (auto const* form_associated_element = as_if<FormAssociatedElement>(element))
-        return form_associated_element->novalidate_state();
-    return false;
-}
-
 // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-form-submit
 WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(GC::Ref<HTMLElement> submitter, SubmitFormOptions options)
 {
@@ -154,7 +144,7 @@ WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(GC::Ref<HTMLElement> subm
         // 4. If the submitter element's no-validate state is false, then interactively validate the constraints
         //    of form and examine the result. If the result is negative (i.e., the constraint validation concluded
         //    that there were invalid fields and probably informed the user of this), then:
-        if (!novalidate_state(submitter)) {
+        if (!submitter->novalidate_state()) {
             auto validation_result = interactively_validate_constraints();
             if (!validation_result) {
                 // 1. Set form's firing submission events to false.
@@ -173,7 +163,7 @@ WebIDL::ExceptionOr<void> HTMLFormElement::submit_form(GC::Ref<HTMLElement> subm
         // 6. Let shouldContinue be the result of firing an event named submit at form using SubmitEvent, with the
         //    submitter attribute initialized to submitterButton, the bubbles attribute initialized to true, and the
         //    cancelable attribute initialized to true.
-        SubmitEventInit event_init {};
+        Bindings::SubmitEventInit event_init {};
         event_init.submitter = submitter_button;
         auto submit_event = SubmitEvent::create(realm, EventNames::submit, event_init);
         submit_event->set_bubbles(true);
@@ -387,7 +377,7 @@ void HTMLFormElement::reset_form()
 
     // 2. If reset is true, then invoke the reset algorithm of each resettable element whose form owner is form.
     if (reset) {
-        GC::RootVector<GC::Ref<HTMLElement>> associated_elements_copy(heap(), m_associated_elements);
+        GC::RootVector<GC::Ref<HTMLElement>> associated_elements_copy { m_associated_elements };
         for (auto element : associated_elements_copy) {
             auto& form_associated_element = as<FormAssociatedElement>(*element);
             if (form_associated_element.is_resettable())
@@ -540,29 +530,6 @@ HTMLFormElement::EncodingTypeAttributeState HTMLFormElement::encoding_type_state
     return EncodingTypeAttributeState::FormUrlEncoded;
 }
 
-// https://html.spec.whatwg.org/multipage/forms.html#category-listed
-static bool is_listed_element(DOM::Element const& element)
-{
-    // Denotes elements that are listed in the form.elements and fieldset.elements APIs.
-    // These elements also have a form content attribute, and a matching form IDL attribute,
-    // that allow authors to specify an explicit form owner.
-    // => button, fieldset, input, object, output, select, textarea, form-associated custom elements
-
-    if (is<HTMLButtonElement>(element)
-        || is<HTMLFieldSetElement>(element)
-        || is<HTMLInputElement>(element)
-        || is<HTMLObjectElement>(element)
-        || is<HTMLOutputElement>(element)
-        || is<HTMLSelectElement>(element)
-        || is<HTMLTextAreaElement>(element)) {
-        return true;
-    }
-
-    // FIXME: Form-associated custom elements return also true
-
-    return false;
-}
-
 static bool is_form_control(DOM::Element const& element, HTMLFormElement const& form)
 {
     // The elements IDL attribute must return an HTMLFormControlsCollection rooted at the form element's root,
@@ -570,16 +537,19 @@ static bool is_form_control(DOM::Element const& element, HTMLFormElement const& 
     // with the exception of input elements whose type attribute is in the Image Button state, which must,
     // for historical reasons, be excluded from this particular collection.
 
-    if (!is_listed_element(element))
-        return false;
-
     if (is<HTMLInputElement>(element)
         && static_cast<HTMLInputElement const&>(element).type_state() == HTMLInputElement::TypeAttributeState::ImageButton) {
         return false;
     }
 
-    auto const& form_associated_element = as<FormAssociatedElement>(element);
-    if (form_associated_element.form() != &form)
+    auto const* form_associated_element = as_if<FormAssociatedElement>(element);
+    if (!form_associated_element)
+        return false;
+
+    if (form_associated_element->form() != &form)
+        return false;
+
+    if (!form_associated_element->is_listed())
         return false;
 
     return true;
@@ -610,7 +580,7 @@ HTMLFormElement::StaticValidationResult HTMLFormElement::statically_validate_con
     // 1. Let controls be a list of all the submittable elements whose form owner is form, in tree order.
     auto controls = get_submittable_elements();
     // 2. Let invalid controls be an initially empty list of elements.
-    GC::RootVector<GC::Ref<DOM::Element>> invalid_controls(realm().heap());
+    GC::RootVector<GC::Ref<DOM::Element>> invalid_controls;
     // 3. For each element field in controls, in tree order:
     for (auto& element : controls) {
         auto& field = as<FormAssociatedElement>(*element);
@@ -627,7 +597,7 @@ HTMLFormElement::StaticValidationResult HTMLFormElement::statically_validate_con
     if (invalid_controls.is_empty())
         return { true, invalid_controls };
     // 5. Let unhandled invalid controls be an initially empty list of elements.
-    GC::RootVector<GC::Ref<DOM::Element>> unhandled_invalid_controls(realm().heap());
+    GC::RootVector<GC::Ref<DOM::Element>> unhandled_invalid_controls;
     // 6. For each element field in invalid controls, if any, in tree order:
     for (auto& field : invalid_controls) {
         // 1. Let notCanceled be the result of firing an event named invalid at field, with the cancelable attribute
@@ -666,7 +636,7 @@ bool HTMLFormElement::interactively_validate_constraints()
     if (first_invalid_control.has_value()) {
         auto control = first_invalid_control.release_value();
         run_focusing_steps(control);
-        DOM::ScrollIntoViewOptions scroll_options;
+        Bindings::ScrollIntoViewOptions scroll_options;
         scroll_options.block = Bindings::ScrollLogicalPosition::Nearest;
         scroll_options.inline_ = Bindings::ScrollLogicalPosition::Nearest;
         scroll_options.behavior = Bindings::ScrollBehavior::Instant;
@@ -733,7 +703,7 @@ String HTMLFormElement::action() const
         return document().url_string();
     }
 
-    if (auto maybe_url = document().base_url().complete_url(form_action_attribute.value()); maybe_url.has_value())
+    if (auto maybe_url = document().encoding_parse_url(form_action_attribute.value()); maybe_url.has_value())
         return maybe_url->to_string();
     return {};
 }
@@ -807,7 +777,7 @@ static ErrorOr<Vector<DOMURL::QueryParam>> convert_to_list_of_name_value_pairs(G
         // 2. If entry's value is a File object, then let value be entry's value's name. Otherwise, let value be entry's value.
         String value;
         entry.value.visit(
-            [&value](GC::Root<FileAPI::File> const& file) {
+            [&value](GC::Ref<FileAPI::File> file) {
                 value = file->name();
             },
             [&value](String const& string) {
@@ -1064,6 +1034,19 @@ Optional<JS::Value> HTMLFormElement::item_value(size_t index) const
     return {};
 }
 
+bool HTMLFormElement::is_supported_property_name(FlyString const& name) const
+{
+    // NB: This is a simplified version of ::supported_property_names() that does not require sorting or allocations.
+    for (auto const& candidate : m_associated_elements) {
+        if (is_form_control(*candidate, *this) || is<HTMLImageElement>(*candidate)) {
+            if (first_is_one_of(name, candidate->id(), candidate->name()))
+                return true;
+        }
+    }
+
+    return m_past_names_map.contains(name);
+}
+
 // https://html.spec.whatwg.org/multipage/forms.html#the-form-element:supported-property-names
 Vector<FlyString> HTMLFormElement::supported_property_names() const
 {
@@ -1128,10 +1111,9 @@ Vector<FlyString> HTMLFormElement::supported_property_names() const
     // 5. Sort sourced names by tree order of the element entry of each tuple, sorting entries with the same element by
     //    putting entries whose source is id first, then entries whose source is name, and finally entries whose source
     //    is past, and sorting entries with the same element and source by their age, oldest first.
-    // FIXME: Require less const casts here by changing the signature of DOM::Node::compare_document_position
     quick_sort(sourced_names, [](auto const& lhs, auto const& rhs) -> bool {
         if (lhs.element != rhs.element)
-            return const_cast<DOM::Element*>(lhs.element.ptr())->compare_document_position(const_cast<DOM::Element*>(rhs.element.ptr())) & DOM::Node::DOCUMENT_POSITION_FOLLOWING;
+            return lhs.element->is_before(*rhs.element);
         if (lhs.source != rhs.source)
             return lhs.source < rhs.source;
         return lhs.age < rhs.age;
@@ -1148,13 +1130,7 @@ Vector<FlyString> HTMLFormElement::supported_property_names() const
             continue;
         names.set(entry.name, AK::HashSetExistingEntryBehavior::Keep);
     }
-
-    Vector<FlyString> result;
-    result.ensure_capacity(names.size());
-    for (auto const& name : names)
-        result.unchecked_append(name);
-
-    return result;
+    return names.values();
 }
 
 // https://html.spec.whatwg.org/multipage/forms.html#dom-form-nameditem

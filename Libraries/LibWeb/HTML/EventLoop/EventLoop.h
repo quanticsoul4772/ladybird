@@ -8,6 +8,7 @@
 
 #include <AK/Function.h>
 #include <AK/Noncopyable.h>
+#include <AK/Queue.h>
 #include <LibCore/Forward.h>
 #include <LibGC/Ptr.h>
 #include <LibGC/Weak.h>
@@ -53,11 +54,11 @@ public:
     TaskQueue& task_queue() { return *m_task_queue; }
     TaskQueue const& task_queue() const { return *m_task_queue; }
 
-    TaskQueue& microtask_queue() { return *m_microtask_queue; }
-    TaskQueue const& microtask_queue() const { return *m_microtask_queue; }
+    bool microtask_queue_empty() const { return m_microtask_queue.is_empty(); }
+    void enqueue_microtask(GC::Ref<HTML::Task> task) { m_microtask_queue.enqueue(task); }
+    GC::Ref<HTML::Task> dequeue_microtask() { return m_microtask_queue.dequeue(); }
 
     void spin_until(GC::Ref<GC::Function<bool()>> goal_condition);
-    void spin_processing_tasks_with_source_until(Task::Source, GC::Ref<GC::Function<bool()>> goal_condition);
     void process();
     void queue_task_to_update_the_rendering();
 
@@ -74,14 +75,15 @@ public:
 
     void register_document(Badge<DOM::Document>, DOM::Document&);
     void unregister_document(Badge<DOM::Document>, DOM::Document&);
+    void document_navigable_did_change(Badge<DOM::Document>);
 
     [[nodiscard]] Vector<GC::Root<DOM::Document>> documents_in_this_event_loop_matching(Function<bool(DOM::Document&)> callback) const;
 
     Vector<GC::Root<HTML::Window>> same_loop_windows() const;
 
-    void push_onto_backup_incumbent_realm_stack(JS::Realm&);
+    void push_onto_backup_incumbent_realm_stack(GC::Ref<EnvironmentSettingsObject>);
     void pop_backup_incumbent_realm_stack();
-    JS::Realm& top_of_backup_incumbent_realm_stack();
+    EnvironmentSettingsObject& top_of_backup_incumbent_realm_stack();
     bool is_backup_incumbent_realm_stack_empty() const { return m_backup_incumbent_realm_stack.is_empty(); }
 
     void register_environment_settings_object(Badge<EnvironmentSettingsObject>, EnvironmentSettingsObject&);
@@ -108,7 +110,7 @@ private:
     Vector<GC::Ref<GC::Function<void()>>> m_reached_step_1_tasks;
 
     GC::Ptr<TaskQueue> m_task_queue;
-    GC::Ptr<TaskQueue> m_microtask_queue;
+    Queue<GC::Ref<HTML::Task>> m_microtask_queue;
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#currently-running-task
     GC::Ptr<Task> m_currently_running_task { nullptr };
@@ -123,22 +125,21 @@ private:
     // https://html.spec.whatwg.org/multipage/webappapis.html#performing-a-microtask-checkpoint
     bool m_performing_a_microtask_checkpoint { false };
 
-    Vector<GC::Weak<DOM::Document>> m_documents;
+    mutable Vector<GC::Weak<DOM::Document>> m_documents;
+    mutable bool m_documents_sort_dirty { false };
+    void ensure_documents_sorted() const;
 
     // Used to implement step 4 of "perform a microtask checkpoint".
     // NOTE: These are weak references! ESO registers and unregisters itself from the event loop manually.
     Vector<RawPtr<EnvironmentSettingsObject>> m_related_environment_settings_objects;
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#backup-incumbent-settings-object-stack
-    // https://whatpr.org/html/9893/webappapis.html#backup-incumbent-realm-stack
-    Vector<GC::Ref<JS::Realm>> m_backup_incumbent_realm_stack;
+    Vector<GC::Ref<EnvironmentSettingsObject>> m_backup_incumbent_realm_stack;
 
     // https://html.spec.whatwg.org/multipage/browsing-the-web.html#termination-nesting-level
     size_t m_termination_nesting_level { 0 };
 
     bool m_execution_paused { false };
-
-    bool m_skip_event_loop_processing_steps { false };
 
     bool m_running_rendering_task { false };
 

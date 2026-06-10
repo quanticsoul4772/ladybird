@@ -12,6 +12,7 @@
 #include <LibWeb/DOM/Range.h>
 #include <LibWeb/HTML/BrowsingContext.h>
 #include <LibWeb/HTML/BrowsingContextGroup.h>
+#include <LibWeb/HTML/CustomElements/CustomElementRegistry.h>
 #include <LibWeb/HTML/HTMLDocument.h>
 #include <LibWeb/HTML/HTMLIFrameElement.h>
 #include <LibWeb/HTML/HTMLInputElement.h>
@@ -83,7 +84,7 @@ URL::Origin determine_the_origin(Optional<URL::URL const&> url, SandboxingFlagSe
 }
 
 // https://html.spec.whatwg.org/multipage/document-sequences.html#creating-a-new-auxiliary-browsing-context
-WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext::create_a_new_auxiliary_browsing_context_and_document(GC::Ref<Page> page, GC::Ref<HTML::BrowsingContext> opener)
+BrowsingContext::BrowsingContextAndDocument BrowsingContext::create_a_new_auxiliary_browsing_context_and_document(GC::Ref<Page> page, GC::Ref<HTML::BrowsingContext> opener)
 {
     // 1. Let openerTopLevelBrowsingContext be opener's top-level traversable's active browsing context.
     auto opener_top_level_browsing_context = opener->top_level_traversable()->active_browsing_context();
@@ -95,7 +96,7 @@ WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext
     VERIFY(group);
 
     // 4. Set browsingContext and document be the result of creating a new browsing context and document with opener's active document, null, and group.
-    auto [browsing_context, document] = TRY(create_a_new_browsing_context_and_document(page, opener->active_document(), nullptr, *group));
+    auto [browsing_context, document] = create_a_new_browsing_context_and_document(page, opener->active_document(), nullptr, *group);
 
     // 5. Set browsingContext's is auxiliary to true.
     browsing_context->m_is_auxiliary = true;
@@ -127,7 +128,7 @@ static void populate_with_html_head_body(GC::Ref<DOM::Document> document)
 }
 
 // https://html.spec.whatwg.org/multipage/document-sequences.html#creating-a-new-browsing-context
-WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext::create_a_new_browsing_context_and_document(GC::Ref<Page> page, GC::Ptr<DOM::Document> creator, GC::Ptr<DOM::Element> embedder, GC::Ref<BrowsingContextGroup> group)
+BrowsingContext::BrowsingContextAndDocument BrowsingContext::create_a_new_browsing_context_and_document(GC::Ref<Page> page, GC::Ptr<DOM::Document> creator, GC::Ptr<DOM::Element> embedder, GC::Ref<BrowsingContextGroup> group)
 {
     auto& vm = group->vm();
 
@@ -156,8 +157,8 @@ WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext
         browsing_context->m_virtual_browsing_context_group_id = creator->browsing_context()->top_level_browsing_context()->m_virtual_browsing_context_group_id;
     }
 
-    // FIXME: 6. Let sandboxFlags be the result of determining the creation sandboxing flags given browsingContext and embedder.
-    SandboxingFlagSet sandbox_flags = {};
+    // 6. Let sandboxFlags be the result of determining the creation sandboxing flags given browsingContext and embedder.
+    auto sandbox_flags = determine_the_creation_sandboxing_flags(*browsing_context, embedder);
 
     // 7. Let origin be the result of determining the origin given about:blank, sandboxFlags, and creatorOrigin.
     auto origin = determine_the_origin(URL::about_blank(), sandbox_flags, creator_origin);
@@ -184,6 +185,8 @@ WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext
             return browsing_context->window_proxy();
         });
 
+    auto& realm = window->realm();
+
     // 11. Let topLevelCreationURL be about:blank if embedder is null; otherwise embedder's relevant settings object's top-level creation URL.
     auto top_level_creation_url = !embedder ? URL::about_blank() : relevant_settings_object(*embedder).top_level_creation_url.value();
 
@@ -204,10 +207,10 @@ WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext
     auto load_timing_info = DOM::DocumentLoadTimingInfo();
     load_timing_info.navigation_start_time = HighResolutionTime::coarsen_time(
         unsafe_context_creation_time,
-        as<WindowEnvironmentSettingsObject>(Bindings::principal_host_defined_environment_settings_object(window->realm())).cross_origin_isolated_capability());
+        as<WindowEnvironmentSettingsObject>(Bindings::principal_host_defined_environment_settings_object(realm)).cross_origin_isolated_capability());
 
     // 15. Let document be a new Document, with:
-    auto document = HTML::HTMLDocument::create(window->realm());
+    auto document = HTML::HTMLDocument::create(realm);
 
     // Non-standard
     window->set_associated_document(*document);
@@ -246,6 +249,9 @@ WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext
     // allow declarative shadow roots: true
     document->set_allow_declarative_shadow_roots(true);
 
+    // custom element registry: A new CustomElementRegistry object.
+    document->set_custom_element_registry(realm.create<CustomElementRegistry>(realm));
+
     // 16. If creator is non-null, then:
     if (creator) {
         // 1. Set document's referrer to the serialization of creator's URL.
@@ -272,6 +278,8 @@ WebIDL::ExceptionOr<BrowsingContext::BrowsingContextAndDocument> BrowsingContext
 
     // 19. Populate with html/head/body given document.
     populate_with_html_head_body(*document);
+    if (!embedder)
+        document->set_supported_color_schemes({ "light"_string, "dark"_string });
 
     // 20. Make active document.
     document->make_active();
@@ -296,6 +304,7 @@ void BrowsingContext::visit_edges(Cell::Visitor& visitor)
 
     visitor.visit(m_page);
     visitor.visit(m_window_proxy);
+    visitor.visit(m_active_document);
     visitor.visit(m_group);
     visitor.visit(m_opener_browsing_context);
 }
@@ -338,31 +347,40 @@ GC::Ptr<BrowsingContext> BrowsingContext::top_level_browsing_context() const
     return navigable->active_browsing_context();
 }
 
+// https://html.spec.whatwg.org/multipage/document-sequences.html#active-document
 DOM::Document const* BrowsingContext::active_document() const
 {
-    auto* window = active_window();
-    if (!window)
-        return nullptr;
-    return &window->associated_document();
+    // AD-HOC: The HTML Standard currently defines this as the active window's associated Document.
+    //         That changes too early when the initial about:blank Window is reused for its first
+    //         same-origin navigation, because create-and-initialize updates the associated Document
+    //         before the new Document is made active.
+    //         Spec issue: https://github.com/whatwg/html/issues/12415
+    return m_active_document;
 }
 
+// https://html.spec.whatwg.org/multipage/document-sequences.html#active-document
 DOM::Document* BrowsingContext::active_document()
 {
-    auto* window = active_window();
-    if (!window)
-        return nullptr;
-    return &window->associated_document();
+    // AD-HOC: See the const overload above.
+    return m_active_document;
+}
+
+void BrowsingContext::set_active_document(GC::Ptr<DOM::Document> document)
+{
+    m_active_document = document;
 }
 
 // https://html.spec.whatwg.org/multipage/browsers.html#active-window
 HTML::Window* BrowsingContext::active_window()
 {
+    // A browsing context's active window is its WindowProxy object's [[Window]] internal slot value.
     return m_window_proxy->window();
 }
 
 // https://html.spec.whatwg.org/multipage/browsers.html#active-window
 HTML::Window const* BrowsingContext::active_window() const
 {
+    // A browsing context's active window is its WindowProxy object's [[Window]] internal slot value.
     return m_window_proxy->window();
 }
 

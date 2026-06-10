@@ -10,7 +10,8 @@ namespace Gfx {
 
 class Bitmap;
 class CMYKBitmap;
-class ImmutableBitmap;
+class ColorSpace;
+class DecodedImageFrame;
 class Color;
 
 class Emoji;
@@ -25,6 +26,8 @@ class Palette;
 class YUVData;
 class PaletteImpl;
 class Path;
+class SharedImage;
+class SharedImageBuffer;
 class ShareableBitmap;
 class SkiaBackendContext;
 struct SystemTheme;

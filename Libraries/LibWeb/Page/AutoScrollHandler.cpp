@@ -7,7 +7,6 @@
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/DocumentFragment.h>
 #include <LibWeb/DOM/Element.h>
-#include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/Page/AutoScrollHandler.h>
 #include <LibWeb/Page/EventHandler.h>
@@ -44,16 +43,7 @@ static Optional<CSSPixelRect> scrollport_rect_in_viewport(Painting::PaintableBox
     if (paintable_box.is_viewport_paintable())
         return scrollport;
 
-    auto const& accumulated_visual_context = paintable_box.accumulated_visual_context();
-    if (!accumulated_visual_context)
-        return {};
-    auto const* viewport_paintable = paintable_box.document().paintable();
-    if (!viewport_paintable)
-        return {};
-    auto pixel_ratio = static_cast<float>(paintable_box.document().page().client().device_pixels_per_css_pixel());
-    auto const& scroll_state = viewport_paintable->scroll_state_snapshot();
-    auto result = accumulated_visual_context->transform_rect_to_viewport(scrollport.to_type<float>() * pixel_ratio, scroll_state);
-    return (result * (1.f / pixel_ratio)).to_type<CSSPixels>();
+    return paintable_box.transform_rect_to_viewport(scrollport);
 }
 
 // Returns scroll speed in CSS pixels per second for each axis, based on how far the mouse is past the auto scroll edge.
@@ -80,21 +70,6 @@ static CSSPixelPoint compute_auto_scroll_speed(CSSPixelPoint mouse, CSSPixelRect
     };
 }
 
-static bool is_in_form_associated_text_control(DOM::Element const& element)
-{
-    auto const& host = element.containing_shadow_root() ? *element.containing_shadow_root()->host() : element;
-    return is<HTML::FormAssociatedTextControlElement>(host);
-}
-
-// Returns the paintable box that manages the scrollport for an auto-scroll container element. When the element is the
-// document's scrolling element, the viewport paintable is the scroll container.
-static Painting::PaintableBox* auto_scroll_paintable(DOM::Element& element)
-{
-    if (element.document().scrolling_element().ptr() == &element)
-        return element.document().paintable();
-    return element.paintable_box();
-}
-
 AutoScrollHandler::AutoScrollHandler(HTML::Navigable& navigable, DOM::Element& container)
     : m_navigable(navigable)
     , m_container_element(container)
@@ -113,7 +88,7 @@ CSSPixelPoint AutoScrollHandler::process(CSSPixelPoint mouse_position)
 
     m_container_element->document().update_layout(DOM::UpdateLayoutReason::AutoScrollSelection);
 
-    auto* paintable_box = auto_scroll_paintable(m_container_element);
+    auto paintable_box = auto_scroll_paintable(m_container_element);
     if (!paintable_box)
         return mouse_position;
 
@@ -129,16 +104,14 @@ CSSPixelPoint AutoScrollHandler::process(CSSPixelPoint mouse_position)
     }
 
     activate();
-    if (is_in_form_associated_text_control(m_container_element))
-        return constrained(mouse_position, *scrollport);
-    return mouse_position;
+    return constrained(mouse_position, *scrollport);
 }
 
 GC::Ptr<DOM::Element> AutoScrollHandler::find_scrollable_ancestor(Painting::Paintable const& paintable)
 {
-    auto* paintable_box = paintable.containing_block();
+    auto paintable_box = paintable.containing_block();
     while (paintable_box) {
-        if (paintable_box->has_scrollable_overflow()) {
+        if (paintable_box->could_be_scrolled_by_wheel_event()) {
             if (auto* element = as_if<DOM::Element>(paintable_box->dom_node().ptr()))
                 return element;
         }
@@ -153,6 +126,15 @@ GC::Ptr<DOM::Element> AutoScrollHandler::find_scrollable_ancestor(Painting::Pain
         paintable_box = paintable_box->containing_block();
     }
     return {};
+}
+
+// Returns the paintable box that manages the scrollport for an auto-scroll container element. When the element is the
+// document's scrolling element, the viewport paintable is the scroll container.
+RefPtr<Painting::PaintableBox> AutoScrollHandler::auto_scroll_paintable(DOM::Element& element)
+{
+    if (element.document().scrolling_element().ptr() == &element)
+        return element.document().paintable();
+    return element.paintable_box();
 }
 
 void AutoScrollHandler::activate()
@@ -179,7 +161,7 @@ void AutoScrollHandler::perform_tick()
     auto& document = *m_navigable->active_document();
     document.update_layout(DOM::UpdateLayoutReason::AutoScrollSelection);
 
-    auto* paintable_box = auto_scroll_paintable(m_container_element);
+    auto paintable_box = auto_scroll_paintable(m_container_element);
     if (!paintable_box || !document.paintable()) {
         deactivate();
         return;
@@ -213,10 +195,7 @@ void AutoScrollHandler::perform_tick()
     if (paintable_box->scroll_by(scroll_x, scroll_y) == Painting::PaintableBox::ScrollHandled::No)
         return;
 
-    auto selection_position = is_in_form_associated_text_control(m_container_element)
-        ? constrained(m_mouse_position, *scrollport)
-        : m_mouse_position;
-    m_navigable->event_handler().apply_mouse_selection(selection_position);
+    m_navigable->event_handler().apply_mouse_selection(constrained(m_mouse_position, *scrollport));
 }
 
 }

@@ -13,12 +13,12 @@
 #include <AK/StdLibExtras.h>
 #include <AK/Variant.h>
 #include <LibCore/Forward.h>
-#include <LibCore/SharedCircularQueue.h>
+#include <LibIPC/Attachment.h>
 #include <LibIPC/Concepts.h>
 #include <LibIPC/File.h>
 #include <LibIPC/Forward.h>
 #include <LibIPC/Message.h>
-#include <LibURL/Forward.h>
+#include <LibURL/URL.h>
 
 namespace IPC {
 
@@ -51,9 +51,9 @@ public:
         return {};
     }
 
-    ErrorOr<void> append_file_descriptor(int fd)
+    ErrorOr<void> append_attachment(Attachment attachment)
     {
-        TRY(m_buffer.append_file_descriptor(fd));
+        TRY(m_buffer.append_attachment(move(attachment)));
         return {};
     }
 
@@ -74,6 +74,12 @@ template<Enum T>
 ErrorOr<void> encode(Encoder& encoder, T const& value)
 {
     return encoder.encode(to_underlying(value));
+}
+
+template<Concepts::DistinctNumeric T>
+ErrorOr<void> encode(Encoder& encoder, T const& value)
+{
+    return encoder.encode(value.value());
 }
 
 template<>
@@ -126,6 +132,9 @@ ErrorOr<void> encode(Encoder&, URL::Host const&);
 
 template<>
 ErrorOr<void> encode(Encoder&, File const&);
+
+template<>
+ErrorOr<void> encode(Encoder&, TransportHandle const&);
 
 template<>
 ErrorOr<void> encode(Encoder&, Empty const&);
@@ -188,13 +197,6 @@ ErrorOr<void> encode(Encoder& encoder, T const& hashmap)
         TRY(encoder.encode(it.value));
     }
 
-    return {};
-}
-
-template<Concepts::SharedSingleProducerCircularQueue T>
-ErrorOr<void> encode(Encoder& encoder, T const& queue)
-{
-    TRY(encoder.encode(TRY(IPC::File::clone_fd(queue.fd()))));
     return {};
 }
 

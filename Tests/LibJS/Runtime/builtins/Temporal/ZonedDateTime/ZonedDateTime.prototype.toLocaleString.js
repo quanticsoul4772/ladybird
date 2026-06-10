@@ -6,7 +6,16 @@ describe("correct behavior", () => {
     test("basic functionality", () => {
         const plainDateTime = new Temporal.PlainDateTime(2021, 11, 3, 1, 33, 5, 100, 200, 300, "gregory");
         const zonedDateTime = plainDateTime.toZonedDateTime("UTC");
-        expect(zonedDateTime.toLocaleString()).toBe("11/3/2021, 1:33:5 AM UTC");
+        expect(zonedDateTime.toLocaleString()).toBe("11/3/2021, 1:33:05 AM UTC");
+    });
+
+    test("same result as Date.toLocaleString", () => {
+        const date = new Date(0);
+        const zonedDateTime = new Temporal.ZonedDateTime(0n, "UTC");
+
+        const result1 = date.toLocaleString("ja", { dateStyle: "full", timeZone: "UTC" });
+        const result2 = zonedDateTime.toLocaleString("ja", { dateStyle: "full" });
+        expect(result1).toBe(result2);
     });
 });
 

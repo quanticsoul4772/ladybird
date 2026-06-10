@@ -7,19 +7,12 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/OfflineAudioContextPrototype.h>
+#include <LibWeb/Bindings/OfflineAudioContext.h>
 #include <LibWeb/HighResolutionTime/DOMHighResTimeStamp.h>
 #include <LibWeb/WebAudio/BaseAudioContext.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::WebAudio {
-
-// https://webaudio.github.io/web-audio-api/#OfflineAudioContextOptions
-struct OfflineAudioContextOptions {
-    WebIDL::UnsignedLong number_of_channels { 1 };
-    WebIDL::UnsignedLong length {};
-    float sample_rate {};
-};
 
 // https://webaudio.github.io/web-audio-api/#OfflineAudioContext
 class OfflineAudioContext final : public BaseAudioContext {
@@ -27,7 +20,7 @@ class OfflineAudioContext final : public BaseAudioContext {
     GC_DECLARE_ALLOCATOR(OfflineAudioContext);
 
 public:
-    static WebIDL::ExceptionOr<GC::Ref<OfflineAudioContext>> construct_impl(JS::Realm&, OfflineAudioContextOptions const&);
+    static WebIDL::ExceptionOr<GC::Ref<OfflineAudioContext>> construct_impl(JS::Realm&, Bindings::OfflineAudioContextOptions const&);
     static WebIDL::ExceptionOr<GC::Ref<OfflineAudioContext>> construct_impl(
         JS::Realm&,
         WebIDL::UnsignedLong number_of_channels,

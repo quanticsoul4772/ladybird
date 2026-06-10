@@ -6,17 +6,11 @@
 
 #pragma once
 
-#include <LibWeb/Bindings/XRSystemPrototype.h>
+#include <LibWeb/Bindings/XRSystem.h>
 #include <LibWeb/Internals/InternalsBase.h>
 #include <LibWeb/WebXR/XRSession.h>
 
 namespace Web::Internals {
-
-struct FakeXRDeviceInit {
-    Optional<Vector<Bindings::XRSessionMode>> supported_modes;
-
-    Optional<Vector<String>> supported_features;
-};
 
 // https://github.com/immersive-web/webxr-test-api/blob/main/explainer.md
 class WEB_API FakeXRDevice final : public InternalsBase {

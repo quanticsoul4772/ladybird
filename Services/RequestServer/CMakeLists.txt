@@ -1,7 +1,3 @@
-set(CMAKE_AUTOMOC OFF)
-set(CMAKE_AUTORCC OFF)
-set(CMAKE_AUTOUIC OFF)
-
 set(SOURCES
     ConnectionFromClient.cpp
     CURL.cpp
@@ -17,6 +13,12 @@ set(SOURCES
     WebSocketImplCurl.cpp
     YARAScanWorkerPool.cpp
 )
+
+if (LINUX)
+    list(APPEND SOURCES SandboxLinux.cpp)
+else()
+    list(APPEND SOURCES SandboxUnimplemented.cpp)
+endif()
 
 set(GENERATED_SOURCES
     RequestClientEndpoint.h
@@ -35,9 +37,6 @@ endif()
 add_library(requestserverservice ${RS_LIB_TYPE} ${SOURCES} ${GENERATED_SOURCES})
 ladybird_generated_sources(requestserverservice)
 
-find_package(PkgConfig)
-find_package(CURL REQUIRED)
-
 add_executable(RequestServer main.cpp)
 add_executable(TestSecurityTap TestSecurityTap.cpp)
 add_executable(TestTrafficMonitor TestTrafficMonitor.cpp)
@@ -48,11 +47,11 @@ target_include_directories(requestserverservice PRIVATE ${LADYBIRD_SOURCE_DIR}/S
 target_link_libraries(RequestServer PRIVATE requestserverservice)
 target_link_libraries(TestSecurityTap PRIVATE requestserverservice)
 target_link_libraries(TestTrafficMonitor PRIVATE requestserverservice)
-target_link_libraries(requestserverservice PUBLIC LibCore LibDatabase LibDNS LibCrypto LibFileSystem LibHTTP LibIPC LibMain LibRequests LibTLS LibWebSocket LibURL LibTextCodec LibThreading CURL::libcurl sentinelservice)
+target_link_libraries(requestserverservice PUBLIC LibCore LibDatabase LibDNS LibCrypto LibFileSystem LibHTTP LibIPC LibMain LibRequests LibSandbox LibTLS LibWebSocket LibURL LibTextCodec LibThreading CURL::libcurl sentinelservice)
 target_link_libraries(requestserverservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
 
 if (WIN32)
-    lagom_windows_bin(RequestServer CONSOLE)
+    ladybird_windows_bin(RequestServer CONSOLE)
 endif()
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "SunOS")

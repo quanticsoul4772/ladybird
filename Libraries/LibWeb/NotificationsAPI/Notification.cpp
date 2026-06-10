@@ -8,7 +8,7 @@
 #include <AK/Time.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/NotificationPrototype.h>
+#include <LibWeb/Bindings/Notification.h>
 #include <LibWeb/HTML/StructuredSerialize.h>
 #include <LibWeb/NotificationsAPI/Notification.h>
 #include <LibWeb/ServiceWorker/ServiceWorkerGlobalScope.h>
@@ -26,7 +26,7 @@ Notification::Notification(JS::Realm& realm)
 WebIDL::ExceptionOr<ConceptNotification> Notification::create_a_notification(
     JS::Realm& realm,
     String const& title,
-    NotificationOptions const& options,
+    Bindings::NotificationOptions const& options,
     URL::Origin origin,
     URL::URL base_url,
     HighResolutionTime::EpochTimeStamp fallback_timestamp)
@@ -142,7 +142,7 @@ WebIDL::ExceptionOr<ConceptNotification> Notification::create_a_notification(
 WebIDL::ExceptionOr<ConceptNotification> Notification::create_a_notification_with_a_settings_object(
     JS::Realm& realm,
     String const& title,
-    NotificationOptions const& options,
+    Bindings::NotificationOptions const& options,
     GC::Ref<HTML::EnvironmentSettingsObject> settings)
 {
     // 1. Let origin be settings’s origin.
@@ -163,7 +163,7 @@ WebIDL::ExceptionOr<ConceptNotification> Notification::create_a_notification_wit
 WebIDL::ExceptionOr<GC::Ref<Notification>> Notification::construct_impl(
     JS::Realm& realm,
     String const& title,
-    NotificationOptions const& options)
+    Bindings::NotificationOptions const& options)
 {
     auto this_notification = realm.create<Notification>(realm);
     auto& relevant_settings_object = HTML::relevant_settings_object(this_notification);

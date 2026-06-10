@@ -39,12 +39,17 @@ public:
 
     virtual void serialize(StringBuilder&, SerializationMode) const override;
     virtual Vector<Parser::ComponentValue> tokenize() const override;
-    virtual GC::Ref<CSSStyleValue> reify(JS::Realm&, FlyString const& associated_property) const override;
+    virtual GC::Ref<CSSStyleValue> reify(JS::Realm&, Utf16FlyString const& associated_property) const override;
     virtual StyleValueVector subdivide_into_iterations(PropertyNameAndID const&) const override;
 
     virtual ValueComparingNonnullRefPtr<StyleValue const> absolutized(ComputationContext const&) const override;
 
     bool properties_equal(StyleValueList const& other) const { return m_properties == other.m_properties; }
+
+    virtual bool is_computationally_independent() const override
+    {
+        return all_of(m_properties.values, [](auto& value) { return value->is_computationally_independent(); });
+    }
 
     Separator separator() const { return m_properties.separator; }
 

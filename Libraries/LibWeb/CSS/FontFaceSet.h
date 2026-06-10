@@ -9,7 +9,7 @@
 
 #include <LibJS/Runtime/Set.h>
 #include <LibJS/Runtime/SetIterator.h>
-#include <LibWeb/Bindings/FontFaceSetPrototype.h>
+#include <LibWeb/Bindings/FontFaceSet.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CSS/FontFace.h>
 #include <LibWeb/DOM/EventTarget.h>
@@ -26,8 +26,8 @@ public:
 
     GC::Ref<JS::Set> set_entries() const { return m_set_entries; }
 
-    WebIDL::ExceptionOr<GC::Ref<FontFaceSet>> add(GC::Root<FontFace>);
-    bool delete_(GC::Root<FontFace>);
+    WebIDL::ExceptionOr<GC::Ref<FontFaceSet>> add(GC::Ref<FontFace>);
+    bool delete_(GC::Ref<FontFace>);
     void clear();
 
     void add_css_connected_font(GC::Ref<FontFace>);
@@ -40,6 +40,7 @@ public:
     WebIDL::CallbackType* onloadingerror();
 
     JS::ThrowCompletionOr<GC::Ref<WebIDL::Promise>> load(String const& font, String const& text);
+    WebIDL::ExceptionOr<bool> check(String const& font, String const& text);
 
     Vector<GC::Ref<FontFace>>& loading_fonts() { return m_loading_fonts; }
     Vector<GC::Ref<FontFace>>& loaded_fonts() { return m_loaded_fonts; }

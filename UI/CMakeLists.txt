@@ -47,16 +47,7 @@ function(create_ladybird_bundle target_name)
 endfunction()
 
 # Select UI Framework
-if (ENABLE_QT)
-   add_subdirectory(Qt)
-elseif (APPLE)
-   add_subdirectory(AppKit)
-elseif(ANDROID)
-   add_subdirectory(Android)
-else()
-    # TODO: Check for other GUI frameworks here when we move them in-tree
-    return()
-endif()
+add_subdirectory(${LADYBIRD_GUI_FRAMEWORK})
 
 if (NOT TARGET ladybird)
     message(FATAL_ERROR "UI Framework selection must declare a ladybird target")
@@ -68,7 +59,7 @@ else()
     set(LADYBIRD_TARGET ladybird PRIVATE)
 endif()
 
-set(LADYBIRD_LIBS AK LibCore LibFileSystem LibGfx LibImageDecoderClient LibIPC LibJS LibMain LibWeb LibWebView LibRequests LibURL)
+set(LADYBIRD_LIBS AK LibCore LibFileSystem LibGfx LibImageDecoderClient LibIPC LibJS LibMain LibWeb LibWebView LibRequests LibSync LibURL)
 target_link_libraries(${LADYBIRD_TARGET} PRIVATE ${LADYBIRD_LIBS})
 target_link_libraries(${LADYBIRD_TARGET} PRIVATE OpenSSL::Crypto OpenSSL::SSL)
 
@@ -107,8 +98,6 @@ else()
         USES_TERMINAL
     )
 endif()
-
-set(ladybird_helper_processes ImageDecoder RequestServer WebContent WebWorker)
 
 add_dependencies(ladybird ${ladybird_helper_processes})
 # FIXME: Increase support for building targets on Windows

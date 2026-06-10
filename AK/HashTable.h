@@ -13,6 +13,7 @@
 #include <AK/ReverseIterator.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Traits.h>
+#include <AK/TypedTransfer.h>
 #include <AK/Types.h>
 #include <AK/kmalloc.h>
 
@@ -189,7 +190,7 @@ public:
             }
         }
 
-        kfree_sized(m_buckets, size_in_bytes(capacity()));
+        kfree(m_buckets);
     }
 
     HashTable(HashTable const& other)
@@ -405,10 +406,14 @@ public:
         if (should_grow())
             rehash(max(capacity() * 2, grow_capacity_at_least));
 
-        auto [result, bucket] = lookup_for_writing<T>(hash, move(predicate), existing_entry_behavior);
+        auto [result, bucket, probe_length] = lookup_for_writing<T>(hash, move(predicate), existing_entry_behavior);
         switch (result) {
         case HashSetResult::InsertedNewEntry:
+            // The bucket is in a tentative state (Free, not in the ordered list). Construct the
+            // value first so that if the callback triggers traversal of this hash table,
+            // iterators skip this bucket. Commit only after construction succeeds.
             new (bucket.slot()) T(initialization_callback());
+            commit_inserted_bucket(bucket, hash, probe_length);
             break;
         case HashSetResult::ReplacedExistingEntry:
             (*bucket.slot()) = T(initialization_callback());
@@ -578,6 +583,31 @@ private:
     bool should_grow() const { return ((m_size + 1) * 100) >= (capacity() * grow_at_load_factor_percent); }
     static constexpr size_t size_in_bytes(size_t capacity) { return sizeof(BucketType) * capacity; }
 
+    static void relocate_bucket(BucketType* dst, BucketType* src)
+    {
+        dst->state = src->state;
+        dst->hash = src->hash;
+        if constexpr (IsOrdered) {
+            dst->previous = exchange(src->previous, nullptr);
+            dst->next = exchange(src->next, nullptr);
+        }
+        TypedTransfer<T>::relocate(dst->slot(), src->slot(), 1);
+    }
+
+    static void swap_buckets(BucketType* a, BucketType* b)
+    {
+        swap(a->state, b->state);
+        swap(a->hash, b->hash);
+        if constexpr (IsOrdered) {
+            swap(a->previous, b->previous);
+            swap(a->next, b->next);
+        }
+        alignas(T) u8 tmp[sizeof(T)];
+        TypedTransfer<T>::relocate(reinterpret_cast<T*>(tmp), a->slot(), 1);
+        TypedTransfer<T>::relocate(a->slot(), b->slot(), 1);
+        TypedTransfer<T>::relocate(b->slot(), reinterpret_cast<T*>(tmp), 1);
+    }
+
     BucketType* end_bucket()
     {
         if constexpr (IsOrdered)
@@ -596,7 +626,6 @@ private:
         VERIFY(new_capacity >= size());
 
         auto* old_buckets = m_buckets;
-        auto old_buckets_size = size_in_bytes(capacity());
         Iterator old_iter = begin();
 
         auto* new_buckets = kcalloc(1, size_in_bytes(new_capacity));
@@ -618,7 +647,7 @@ private:
             it->~T();
         }
 
-        kfree_sized(old_buckets, old_buckets_size);
+        kfree(old_buckets);
         return {};
     }
     void rehash(size_t new_capacity)
@@ -671,23 +700,19 @@ private:
     struct LookupForWritingResult {
         HashSetResult result;
         BucketType& bucket;
+        // Only meaningful for InsertedNewEntry: the probe length to stamp when the caller commits.
+        size_t probe_length;
     };
 
     template<typename U, typename TUnaryPredicate>
     ALWAYS_INLINE LookupForWritingResult lookup_for_writing(u32 const hash, TUnaryPredicate predicate,
         HashSetExistingEntryBehavior existing_entry_behavior)
     {
-        auto update_collection_for_new_bucket = [&](BucketType& bucket) {
-            if constexpr (IsOrdered) {
-                if (!m_collection_data.head) [[unlikely]] {
-                    m_collection_data.head = &bucket;
-                } else {
-                    bucket.previous = m_collection_data.tail;
-                    m_collection_data.tail->next = &bucket;
-                }
-                m_collection_data.tail = &bucket;
-            }
-        };
+        // NB: For InsertedNewEntry results we hand the bucket back in a tentative state:
+        //     state=Free, not in the ordered list, and m_size unchanged. The caller must
+        //     placement-new the value and then call commit_inserted_bucket() to finalize.
+        //     Leaving state=Free across construction makes the bucket invisible to iterators,
+        //     which is essential for ensure() callbacks that may trigger traversal.
         auto update_collection_for_swapped_buckets = [&](BucketType* left_bucket, BucketType* right_bucket) {
             if constexpr (IsOrdered) {
                 if (m_collection_data.head == left_bucket)
@@ -722,21 +747,17 @@ private:
         for (;;) {
             auto* bucket = &m_buckets[bucket_index];
 
-            // We found a free bucket, write to it and stop
+            // We found a free bucket. Return it tentatively; caller commits after construction.
             if (bucket->state == BucketState::Free) {
-                bucket->state = bucket_state_for_probe_length(probe_length);
-                bucket->hash.set(hash);
-                update_collection_for_new_bucket(*bucket);
-                ++m_size;
-                return { HashSetResult::InsertedNewEntry, *bucket };
+                return { HashSetResult::InsertedNewEntry, *bucket, probe_length };
             }
 
             // The bucket is already used, does it have an identical value?
             if (bucket->hash.check(hash) && predicate(*bucket->slot())) {
                 if (existing_entry_behavior == HashSetExistingEntryBehavior::Replace) {
-                    return { HashSetResult::ReplacedExistingEntry, *bucket };
+                    return { HashSetResult::ReplacedExistingEntry, *bucket, 0 };
                 }
-                return { HashSetResult::KeptExistingEntry, *bucket };
+                return { HashSetResult::KeptExistingEntry, *bucket, 0 };
             }
 
             // Robin hood: if our probe length is larger (poor) than this bucket's (rich), steal its position!
@@ -744,18 +765,22 @@ private:
             auto target_probe_length = used_bucket_probe_length(*bucket);
             if (probe_length > target_probe_length) {
                 // Copy out bucket
-                BucketType bucket_to_move = move(*bucket);
+                BucketType bucket_to_move {};
+                relocate_bucket(&bucket_to_move, bucket);
                 update_collection_for_swapped_buckets(bucket, &bucket_to_move);
 
-                // Write new bucket
+                // Tentatively occupy the stolen slot so the displacement loop below sees it as
+                // used with the correct probe length. We will un-stamp it before returning so
+                // that the caller can commit after constructing the value.
                 BucketType* inserted_bucket = bucket;
+                size_t const inserted_probe_length = probe_length;
                 bucket->state = bucket_state_for_probe_length(probe_length);
                 bucket->hash.set(hash);
                 probe_length = target_probe_length;
-                if constexpr (IsOrdered)
+                if constexpr (IsOrdered) {
+                    bucket->previous = nullptr;
                     bucket->next = nullptr;
-                update_collection_for_new_bucket(*bucket);
-                ++m_size;
+                }
 
                 // Find a free bucket, swapping with smaller probe length buckets along the way
                 for (;;) {
@@ -764,7 +789,7 @@ private:
                     ++probe_length;
 
                     if (bucket->state == BucketState::Free) {
-                        *bucket = move(bucket_to_move);
+                        relocate_bucket(bucket, &bucket_to_move);
                         bucket->state = bucket_state_for_probe_length(probe_length);
                         update_collection_for_swapped_buckets(&bucket_to_move, bucket);
                         break;
@@ -772,14 +797,22 @@ private:
 
                     target_probe_length = used_bucket_probe_length(*bucket);
                     if (probe_length > target_probe_length) {
-                        swap(bucket_to_move, *bucket);
+                        swap_buckets(&bucket_to_move, bucket);
                         bucket->state = bucket_state_for_probe_length(probe_length);
                         probe_length = target_probe_length;
                         update_collection_for_swapped_buckets(&bucket_to_move, bucket);
                     }
                 }
 
-                return { HashSetResult::InsertedNewEntry, *inserted_bucket };
+                // Un-stamp the target bucket: state back to Free, not in the ordered list,
+                // m_size unchanged. The caller will commit after placement-new.
+                inserted_bucket->state = BucketState::Free;
+                if constexpr (IsOrdered) {
+                    inserted_bucket->previous = nullptr;
+                    inserted_bucket->next = nullptr;
+                }
+
+                return { HashSetResult::InsertedNewEntry, *inserted_bucket, inserted_probe_length };
             }
 
             // Try next bucket
@@ -788,17 +821,36 @@ private:
         }
     }
 
+    // Finalizes a bucket tentatively reserved by lookup_for_writing. Must be called after
+    // the caller has constructed the value in bucket.slot() via placement-new.
+    ALWAYS_INLINE void commit_inserted_bucket(BucketType& bucket, u32 hash, size_t probe_length)
+    {
+        bucket.state = bucket_state_for_probe_length(probe_length);
+        bucket.hash.set(hash);
+        if constexpr (IsOrdered) {
+            if (!m_collection_data.head) [[unlikely]] {
+                m_collection_data.head = &bucket;
+            } else {
+                bucket.previous = m_collection_data.tail;
+                m_collection_data.tail->next = &bucket;
+            }
+            m_collection_data.tail = &bucket;
+        }
+        ++m_size;
+    }
+
     template<typename U = T>
     ALWAYS_INLINE HashSetResult write_value(U&& value, HashSetExistingEntryBehavior existing_entry_behavior)
     {
         u32 const hash = TraitsForT::hash(value);
-        auto [result, bucket] = lookup_for_writing<U>(hash, [&](auto& candidate) { return TraitsForT::equals(candidate, static_cast<T const&>(value)); }, existing_entry_behavior);
+        auto [result, bucket, probe_length] = lookup_for_writing<U>(hash, [&](auto& candidate) { return TraitsForT::equals(candidate, static_cast<T const&>(value)); }, existing_entry_behavior);
         switch (result) {
         case HashSetResult::ReplacedExistingEntry:
             (*bucket.slot()) = forward<U>(value);
             break;
         case HashSetResult::InsertedNewEntry:
             new (bucket.slot()) T(forward<U>(value));
+            commit_inserted_bucket(bucket, hash, probe_length);
             break;
         case HashSetResult::KeptExistingEntry:
             break;
@@ -861,11 +913,7 @@ private:
                 break;
 
             auto* shift_to_bucket = &m_buckets[shift_to_index];
-            *shift_to_bucket = move(*shift_from_bucket);
-            if constexpr (IsOrdered) {
-                shift_from_bucket->previous = nullptr;
-                shift_from_bucket->next = nullptr;
-            }
+            relocate_bucket(shift_to_bucket, shift_from_bucket);
             shift_to_bucket->state = bucket_state_for_probe_length(shift_from_probe_length - 1);
             update_bucket_neighbors(shift_to_bucket);
 

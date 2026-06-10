@@ -30,6 +30,11 @@ struct DrawGlyph {
     u32 glyph_id { 0 };
 };
 
+struct ShapedGlyphs {
+    Vector<DrawGlyph> glyphs;
+    float width { 0 };
+};
+
 class GlyphRun : public AtomicRefCounted<GlyphRun> {
 public:
     enum class TextType {
@@ -47,7 +52,6 @@ public:
     [[nodiscard]] TextType text_type() const { return m_text_type; }
     [[nodiscard]] Vector<DrawGlyph> const& glyphs() const { return m_glyphs; }
     [[nodiscard]] Vector<DrawGlyph>& glyphs() { return m_glyphs; }
-    [[nodiscard]] bool is_empty() const { return m_glyphs.is_empty(); }
     [[nodiscard]] float width() const { return m_width; }
 
     [[nodiscard]] NonnullRefPtr<GlyphRun> slice(size_t start, size_t length) const;
@@ -56,6 +60,8 @@ public:
 
     FloatRect cached_blob_bounds() const;
     SkTextBlob* cached_skia_text_blob() const;
+
+    [[nodiscard]] Vector<float> get_glyph_intercepts(float scale, float y_top, float y_bottom) const;
 
 private:
     Vector<DrawGlyph> m_glyphs;
@@ -68,7 +74,7 @@ private:
 };
 
 NonnullRefPtr<GlyphRun> shape_text(FloatPoint baseline_start, float letter_spacing, Utf16View const&, Gfx::Font const& font, GlyphRun::TextType);
-Vector<NonnullRefPtr<GlyphRun>> shape_text(FloatPoint baseline_start, Utf16View const&, FontCascadeList const&);
+Vector<NonnullRefPtr<GlyphRun>> shape_text(FloatPoint baseline_start, Utf16View const&, FontCascadeList const&, float letter_spacing = 0.f);
 float measure_text_width(Utf16View const&, Font const& font, float letter_spacing = 0.f);
 
 }

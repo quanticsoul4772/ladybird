@@ -6,12 +6,15 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/Promise.h>
 #include <LibMedia/IncrementallyPopulatedStream.h>
 #include <LibMedia/PlaybackManager.h>
 #include <LibMedia/Sinks/DisplayingVideoSink.h>
 #include <LibMedia/Track.h>
-#include <LibWeb/Bindings/HTMLMediaElementPrototype.h>
+#include <LibMedia/VideoFrame.h>
+#include <LibURL/Parser.h>
+#include <LibWeb/Bindings/HTMLMediaElement.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
@@ -23,6 +26,7 @@
 #include <LibWeb/Fetch/Infrastructure/FetchController.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Requests.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Responses.h>
+#include <LibWeb/FileAPI/BlobURLStore.h>
 #include <LibWeb/HTML/AudioPlayState.h>
 #include <LibWeb/HTML/AudioTrack.h>
 #include <LibWeb/HTML/AudioTrackList.h>
@@ -32,6 +36,7 @@
 #include <LibWeb/HTML/HTMLSourceElement.h>
 #include <LibWeb/HTML/HTMLVideoElement.h>
 #include <LibWeb/HTML/MediaError.h>
+#include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/PotentialCORSRequest.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
@@ -41,8 +46,10 @@
 #include <LibWeb/HTML/TrackEvent.h>
 #include <LibWeb/HTML/VideoTrack.h>
 #include <LibWeb/HTML/VideoTrackList.h>
+#include <LibWeb/HTML/Window.h>
 #include <LibWeb/InvalidateDisplayList.h>
 #include <LibWeb/Layout/Node.h>
+#include <LibWeb/MediaSourceExtensions/MediaSource.h>
 #include <LibWeb/MimeSniff/MimeType.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/Paintable.h>
@@ -51,7 +58,7 @@
 
 namespace Web::HTML {
 
-struct HTMLMediaElement::FetchData {
+struct HTMLMediaElement::RemoteFetchData {
     URL::URL url_record;
     RefPtr<Media::IncrementallyPopulatedStream> stream;
     GC::Weak<Fetch::Infrastructure::FetchController> fetch_controller;
@@ -59,7 +66,7 @@ struct HTMLMediaElement::FetchData {
     bool accepts_byte_ranges { false };
     u64 offset { 0 };
 
-    ~FetchData()
+    ~RemoteFetchData()
     {
         if (stream) {
             stream->set_data_request_callback(nullptr);
@@ -84,7 +91,7 @@ void HTMLMediaElement::initialize(JS::Realm& realm)
     Base::initialize(realm);
 
     m_audio_tracks = realm.create<AudioTrackList>(realm);
-    m_video_tracks = realm.create<VideoTrackList>(realm);
+    m_video_tracks = realm.create<VideoTrackList>(realm, this);
     m_text_tracks = realm.create<TextTrackList>(realm);
     m_document_observer = realm.create<DOM::DocumentObserver>(realm, document());
 
@@ -96,18 +103,18 @@ void HTMLMediaElement::initialize(JS::Realm& realm)
 
         // AD-HOC: Stop the fetch here so that the element can be reclaimed by GC. The fetch callbacks hold a strong
         //         reference to their media element to ensure that load/error events are fired as expected.
-        if (m_fetch_data && m_fetch_data->fetch_controller) {
-            m_fetch_data->fetch_controller->stop_fetch();
-            m_fetch_data->fetch_controller = nullptr;
+        if (m_remote_fetch_data && m_remote_fetch_data->fetch_controller) {
+            m_remote_fetch_data->fetch_controller->stop_fetch();
+            m_remote_fetch_data->fetch_controller = nullptr;
         }
     });
 
     m_document_observer->set_document_became_active([this]() {
         // AD-HOC: Restart the fetch from where the stream last received data so that playback can continue.
-        if (m_fetch_data) {
-            VERIFY(!m_fetch_data->fetch_controller);
-            if (m_fetch_data->stream->next_chunk_start() != m_fetch_data->stream->expected_size())
-                fetch_resource(UntilEnd { m_fetch_data->stream->next_chunk_start() });
+        if (m_remote_fetch_data) {
+            VERIFY(!m_remote_fetch_data->fetch_controller);
+            if (m_remote_fetch_data->stream->next_chunk_start() != m_remote_fetch_data->stream->expected_size())
+                load_remote_resource(UntilEnd { m_remote_fetch_data->stream->next_chunk_start() });
         }
     });
 
@@ -118,11 +125,13 @@ void HTMLMediaElement::finalize()
 {
     Base::finalize();
 
-    if (m_selected_video_track) {
-        VERIFY(m_selected_video_track_sink);
-        m_playback_manager->remove_the_displaying_video_sink_for_track(m_selected_video_track->track_in_playback_manager());
-        m_selected_video_track_sink = nullptr;
-    }
+    // Tear down the controls eagerly so the Core::Timer they own (and the
+    // closures it captures) cannot fire during the window between this GC
+    // and our sweep, when our GC::Weak references to shadow tree nodes are
+    // already cleared.
+    m_controls.clear();
+
+    clear_compositor_video_frame();
 
     document().page().unregister_media_element({}, unique_id());
 }
@@ -144,7 +153,12 @@ void HTMLMediaElement::queue_a_media_element_task(Function<void()> steps)
 {
     // To queue a media element task with a media element element and a series of steps steps, queue an element task on the media element's
     // media element event task source given element and steps.
-    queue_an_element_task(media_element_event_task_source(), move(steps));
+    queue_an_element_task(media_element_event_task_source(), [element = GC::Weak { *this }, steps = move(steps)]() mutable {
+        auto self = element.ptr();
+        if (!self || !self->document().is_fully_active())
+            return;
+        steps();
+    });
 }
 
 void HTMLMediaElement::visit_edges(Cell::Visitor& visitor)
@@ -158,6 +172,16 @@ void HTMLMediaElement::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_source_element_selector);
     visitor.visit(m_pending_play_promises);
     visitor.visit(m_selected_video_track);
+    m_assigned_media_provider_object.visit(
+        [](Empty) {},
+        [&visitor](GC::Ref<MediaSourceExtensions::MediaSource> media_source) {
+            visitor.visit(media_source);
+        },
+        [&visitor](GC::Ref<FileAPI::Blob> blob) {
+            visitor.visit(blob);
+        });
+    if (m_controls.has_value())
+        m_controls->visit_edges(visitor);
 }
 
 void HTMLMediaElement::attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_)
@@ -165,6 +189,12 @@ void HTMLMediaElement::attribute_changed(FlyString const& name, Optional<String>
     Base::attribute_changed(name, old_value, value, namespace_);
 
     if (name == HTML::AttributeNames::src) {
+        // https://html.spec.whatwg.org/multipage/media.html#attr-media-src
+        // If a src attribute of a media element is set or changed, the user agent must invoke the
+        // media element's media element load algorithm. (Removing the src attribute does not do
+        // this, even if there are source elements present.)
+        if (!value.has_value())
+            return;
         load_element().release_value_but_fixme_should_propagate_errors();
     } else if (name == HTML::AttributeNames::crossorigin) {
         m_crossorigin = cors_setting_attribute_from_keyword(value);
@@ -176,10 +206,43 @@ void HTMLMediaElement::attribute_changed(FlyString const& name, Optional<String>
     }
 }
 
-// https://html.spec.whatwg.org/multipage/media.html#playing-the-media-resource:media-element-83
-void HTMLMediaElement::removed_from(DOM::Node* old_parent, DOM::Node& old_root)
+// https://html.spec.whatwg.org/multipage/media.html#dom-media-srcobject
+OptionalMediaProvider HTMLMediaElement::src_object() const
 {
-    Base::removed_from(old_parent, old_root);
+    // The srcObject IDL attribute, on getting, must return the element's assigned media provider
+    // object, if any, or null otherwise.
+    return assigned_media_provider_object();
+}
+
+// https://html.spec.whatwg.org/multipage/media.html#dom-media-srcobject
+WebIDL::ExceptionOr<void> HTMLMediaElement::set_src_object(OptionalMediaProvider src_object)
+{
+    // On setting, it must set the element's assigned media provider object to the new value,
+    set_assigned_media_provider_object(src_object);
+
+    // and then invoke the element's media element load algorithm.
+    return load_element();
+}
+
+HTMLMediaElement::MediaProviderObject& HTMLMediaElement::assigned_media_provider_object()
+{
+    return m_assigned_media_provider_object;
+}
+
+HTMLMediaElement::MediaProviderObject const& HTMLMediaElement::assigned_media_provider_object() const
+{
+    return m_assigned_media_provider_object;
+}
+
+void HTMLMediaElement::set_assigned_media_provider_object(MediaProviderObject const& provider)
+{
+    m_assigned_media_provider_object = provider;
+}
+
+// https://html.spec.whatwg.org/multipage/media.html#playing-the-media-resource:media-element-83
+void HTMLMediaElement::removed_from(IsSubtreeRoot is_subtree_root, DOM::Node* old_ancestor, DOM::Node& old_root)
+{
+    Base::removed_from(is_subtree_root, old_ancestor, old_root);
 
     // When a media element is removed from a Document, the user agent must run the following steps:
 
@@ -197,7 +260,10 @@ void HTMLMediaElement::removed_from(DOM::Node* old_parent, DOM::Node& old_root)
 
 void HTMLMediaElement::cancel_the_fetching_process()
 {
-    m_fetch_data.clear();
+    m_current_fetch_generation++;
+    if (m_remote_fetch_data && m_remote_fetch_data->stream)
+        m_remote_fetch_data->stream->close();
+    m_remote_fetch_data.clear();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#fatal-decode-error
@@ -242,11 +308,15 @@ GC::Ref<TimeRanges> HTMLMediaElement::buffered() const
 {
     auto& realm = this->realm();
 
-    // FIXME: The buffered attribute must return a new static normalized TimeRanges object that represents the ranges of the
-    //        media resource, if any, that the user agent has buffered, at the time the attribute is evaluated. User agents
-    //        must accurately determine the ranges available, even for media streams where this can only be determined by
-    //        tedious inspection.
-    return realm.create<TimeRanges>(realm);
+    // https://html.spec.whatwg.org/multipage/media.html#dom-media-buffered
+    // The buffered attribute must return a new static normalized TimeRanges object that represents the ranges of the
+    // media resource, if any, that the user agent has buffered, at the time the attribute is evaluated.
+    auto time_ranges = realm.create<TimeRanges>(realm);
+    if (m_playback_manager) {
+        for (auto const& range : m_playback_manager->buffered_time_ranges())
+            time_ranges->add_range(range.start.to_seconds_f64(), range.end.to_seconds_f64());
+    }
+    return time_ranges;
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-media-played
@@ -388,6 +458,7 @@ void HTMLMediaElement::set_current_playback_position(double playback_position)
         reached_end_of_media_playback();
 
     upon_has_ended_playback_possibly_changed();
+    update_natural_dimensions();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-media-duration
@@ -399,6 +470,16 @@ double HTMLMediaElement::duration() const
 
     // FIXME: Handle unbounded media resources.
     return m_duration;
+}
+
+// https://html.spec.whatwg.org/multipage/media.html#dom-media-getstartdate
+JS::Object* HTMLMediaElement::get_start_date()
+{
+    // The getStartDate() method must return a new Date object representing the current timeline offset.
+    auto date_value = m_timeline_offset.has_value()
+        ? static_cast<double>(m_timeline_offset->milliseconds_since_epoch())
+        : NAN;
+    return JS::Date::create(realm(), date_value).ptr();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-media-ended
@@ -469,17 +550,6 @@ void HTMLMediaElement::pause()
 
     // 2. Run the internal pause steps for the media element.
     pause_element();
-}
-
-void HTMLMediaElement::toggle_playback()
-{
-    // AD-HOC: An execution context is required for Promise creation hooks.
-    TemporaryExecutionContext execution_context { realm() };
-
-    if (potentially_playing())
-        pause();
-    else
-        play();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#dom-media-volume
@@ -594,8 +664,8 @@ GC::Ref<TextTrack> HTMLMediaElement::add_text_track(Bindings::TextTrackKind kind
     //    textTracks attribute's TextTrackList object, using TrackEvent, with the track attribute initialized to the new
     //    text track's TextTrack object.
     queue_a_media_element_task([this, text_track] {
-        TrackEventInit event_init {};
-        event_init.track = GC::make_root(text_track);
+        Bindings::TrackEventInit event_init {};
+        event_init.track = text_track;
 
         auto event = TrackEvent::create(this->realm(), HTML::EventNames::addtrack, move(event_init));
         m_text_tracks->dispatch_event(event);
@@ -616,16 +686,14 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::load_element()
     //          any ongoing fetch operation. Therefore, all resource selection algorithms will be cancelled before a new
     //          one begins.
 
-    // 2. Let pending tasks be a list of all tasks from the media element's media element event task source in one of the task queues.
-    [[maybe_unused]] auto pending_tasks = HTML::main_thread_event_loop().task_queue().take_tasks_matching([&](auto& task) {
+    // 2. Let pending tasks be a list of all tasks from the media element's media element event task source in one of
+    //    the task queues.
+    // FIXME: 3. For each task in pending tasks that would resolve pending play promises or reject pending play promises,
+    //    immediately resolve or reject those promises in the order the corresponding tasks were queued.
+    // 4. Remove each task in pending tasks from its task queue
+    main_thread_event_loop().task_queue().remove_tasks_matching([&](auto& task) {
         return task.source() == media_element_event_task_source();
     });
-
-    // FIXME: 3. For each task in pending tasks that would resolve pending play promises or reject pending play promises, immediately resolve or
-    //           reject those promises in the order the corresponding tasks were queued.
-
-    // 4. Remove each task in pending tasks from its task queue
-    //    NOTE: We performed this step along with step 2.
 
     // 5. If the media element's networkState is set to NETWORK_LOADING or NETWORK_IDLE, queue a media element task given the media element to
     //    fire an event named abort at the media element.
@@ -682,7 +750,8 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::load_element()
             });
         }
 
-        // FIXME: 9. Set the timeline offset to Not-a-Number (NaN).
+        // 9. Set the timeline offset to Not-a-Number (NaN).
+        m_timeline_offset = {};
 
         // 10. Update the duration attribute to Not-a-Number (NaN).
         set_duration(NAN);
@@ -763,7 +832,7 @@ public:
 
         // 9. Run the resource fetch algorithm with urlRecord. If that algorithm returns without aborting this one, then
         //    the load failed.
-        m_media_element->fetch_resource(*url_record, [self = GC::make_root(this)](auto const&) { self->failed_with_elements(); });
+        m_media_element->load_url_resource(*url_record, [self = GC::make_root(this)](auto const&) { self->failed_with_elements(); });
     }
 
     void process_next_candidate()
@@ -875,7 +944,7 @@ private:
 
 GC_DEFINE_ALLOCATOR(SourceElementSelector);
 
-void HTMLMediaElement::children_changed(ChildrenChangedMetadata const* metadata)
+void HTMLMediaElement::children_changed(ChildrenChangedMetadata const& metadata)
 {
     Base::children_changed(metadata);
 
@@ -906,10 +975,12 @@ void HTMLMediaElement::select_resource()
         Optional<SelectMode> mode;
         GC::Ptr<HTMLSourceElement> candidate;
 
-        // 6. FIXME: ⌛ If the media element has an assigned media provider object, then let mode be object.
-
+        // 6. ⌛ If the media element has an assigned media provider object, then let mode be object.
+        if (!assigned_media_provider_object().has<Empty>()) {
+            mode = SelectMode::Object;
+        }
         // ⌛ Otherwise, if the media element has no assigned media provider object but has a src attribute, then let mode be attribute.
-        if (has_attribute(HTML::AttributeNames::src)) {
+        else if (has_attribute(HTML::AttributeNames::src)) {
             mode = SelectMode::Attribute;
         }
         // ⌛ Otherwise, if the media element does not have an assigned media provider object and does not have a src attribute, but does have
@@ -941,17 +1012,34 @@ void HTMLMediaElement::select_resource()
         // 9. Run the appropriate steps from the following list:
         switch (*mode) {
         // -> If mode is object
-        case SelectMode::Object:
-            // FIXME: 1. ⌛ Set the currentSrc attribute to the empty string.
-            // FIXME: 2. End the synchronous section, continuing the remaining steps in parallel.
-            // FIXME: 3. Run the resource fetch algorithm with the assigned media provider object. If that algorithm returns without aborting this one,
-            //           then theload failed.
-            // FIXME: 4. Failed with media provider: Reaching this step indicates that the media resource failed to load. Take pending play promises and queue
-            //           a media element task given the media element to run the dedicated media source failure steps with the result.
-            // FIXME: 5. Wait for the task queued by the previous step to have executed.
+        case SelectMode::Object: {
+            auto failed_with_media_provider = [this](auto error_message) {
+                // 4. Failed with media provider: Reaching this step indicates that the media resource failed to load. Take pending play promises and queue
+                //    a media element task given the media element to run the dedicated media source failure steps with the result.
+                queue_a_media_element_task([this, error_message = move(error_message)]() mutable {
+                    auto promises = take_pending_play_promises();
+                    handle_media_source_failure(promises, move(error_message));
+                });
+
+                // 5. Wait for the task queued by the previous step to have executed.
+                // AD-HOC: All calls to the failure steps immediately return, so we do not actually need to wait here.
+            };
+
+            // 1. ⌛ Set the currentSrc attribute to the empty string.
+            m_current_src = {};
+
+            // 2. End the synchronous section, continuing the remaining steps in parallel.
+
+            // 3. Run the resource fetch algorithm with the assigned media provider object. If that algorithm returns without aborting this one,
+            //    then the load failed.
+            VERIFY(!assigned_media_provider_object().has<Empty>());
+            queue_a_media_element_task([this, failed_with_media_provider = move(failed_with_media_provider)]() mutable {
+                load_local_resource(assigned_media_provider_object(), move(failed_with_media_provider));
+            });
 
             // 6. Return. The element won't attempt to load another resource until this algorithm is triggered again.
             return;
+        }
 
         // -> If mode is attribute
         case SelectMode::Attribute: {
@@ -988,7 +1076,7 @@ void HTMLMediaElement::select_resource()
             //    then the load failed.
             queue_a_media_element_task([this, url_record = move(url_record), failed_with_attribute = move(failed_with_attribute)]() mutable {
                 if (url_record.has_value()) {
-                    fetch_resource(*url_record, move(failed_with_attribute));
+                    load_url_resource(*url_record, move(failed_with_attribute));
                     return;
                 }
             });
@@ -1029,57 +1117,96 @@ void HTMLMediaElement::select_resource()
     });
 }
 
-void HTMLMediaElement::fetch_resource(URL::URL const& url_record, Function<void(String)> failure_callback)
+// https://html.spec.whatwg.org/multipage/media.html#concept-media-load-resource
+void HTMLMediaElement::load_url_resource(URL::URL const& url_record, Function<void(String)> failure_callback)
 {
-    m_fetch_data = make<FetchData>();
-    m_fetch_data->url_record = url_record;
-    m_fetch_data->stream = Media::IncrementallyPopulatedStream::create_empty();
-    m_fetch_data->stream->set_data_request_callback(GC::weak_callback(*this, [&fetch_data = *m_fetch_data](auto& self, u64 offset) {
+    // 1. Let mode be remote.
+    // 2. If the algorithm was invoked with media provider object, then set mode to local.
+    // NB: We invoke load_local_resource() directly when a media provider object is being loaded.
+
+    //    Otherwise:
+    // AD-HOC: Skip these steps if the URL is not a blob. Otherwise, we'll access a nonexistent
+    //         blob URL entry below.
+    if (url_record.blob_url_entry().has_value()) {
+        // 1. Let isTopLevelSelfFetch be false.
+        auto is_top_level_self_fetch = false;
+        // 2. Let settingsObject be the media element's node document's relevant settings object.
+        auto& settings_object = document().relevant_settings_object();
+        // 3. Let global be the media element's node document's relevant global object.
+        auto const& global_window = as_if<HTML::Window>(HTML::relevant_global_object(document()));
+        // 4. If all of the following conditions are true:
+        if (
+            // global is a Window object;
+            global_window != nullptr &&
+            // global's navigable is not null;
+            global_window->navigable() != nullptr &&
+            // global's navigable's parent is null; and
+            global_window->navigable()->parent() == nullptr &&
+            // settingsObject's creation URL equals the URL record,
+            settings_object.creation_url == url_record) {
+            // then set isTopLevelSelfFetch to true.
+            is_top_level_self_fetch = true;
+        }
+
+        // 5. Let stringOrEnvironment be "top-level-self-fetch" if isTopLevelSelfFetch is true; otherwise settingsObject.
+        auto string_or_environment = [&] -> Variant<GC::Ref<HTML::Environment>, FileAPI::TopLevelSelfFetch> {
+            if (is_top_level_self_fetch)
+                return FileAPI::TopLevelSelfFetch();
+            return { settings_object };
+        }();
+
+        // 6. Let object be the result of obtaining a blob object using the URL record's blob URL entry and stringOrEnvironment.
+        auto object = FileAPI::obtain_a_blob_object(*url_record.blob_url_entry(), string_or_environment);
+        // 7. If object is a media provider object,
+        if (object.has_value() && object->has<URL::BlobURLEntry::MediaSource>()) {
+            // then set mode to local.
+
+            // NB: The subsequent steps for local resources are contained in load_local_resource().
+            auto const& blob_entry = FileAPI::resolve_a_blob_url(url_record).value();
+            load_local_resource(blob_entry.object.get<GC::Ref<MediaSourceExtensions::MediaSource>>(), move(failure_callback));
+            return;
+        }
+    }
+
+    // This is only reached via a media element task which is only processed once the document is fully active.
+    // The observer callbacks that stop/restart the fetch depend on this invariant, so ensure it here.
+    VERIFY(document().is_fully_active());
+
+    m_remote_fetch_data = make<RemoteFetchData>();
+    m_remote_fetch_data->url_record = url_record;
+    m_remote_fetch_data->stream = Media::IncrementallyPopulatedStream::create_empty();
+    m_remote_fetch_data->stream->set_data_request_callback(GC::weak_callback(*this, [](auto& self, u64 offset) {
         self.restart_fetch_at_offset(offset);
     }));
-    m_fetch_data->failure_callback = [&stream = *m_fetch_data->stream, failure_callback = move(failure_callback)](String error_message) {
-        // Ensure that we unblock any reads if we stop the fetch due to some failure.
-        stream.close();
-        failure_callback(move(error_message));
-    };
+    m_remote_fetch_data->failure_callback = move(failure_callback);
 
-    set_up_playback_manager();
+    set_up_playback_manager_for_remote();
 
-    fetch_resource(EntireResource {});
+    load_remote_resource(EntireResource {});
 }
 
-enum class FetchMode : u8 {
-    Local,
-    Remote,
-};
-
 // https://html.spec.whatwg.org/multipage/media.html#concept-media-load-resource
-void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
+void HTMLMediaElement::load_remote_resource(ByteRange const& byte_range)
 {
     auto& realm = this->realm();
     auto& vm = realm.vm();
 
-    auto const& url_record = m_fetch_data->url_record;
+    auto const& url_record = m_remote_fetch_data->url_record;
 
     auto fetch_generation = ++m_current_fetch_generation;
 
     // 1. Let mode be remote.
-    auto mode = FetchMode::Remote;
+    // 2. If the algorithm was invoked with media provider object, then set mode to local.
+    // 3. If mode is remote, then let the current media resource be the resource given by the URL record passed to this
+    //    algorithm; otherwise, let the current media resource be the resource given by the media provider object.
+    //    Either way, the current media resource is now the element's media resource.
+    // NB: Mode is already determined to be remote, so only the "mode is remote" steps apply.
 
-    // FIXME: 2. If the algorithm was invoked with media provider object, then set mode to local.
-    //           Otherwise:
-    //           1. Let object be the result of obtaining a blob object using the URL record's blob URL entry and the media
-    //              element's node document's relevant settings object.
-    //           2. If object is a media provider object, then set mode to local.
-    // FIXME: 3. If mode is remote, then let the current media resource be the resource given by the URL record passed to this algorithm; otherwise, let the
-    //           current media resource be the resource given by the media provider object. Either way, the current media resource is now the element's media
-    //           resource.
     // FIXME: 4. Remove all media-resource-specific text tracks from the media element's list of pending text tracks, if any.
 
     // 5. Run the appropriate steps from the following list:
-    switch (mode) {
     // -> If mode is remote
-    case FetchMode::Remote: {
+    {
         // FIXME: 1. Optionally, run the following substeps. This is the expected behavior if the user agent intends to not attempt to fetch the resource until
         //           the user requests it explicitly (e.g. as a way to implement the preload attribute's none keyword).
         //            1. Set the networkState to NETWORK_IDLE.
@@ -1116,14 +1243,14 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
         // NB: byte_range is passed as a parameter.
 
         // 7. If byteRange is not "entire resource", then:
-        m_fetch_data->offset = 0;
+        m_remote_fetch_data->offset = 0;
 
         if (!byte_range.has<EntireResource>()) {
             // 1. If byteRange[1] is "until end", then add a range header to request given byteRange[0].
             if (byte_range.has<UntilEnd>()) {
                 auto const& range = byte_range.get<UntilEnd>();
                 request->add_range_header(range.first, {});
-                m_fetch_data->offset = range.first;
+                m_remote_fetch_data->offset = range.first;
             } else {
                 // 2. Otherwise, add a range header to request given byteRange[0] and byteRange[1].
                 // NB: We don't currently have any need to request a range with a delimited end.
@@ -1135,7 +1262,7 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
         Fetch::Infrastructure::FetchAlgorithms::Input fetch_algorithms_input {};
 
         fetch_algorithms_input.process_response = [self = GC::Ref(*this), byte_range = move(byte_range), fetch_generation](auto response) mutable {
-            auto& fetch_data = self->m_fetch_data;
+            auto& fetch_data = self->m_remote_fetch_data;
 
             // FIXME: If the response is CORS cross-origin, we must use its internal response to query any of its data. See:
             //        https://github.com/whatwg/html/issues/9355
@@ -1156,6 +1283,7 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
             // NOTE: We do this step before creating the updateMedia task so that we can invoke the failure callback.
             auto maybe_verify_response_failure = self->verify_response_or_get_failure_reason(response, byte_range);
             if (maybe_verify_response_failure.has_value()) {
+                fetch_data->stream->close();
                 fetch_data->failure_callback(maybe_verify_response_failure.value());
                 return;
             }
@@ -1168,7 +1296,7 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
                     return;
                 if (fetch_generation != weak_self->m_current_fetch_generation)
                     return;
-                auto& fetch_data = weak_self->m_fetch_data;
+                auto& fetch_data = weak_self->m_remote_fetch_data;
 
                 // 6. Update the media data with the contents of response's unsafe response obtained in this fashion. response can be CORS-same-origin or
                 //    CORS-cross-origin; this affects whether subtitles referenced in the media data are exposed in the API and, for video elements, whether
@@ -1191,7 +1319,7 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
                 if (fetch_generation != weak_self->m_current_fetch_generation)
                     return;
 
-                weak_self->m_fetch_data->stream->close();
+                weak_self->m_remote_fetch_data->stream->close();
                 weak_self->queue_a_media_element_task([self = weak_self.as_nonnull()] {
                     self->process_media_data(FetchingStatus::Complete);
                 });
@@ -1205,6 +1333,8 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
                     return;
                 if (fetch_generation != weak_self->m_current_fetch_generation)
                     return;
+
+                weak_self->m_remote_fetch_data->stream->close();
                 weak_self->queue_a_media_element_task([self = weak_self.as_nonnull()] {
                     self->process_media_data(FetchingStatus::Interrupted);
                 });
@@ -1214,26 +1344,125 @@ void HTMLMediaElement::fetch_resource(ByteRange const& byte_range)
             response->body()->incrementally_read(update_media, process_end_of_media, process_body_error, GC::Ref { global });
         };
 
-        m_fetch_data->fetch_controller = Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
-        break;
+        m_remote_fetch_data->fetch_controller = Fetch::Fetching::fetch(realm, request, Fetch::Infrastructure::FetchAlgorithms::create(vm, move(fetch_algorithms_input)));
+    }
+}
+
+// https://html.spec.whatwg.org/multipage/media.html#concept-media-load-resource
+void HTMLMediaElement::load_local_resource(MediaProviderObject const& media_provider, Function<void(String)> failure_callback)
+{
+    // 1. Let mode be remote.
+    // 2. If the algorithm was invoked with media provider object, then set mode to local.
+    // 3. If mode is remote, then let the current media resource be the resource given by the URL record passed to this
+    //    algorithm; otherwise, let the current media resource be the resource given by the media provider object.
+    //    Either way, the current media resource is now the element's media resource.
+    // NB: The mode is already determined to be local, so only the "mode is local" steps apply.
+
+    // FIXME: 4. Remove all media-resource-specific text tracks from the media element's list of pending text tracks, if any.
+
+    // 5. Run the appropriate steps from the following list:
+    //    -> If mode is remote
+    //    -> Otherwise (mode is local)
+
+    // https://w3c.github.io/media-source/#mediasource-attach
+    // At the beginning of the "Otherwise (mode is local)" section of the resource fetch algorithm,
+    // execute the additional steps, below.
+
+    // 1. If the resource fetch algorithm was invoked with a media provider object that is a MediaSource object, a
+    //    MediaSourceHandle object or a URL record whose object is a MediaSource object, then:
+    if (media_provider.has<GC::Ref<MediaSourceExtensions::MediaSource>>()) {
+        auto const& media_source = media_provider.get<GC::Ref<MediaSourceExtensions::MediaSource>>();
+
+        // FIXME: -> If the media provider object is a URL record whose object is a MediaSource that was constructed in
+        //           a DedicatedWorkerGlobalScope, such as would occur if attempting to use a MediaSource object URL
+        //           from a DedicatedWorkerGlobalScope MediaSource
+        //               Run the "If the media data cannot be fetched at all, due to network errors, causing the user
+        //               agent to give up trying to fetch the resource" steps of the resource fetch algorithm's media
+        //               data processing steps list.
+
+        // FIXME: -> If the media provider object is a MediaSourceHandle whose [[Detached]] internal slot is true
+        //               Run the "If the media data cannot be fetched at all, due to network errors, causing the user
+        //               agent to give up trying to fetch the resource" steps of the resource fetch algorithm's media
+        //               data processing steps list.
+
+        // FIXME: -> If the media provider object is a MediaSourceHandle whose underlying MediaSource's [[has ever been
+        //           attached]] internal slot is true
+        //               Run the "If the media data cannot be fetched at all, due to network errors, causing the user
+        //               agent to give up trying to fetch the resource" steps of the resource fetch algorithm's media
+        //               data processing steps list.
+
+        // -> If readyState is NOT set to "closed"
+        if (!media_source->ready_state_is_closed()) {
+            // Run the "If the media data cannot be fetched at all, due to network errors, causing the user agent to
+            // give up trying to fetch the resource" steps of the resource fetch algorithm's media data processing
+            // steps list.
+            failure_callback("MediaSource is not closed"_string);
+        }
+        // -> Otherwise
+        else {
+            // 1. Set the MediaSource's [[has ever been attached]] internal slot to true.
+            media_source->set_has_ever_been_attached();
+
+            // 2. Set the media element's delaying-the-load-event-flag to false.
+            m_delaying_the_load_event.clear();
+
+            // FIXME: 3. If the MediaSource was constructed in a DedicatedWorkerGlobalScope, then setup worker
+            //           attachment communication and open the MediaSource:
+            //            1. Set [[channel with worker]] to be a new MessageChannel.
+            //            2. Set [[port to worker]] to the port1 value of [[channel with worker]].
+            //            3. Execute StructuredSerializeWithTransfer with the port2 of [[channel with worker]] as both
+            //               the value and the sole member of the transferList, and let the result be serialized port2.
+            //            4. Queue a task on the MediaSource's DedicatedWorkerGlobalScope that will
+            //                1. Execute StructuredDeserializeWithTransfer with serialized port2 and
+            //                   DedicatedWorkerGlobalScope's realm, and set [[port to main]] to be the resulting
+            //                   deserialized clone of the transferred port2 value of [[channel with worker]].
+            //                2. Set the readyState attribute to "open".
+            //                3. Queue a task to fire an event named sourceopen at the MediaSource.
+
+            // Otherwise, the MediaSource was constructed in a Window:
+            // FIXME: 1. Set [[channel with worker]] null.
+            //        2. Set [[port to worker]] null.
+            //        3. Set [[port to main]] null.
+
+            media_source->set_assigned_to_media_element({}, *this);
+            set_up_playback_manager_for_local();
+
+            // 4. Set the readyState attribute to "open".
+            // 5. Queue a task to fire an event named sourceopen at the MediaSource.
+            media_source->set_ready_state_to_open_and_fire_sourceopen_event();
+
+            // FIXME: 4. Continue the resource fetch algorithm by running the remaining "Otherwise (mode is local)"
+            //           steps, with these requirements:
+            //            1. Text in the resource fetch algorithm or the media data processing steps list that refers
+            //               to "the download", "bytes received", or "whenever new data for the current media resource
+            //               becomes available" refers to data passed in via appendBuffer().
+            //            2. References to HTTP in the resource fetch algorithm and the media data processing steps
+            //               list shall not apply because the HTMLMediaElement does not fetch media data via HTTP when
+            //               a MediaSource is attached.
+
+            // NB: Since we haven't created a RemoteFetchData instance and assigned it here, we won't do anything
+            //     further with regard to the HTTP fetch. Data received, etc. is handled largely through
+            //     the demuxers that our PlaybackManager is given.
+        }
+    } else {
+        // FIXME: Support File objects.
+        failure_callback("File objects are not supported"_string);
     }
 
-    // -> Otherwise (mode is local)
-    case FetchMode::Local:
-        // FIXME:
-        // The resource described by the current media resource, if any, contains the media data. It is CORS-same-origin.
-        //
-        // If the current media resource is a raw data stream (e.g. from a File object), then to determine the format of the media resource, the user agent
-        // must use the rules for sniffing audio and video specifically. Otherwise, if the data stream is pre-decoded, then the format is the format given
-        // by the relevant specification.
-        //
-        // Whenever new data for the current media resource becomes available, queue a media element task given the media element to run the first appropriate
-        // steps from the media data processing steps list below.
-        //
-        // When the current media resource is permanently exhausted (e.g. all the bytes of a Blob have been processed), if there were no decoding errors,
-        // then the user agent must move on to the final step below. This might never happen, e.g. if the current media resource is a MediaStream.
-        break;
-    }
+    // The resource described by the current media resource, if any, contains the media data. It is
+    // CORS-same-origin.
+    //
+    // If the current media resource is a raw data stream (e.g. from a File object), then to determine the
+    // format of the media resource, the user agent must use the rules for sniffing audio and video
+    // specifically. Otherwise, if the data stream is pre-decoded, then the format is the format given by the
+    // relevant specification.
+    //
+    // Whenever new data for the current media resource becomes available, queue a media element task given the
+    // media element to run the first appropriate steps from the media data processing steps list below.
+    //
+    // When the current media resource is permanently exhausted (e.g. all the bytes of a Blob have been processed),
+    // if there were no decoding errors, then the user agent must move on to the final step below. This might never
+    // happen, e.g. if the current media resource is a MediaStream.
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#verify-a-media-response
@@ -1266,59 +1495,104 @@ Optional<String> HTMLMediaElement::verify_response_or_get_failure_reason(GC::Ref
         return MUST(String::formatted("Failed to extract values from Content-Range: {}", internal_response->header_list()->get("Content-Range"sv)));
 
     auto const& content_range = maybe_content_range.get<HTTP::HeaderList::ContentRangeValues>();
-    m_fetch_data->offset = content_range.first_byte_pos;
+    m_remote_fetch_data->offset = content_range.first_byte_pos;
     if (content_range.complete_length.has_value())
-        m_fetch_data->stream->set_expected_size(content_range.complete_length.value());
+        m_remote_fetch_data->stream->set_expected_size(content_range.complete_length.value());
 
     return {};
 }
 
 void HTMLMediaElement::restart_fetch_at_offset(u64 offset)
 {
-    VERIFY(m_fetch_data);
+    VERIFY(m_remote_fetch_data);
 
     if (m_error)
         return;
 
-    if (!m_fetch_data->accepts_byte_ranges)
+    if (!m_remote_fetch_data->accepts_byte_ranges)
         return;
 
-    if (m_fetch_data->fetch_controller) {
-        m_fetch_data->fetch_controller->stop_fetch();
-        m_fetch_data->fetch_controller = nullptr;
+    if (m_remote_fetch_data->fetch_controller) {
+        m_remote_fetch_data->fetch_controller->stop_fetch();
+        m_remote_fetch_data->fetch_controller = nullptr;
     }
 
-    fetch_resource(UntilEnd { offset });
+    load_remote_resource(UntilEnd { offset });
 }
 
 void HTMLMediaElement::set_audio_track_enabled(Badge<AudioTrack>, GC::Ptr<HTML::AudioTrack> audio_track, bool enabled)
 {
+    VERIFY(m_playback_manager);
+
+    if (!m_playback_manager->audio_tracks().contains_slow(audio_track->track_in_playback_manager()))
+        return;
+
     if (enabled)
         m_playback_manager->enable_an_audio_track(audio_track->track_in_playback_manager());
     else
         m_playback_manager->disable_an_audio_track(audio_track->track_in_playback_manager());
 }
 
-Painting::ExternalContentSource& HTMLMediaElement::ensure_external_content_source()
+Painting::VideoFrameResourceId HTMLMediaElement::ensure_video_frame_resource_id()
 {
-    if (!m_external_content_source)
-        m_external_content_source = Painting::ExternalContentSource::create();
-    return *m_external_content_source;
+    if (!m_video_frame_resource_id.has_value())
+        m_video_frame_resource_id = Painting::allocate_video_frame_resource_id();
+    return *m_video_frame_resource_id;
+}
+
+void HTMLMediaElement::update_compositor_video_frame(NonnullRefPtr<Media::VideoFrame const> frame)
+{
+    auto frame_id = ensure_video_frame_resource_id();
+    if (auto navigable = document().navigable(); navigable && navigable->has_compositor_context())
+        navigable->compositor_context().update_video_frame(frame_id, move(frame));
+}
+
+void HTMLMediaElement::clear_compositor_video_frame()
+{
+    if (!m_video_frame_resource_id.has_value())
+        return;
+    if (auto navigable = document().navigable(); navigable && navigable->has_compositor_context())
+        navigable->compositor_context().clear_video_frame(*m_video_frame_resource_id);
+}
+
+void HTMLMediaElement::update_current_video_frame()
+{
+    if (auto current_frame = m_selected_video_track_sink->current_frame())
+        update_compositor_video_frame(NonnullRefPtr<Media::VideoFrame const> { *current_frame });
+    else
+        clear_compositor_video_frame();
+
+    auto intrinsic_dimensions_changed = update_intrinsic_video_dimensions();
+    set_needs_repaint(intrinsic_dimensions_changed ? InvalidateDisplayList::Yes : InvalidateDisplayList::No);
 }
 
 void HTMLMediaElement::set_selected_video_track(Badge<VideoTrack>, GC::Ptr<HTML::VideoTrack> video_track)
 {
-    if (m_selected_video_track) {
-        VERIFY(m_selected_video_track_sink);
-        m_playback_manager->remove_the_displaying_video_sink_for_track(m_selected_video_track->track_in_playback_manager());
-        m_selected_video_track_sink = nullptr;
-        if (m_external_content_source)
-            m_external_content_source->clear();
-    }
+    VERIFY(m_playback_manager);
+
+    if (video_track && !m_playback_manager->video_tracks().contains_slow(video_track->track_in_playback_manager()))
+        return;
+
+    clear_compositor_video_frame();
+
+    auto previous_track = m_selected_video_track;
 
     m_selected_video_track = video_track;
-    if (video_track)
+    if (video_track) {
         m_selected_video_track_sink = m_playback_manager->get_or_create_the_displaying_video_sink_for_track(video_track->track_in_playback_manager());
+        auto sink_update_result = m_selected_video_track_sink->update();
+        if (sink_update_result == Media::DisplayingVideoSinkUpdateResult::NewFrameAvailable) {
+            update_current_video_frame();
+        } else if (auto* video_element = as_if<HTMLVideoElement>(this)) {
+            auto const& video_data = video_track->track_in_playback_manager().video_data();
+            video_element->set_intrinsic_video_dimensions(Gfx::Size<u32>(video_data.pixel_width, video_data.pixel_height));
+        }
+    } else {
+        m_selected_video_track_sink = nullptr;
+    }
+
+    if (previous_track)
+        m_playback_manager->remove_the_displaying_video_sink_for_track(previous_track->track_in_playback_manager());
 }
 
 void HTMLMediaElement::update_video_frame_and_timeline()
@@ -1328,10 +1602,8 @@ void HTMLMediaElement::update_video_frame_and_timeline()
 
     if (m_selected_video_track_sink) {
         auto sink_update_result = m_selected_video_track_sink->update();
-        if (sink_update_result == Media::DisplayingVideoSinkUpdateResult::NewFrameAvailable) {
-            ensure_external_content_source().update(m_selected_video_track_sink->current_frame());
-            set_needs_repaint();
-        }
+        if (sink_update_result == Media::DisplayingVideoSinkUpdateResult::NewFrameAvailable)
+            update_current_video_frame();
     }
 
     // Wait for the seek to complete before updating the timestamp, otherwise we'll display the timestamp from
@@ -1352,7 +1624,7 @@ void HTMLMediaElement::on_audio_track_added(Media::Track const& track)
     auto audio_track = realm.create<AudioTrack>(realm, *this, track);
 
     // 2. Update the media element's audioTracks attribute's AudioTrackList object with the new AudioTrack object.
-    m_audio_tracks->add_track({}, audio_track);
+    m_audio_tracks->add_track(audio_track);
 
     // 3. Let enable be unknown.
     auto enable = TriState::Unknown;
@@ -1378,21 +1650,9 @@ void HTMLMediaElement::on_audio_track_added(Media::Track const& track)
     if (enable == TriState::True)
         audio_track->set_enabled(true);
 
-    // NB: According to https://dev.w3.org/html5/html-sourcing-inband-tracks/, kind should be set according to format, and the following criteria within
-    //     the specified formats.
-    // WebM:
-    //     - "main": the FlagDefault element is set on the track
-    //     - "translation": not first audio (video) track
-    // MP4:
-    //     - "main": first audio (video) track
-    //     - "translation": not first audio (video) track
-    // Though the behavior for WebM is not clear if its first track is not marked with FlagDefault, the idea here seems to be that the preferred
-    // track should be marked as "main", and the rest should be marked as "translation".
-    audio_track->set_kind(enable == TriState::True ? "main"_utf16 : "translation"_utf16);
-
     // 7. Fire an event named addtrack at this AudioTrackList object, using TrackEvent, with the track attribute initialized to the new AudioTrack object.
-    TrackEventInit event_init {};
-    event_init.track = GC::make_root(audio_track);
+    Bindings::TrackEventInit event_init {};
+    event_init.track = audio_track;
 
     auto event = TrackEvent::create(realm, EventNames::addtrack, move(event_init));
     m_audio_tracks->dispatch_event(event);
@@ -1406,7 +1666,7 @@ void HTMLMediaElement::on_video_track_added(Media::Track const& track)
     auto video_track = realm.create<VideoTrack>(realm, *this, track);
 
     // 2. Update the media element's videoTracks attribute's VideoTrackList object with the new VideoTrack object.
-    m_video_tracks->add_track({}, *video_track);
+    m_video_tracks->add_track(video_track);
 
     // 3. Let enable be unknown.
     auto enable = TriState::Unknown;
@@ -1433,12 +1693,9 @@ void HTMLMediaElement::on_video_track_added(Media::Track const& track)
     if (enable == TriState::True)
         video_track->set_selected(true);
 
-    // NB: See the comment regarding AudioTrack.kind above with regard to https://dev.w3.org/html5/html-sourcing-inband-tracks/.
-    video_track->set_kind(enable == TriState::True ? "main"_utf16 : "translation"_utf16);
-
     // 7. Fire an event named addtrack at this VideoTrackList object, using TrackEvent, with the track attribute initialized to the new VideoTrack object.
-    TrackEventInit event_init {};
-    event_init.track = GC::make_root(video_track);
+    Bindings::TrackEventInit event_init {};
+    event_init.track = video_track;
 
     auto event = TrackEvent::create(realm, HTML::EventNames::addtrack, move(event_init));
     m_video_tracks->dispatch_event(event);
@@ -1455,8 +1712,9 @@ void HTMLMediaElement::on_metadata_parsed()
     m_source_element_selector = nullptr;
 
     // FIXME: 1. Establish the media timeline for the purposes of the current playback position and the earliest possible position, based on the media data.
-    // FIXME: 2. Update the timeline offset to the date and time that corresponds to the zero time in the media timeline established in the previous step,
-    //           if any. If no explicit time and date is given by the media resource, the timeline offset must be set to Not-a-Number (NaN).
+    // 2. Update the timeline offset to the date and time that corresponds to the zero time in the media timeline established in the previous step,
+    //    if any. If no explicit time and date is given by the media resource, the timeline offset must be set to Not-a-Number (NaN).
+    m_timeline_offset = m_playback_manager->start_time_realtime();
 
     // 3. Set the current playback position and the official playback position to the earliest possible position.
     m_current_playback_position = 0;
@@ -1479,25 +1737,12 @@ void HTMLMediaElement::on_metadata_parsed()
     //    named resize at the media element.
     auto* video_element = as_if<HTMLVideoElement>(*this);
     if (m_selected_video_track && video_element) {
-        video_element->set_video_height(m_selected_video_track->track_in_playback_manager().video_data().pixel_height);
-        video_element->set_video_width(m_selected_video_track->track_in_playback_manager().video_data().pixel_width);
-
-        queue_a_media_element_task([this] {
-            dispatch_event(DOM::Event::create(this->realm(), HTML::EventNames::resize));
-        });
+        auto const& video_data = m_selected_video_track->track_in_playback_manager().video_data();
+        video_element->set_intrinsic_video_dimensions(Gfx::Size<u32>(video_data.pixel_width, video_data.pixel_height));
     }
 
     // 6. Set the readyState attribute to HAVE_METADATA.
     set_ready_state(ReadyState::HaveMetadata);
-    // NOTE: The spec does not say exactly when to update the readyState attribute. Rather, it describes what
-    //       each step requires, and leaves it up to the user agent to determine when those requirements are
-    //       reached: https://html.spec.whatwg.org/multipage/media.html#ready-states
-    //
-    //       Since we fetch the entire response at once, if we reach here with successfully decoded video
-    //       metadata, we have satisfied the HAVE_ENOUGH_DATA requirements. This logic will of course need
-    //       to change if we fetch or process the media data in smaller chunks.
-    if (m_ready_state == ReadyState::HaveMetadata)
-        set_ready_state(ReadyState::HaveEnoughData);
 
     // 7. Let jumped be false.
     [[maybe_unused]] auto jumped = false;
@@ -1530,12 +1775,20 @@ void HTMLMediaElement::on_metadata_parsed()
             return IterationDecision::Break;
         });
     }
+
+    // AD-HOC: Now that we've enabled one of each available track type, the playback manager can be started. If this
+    //         causes the playback manager to exit the initial state, the ready state should change.
+    m_playback_manager->start();
+    update_ready_state();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#media-data-processing-steps-list
-void HTMLMediaElement::set_up_playback_manager()
+void HTMLMediaElement::set_up_playback_manager_for_remote()
 {
     m_playback_manager = Media::PlaybackManager::create();
+    m_playback_manager->set_audio_output_disabled(document().page().client().is_headless());
+
+    m_playback_manager->set_playback_rate(static_cast<float>(m_playback_rate));
 
     m_has_enabled_preferred_audio_track = false;
     m_has_selected_preferred_video_track = false;
@@ -1548,8 +1801,8 @@ void HTMLMediaElement::set_up_playback_manager()
 
     // -> If the media resource is found to have an audio track
     // -> If the media resource is found to have a video track
-    m_playback_manager->on_track_added = GC::weak_callback(*this, [](auto& self, auto track_type, auto& track) {
-        if (track_type == Media::TrackType::Audio)
+    m_playback_manager->on_track_added = GC::weak_callback(*this, [](auto& self, auto& track) {
+        if (track.type() == Media::TrackType::Audio)
             self.on_audio_track_added(track);
         else
             self.on_video_track_added(track);
@@ -1562,31 +1815,108 @@ void HTMLMediaElement::set_up_playback_manager()
 
     // -> If the media data can be fetched but is found by inspection to be in an unsupported format, or can otherwise not be rendered at all
     m_playback_manager->on_unsupported_format_error = GC::weak_callback(*this, [](auto& self, Media::DecoderError&& error) mutable {
+        auto const* playback_manager_ptr = self.m_playback_manager.ptr();
+
         // NB: Queue a task for this so that we don't destroy the PlaybackManager within one of its callbacks when we
         //     call forget_media_resource_specific_tracks().
-        self.queue_a_media_element_task([self = GC::Weak(self), error = move(error)] {
+        self.queue_a_media_element_task([self = GC::Weak(self), error = move(error), playback_manager_ptr = move(playback_manager_ptr)] {
             if (!self)
                 return;
             if (self->m_error)
                 return;
+            if (playback_manager_ptr != self->m_playback_manager.ptr())
+                return;
 
             // 1. The user agent should cancel the fetching process.
-            VERIFY(self->m_fetch_data);
-            auto fetch_data = move(self->m_fetch_data);
-            if (fetch_data->fetch_controller)
-                fetch_data->fetch_controller->stop_fetch();
+            VERIFY(self->m_remote_fetch_data);
+            auto failure_callback = move(self->m_remote_fetch_data->failure_callback);
+            self->cancel_the_fetching_process();
 
             // 2. Abort this subalgorithm, returning to the resource selection algorithm.
-            fetch_data->failure_callback(MUST(String::from_utf8(error.description())));
+            failure_callback(MUST(String::from_utf8(error.description())));
         });
     });
 
     // -> If the media data is corrupted
     m_playback_manager->on_error = GC::weak_callback(*this, [](auto& self, Media::DecoderError&& error) {
-        self.set_decoder_error(MUST(String::from_utf8(error.description())));
+        auto const* playback_manager_ptr = self.m_playback_manager.ptr();
+
+        self.queue_a_media_element_task([self = GC::Weak(self), error = move(error), playback_manager_ptr = move(playback_manager_ptr)] {
+            if (!self)
+                return;
+            if (self->m_error)
+                return;
+            if (playback_manager_ptr != self->m_playback_manager.ptr())
+                return;
+            self->set_decoder_error(MUST(String::from_utf8(error.description())));
+        });
     });
 
-    m_playback_manager->add_media_source(*m_fetch_data->stream);
+    m_playback_manager->add_media_source(*m_remote_fetch_data->stream);
+
+    m_playback_manager->on_playback_state_change = GC::weak_callback(*this, [](auto& self) {
+        self.on_playback_manager_state_change();
+    });
+}
+
+// https://html.spec.whatwg.org/multipage/media.html#media-data-processing-steps-list
+void HTMLMediaElement::set_up_playback_manager_for_local()
+{
+    m_playback_manager = Media::PlaybackManager::create();
+    m_playback_manager->set_audio_output_disabled(document().page().client().is_headless());
+
+    m_playback_manager->set_playback_rate(static_cast<float>(m_playback_rate));
+
+    m_has_enabled_preferred_audio_track = false;
+    m_has_selected_preferred_video_track = false;
+
+    // NB: The spec is unclear on whether the following media resource track conditions should trigger multiple
+    //     times on one media resource, but it is implied to be possible by the start of the "Media elements"
+    //     section, where it says that a "media resource can have multiple audio and video tracks."
+    //     https://html.spec.whatwg.org/multipage/media.html#media-elements
+    //     Therefore, we enumerate all the available tracks into our VideoTrackList and AudioTrackList.
+
+    // AD-HOC: Enable the tracks in PlaybackManager if MediaSource already enabled them in the DOM.
+    //         Note that we do not want to call on_(audio/video)_track_added() here, since the MSE spec takes care
+    //         of setting up the tracks.
+    m_playback_manager->on_track_added = GC::weak_callback(*this, [](auto& self, auto& track) {
+        if (track.type() == Media::TrackType::Audio) {
+            self.m_audio_tracks->for_each_track([&](auto& element_track) {
+                if (!element_track.enabled())
+                    return IterationDecision::Continue;
+                if (element_track.track_in_playback_manager() == track) {
+                    self.m_playback_manager->enable_an_audio_track(track);
+                    return IterationDecision::Break;
+                }
+                return IterationDecision::Continue;
+            });
+        } else if (track.type() == Media::TrackType::Video) {
+            self.m_video_tracks->for_each_track([&](auto& element_track) {
+                if (!element_track.selected())
+                    return IterationDecision::Continue;
+                if (element_track.track_in_playback_manager() == track) {
+                    self.m_selected_video_track = element_track;
+                    self.m_selected_video_track_sink = self.m_playback_manager->get_or_create_the_displaying_video_sink_for_track(track);
+                    return IterationDecision::Break;
+                }
+                return IterationDecision::Continue;
+            });
+        }
+    });
+
+    // -> Once enough of the media data has been fetched to determine the duration of the media resource, its dimensions, and other metadata
+    m_playback_manager->on_metadata_parsed = GC::weak_callback(*this, [](auto& self) {
+        self.on_metadata_parsed();
+    });
+
+    // -> If the media data is corrupted
+    m_playback_manager->on_error = GC::weak_callback(*this, [](auto& self, Media::DecoderError&& error) {
+        self.queue_a_media_element_task([self = GC::Weak(self), error = move(error)] {
+            if (!self)
+                return;
+            self->set_decoder_error(MUST(String::from_utf8(error.description())));
+        });
+    });
 
     m_playback_manager->on_playback_state_change = GC::weak_callback(*this, [](auto& self) {
         self.on_playback_manager_state_change();
@@ -1606,12 +1936,28 @@ void HTMLMediaElement::process_media_data(FetchingStatus fetching_status)
         // Set the networkState to NETWORK_IDLE and fire an event named suspend at the media element.
         m_network_state = NetworkState::Idle;
         dispatch_event(DOM::Event::create(realm, HTML::EventNames::suspend));
+
+        update_ready_state();
     } else if (fetching_status == FetchingStatus::Ongoing) {
-        // If the user agent ever discards any media data and then needs to resume the network activity to obtain it again, then it must queue a media
-        // element task given the media element to set the networkState to NETWORK_LOADING.
+        // If the user agent ever discards any media data and then needs to resume the network activity to obtain it
+        // again, then it must queue a media element task given the media element to set the networkState to NETWORK_LOADING.
         queue_a_media_element_task(GC::weak_callback(*this, [](auto& self) {
             self.m_network_state = NetworkState::Loading;
         }));
+
+        // While the load is not suspended (see below), every 350ms (±200ms) or for every byte received, whichever is
+        // least frequent, queue a media element task given the media element to:
+        auto now = MonotonicTime::now();
+        if (!m_last_progress_event_time.has_value() || now - m_last_progress_event_time.value() > AK::Duration::from_milliseconds(350)) {
+            m_last_progress_event_time = now;
+            queue_a_media_element_task(GC::weak_callback(*this, [](auto& self) {
+                // FIXME: 1. Set the element's is currently stalled to false.
+                // 2. Fire an event named progress at the element.
+                self.dispatch_event(DOM::Event::create(self.realm(), HTML::EventNames::progress));
+            }));
+
+            update_ready_state();
+        }
     }
 
     // -> If the connection is interrupted after some media data has been received, causing the user agent to give up trying
@@ -1689,20 +2035,27 @@ void HTMLMediaElement::forget_media_resource_specific_tracks()
     // of text tracks all the media-resource-specific text tracks, then empty the media element's audioTracks attribute's AudioTrackList object, then
     // empty the media element's videoTracks attribute's VideoTrackList object. No events (in particular, no removetrack events) are fired as part of
     // this; the error and emptied events, fired by the algorithms that invoke this one, can be used instead.
-    m_audio_tracks->remove_all_tracks({});
-    m_video_tracks->remove_all_tracks({});
+    m_audio_tracks->remove_all_tracks();
+    m_video_tracks->remove_all_tracks();
     m_playback_manager.clear();
+    clear_compositor_video_frame();
+
+    // NB: At this point, we no longer have any selected tracks to derive the video dimensions from.
+    update_intrinsic_video_dimensions();
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#ready-states:media-element-3
 void HTMLMediaElement::set_ready_state(ReadyState ready_state)
 {
-    dbgln("HTMLMediaElement: set_ready_state() called with ready_state={}", (int)ready_state);
-    dbgln("HTMLMediaElement: Current m_ready_state={}, m_network_state={}", (int)m_ready_state, (int)m_network_state);
+    if (m_ready_state == ready_state)
+        return;
+
+    auto old_ready_state = m_ready_state;
+    m_ready_state = ready_state;
 
     ScopeGuard guard { [&] {
-        m_ready_state = ready_state;
         upon_has_ended_playback_possibly_changed();
+        update_natural_dimensions();
         set_needs_style_update(true);
     } };
 
@@ -1715,8 +2068,7 @@ void HTMLMediaElement::set_ready_state(ReadyState ready_state)
 
     // 1. Apply the first applicable set of substeps from the following list:
     // -> If the previous ready state was HAVE_NOTHING, and the new ready state is HAVE_METADATA
-    if (m_ready_state == ReadyState::HaveNothing && ready_state == ReadyState::HaveMetadata) {
-        dbgln("HTMLMediaElement: Transitioning from HAVE_NOTHING to HAVE_METADATA - Queueing loadedmetadata event");
+    if (old_ready_state == ReadyState::HaveNothing && ready_state == ReadyState::HaveMetadata) {
         // Queue a media element task given the media element to fire an event named loadedmetadata at the element.
         queue_a_media_element_task([this] {
             dbgln("HTMLMediaElement: Dispatching loadedmetadata event");
@@ -1727,7 +2079,7 @@ void HTMLMediaElement::set_ready_state(ReadyState ready_state)
     }
 
     // -> If the previous ready state was HAVE_METADATA and the new ready state is HAVE_CURRENT_DATA or greater
-    if (m_ready_state == ReadyState::HaveMetadata && ready_state >= ReadyState::HaveCurrentData) {
+    if (old_ready_state == ReadyState::HaveMetadata && ready_state >= ReadyState::HaveCurrentData) {
         // If this is the first time this occurs for this media element since the load() algorithm was last invoked, the user agent must queue a media
         // element task given the media element to fire an event named loadeddata at the element.
         if (m_first_data_load_event_since_load_start) {
@@ -1749,7 +2101,7 @@ void HTMLMediaElement::set_ready_state(ReadyState ready_state)
     }
 
     // -> If the previous ready state was HAVE_FUTURE_DATA or more, and the new ready state is HAVE_CURRENT_DATA or less
-    if (m_ready_state >= ReadyState::HaveFutureData && ready_state <= ReadyState::HaveCurrentData) {
+    if (old_ready_state >= ReadyState::HaveFutureData && ready_state <= ReadyState::HaveCurrentData) {
         // FIXME: If the media element was potentially playing before its readyState attribute changed to a value lower than HAVE_FUTURE_DATA, and the element
         //        has not ended playback, and playback has not stopped due to errors, paused for user interaction, or paused for in-band content, the user agent
         //        must queue a media element task given the media element to fire an event named timeupdate at the element, and queue a media element task given
@@ -1758,7 +2110,7 @@ void HTMLMediaElement::set_ready_state(ReadyState ready_state)
     }
 
     // -> If the previous ready state was HAVE_CURRENT_DATA or less, and the new ready state is HAVE_FUTURE_DATA
-    if (m_ready_state <= ReadyState::HaveCurrentData && ready_state == ReadyState::HaveFutureData) {
+    if (old_ready_state <= ReadyState::HaveCurrentData && ready_state == ReadyState::HaveFutureData) {
         // The user agent must queue a media element task given the media element to fire an event named canplay at the element.
         queue_a_media_element_task([this] {
             dispatch_event(DOM::Event::create(this->realm(), HTML::EventNames::canplay));
@@ -1775,7 +2127,7 @@ void HTMLMediaElement::set_ready_state(ReadyState ready_state)
     if (ready_state == ReadyState::HaveEnoughData) {
         // If the previous ready state was HAVE_CURRENT_DATA or less, the user agent must queue a media element task given the media element to fire an event
         // named canplay at the element, and, if the element's paused attribute is false, notify about playing for the element.
-        if (m_ready_state <= ReadyState::HaveCurrentData) {
+        if (old_ready_state <= ReadyState::HaveCurrentData) {
             queue_a_media_element_task([this] {
                 dispatch_event(DOM::Event::create(this->realm(), HTML::EventNames::canplay));
             });
@@ -1822,12 +2174,103 @@ void HTMLMediaElement::set_ready_state(ReadyState ready_state)
     }
 }
 
-void HTMLMediaElement::on_playback_manager_state_change()
+// https://w3c.github.io/media-source/#buffer-monitoring
+void HTMLMediaElement::update_ready_state()
 {
+    // AD-HOC: This method is invoked by our versions of the following Media Source Extensions algorithms to fulfill
+    //         the necessary changes to the ready state.
+    //          - https://w3c.github.io/media-source/#sourcebuffer-coded-frame-processing (steps 2-4)
+    //          - https://w3c.github.io/media-source/#sourcebuffer-coded-frame-removal (step 3.5)
+    //          - https://w3c.github.io/media-source/#sourcebuffer-init-segment-received (steps 8-9)
+    //         We intentionally share this logic between local and remote playback, since it's the most specified
+    //         algorithm regarding ready states during playback.
+
     if (!m_playback_manager)
         return;
-    if (seeking() && m_playback_manager->state() != Media::PlaybackState::Seeking)
+
+    // -> If the HTMLMediaElement's readyState attribute is HAVE_NOTHING:
+    if (m_ready_state == ReadyState::HaveNothing) {
+        // 1. Abort these steps.
+        return;
+    }
+
+    // -> If HTMLMediaElement's buffered does not contain a TimeRanges for the current playback position:
+    auto current_time = m_playback_manager->current_time();
+    auto ranges = m_playback_manager->buffered_time_ranges();
+    auto current_range = ranges.range_at_or_after(current_time);
+    auto available_data = m_playback_manager->available_data();
+
+    if (available_data == Media::AvailableData::None
+        || (available_data == Media::AvailableData::Current && !current_range.has_value())) {
+        // 1. Set the HTMLMediaElement's readyState attribute to HAVE_METADATA.
+        set_ready_state(ReadyState::HaveMetadata);
+        // 2. Abort these steps.
+        return;
+    }
+
+    // FIXME: It may be worth turning this into a heuristic based on the rate of change of the playback position and
+    //        the buffered head.
+    constexpr auto have_enough_data_duration = AK::Duration::from_seconds(5);
+
+    auto duration = m_playback_manager->duration();
+    auto current_range_end = AK::Duration::zero();
+    if (current_range.has_value())
+        current_range_end = current_range->end;
+    auto playable_duration = max(AK::Duration::zero(), current_range_end - current_time);
+
+    // -> If HTMLMediaElement's buffered contains a TimeRanges that includes the current playback position and
+    //    enough data to ensure uninterrupted playback:
+    if (available_data == Media::AvailableData::Future && (playable_duration >= have_enough_data_duration || current_range_end >= duration)) {
+        // 1. Set the HTMLMediaElement's readyState attribute to HAVE_ENOUGH_DATA.
+        set_ready_state(ReadyState::HaveEnoughData);
+
+        // 2. Playback may resume at this point if it was previously suspended by a transition to HAVE_CURRENT_DATA.
+        // NB: Playback will have resumed due to PlaybackManager exiting buffering/seeking.
+
+        // 3. Abort these steps.
+        return;
+    }
+
+    // -> If HTMLMediaElement's buffered contains a TimeRanges that includes the current playback position and
+    //    some time beyond the current playback position:
+    if (available_data == Media::AvailableData::Future && playable_duration > AK::Duration::zero()) {
+        // 1. Set the HTMLMediaElement's readyState attribute to HAVE_FUTURE_DATA.
+        set_ready_state(ReadyState::HaveFutureData);
+
+        // 2. Playback may resume at this point if it was previously suspended by a transition to HAVE_CURRENT_DATA.
+        // NB: Playback will have resumed due to PlaybackManager exiting buffering/seeking.
+
+        // 3. Abort these steps.
+        return;
+    }
+
+    // -> If HTMLMediaElement's buffered contains a TimeRanges that ends at the current playback position and
+    //    does not have a range covering the time immediately after:
+    {
+        // 1. Set the HTMLMediaElement's readyState attribute to HAVE_CURRENT_DATA.
+        set_ready_state(ReadyState::HaveCurrentData);
+
+        // 2. Playback is suspended at this point since the media element doesn't have enough data to advance the media timeline.
+        // NB: Playback is suspended by PlaybackManager being in buffering/seeking states.
+
+        // 3. Abort these steps.
+        return;
+    }
+}
+
+void HTMLMediaElement::on_playback_manager_state_change()
+{
+    VERIFY(m_playback_manager);
+    auto state = m_playback_manager->state();
+    if (seeking() && state != Media::PlaybackState::Seeking)
         finish_seeking_element();
+
+    // NB: Queue the readyState update as a task so that it will never run before the durationchange and loadedmetadata
+    //     events are fired. This ensures that readyState has a deterministic value in those events.
+    queue_a_media_element_task(GC::weak_callback(*this, [](auto& self) {
+        if (self.m_ready_state >= ReadyState::HaveMetadata)
+            self.update_ready_state();
+    }));
 }
 
 // https://html.spec.whatwg.org/multipage/media.html#internal-play-steps
@@ -2014,9 +2457,9 @@ void HTMLMediaElement::seek_element(double playback_position, MediaSeekMode seek
     //    playback position, then the adjusted new playback position must also be after the current playback position.
     auto manager_seek_mode = Media::SeekMode::Accurate;
     if (seek_mode == MediaSeekMode::ApproximateForSpeed) {
-        if (playback_position <= current_playback_position())
+        if (playback_position < current_playback_position())
             manager_seek_mode = Media::SeekMode::FastBefore;
-        else
+        else if (playback_position > current_playback_position())
             manager_seek_mode = Media::SeekMode::FastAfter;
     }
 
@@ -2109,6 +2552,7 @@ void HTMLMediaElement::set_show_poster(bool show_poster)
 
     m_show_poster = show_poster;
 
+    update_natural_dimensions();
     set_needs_repaint();
 }
 
@@ -2127,6 +2571,7 @@ void HTMLMediaElement::set_paused(bool paused)
             document().page().client().page_did_change_audio_play_state(AudioPlayState::Paused);
     }
 
+    update_natural_dimensions();
     set_needs_repaint();
     set_needs_style_update(true);
 }
@@ -2157,9 +2602,8 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::set_playback_rate(double new_value)
     // on setting, the user agent must follow these steps:
 
     // 1. If the given value is not supported by the user agent, then throw a "NotSupportedError" DOMException.
-    // FIXME: We need to support playback rates other than 1 for this to be even remotely useful.
-    if (new_value != 1.0)
-        return WebIDL::NotSupportedError::create(realm(), "Playback rates other than 1 are not supported."_utf16);
+    if (!isfinite(new_value) || new_value < 0.0 || new_value > 64.0)
+        return WebIDL::NotSupportedError::create(realm(), "Playback rate is outside of the supported range."_utf16);
 
     // When the defaultPlaybackRate or playbackRate attributes change value (either by being set by script or by being changed directly by the user agent, e.g. in response to user
     // control), the user agent must queue a media element task given the media element to fire an event named ratechange at the media element.
@@ -2171,9 +2615,11 @@ WebIDL::ExceptionOr<void> HTMLMediaElement::set_playback_rate(double new_value)
 
     // 2. Set playbackRate to the new value, and if the element is potentially playing, change the playback speed.
     m_playback_rate = new_value;
-    if (potentially_playing()) {
-        // FIXME: Do this once playback speeds other than 1 are supported.
-    }
+    // AD-HOC: Set the playback rate even when not potentially playing. The spec mandates that the media time advances
+    //         by playbackRate units of media time per unit time on the clock. There's no reason this shouldn't be set
+    //         always.
+    if (m_playback_manager)
+        m_playback_manager->set_playback_rate(static_cast<float>(new_value));
 
     return {};
 }
@@ -2372,6 +2818,11 @@ void HTMLMediaElement::time_marches_on(TimeMarchesOnReason reason)
             queue_a_media_element_task([this]() {
                 dispatch_time_update_event();
             });
+
+            // AD-HOC: Run the SourceBuffer monitoring algorithm to update readyState based on buffered data relative to
+            //         the current playback position. This satisfies the periodic buffer monitoring in MSE:
+            //         https://w3c.github.io/media-source/#buffer-monitoring
+            update_ready_state();
         }
     }
 
@@ -2425,7 +2876,7 @@ GC::RootVector<GC::Ref<WebIDL::Promise>> HTMLMediaElement::take_pending_play_pro
     // 1. Let promises be an empty list of promises.
     // 2. Copy the media element's list of pending play promises to promises.
     // 3. Clear the media element's list of pending play promises.
-    GC::RootVector<GC::Ref<WebIDL::Promise>> promises(heap());
+    GC::RootVector<GC::Ref<WebIDL::Promise>> promises;
     promises.extend(move(m_pending_play_promises));
 
     // 4. Return promises.

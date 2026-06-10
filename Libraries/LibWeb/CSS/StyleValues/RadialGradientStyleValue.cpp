@@ -26,7 +26,7 @@ void RadialGradientStyleValue::serialize(StringBuilder& builder, SerializationMo
 
     bool has_size = serialized_size != "farthest-corner"sv;
     bool has_position = !m_properties.position->is_center(mode);
-    bool has_color_space = m_properties.interpolation_method.has_value() && m_properties.interpolation_method.value().color_space != InterpolationMethod::default_color_space(m_properties.color_syntax);
+    bool has_color_space = m_properties.color_interpolation_method && m_properties.color_interpolation_method->as_color_interpolation_method().color_interpolation_method() != ColorInterpolationMethodStyleValue::default_color_interpolation_method(m_properties.color_syntax);
 
     if (has_size)
         m_properties.size->serialize(builder, mode);
@@ -43,7 +43,7 @@ void RadialGradientStyleValue::serialize(StringBuilder& builder, SerializationMo
         if (has_size || has_position)
             builder.append(' ');
 
-        m_properties.interpolation_method.value().serialize(builder);
+        m_properties.color_interpolation_method->serialize(builder, mode);
     }
 
     if (has_size || has_position || has_color_space)
@@ -69,12 +69,8 @@ void RadialGradientStyleValue::resolve_for_size(Layout::NodeWithStyle const& nod
     auto center = m_properties.position->resolved(node, gradient_box);
     auto gradient_size = resolve_size(center, gradient_box, node);
 
-    ResolvedDataCacheKey cache_key {
-        .length_resolution_context = Length::ResolutionContext::for_layout_node(node),
-        .size = paint_size,
-    };
-    if (m_resolved_data_cache_key != cache_key) {
-        m_resolved_data_cache_key = move(cache_key);
+    if (m_resolved_size != paint_size) {
+        m_resolved_size = move(paint_size);
         m_resolved = ResolvedData {
             Painting::resolve_radial_gradient_data(node, gradient_size, *this),
             gradient_size,
@@ -94,7 +90,9 @@ ValueComparingNonnullRefPtr<StyleValue const> RadialGradientStyleValue::absoluti
     auto absolutized_size = m_properties.size->absolutized(context);
     NonnullRefPtr absolutized_position = m_properties.position->absolutized(context)->as_position();
 
-    return create(m_properties.ending_shape, move(absolutized_size), move(absolutized_position), move(absolutized_color_stops), m_properties.repeating, m_properties.interpolation_method);
+    auto absolutized_color_interpolation_method = m_properties.color_interpolation_method ? ValueComparingRefPtr<StyleValue const> { m_properties.color_interpolation_method->absolutized(context) } : nullptr;
+
+    return create(m_properties.ending_shape, move(absolutized_size), move(absolutized_position), move(absolutized_color_stops), m_properties.repeating, move(absolutized_color_interpolation_method));
 }
 
 bool RadialGradientStyleValue::equals(StyleValue const& other) const
@@ -105,7 +103,15 @@ bool RadialGradientStyleValue::equals(StyleValue const& other) const
     return m_properties == other_gradient.m_properties;
 }
 
-void RadialGradientStyleValue::paint(DisplayListRecordingContext& context, DevicePixelRect const& dest_rect, CSS::ImageRendering) const
+bool RadialGradientStyleValue::is_computationally_independent() const
+{
+    return m_properties.size->is_computationally_independent()
+        && m_properties.position->is_computationally_independent()
+        && all_of(m_properties.color_stop_list, [&](auto const& stop) { return stop.color_stop.color->is_computationally_independent(); })
+        && (!m_properties.color_interpolation_method || m_properties.color_interpolation_method->is_computationally_independent());
+}
+
+void RadialGradientStyleValue::paint(DisplayListRecordingContext& context, DOM::Document const&, DevicePixelRect const& dest_rect, CSS::ImageRendering) const
 {
     VERIFY(m_resolved.has_value());
     auto center = context.rounded_device_point(m_resolved->center).to_type<int>();

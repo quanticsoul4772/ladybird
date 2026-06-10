@@ -7,34 +7,26 @@
 #pragma once
 
 #include <LibGfx/Font/Typeface.h>
+#include <LibGfx/FontCascadeList.h>
 #include <LibURL/URL.h>
-#include <LibWeb/Bindings/FontFacePrototype.h>
+#include <LibWeb/Bindings/FontFace.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CSS/ParsedFontFace.h>
+#include <LibWeb/CSS/StyleValues/ComputationContext.h>
+#include <LibWeb/WebIDL/Buffers.h>
 
 namespace Web::CSS {
 
-struct FontFaceDescriptors {
-    String style = "normal"_string;
-    String weight = "normal"_string;
-    String stretch = "normal"_string;
-    String unicode_range = "U+0-10FFFF"_string;
-    String feature_settings = "normal"_string;
-    String variation_settings = "normal"_string;
-    String display = "auto"_string;
-    String ascent_override = "normal"_string;
-    String descent_override = "normal"_string;
-    String line_gap_override = "normal"_string;
-};
+class FontLoader;
 
 class FontFace final : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(FontFace, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(FontFace);
 
 public:
-    using FontFaceSource = Variant<String, GC::Root<WebIDL::BufferSource>>;
+    using FontFaceSource = FlattenVariant<Variant<String>, WebIDL::BufferSourceVariant>;
 
-    [[nodiscard]] static GC::Ref<FontFace> construct_impl(JS::Realm&, String family, FontFaceSource source, FontFaceDescriptors const& descriptors);
+    [[nodiscard]] static GC::Ref<FontFace> construct_impl(JS::Realm&, String family, FontFaceSource source, Bindings::FontFaceDescriptors const& descriptors);
     [[nodiscard]] static GC::Ref<FontFace> create_css_connected(JS::Realm&, CSSFontFaceRule&);
     virtual ~FontFace() override;
 
@@ -88,6 +80,26 @@ public:
 
     ParsedFontFace parsed_font_face() const;
 
+    RefPtr<Gfx::Typeface const> typeface() const { return m_parsed_font; }
+
+    FontWeightRange declared_weight_range() const { return m_cached_weight_range; }
+    int declared_slope() const { return m_cached_slope; }
+    int declared_width() const { return m_cached_width; }
+    bool should_be_registered_with_font_computer() const { return is_css_connected() || status() == Bindings::FontFaceLoadStatus::Loaded; }
+
+    RefPtr<Gfx::FontCascadeList const> font_with_point_size(float point_size, Gfx::FontVariationSettings const&, Gfx::ShapeFeatures const&) const;
+
+    Vector<Gfx::UnicodeRange> const& unicode_ranges() const { return m_unicode_ranges; }
+    bool has_urls() const { return !m_urls.is_empty(); }
+
+    bool has_non_default_unicode_range() const
+    {
+        if (m_unicode_ranges.size() != 1)
+            return true;
+        auto const& range = m_unicode_ranges.first();
+        return range.min_code_point() != 0 || range.max_code_point() != 0x10FFFF;
+    }
+
     Bindings::FontFaceLoadStatus status() const { return m_status; }
 
     GC::Ref<WebIDL::Promise> load();
@@ -105,6 +117,10 @@ private:
     virtual void visit_edges(Visitor&) override;
     void reject_status_promise(JS::Value reason);
 
+    Optional<FontComputer&> font_computer() const;
+
+    [[nodiscard]] Optional<ComputationContext> computation_context() const;
+
     // FIXME: Should we be storing StyleValues instead?
     String m_family;
     String m_style;
@@ -118,6 +134,11 @@ private:
     String m_ascent_override;
     String m_descent_override;
     String m_line_gap_override;
+
+    FontWeightRange m_cached_weight_range { 400, 400 };
+    int m_cached_slope { 0 };
+    int m_cached_width { 100 };
+    GC::Ptr<FontLoader> m_font_loader;
 
     // https://drafts.csswg.org/css-font-loading/#dom-fontface-status
     Bindings::FontFaceLoadStatus m_status { Bindings::FontFaceLoadStatus::Unloaded };

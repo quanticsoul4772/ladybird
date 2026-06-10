@@ -5,7 +5,7 @@
  */
 
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/XRTestPrototype.h>
+#include <LibWeb/Bindings/XRTest.h>
 #include <LibWeb/Internals/FakeXRDevice.h>
 #include <LibWeb/Internals/XRTest.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
@@ -28,7 +28,7 @@ void XRTest::initialize(JS::Realm& realm)
     Base::initialize(realm);
 }
 
-GC::Ref<WebIDL::Promise> XRTest::simulate_device_connection(FakeXRDeviceInit const&) const
+GC::Ref<WebIDL::Promise> XRTest::simulate_device_connection(Bindings::FakeXRDeviceInit const&) const
 {
     // Simulates connecting a device to the system.
     // Used to instantiate a fake device for use in tests.

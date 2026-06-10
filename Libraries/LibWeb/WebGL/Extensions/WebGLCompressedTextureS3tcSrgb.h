@@ -8,16 +8,15 @@
 
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/Forward.h>
-#include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
-namespace Web::WebGL::Extensions {
+namespace Web::WebGL {
 
 class WebGLCompressedTextureS3tcSrgb : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(WebGLCompressedTextureS3tcSrgb, Bindings::PlatformObject);
     GC_DECLARE_ALLOCATOR(WebGLCompressedTextureS3tcSrgb);
 
 public:
-    static JS::ThrowCompletionOr<GC::Ptr<WebGLCompressedTextureS3tcSrgb>> create(JS::Realm&, GC::Ref<WebGLRenderingContextBase>);
+    static JS::ThrowCompletionOr<GC::Ref<JS::Object>> create(JS::Realm&, GC::Ref<WebGLRenderingContextBase>);
 
 protected:
     void initialize(JS::Realm&) override;

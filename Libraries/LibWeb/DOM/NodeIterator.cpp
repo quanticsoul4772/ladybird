@@ -5,7 +5,7 @@
  */
 
 #include <LibJS/Runtime/ValueInlines.h>
-#include <LibWeb/Bindings/NodeIteratorPrototype.h>
+#include <LibWeb/Bindings/NodeIterator.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Node.h>
 #include <LibWeb/DOM/NodeIterator.h>
@@ -138,12 +138,9 @@ JS::ThrowCompletionOr<GC::Ptr<Node>> NodeIterator::traverse(Direction direction)
 }
 
 // https://dom.spec.whatwg.org/#concept-traversal-filter
-JS::Object* NodeIterator::filter() const
+GC::Ptr<NodeFilter> NodeIterator::filter() const
 {
-    if (!m_filter)
-        return nullptr;
-
-    return m_filter->callback().callback;
+    return m_filter;
 }
 
 // https://dom.spec.whatwg.org/#concept-node-filter

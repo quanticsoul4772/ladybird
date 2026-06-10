@@ -6,12 +6,17 @@
 
 #pragma once
 
+#include <AK/Function.h>
+#include <AK/HashMap.h>
 #include <AK/JsonValue.h>
+#include <AK/RefPtr.h>
 #include <AK/Types.h>
+#include <LibCore/EventLoop.h>
 #include <LibCore/Platform/ProcessStatistics.h>
-#include <LibThreading/Mutex.h>
+#include <LibCore/Timer.h>
 #include <LibWebView/Forward.h>
 #include <LibWebView/Process.h>
+#include <LibWebView/ProcessMonitor.h>
 #include <LibWebView/ProcessType.h>
 
 namespace WebView {
@@ -24,11 +29,13 @@ class WEBVIEW_API ProcessManager {
 
 public:
     ProcessManager();
-    ~ProcessManager();
 
     void add_process(Process&&);
+    void for_each_process(Function<void(Process&)>);
     Optional<Process> remove_process(pid_t);
     Optional<Process&> find_process(pid_t);
+    void cancel_forced_exit(pid_t);
+    void force_exit_after_timeout(pid_t, int timeout_ms);
 
 #if defined(AK_OS_MACH)
     void set_process_mach_port(pid_t, Core::MachPort&&);
@@ -37,13 +44,17 @@ public:
     void update_all_process_statistics();
     JsonValue serialize_json();
 
-    Function<void(Process&&)> on_process_exited;
+    Function<void(Process&)> on_process_added; // test-web
+    Function<void(Process&&, Optional<int> exit_status)> on_process_exited;
 
 private:
+    void verify_event_loop() const;
+
     Core::Platform::ProcessStatistics m_statistics;
     HashMap<pid_t, Process> m_processes;
-    [[maybe_unused]] int m_signal_handle { -1 };
-    Threading::Mutex m_lock;
+    HashMap<pid_t, RefPtr<Core::Timer>> m_forced_exit_timers;
+    ProcessMonitor m_process_monitor;
+    Core::EventLoop* m_creation_event_loop { &Core::EventLoop::current() };
 };
 
 }

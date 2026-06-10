@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018-2025, Andreas Kling <andreas@ladybird.org>
  * Copyright (c) 2020-2023, the SerenityOS developers.
- * Copyright (c) 2021-2024, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2026, Sam Atkins <sam@ladybird.org>
  * Copyright (c) 2021, Tobias Christiansen <tobyase@serenityos.org>
  * Copyright (c) 2022, MacDue <macdue@dueutil.tech>
  * Copyright (c) 2025, Lorenz Ackermann <me@lorenzackermann.xyz>
@@ -12,9 +12,9 @@
 #include <LibTextCodec/Decoder.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/Bindings/PrincipalHostDefined.h>
-#include <LibWeb/CSS/CSSMediaRule.h>
 #include <LibWeb/CSS/CSSRuleList.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
+#include <LibWeb/CSS/Keyword.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/HTML/Window.h>
 
@@ -22,9 +22,9 @@ namespace Web {
 
 GC::Ref<JS::Realm> internal_css_realm()
 {
-    static GC::Root<JS::Realm> realm;
-    static GC::Root<HTML::Window> window;
-    static OwnPtr<JS::ExecutionContext> execution_context;
+    static auto& realm = *new GC::Root<JS::Realm>;
+    static auto& window = *new GC::Root<HTML::Window>;
+    static auto& execution_context = *new OwnPtr<JS::ExecutionContext>;
     if (!realm) {
         execution_context = Bindings::create_a_new_javascript_realm(
             Bindings::main_thread_vm(),
@@ -88,11 +88,11 @@ RefPtr<CSS::StyleValue const> parse_css_type(CSS::Parser::ParsingParams const& c
     return CSS::Parser::Parser::create(context, string).parse_as_type(value_type);
 }
 
-RefPtr<CSS::StyleValue const> parse_css_descriptor(CSS::Parser::ParsingParams const& parsing_params, CSS::AtRuleID at_rule_id, CSS::DescriptorID descriptor_id, StringView string)
+RefPtr<CSS::StyleValue const> parse_css_descriptor(CSS::Parser::ParsingParams const& parsing_params, CSS::AtRuleID at_rule_id, CSS::DescriptorNameAndID const& descriptor_name_and_id, StringView string)
 {
     if (string.is_empty())
         return nullptr;
-    return CSS::Parser::Parser::create(parsing_params, string).parse_as_descriptor_value(at_rule_id, descriptor_id);
+    return CSS::Parser::Parser::create(parsing_params, string).parse_as_descriptor_value(at_rule_id, descriptor_name_and_id);
 }
 
 CSS::CSSRule* parse_css_rule(CSS::Parser::ParsingParams const& context, StringView css_text)
@@ -105,7 +105,7 @@ Optional<CSS::SelectorList> parse_selector(CSS::Parser::ParsingParams const& con
     return CSS::Parser::Parser::create(context, selector_text).parse_as_selector();
 }
 
-Optional<CSS::SelectorList> parse_selector_for_nested_style_rule(CSS::Parser::ParsingParams const& context, StringView selector_text)
+Optional<CSS::SelectorList> parse_selector_for_nested_style_rule(CSS::Parser::ParsingParams const& context, StringView selector_text, CSS::StyleNestingParent parent_is_scope_rule)
 {
     auto parser = CSS::Parser::Parser::create(context, selector_text);
 
@@ -113,7 +113,7 @@ Optional<CSS::SelectorList> parse_selector_for_nested_style_rule(CSS::Parser::Pa
     if (!maybe_selectors.has_value())
         return {};
 
-    return adapt_nested_relative_selector_list(*maybe_selectors);
+    return adapt_nested_relative_selector_list(*maybe_selectors, parent_is_scope_rule);
 }
 
 Optional<CSS::PageSelectorList> parse_page_selector_list(CSS::Parser::ParsingParams const& params, StringView selector_text)
@@ -149,7 +149,7 @@ Vector<CSS::Parser::ComponentValue> parse_component_values_list(CSS::Parser::Par
 }
 
 // https://drafts.csswg.org/css-syntax/#css-decode-bytes
-ErrorOr<String> css_decode_bytes(Optional<StringView> const& environment_encoding, Optional<String> mime_type_charset, ByteBuffer const& encoded_string)
+ErrorOr<String> css_decode_bytes(Optional<StringView> const& environment_encoding, Optional<String> mime_type_charset, ReadonlyBytes encoded_string)
 {
     // https://drafts.csswg.org/css-syntax/#determine-the-fallback-encoding
     auto determine_the_fallback_encoding = [&mime_type_charset, &environment_encoding, &encoded_string]() -> StringView {
@@ -171,7 +171,7 @@ ErrorOr<String> css_decode_bytes(Optional<StringView> const& environment_encodin
             if (scan_length < pattern_start.length())
                 return {};
 
-            StringView buffer_view = encoded_string.bytes().slice(0, scan_length);
+            StringView buffer_view = encoded_string.slice(0, scan_length);
             if (!buffer_view.starts_with(pattern_start))
                 return {};
 
@@ -217,6 +217,28 @@ ErrorOr<String> css_decode_bytes(Optional<StringView> const& environment_encodin
     }
     // 2. Decode stylesheet’s stream of bytes with fallback encoding fallback, and return the result.
     return TextCodec::convert_input_to_utf8_using_given_decoder_unless_there_is_a_byte_order_mark(*decoder, encoded_string);
+}
+
+// https://drafts.csswg.org/css-values-4/#identifier-value
+bool is_valid_custom_ident(FlyString const& ident, ReadonlySpan<StringView> const& blacklist)
+{
+    // The CSS-wide keywords are not valid <custom-ident>s.
+    if (CSS::is_css_wide_keyword(ident))
+        return false;
+
+    // The default keyword is reserved and is also not a valid <custom-ident>.
+    if (ident.equals_ignoring_ascii_case("default"sv))
+        return false;
+
+    // Specifications using <custom-ident> must specify clearly what other keywords are excluded from <custom-ident>,
+    // if any—for example by saying that any pre-defined keywords in that property’s value definition are excluded.
+    // Excluded keywords are excluded in all ASCII case permutations.
+    for (auto& value : blacklist) {
+        if (ident.equals_ignoring_ascii_case(value))
+            return false;
+    }
+
+    return true;
 }
 
 }

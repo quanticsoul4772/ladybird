@@ -7,6 +7,7 @@
 #include <AK/AllOf.h>
 #include <AK/GenericLexer.h>
 #include <AK/HashTable.h>
+#include <AK/NeverDestroyed.h>
 #include <AK/QuickSort.h>
 #include <AK/StringBuilder.h>
 #include <LibUnicode/ICU.h>
@@ -478,15 +479,7 @@ Optional<LocaleID> parse_unicode_locale_id(StringView locale)
 
 String canonicalize_unicode_locale_id(StringView locale)
 {
-    UErrorCode status = U_ZERO_ERROR;
-
-    auto locale_data = LocaleData::for_locale(locale);
-    VERIFY(locale_data.has_value());
-
-    locale_data->locale().canonicalize(status);
-    verify_icu_success(status);
-
-    return locale_data->to_string();
+    return LocaleData::canonicalize(locale);
 }
 
 String canonicalize_unicode_extension_values(StringView key, StringView value)
@@ -497,9 +490,6 @@ String canonicalize_unicode_extension_values(StringView key, StringView value)
     builder.setUnicodeLocaleKeyword(icu_string_piece(key), icu_string_piece(value));
 
     auto locale = builder.build(status);
-    verify_icu_success(status);
-
-    locale.canonicalize(status);
     verify_icu_success(status);
 
     auto result = locale.getUnicodeKeywordValue<StringBuilder>(icu_string_piece(key), status);
@@ -541,7 +531,7 @@ static void define_locales_without_scripts(HashTable<String>& locales)
 
 bool is_locale_available(StringView locale)
 {
-    static auto available_locales = []() {
+    static NeverDestroyed<HashTable<String>> available_locales { []() {
         i32 count = 0;
         auto const* locale_list = icu::Locale::getAvailableLocales(count);
 
@@ -560,9 +550,9 @@ bool is_locale_available(StringView locale)
 
         define_locales_without_scripts(available_locales);
         return available_locales;
-    }();
+    }() };
 
-    return available_locales.contains(locale);
+    return available_locales->contains(locale);
 }
 
 Style style_from_string(StringView style)

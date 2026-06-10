@@ -7,31 +7,35 @@
 
 #include <AK/Debug.h>
 #include <AK/HashTable.h>
+#include <AK/NumericLimits.h>
 #include <AK/TemporaryChange.h>
+#include <LibGC/ConservativeHashTable.h>
 #include <LibGC/RootHashMap.h>
-#include <LibJS/AST.h>
+#include <LibGC/RootHashTable.h>
+#include <LibJS/Bytecode/AsmInterpreter/AsmInterpreter.h>
 #include <LibJS/Bytecode/BasicBlock.h>
+#include <LibJS/Bytecode/Builtins.h>
+#include <LibJS/Bytecode/Debug.h>
 #include <LibJS/Bytecode/FormatOperand.h>
-#include <LibJS/Bytecode/Generator.h>
 #include <LibJS/Bytecode/Instruction.h>
-#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Bytecode/Label.h>
 #include <LibJS/Bytecode/Op.h>
 #include <LibJS/Bytecode/PropertyAccess.h>
+#include <LibJS/Bytecode/PropertyNameIterator.h>
 #include <LibJS/Export.h>
 #include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Accessor.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/AsyncFromSyncIterator.h>
 #include <LibJS/Runtime/AsyncFromSyncIteratorPrototype.h>
+#include <LibJS/Runtime/AsyncGenerator.h>
 #include <LibJS/Runtime/BigInt.h>
 #include <LibJS/Runtime/ClassConstruction.h>
-#include <LibJS/Runtime/CompletionCell.h>
 #include <LibJS/Runtime/DeclarativeEnvironment.h>
 #include <LibJS/Runtime/ECMAScriptFunctionObject.h>
 #include <LibJS/Runtime/Environment.h>
 #include <LibJS/Runtime/FunctionEnvironment.h>
-#include <LibJS/Runtime/GeneratorResult.h>
+#include <LibJS/Runtime/GeneratorObject.h>
 #include <LibJS/Runtime/GlobalEnvironment.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/Iterator.h>
@@ -42,15 +46,19 @@
 #include <LibJS/Runtime/Realm.h>
 #include <LibJS/Runtime/Reference.h>
 #include <LibJS/Runtime/RegExpObject.h>
+#include <LibJS/Runtime/StringConstructor.h>
 #include <LibJS/Runtime/TypedArray.h>
+#include <LibJS/Runtime/VM.h>
 #include <LibJS/Runtime/Value.h>
 #include <LibJS/Runtime/ValueInlines.h>
 #include <LibJS/SourceTextModule.h>
 #include <math.h>
 
-namespace JS::Bytecode {
+namespace JS {
 
-bool g_dump_bytecode = false;
+using namespace Bytecode;
+
+bool Bytecode::g_dump_bytecode = false;
 
 ALWAYS_INLINE static ThrowCompletionOr<bool> loosely_inequals(VM& vm, Value src1, Value src2)
 {
@@ -88,30 +96,20 @@ ALWAYS_INLINE static ThrowCompletionOr<bool> strict_equals(VM&, Value src1, Valu
     return is_strictly_equal(src1, src2);
 }
 
-Interpreter::Interpreter() = default;
-
-Interpreter::~Interpreter() = default;
-
-ALWAYS_INLINE Value Interpreter::get(Operand op) const
+ALWAYS_INLINE Value VM::do_yield(Value value, Optional<Label> continuation, bool value_is_iterator_result)
 {
-    return m_running_execution_context->registers_and_constants_and_locals_and_arguments()[op.raw()];
-}
-
-ALWAYS_INLINE void Interpreter::set(Operand op, Value value)
-{
-    m_running_execution_context->registers_and_constants_and_locals_and_arguments()[op.raw()] = value;
-}
-
-ALWAYS_INLINE Value Interpreter::do_yield(Value value, Optional<Label> continuation)
-{
-    // FIXME: If we get a pointer, which is not accurately representable as a double
-    //        will cause this to explode
-    auto continuation_value = continuation.has_value() ? Value(continuation->address()) : js_null();
-    return vm().heap().allocate<GeneratorResult>(value, continuation_value, false).ptr();
+    auto& context = running_execution_context();
+    if (continuation.has_value())
+        context.yield_continuation = continuation->address();
+    else
+        context.yield_continuation = ExecutionContext::no_yield_continuation;
+    context.yield_is_await = false;
+    context.yield_value_is_iterator_result = value_is_iterator_result;
+    return value;
 }
 
 // 16.1.6 ScriptEvaluation ( scriptRecord ), https://tc39.es/ecma262/#sec-runtime-semantics-scriptevaluation
-ThrowCompletionOr<Value> Interpreter::run(Script& script_record, GC::Ptr<Environment> lexical_environment_override)
+ThrowCompletionOr<Value> VM::run(Script& script_record, GC::Ptr<Environment> lexical_environment_override)
 {
     auto& vm = this->vm();
 
@@ -126,27 +124,20 @@ ThrowCompletionOr<Value> Interpreter::run(Script& script_record, GC::Ptr<Environ
 
     // 11. Let script be scriptRecord.[[ECMAScriptCode]].
     GC::Ptr<Executable> executable = script_record.cached_executable();
-    if (!executable && result.type() == Completion::Type::Normal) {
-        executable = JS::Bytecode::Generator::generate_from_ast_node(vm, *script_record.parse_node(), {});
-        if (executable) {
-            script_record.cache_executable(*executable);
-            script_record.drop_ast();
-        }
-    }
     if (executable && g_dump_bytecode)
         executable->dump();
 
     u32 registers_and_locals_count = 0;
-    u32 constants_count = 0;
+    ReadonlySpan<Value> constants;
     if (executable) {
         registers_and_locals_count = executable->registers_and_locals_count;
-        constants_count = executable->constants.size();
+        constants = executable->constants;
     }
 
     // 2. Let scriptContext be a new ECMAScript code execution context.
     auto& stack = vm.interpreter_stack();
     auto* stack_mark = stack.top();
-    auto* script_context = stack.allocate(registers_and_locals_count, constants_count, 0);
+    auto* script_context = stack.allocate(registers_and_locals_count, constants, 0);
     if (!script_context) [[unlikely]]
         return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
     ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
@@ -179,7 +170,7 @@ ThrowCompletionOr<Value> Interpreter::run(Script& script_record, GC::Ptr<Environ
     // 13. If result.[[Type]] is normal, then
     if (executable && result.type() == Completion::Type::Normal) {
         // a. Set result to Completion(Evaluation of script).
-        result = run_executable(*script_context, *executable, {}, {});
+        result = run_executable(*script_context, *executable, 0, {});
 
         // b. If result is a normal completion and result.[[Value]] is empty, then
         if (result.type() == Completion::Type::Normal && result.value().is_special_empty_value()) {
@@ -207,14 +198,14 @@ ThrowCompletionOr<Value> Interpreter::run(Script& script_record, GC::Ptr<Environ
     return result.value();
 }
 
-ThrowCompletionOr<Value> Interpreter::run(SourceTextModule& module)
+ThrowCompletionOr<Value> VM::run(SourceTextModule& module)
 {
     // FIXME: This is not a entry point as defined in the spec, but is convenient.
     //        To avoid work we use link_and_eval_module however that can already be
     //        dangerous if the vm loaded other modules.
     auto& vm = this->vm();
 
-    TRY(vm.link_and_eval_module(Badge<Bytecode::Interpreter> {}, module));
+    TRY(vm.link_and_eval_module(module));
 
     vm.run_queued_promise_jobs();
 
@@ -223,7 +214,7 @@ ThrowCompletionOr<Value> Interpreter::run(SourceTextModule& module)
     return js_undefined();
 }
 
-Interpreter::HandleExceptionResponse Interpreter::handle_exception(u32 program_counter, Value exception)
+VM::HandleExceptionResponse VM::handle_exception(u32 program_counter, Value exception)
 {
     for (;;) {
         auto handlers = current_executable().exception_handlers_for_offset(program_counter);
@@ -239,8 +230,6 @@ Interpreter::HandleExceptionResponse Interpreter::handle_exception(u32 program_c
             auto* caller_frame = callee_frame->caller_frame;
             auto caller_pc = callee_frame->caller_return_pc;
 
-            auto& ec_stack = vm().execution_context_stack();
-            ec_stack.resize(ec_stack.size() - 1);
             vm().interpreter_stack().deallocate(callee_frame);
 
             m_running_execution_context = caller_frame;
@@ -259,7 +248,7 @@ Interpreter::HandleExceptionResponse Interpreter::handle_exception(u32 program_c
     }
 }
 
-ExecutionContext* Interpreter::push_inline_frame(
+ExecutionContext* VM::push_inline_frame(
     ECMAScriptFunctionObject& callee_function,
     Executable& callee_executable,
     ReadonlySpan<Operand> arguments,
@@ -273,15 +262,14 @@ ExecutionContext* Interpreter::push_inline_frame(
 
     u32 insn_argument_count = arguments.size();
     size_t registers_and_locals_count = callee_executable.registers_and_locals_count;
-    size_t constants_count = callee_executable.constants.size();
     size_t argument_count = max(insn_argument_count, static_cast<u32>(callee_function.formal_parameter_count()));
 
-    auto* callee_context = stack.allocate(registers_and_locals_count, constants_count, argument_count);
+    auto* callee_context = stack.allocate(registers_and_locals_count, callee_executable.constants, argument_count);
     if (!callee_context) [[unlikely]]
         return nullptr;
 
     // Copy arguments from caller's registers into callee's argument slots.
-    auto* callee_argument_values = callee_context->arguments.data();
+    auto* callee_argument_values = callee_context->arguments_data();
     for (u32 i = 0; i < insn_argument_count; ++i)
         callee_argument_values[i] = get(arguments[i]);
     for (size_t i = insn_argument_count; i < argument_count; ++i)
@@ -290,7 +278,6 @@ ExecutionContext* Interpreter::push_inline_frame(
 
     // Set up caller linkage so Return can restore the caller frame.
     callee_context->caller_frame = m_running_execution_context;
-    callee_context->caller_executable = m_running_execution_context->executable;
     callee_context->caller_dst_raw = dst_raw;
     callee_context->caller_return_pc = return_pc;
     callee_context->caller_is_construct = is_construct;
@@ -301,7 +288,9 @@ ExecutionContext* Interpreter::push_inline_frame(
     callee_context->script_or_module = callee_function.m_script_or_module;
     if (callee_function.function_environment_needed()) {
         auto local_environment = new_function_environment(callee_function, new_target);
-        local_environment->ensure_capacity(callee_function.shared_data().m_function_environment_bindings_count);
+        auto function_environment_bindings_count = callee_function.shared_data().m_function_environment_bindings_count;
+        local_environment->set_environment_shape_cache(callee_function.shared_data().m_function_environment_shape, function_environment_bindings_count);
+        local_environment->ensure_capacity(function_environment_bindings_count);
         callee_context->lexical_environment = local_environment;
         callee_context->variable_environment = local_environment;
     } else {
@@ -310,12 +299,9 @@ ExecutionContext* Interpreter::push_inline_frame(
     }
     callee_context->private_environment = callee_function.m_private_environment;
 
-    // Fast-path push onto execution context stack (avoids Vector::append growth check preventing inlining).
-    auto& ec_stack = vm().execution_context_stack();
-    if (ec_stack.size() < ec_stack.capacity()) [[likely]]
-        ec_stack.unchecked_append(callee_context);
-    else
-        ec_stack.append(callee_context);
+    // Inline JS-to-JS frames stay out of the VM execution context stack and
+    // are tracked through caller_frame instead.
+    m_running_execution_context = callee_context;
 
     // Bind this if the function uses it.
     if (callee_function.uses_this())
@@ -326,26 +312,15 @@ ExecutionContext* Interpreter::push_inline_frame(
     //     and global_declarative_environment, since the caller's realm may differ
     //     in cross-realm calls (e.g. iframe <-> parent).
     callee_context->executable = callee_executable;
-    auto& callee_realm = *callee_context->realm;
-    callee_context->global_object = callee_realm.global_object();
-    callee_context->global_declarative_environment = callee_realm.global_environment().declarative_record();
-    callee_context->identifier_table = callee_executable.identifier_table->identifiers().data();
-    callee_context->property_key_table = callee_executable.property_key_table->property_keys().data();
-
-    // Copy constants (memcpy avoids aliasing issues with the scalar loop).
-    auto* values = callee_context->registers_and_constants_and_locals_and_arguments();
-    if (auto count = callee_executable.constants.size())
-        memcpy(values + callee_executable.registers_and_locals_count,
-            callee_executable.constants.data(),
-            count * sizeof(Value));
 
     // Set this value register.
+    auto* values = callee_context->registers_and_constants_and_locals_and_arguments();
     values[Register::this_value().index()] = callee_context->this_value.value_or(js_special_empty_value());
 
     return callee_context;
 }
 
-NEVER_INLINE bool Interpreter::try_inline_call(Instruction const& insn, u32 current_pc)
+NEVER_INLINE bool VM::try_inline_call(Instruction const& insn, u32 current_pc)
 {
     auto& instruction = static_cast<Op::Call const&>(insn);
     auto callee = get(instruction.callee());
@@ -355,26 +330,25 @@ NEVER_INLINE bool Interpreter::try_inline_call(Instruction const& insn, u32 curr
     if (!is<ECMAScriptFunctionObject>(callee_object))
         return false;
     auto& callee_function = static_cast<ECMAScriptFunctionObject&>(callee_object);
-    if (callee_function.kind() != FunctionKind::Normal
-        || callee_function.is_class_constructor()
-        || !callee_function.bytecode_executable())
+    if (!callee_function.can_inline_call())
         return false;
+
+    auto& callee_executable = callee_function.inline_call_executable();
 
     u32 return_pc = current_pc + instruction.length();
 
     auto* callee_context = push_inline_frame(
-        callee_function, *callee_function.bytecode_executable(),
+        callee_function, callee_executable,
         instruction.arguments(), return_pc, instruction.dst().raw(),
         get(instruction.this_value()), nullptr, false);
 
     if (!callee_context) [[unlikely]]
         return false;
 
-    m_running_execution_context = callee_context;
     return true;
 }
 
-NEVER_INLINE bool Interpreter::try_inline_call_construct(Instruction const& insn, u32 current_pc)
+NEVER_INLINE bool VM::try_inline_call_construct(Instruction const& insn, u32 current_pc)
 {
     auto& instruction = static_cast<Op::CallConstruct const&>(insn);
     auto callee = get(instruction.callee());
@@ -412,16 +386,15 @@ NEVER_INLINE bool Interpreter::try_inline_call_construct(Instruction const& insn
     // InitializeInstanceElements (can throw).
     auto init_result = this_argument->initialize_instance_elements(callee_function);
     if (init_result.is_throw_completion()) [[unlikely]] {
-        vm().pop_execution_context();
+        m_running_execution_context = callee_context->caller_frame;
         vm().interpreter_stack().deallocate(callee_context);
         return false;
     }
 
-    m_running_execution_context = callee_context;
     return true;
 }
 
-NEVER_INLINE void Interpreter::pop_inline_frame(Value return_value)
+NEVER_INLINE void VM::pop_inline_frame(Value return_value)
 {
     auto* callee_frame = m_running_execution_context;
     auto* caller_frame = callee_frame->caller_frame;
@@ -432,8 +405,6 @@ NEVER_INLINE void Interpreter::pop_inline_frame(Value return_value)
     if (callee_frame->caller_is_construct && !return_value.is_object())
         return_value = callee_frame->this_value.value();
 
-    auto& ec_stack = vm().execution_context_stack();
-    ec_stack.resize(ec_stack.size() - 1);
     vm().interpreter_stack().deallocate(callee_frame);
 
     m_running_execution_context = caller_frame;
@@ -443,10 +414,31 @@ NEVER_INLINE void Interpreter::pop_inline_frame(Value return_value)
     vm().finish_execution_generation();
 }
 
-void Interpreter::run_bytecode(size_t entry_point)
+NEVER_INLINE void VM::unwind_inline_frame_for_exception()
+{
+    auto* callee_frame = m_running_execution_context;
+    VERIFY(callee_frame);
+    VERIFY(callee_frame->caller_frame);
+
+    auto* caller_frame = callee_frame->caller_frame;
+    vm().interpreter_stack().deallocate(callee_frame);
+    m_running_execution_context = caller_frame;
+}
+
+void VM::run_bytecode(size_t entry_point)
 {
     if (vm().interpreter_stack().is_exhausted() || vm().did_reach_stack_space_limit()) [[unlikely]] {
         reg(Register::exception()) = vm().throw_completion<InternalError>(ErrorType::CallStackSizeExceeded).value();
+        return;
+    }
+
+    static bool const use_cpp_interpreter = []() {
+        auto const* env = getenv("LIBJS_USE_CPP_INTERPRETER");
+        return env && env[0] == '1';
+    }();
+
+    if (!use_cpp_interpreter && AsmInterpreter::is_available()) {
+        AsmInterpreter::run(*this, entry_point);
         return;
     }
 
@@ -497,6 +489,21 @@ void Interpreter::run_bytecode(size_t entry_point)
             auto& instruction = *reinterpret_cast<Op::Mov const*>(&bytecode[program_counter]);
             set(instruction.dst(), get(instruction.src()));
             DISPATCH_NEXT(Mov);
+        }
+
+        handle_Mov2: {
+            auto& instruction = *reinterpret_cast<Op::Mov2 const*>(&bytecode[program_counter]);
+            set(instruction.dst1(), get(instruction.src1()));
+            set(instruction.dst2(), get(instruction.src2()));
+            DISPATCH_NEXT(Mov2);
+        }
+
+        handle_Mov3: {
+            auto& instruction = *reinterpret_cast<Op::Mov3 const*>(&bytecode[program_counter]);
+            set(instruction.dst1(), get(instruction.src1()));
+            set(instruction.dst2(), get(instruction.src2()));
+            set(instruction.dst3(), get(instruction.src3()));
+            DISPATCH_NEXT(Mov3);
         }
 
         handle_End: {
@@ -641,7 +648,10 @@ void Interpreter::run_bytecode(size_t entry_point)
             DISPATCH_NEXT(Call);
         }
 
-            HANDLE_INSTRUCTION(CallBuiltin);
+#define HANDLE_CALL_BUILTIN_INSTRUCTION(name, ...) \
+    HANDLE_INSTRUCTION(CallBuiltin##name);
+            JS_ENUMERATE_BUILTINS(HANDLE_CALL_BUILTIN_INSTRUCTION)
+#undef HANDLE_CALL_BUILTIN_INSTRUCTION
 
         handle_CallConstruct: {
             auto& instruction = *reinterpret_cast<Op::CallConstruct const*>(&bytecode[program_counter]);
@@ -685,6 +695,7 @@ void Interpreter::run_bytecode(size_t entry_point)
             HANDLE_INSTRUCTION(GetByValue);
             HANDLE_INSTRUCTION(GetByValueWithThis);
             HANDLE_INSTRUCTION(GetCalleeAndThisFromEnvironment);
+            HANDLE_INSTRUCTION(DynamicGetCalleeAndThisFromEnvironment);
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(GetCompletionFields);
             HANDLE_INSTRUCTION(GetGlobal);
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(GetImportMeta);
@@ -694,11 +705,14 @@ void Interpreter::run_bytecode(size_t entry_point)
             HANDLE_INSTRUCTION(GetLengthWithThis);
             HANDLE_INSTRUCTION(GetMethod);
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(GetNewTarget);
+            HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(GetSuperConstructor);
             HANDLE_INSTRUCTION(GetObjectPropertyIterator);
             HANDLE_INSTRUCTION(GetPrivateById);
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(GetTemplateObject);
             HANDLE_INSTRUCTION(GetBinding);
+            HANDLE_INSTRUCTION(DynamicGetBinding);
             HANDLE_INSTRUCTION(GetInitializedBinding);
+            HANDLE_INSTRUCTION(DynamicGetInitializedBinding);
             HANDLE_INSTRUCTION(GreaterThan);
             HANDLE_INSTRUCTION(GreaterThanEquals);
             HANDLE_INSTRUCTION(HasPrivateId);
@@ -706,13 +720,16 @@ void Interpreter::run_bytecode(size_t entry_point)
             HANDLE_INSTRUCTION(In);
             HANDLE_INSTRUCTION(Increment);
             HANDLE_INSTRUCTION(InitializeLexicalBinding);
+            HANDLE_INSTRUCTION(DynamicInitializeLexicalBinding);
             HANDLE_INSTRUCTION(InitializeVariableBinding);
+            HANDLE_INSTRUCTION(DynamicInitializeVariableBinding);
             HANDLE_INSTRUCTION(InstanceOf);
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(IsCallable);
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(IsConstructor);
             HANDLE_INSTRUCTION(IteratorClose);
             HANDLE_INSTRUCTION(IteratorNext);
             HANDLE_INSTRUCTION(IteratorNextUnpack);
+            HANDLE_INSTRUCTION(ObjectPropertyIteratorNext);
             HANDLE_INSTRUCTION(IteratorToArray);
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(LeavePrivateEnvironment);
             HANDLE_INSTRUCTION(LeftShift);
@@ -745,14 +762,19 @@ void Interpreter::run_bytecode(size_t entry_point)
 
             HANDLE_INSTRUCTION(PutBySpread);
             HANDLE_INSTRUCTION(PutPrivateById);
+            HANDLE_INSTRUCTION(ResolveBinding);
             HANDLE_INSTRUCTION(ResolveSuperBase);
             HANDLE_INSTRUCTION(ResolveThisBinding);
             HANDLE_INSTRUCTION(RightShift);
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(SetCompletionType);
+            HANDLE_INSTRUCTION(SetFunctionName);
             HANDLE_INSTRUCTION(SetGlobal);
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(SetLexicalEnvironment);
             HANDLE_INSTRUCTION(SetLexicalBinding);
+            HANDLE_INSTRUCTION(SetResolvedBinding);
+            HANDLE_INSTRUCTION(DynamicSetLexicalBinding);
             HANDLE_INSTRUCTION(SetVariableBinding);
+            HANDLE_INSTRUCTION(DynamicSetVariableBinding);
             HANDLE_INSTRUCTION(StrictlyEquals);
             HANDLE_INSTRUCTION(StrictlyInequals);
             HANDLE_INSTRUCTION(Sub);
@@ -766,6 +788,7 @@ void Interpreter::run_bytecode(size_t entry_point)
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(ToBoolean);
             HANDLE_INSTRUCTION_WITHOUT_EXCEPTION_CHECK(Typeof);
             HANDLE_INSTRUCTION(TypeofBinding);
+            HANDLE_INSTRUCTION(DynamicTypeofBinding);
             HANDLE_INSTRUCTION(UnaryMinus);
             HANDLE_INSTRUCTION(UnaryPlus);
             HANDLE_INSTRUCTION(UnsignedRightShift);
@@ -803,32 +826,43 @@ void Interpreter::run_bytecode(size_t entry_point)
             instruction.execute_impl(*this);
             return;
         }
+
+        handle_YieldIteratorResult: {
+            auto& instruction = *reinterpret_cast<Op::YieldIteratorResult const*>(&bytecode[program_counter]);
+            instruction.execute_impl(*this);
+            return;
+        }
         }
     }
 }
 
-Utf16FlyString const& Interpreter::get_identifier(IdentifierTableIndex index) const
+Utf16FlyString const& VM::get_identifier(IdentifierTableIndex index) const
 {
-    return m_running_execution_context->identifier_table[index.value];
+    return m_running_execution_context->executable->get_identifier(index);
 }
 
-PropertyKey const& Interpreter::get_property_key(PropertyKeyTableIndex index) const
+PropertyKey const& VM::get_property_key(PropertyKeyTableIndex index) const
 {
-    return m_running_execution_context->property_key_table[index.value];
+    return m_running_execution_context->executable->get_property_key(index);
 }
 
-ThrowCompletionOr<Value> Interpreter::run_executable(ExecutionContext& context, Executable& executable, Optional<size_t> entry_point)
+DeclarativeEnvironment& VM::global_declarative_environment()
 {
-    dbgln_if(JS_BYTECODE_DEBUG, "Bytecode::Interpreter will run unit {}", &executable);
+    return realm().global_declarative_environment();
+}
 
-    // NOTE: This is how we "push" a new execution context onto the interpreter stack.
+ThrowCompletionOr<Value> VM::run_executable(ExecutionContext& context, Executable& executable, u32 entry_point)
+{
+    dbgln_if(JS_BYTECODE_DEBUG, "VM will run bytecode unit {}", &executable);
+
+    auto const is_outermost_bytecode_execution = m_run_executable_depth == 0;
+    TemporaryChange restore_run_executable_depth { m_run_executable_depth, m_run_executable_depth + 1 };
+
+    // NOTE: This is how we "push" a new execution context onto the VM's
+    //       execution context stack.
     TemporaryChange restore_running_execution_context { m_running_execution_context, &context };
 
     context.executable = executable;
-    context.global_object = realm().global_object();
-    context.global_declarative_environment = realm().global_environment().declarative_record();
-    context.identifier_table = executable.identifier_table->identifiers().data();
-    context.property_key_table = executable.property_key_table->property_keys().data();
 
     VERIFY(executable.registers_and_locals_count + executable.constants.size() == executable.registers_and_locals_and_constants_count);
     VERIFY(executable.registers_and_locals_and_constants_count <= context.registers_and_constants_and_locals_and_arguments_span().size());
@@ -840,18 +874,12 @@ ThrowCompletionOr<Value> Interpreter::run_executable(ExecutionContext& context, 
     if (reg(Register::this_value()).is_special_empty_value())
         reg(Register::this_value()) = context.this_value.value_or(js_special_empty_value());
 
-    // NB: Layout is [registers | locals | constants | arguments], so constants start after registers+locals.
-    auto* values = context.registers_and_constants_and_locals_and_arguments();
-    if (auto count = executable.constants.size())
-        memcpy(values + executable.registers_and_locals_count,
-            executable.constants.data(),
-            count * sizeof(Value));
+    run_bytecode(entry_point);
 
-    run_bytecode(entry_point.value_or(0));
-
-    dbgln_if(JS_BYTECODE_DEBUG, "Bytecode::Interpreter did run unit {}", context.executable);
+    dbgln_if(JS_BYTECODE_DEBUG, "VM did run bytecode unit {}", context.executable);
 
     if constexpr (JS_BYTECODE_DEBUG) {
+        auto* values = context.registers_and_constants_and_locals_and_arguments();
         for (size_t i = 0; i < executable.number_of_registers; ++i) {
             String value_string;
             if (values[i].is_special_empty_value())
@@ -862,44 +890,21 @@ ThrowCompletionOr<Value> Interpreter::run_executable(ExecutionContext& context, 
         }
     }
 
-    vm().run_queued_promise_jobs();
+    if (is_outermost_bytecode_execution && !vm().is_executing_module())
+        vm().run_queued_promise_jobs();
     vm().finish_execution_generation();
 
     auto exception = reg(Register::exception());
     if (!exception.is_special_empty_value()) [[unlikely]]
-        return throw_completion(exception);
+        return JS::throw_completion(exception);
 
     return reg(Register::return_value());
 }
 
-void Interpreter::catch_exception(Operand dst)
+void VM::catch_exception(Operand dst)
 {
     set(dst, reg(Register::exception()));
     reg(Register::exception()) = js_special_empty_value();
-}
-
-GC::Ref<Bytecode::Executable> compile(VM& vm, ASTNode const& node, FunctionKind kind, Utf16FlyString const& name)
-{
-    auto bytecode_executable = Bytecode::Generator::generate_from_ast_node(vm, node, kind);
-    bytecode_executable->name = name;
-
-    if (Bytecode::g_dump_bytecode)
-        bytecode_executable->dump();
-
-    return bytecode_executable;
-}
-
-GC::Ref<Bytecode::Executable> compile(VM& vm, GC::Ref<SharedFunctionInstanceData const> shared_function_instance_data, BuiltinAbstractOperationsEnabled builtin_abstract_operations_enabled)
-{
-    auto const& name = shared_function_instance_data->m_name;
-
-    auto bytecode_executable = Bytecode::Generator::generate_from_function(vm, shared_function_instance_data, builtin_abstract_operations_enabled);
-    bytecode_executable->name = name;
-
-    if (Bytecode::g_dump_bytecode)
-        bytecode_executable->dump();
-
-    return bytecode_executable;
 }
 
 // NOTE: This function assumes that the index is valid within the TypedArray,
@@ -916,7 +921,7 @@ inline Value fast_typed_array_get_element(TypedArrayBase& typed_array, u32 index
     }
 
     auto const& array_buffer = *typed_array.viewed_array_buffer();
-    auto const* slot = reinterpret_cast<T const*>(array_buffer.buffer().offset_pointer(offset_into_array_buffer.value()));
+    auto const* slot = reinterpret_cast<T const*>(array_buffer.span().offset_pointer(offset_into_array_buffer.value()));
     return Value { *slot };
 }
 
@@ -934,7 +939,7 @@ inline void fast_typed_array_set_element(TypedArrayBase& typed_array, u32 index,
     }
 
     auto& array_buffer = *typed_array.viewed_array_buffer();
-    auto* slot = reinterpret_cast<T*>(array_buffer.buffer().offset_pointer(offset_into_array_buffer.value()));
+    auto* slot = reinterpret_cast<T*>(array_buffer.span().offset_pointer(offset_into_array_buffer.value()));
     *slot = value;
 }
 
@@ -981,17 +986,10 @@ inline ThrowCompletionOr<Value> get_by_value(VM& vm, Optional<IdentifierTableInd
         auto& object = base_value.as_object();
         auto index = static_cast<u32>(property_key_value.as_i32());
 
-        auto const* object_storage = object.indexed_properties().storage();
-
         // For "non-typed arrays":
         if (!object.may_interfere_with_indexed_property_access()
-            && object_storage) {
-            auto maybe_value = [&] {
-                if (object_storage->is_simple_storage())
-                    return static_cast<SimpleIndexedPropertyStorage const*>(object_storage)->inline_get(index);
-                else
-                    return static_cast<GenericIndexedPropertyStorage const*>(object_storage)->get(index);
-            }();
+            && object.indexed_storage_kind() != IndexedStorageKind::None) {
+            auto maybe_value = object.indexed_get(index);
             if (maybe_value.has_value()) {
                 auto value = maybe_value->value;
                 if (!value.is_accessor())
@@ -1055,22 +1053,20 @@ inline ThrowCompletionOr<Value> get_by_value(VM& vm, Optional<IdentifierTableInd
     return TRY(object->internal_get(property_key, base_value));
 }
 
-inline ThrowCompletionOr<Value> get_global(Interpreter& interpreter, IdentifierTableIndex identifier_index, Strict strict, GlobalVariableCache& cache)
+inline ThrowCompletionOr<Value> get_global(VM& vm, IdentifierTableIndex identifier_index, Strict strict, GlobalVariableCache& cache)
 {
-    auto& vm = interpreter.vm();
-    auto& binding_object = interpreter.global_object();
-    auto& declarative_record = interpreter.global_declarative_environment();
+    auto& binding_object = vm.global_object();
+    auto& declarative_record = vm.global_declarative_environment();
 
     auto& shape = binding_object.shape();
     if (cache.environment_serial_number == declarative_record.environment_serial_number()) {
 
         // OPTIMIZATION: For global var bindings, if the shape of the global object hasn't changed,
         //               we can use the cached property offset.
-        if (&shape == cache.entries[0].shape && (!shape.is_dictionary() || shape.dictionary_generation() == cache.entries[0].shape_dictionary_generation)) {
-            auto value = binding_object.get_direct(cache.entries[0].property_offset);
-            if (value.is_accessor())
-                return TRY(call(vm, value.as_accessor().getter(), &binding_object));
-            return value;
+        auto* entry = cache.first_entry();
+        if (entry && &shape == entry->shape && (!shape.is_dictionary() || shape.dictionary_generation() == entry->shape_dictionary_generation)) {
+            auto value = binding_object.get_direct(entry->property_offset);
+            return TRY(get_cached_property_value(vm, value, &binding_object));
         }
 
         // OPTIMIZATION: For global lexical bindings, if the global declarative environment hasn't changed,
@@ -1086,7 +1082,7 @@ inline ThrowCompletionOr<Value> get_global(Interpreter& interpreter, IdentifierT
 
     cache.environment_serial_number = declarative_record.environment_serial_number();
 
-    auto& identifier = interpreter.get_identifier(identifier_index);
+    auto& identifier = vm.get_identifier(identifier_index);
 
     if (auto* module = vm.running_execution_context().script_or_module.get_pointer<GC::Ref<Module>>()) {
         // NOTE: GetGlobal is used to access variables stored in the module environment and global environment.
@@ -1116,12 +1112,14 @@ inline ThrowCompletionOr<Value> get_global(Interpreter& interpreter, IdentifierT
         CacheableGetPropertyMetadata cacheable_metadata;
         auto value = TRY(binding_object.internal_get(identifier, &binding_object, &cacheable_metadata));
         if (cacheable_metadata.type == CacheableGetPropertyMetadata::Type::GetOwnProperty) {
-            cache.entries[0].shape = shape;
-            cache.entries[0].property_offset = cacheable_metadata.property_offset.value();
+            cache.update(PropertyLookupCache::Entry::Type::GetOwnProperty, [&](auto& entry) {
+                entry.shape = shape;
+                entry.property_offset = cacheable_metadata.property_offset.value();
 
-            if (shape.is_dictionary()) {
-                cache.entries[0].shape_dictionary_generation = shape.dictionary_generation();
-            }
+                if (shape.is_dictionary()) {
+                    entry.shape_dictionary_generation = shape.dictionary_generation();
+                }
+            });
         }
         return value;
     }
@@ -1129,30 +1127,28 @@ inline ThrowCompletionOr<Value> get_global(Interpreter& interpreter, IdentifierT
     return vm.throw_completion<ReferenceError>(ErrorType::UnknownIdentifier, identifier);
 }
 
-static COLD Completion throw_type_error_for_callee(Bytecode::Interpreter& interpreter, Value callee, StringView callee_type, Optional<StringTableIndex> const expression_string)
+static COLD Completion throw_type_error_for_callee(VM& vm, Value callee, StringView callee_type, Optional<StringTableIndex> const expression_string)
 {
-    auto& vm = interpreter.vm();
 
     if (expression_string.has_value())
-        return vm.throw_completion<TypeError>(ErrorType::IsNotAEvaluatedFrom, callee, callee_type, interpreter.current_executable().get_string(*expression_string));
+        return vm.throw_completion<TypeError>(ErrorType::IsNotAEvaluatedFrom, callee, callee_type, vm.current_executable().get_string(*expression_string));
 
     return vm.throw_completion<TypeError>(ErrorType::IsNotA, callee, callee_type);
 }
 
-inline ThrowCompletionOr<void> throw_if_needed_for_call(Interpreter& interpreter, Value callee, Op::CallType call_type, Optional<StringTableIndex> const expression_string)
+inline ThrowCompletionOr<void> throw_if_needed_for_call(VM& vm, Value callee, Op::CallType call_type, Optional<StringTableIndex> const expression_string)
 {
     if ((call_type == Op::CallType::Call || call_type == Op::CallType::DirectEval)
         && !callee.is_function()) [[unlikely]]
-        return throw_type_error_for_callee(interpreter, callee, "function"sv, expression_string);
+        return throw_type_error_for_callee(vm, callee, "function"sv, expression_string);
     if (call_type == Op::CallType::Construct && !callee.is_constructor()) [[unlikely]]
-        return throw_type_error_for_callee(interpreter, callee, "constructor"sv, expression_string);
+        return throw_type_error_for_callee(vm, callee, "constructor"sv, expression_string);
     return {};
 }
 
-inline Value new_function(Interpreter& interpreter, u32 shared_function_data_index, Optional<Operand> const home_object)
+inline Value new_function(VM& vm, u32 shared_function_data_index, Optional<Operand> const home_object)
 {
-    auto& vm = interpreter.vm();
-    auto& shared_data = *interpreter.current_executable().shared_function_data[shared_function_data_index];
+    auto& shared_data = *vm.current_executable().shared_function_data[shared_function_data_index];
     auto& realm = *vm.current_realm();
 
     GC::Ref<Object> prototype = [&]() -> GC::Ref<Object> {
@@ -1176,8 +1172,8 @@ inline Value new_function(Interpreter& interpreter, u32 shared_function_data_ind
         *prototype);
 
     if (home_object.has_value()) {
-        auto home_object_value = interpreter.get(home_object.value());
-        function->set_home_object(&home_object_value.as_object());
+        auto home_object_value = vm.get(home_object.value());
+        function->make_method(home_object_value.as_object());
     }
 
     return function;
@@ -1189,18 +1185,17 @@ inline ThrowCompletionOr<void> put_by_value(VM& vm, Value base, Optional<Utf16Fl
     if (kind == PutKind::Normal
         && base.is_object() && property_key_value.is_non_negative_int32()) {
         auto& object = base.as_object();
-        auto* storage = object.indexed_properties().storage();
         auto index = static_cast<u32>(property_key_value.as_i32());
 
         // For "non-typed arrays":
-        if (storage
-            && storage->is_simple_storage()
-            && !object.may_interfere_with_indexed_property_access()) {
-            auto maybe_value = storage->get(index);
+        if (!object.may_interfere_with_indexed_property_access()
+            && object.indexed_storage_kind() != IndexedStorageKind::None
+            && object.indexed_storage_kind() != IndexedStorageKind::Dictionary) {
+            auto maybe_value = object.indexed_get(index);
             if (maybe_value.has_value()) {
                 auto existing_value = maybe_value->value;
                 if (!existing_value.is_accessor()) {
-                    storage->put(index, value);
+                    object.indexed_put(index, value);
                     return {};
                 }
             }
@@ -1304,38 +1299,81 @@ struct CalleeAndThis {
     Value this_value;
 };
 
-inline ThrowCompletionOr<CalleeAndThis> get_callee_and_this_from_environment(Interpreter& interpreter, Utf16FlyString const& name, Strict strict, EnvironmentCoordinate& cache)
+inline ThrowCompletionOr<CalleeAndThis> get_callee_and_this_from_environment(VM& vm, EnvironmentCoordinate const& cache)
 {
-    auto& vm = interpreter.vm();
+    VERIFY(cache.is_valid());
 
     Value callee = js_undefined();
 
-    if (cache.is_valid()) [[likely]] {
-        auto const* environment = interpreter.running_execution_context().lexical_environment.ptr();
-        for (size_t i = 0; i < cache.hops; ++i) {
-            if (environment->is_permanently_screwed_by_eval()) [[unlikely]]
-                goto slow_path;
-            environment = environment->outer_environment();
-        }
-        if (!environment->is_permanently_screwed_by_eval()) [[likely]] {
-            callee = TRY(static_cast<DeclarativeEnvironment const&>(*environment).get_binding_value_direct(vm, cache.index));
-            auto this_value = js_undefined();
-            if (auto base_object = environment->with_base_object()) [[unlikely]]
-                this_value = base_object;
-            return CalleeAndThis {
-                .callee = callee,
-                .this_value = this_value,
-            };
-        }
-    slow_path:
-        cache = {};
+    auto const* environment = vm.running_execution_context().lexical_environment.ptr();
+    for (size_t i = 0; i < cache.hops; ++i)
+        environment = environment->outer_environment();
+
+    callee = TRY(static_cast<DeclarativeEnvironment const&>(*environment).get_binding_value_direct(vm, cache.index));
+    auto this_value = js_undefined();
+    if (auto base_object = environment->with_base_object()) [[unlikely]]
+        this_value = base_object;
+    return CalleeAndThis {
+        .callee = callee,
+        .this_value = this_value,
+    };
+}
+
+template<typename EnvironmentPointer>
+static EnvironmentPointer get_cacheable_environment(EnvironmentPointer environment, EnvironmentCoordinate const& cache)
+{
+    VERIFY(cache.is_valid());
+
+    for (size_t i = 0; i < cache.hops; ++i) {
+        if (!environment->is_declarative_environment() || environment->is_permanently_screwed_by_eval()) [[unlikely]]
+            return nullptr;
+        environment = environment->outer_environment();
+        if (!environment) [[unlikely]]
+            return nullptr;
+    }
+    if (environment->is_declarative_environment() && !environment->is_permanently_screwed_by_eval()) [[likely]]
+        return environment;
+    return nullptr;
+}
+
+template<typename EnvironmentPointer>
+static EnvironmentPointer get_cached_environment(EnvironmentPointer environment, EnvironmentCoordinate& cache)
+{
+    if (!cache.is_valid()) [[unlikely]]
+        return nullptr;
+
+    if (auto* cached_environment = get_cacheable_environment(environment, cache)) [[likely]]
+        return cached_environment;
+
+    cache = {};
+    return nullptr;
+}
+
+template<typename EnvironmentPointer>
+static void update_environment_coordinate_cache(EnvironmentPointer environment, Reference const& reference, EnvironmentCoordinate& cache)
+{
+    if (!reference.environment_coordinate().has_value())
+        return;
+    auto candidate = reference.environment_coordinate().value();
+    if (get_cacheable_environment(environment, candidate))
+        cache = candidate;
+}
+
+inline ThrowCompletionOr<CalleeAndThis> dynamically_get_callee_and_this_from_environment(VM& vm, Utf16FlyString const& name, Strict strict, EnvironmentCoordinate& cache)
+{
+    auto const* current_environment = vm.running_execution_context().lexical_environment.ptr();
+    if (auto const* environment = get_cached_environment(current_environment, cache)) [[likely]] {
+        auto callee = TRY(static_cast<DeclarativeEnvironment const&>(*environment).get_binding_value_direct(vm, cache.index));
+        return CalleeAndThis {
+            .callee = callee,
+            .this_value = js_undefined(),
+        };
     }
 
     auto reference = TRY(vm.resolve_binding(name, strict));
-    if (reference.environment_coordinate().has_value())
-        cache = reference.environment_coordinate().value();
+    update_environment_coordinate_cache(current_environment, reference, cache);
 
-    callee = TRY(reference.get_value(vm));
+    auto callee = TRY(reference.get_value(vm));
 
     Value this_value;
     if (reference.is_property_reference()) {
@@ -1354,7 +1392,7 @@ inline ThrowCompletionOr<CalleeAndThis> get_callee_and_this_from_environment(Int
 }
 
 // 13.2.7.3 Runtime Semantics: Evaluation, https://tc39.es/ecma262/#sec-regular-expression-literals-runtime-semantics-evaluation
-inline Value new_regexp(VM& vm, Regex<ECMA262> const& regex, Utf16String pattern, Utf16String flags)
+inline Value new_regexp(VM& vm, Utf16String pattern, Utf16String flags)
 {
     // 1. Let pattern be CodePointsToString(BodyText of RegularExpressionLiteral).
     // 2. Let flags be CodePointsToString(FlagText of RegularExpressionLiteral).
@@ -1362,7 +1400,7 @@ inline Value new_regexp(VM& vm, Regex<ECMA262> const& regex, Utf16String pattern
     // 3. Return ! RegExpCreate(pattern, flags).
     auto& realm = *vm.current_realm();
     // NOTE: We bypass RegExpCreate and subsequently RegExpAlloc as an optimization to use the already parsed values.
-    auto regexp_object = RegExpObject::create(realm, regex, move(pattern), move(flags));
+    auto regexp_object = RegExpObject::create(realm, move(pattern), move(flags));
     // RegExpAlloc has these two steps from the 'Legacy RegExp features' proposal.
     regexp_object->set_realm(realm);
     // We don't need to check 'If SameValue(newTarget, thisRealm.[[Intrinsics]].[[%RegExp%]]) is true'
@@ -1453,83 +1491,202 @@ inline ThrowCompletionOr<void> append(VM& vm, Value lhs, Value rhs, bool is_spre
     //                 d. Append nextArg to precedingArgs.
 
     // Note: We know from codegen, that lhs is a plain array with only indexed properties
-    auto& lhs_array = lhs.as_array();
-    auto lhs_size = lhs_array.indexed_properties().array_like_size();
+    auto& lhs_array = lhs.as_array_exotic_object();
+    auto lhs_size = lhs_array.indexed_array_like_size();
 
     if (is_spread) {
         // ...rhs
         size_t i = lhs_size;
         TRY(get_iterator_values(vm, rhs, [&i, &lhs_array](Value iterator_value) -> Optional<Completion> {
-            lhs_array.indexed_properties().put(i, iterator_value, default_attributes);
+            lhs_array.indexed_put(i, iterator_value);
             ++i;
             return {};
         }));
     } else {
-        lhs_array.indexed_properties().put(lhs_size, rhs, default_attributes);
+        lhs_array.indexed_put(lhs_size, rhs);
     }
 
     return {};
 }
 
-class JS_API PropertyNameIterator final
-    : public Object
-    , public BuiltinIterator {
-    JS_OBJECT(PropertyNameIterator, Object);
-    GC_DECLARE_ALLOCATOR(PropertyNameIterator);
-
-public:
-    virtual ~PropertyNameIterator() override = default;
-
-    BuiltinIterator* as_builtin_iterator_if_next_is_not_redefined(Value) override { return this; }
-    ThrowCompletionOr<void> next(VM& vm, bool& done, Value& value) override
-    {
-        while (true) {
-            if (m_iterator == m_properties.end()) {
-                done = true;
-                return {};
-            }
-
-            auto const& entry = *m_iterator;
-            ScopeGuard remove_first = [&] { ++m_iterator; };
-
-            // If the property is deleted, don't include it (invariant no. 2)
-            if (!TRY(m_object->has_property(entry)))
-                continue;
-
-            done = false;
-            value = entry.to_value(vm);
-            return {};
-        }
-    }
-
-private:
-    PropertyNameIterator(JS::Realm& realm, GC::Ref<Object> object, Vector<PropertyKey> properties)
-        : Object(realm, nullptr)
-        , m_object(object)
-        , m_properties(move(properties))
-        , m_iterator(m_properties.begin())
-    {
-    }
-
-    virtual void visit_edges(Visitor& visitor) override
-    {
-        Base::visit_edges(visitor);
-        visitor.visit(m_object);
-        for (auto& key : m_properties)
-            key.visit_edges(visitor);
-        if (!m_iterator.is_end())
-            m_iterator->visit_edges(visitor);
-    }
-
-    GC::Ref<Object> m_object;
-    Vector<PropertyKey> m_properties;
-    decltype(m_properties.begin()) m_iterator;
+struct FastPropertyNameIteratorData {
+    Vector<PropertyKey> properties;
+    PropertyNameIterator::FastPath fast_path { PropertyNameIterator::FastPath::None };
+    u32 indexed_property_count { 0 };
+    bool receiver_has_magical_length_property { false };
+    GC::Ptr<Shape> shape;
+    GC::Ptr<PrototypeChainValidity> prototype_chain_validity;
 };
 
-GC_DEFINE_ALLOCATOR(PropertyNameIterator);
+static bool shape_has_enumerable_string_property(Shape const& shape)
+{
+    bool has_enumerable_string_property = false;
+    shape.for_each_property_in_insertion_order([&](auto const& property_key, auto const& metadata) {
+        if (property_key.is_string() && metadata.attributes.is_enumerable()) {
+            has_enumerable_string_property = true;
+            return IterationDecision::Break;
+        }
+        return IterationDecision::Continue;
+    });
+    return has_enumerable_string_property;
+}
+
+static bool property_name_iterator_fast_path_is_still_eligible(Object& object, PropertyNameIterator::FastPath fast_path, u32 indexed_property_count)
+{
+    Object const* object_to_check = &object;
+    bool is_receiver = true;
+
+    while (object_to_check) {
+        if (!object_to_check->eligible_for_own_property_enumeration_fast_path())
+            return false;
+
+        if (is_receiver) {
+            if (fast_path == PropertyNameIterator::FastPath::PackedIndexed) {
+                if (object_to_check->indexed_storage_kind() != IndexedStorageKind::Packed)
+                    return false;
+                if (object_to_check->indexed_array_like_size() != indexed_property_count)
+                    return false;
+            } else if (object_to_check->indexed_array_like_size() != 0) {
+                return false;
+            }
+        } else if (object_to_check->indexed_array_like_size() != 0) {
+            return false;
+        }
+
+        object_to_check = object_to_check->prototype();
+        is_receiver = false;
+    }
+
+    return true;
+}
+
+static bool object_property_iterator_cache_matches(Object& object, ObjectPropertyIteratorCacheData const& cache)
+{
+    // A cache entry represents the fully flattened key snapshot for one bytecode
+    // site. Reusing it is only valid while the receiver still has the same local
+    // state and the prototype chain validity token says nothing above it changed.
+    if (object.has_magical_length_property() != cache.receiver_has_magical_length_property())
+        return false;
+
+    auto& shape = object.shape();
+    if (&shape != cache.shape())
+        return false;
+
+    if (shape.is_dictionary() && shape.dictionary_generation() != cache.shape_dictionary_generation())
+        return false;
+
+    if (cache.prototype_chain_validity() && !cache.prototype_chain_validity()->is_valid())
+        return false;
+
+    return property_name_iterator_fast_path_is_still_eligible(object, cache.fast_path(), cache.indexed_property_count());
+}
+
+static ThrowCompletionOr<Optional<FastPropertyNameIteratorData>> try_get_fast_property_name_iterator_data(Object& object)
+{
+    auto& vm = object.vm();
+    FastPropertyNameIteratorData result {};
+    result.fast_path = PropertyNameIterator::FastPath::PlainNamed;
+    result.receiver_has_magical_length_property = object.has_magical_length_property();
+    result.shape = &object.shape();
+
+    GC::RootHashTable<GC::Ref<Object>> seen_objects;
+    size_t estimated_properties_count = 0;
+    bool prototype_chain_has_enumerable_named_properties = false;
+    for (auto object_to_check = GC::Ptr { &object }; object_to_check && !seen_objects.contains(*object_to_check); object_to_check = TRY(object_to_check->internal_get_prototype_of())) {
+        seen_objects.set(*object_to_check);
+        if (!object_to_check->eligible_for_own_property_enumeration_fast_path())
+            return Optional<FastPropertyNameIteratorData> {};
+        if (&object == object_to_check.ptr()) {
+            if (object_to_check->indexed_array_like_size() != 0) {
+                if (object_to_check->indexed_storage_kind() != IndexedStorageKind::Packed)
+                    return Optional<FastPropertyNameIteratorData> {};
+                result.fast_path = PropertyNameIterator::FastPath::PackedIndexed;
+                result.indexed_property_count = object_to_check->indexed_array_like_size();
+            } else {
+                result.fast_path = PropertyNameIterator::FastPath::PlainNamed;
+            }
+        } else if (object_to_check->indexed_array_like_size() != 0) {
+            // The fast path only knows how to synthesize a packed indexed prefix
+            // for the receiver itself. As soon as indexed properties appear in
+            // the prototype chain, we fall back to the generic enumeration path.
+            return Optional<FastPropertyNameIteratorData> {};
+        } else if (!prototype_chain_has_enumerable_named_properties) {
+            prototype_chain_has_enumerable_named_properties = shape_has_enumerable_string_property(object_to_check->shape());
+        }
+        estimated_properties_count += object_to_check->shape().property_count();
+    }
+    seen_objects.clear_with_capacity();
+
+    if (auto* prototype = object.shape().prototype()) {
+        result.prototype_chain_validity = prototype->shape().prototype_chain_validity();
+        if (!result.prototype_chain_validity)
+            return Optional<FastPropertyNameIteratorData> {};
+    }
+
+    if (!prototype_chain_has_enumerable_named_properties) {
+        // Common case: only the receiver contributes enumerable string keys, so
+        // we can copy them straight from the shape without any shadowing work.
+        result.properties.ensure_capacity(object.shape().property_count());
+        object.shape().for_each_property_in_insertion_order([&](auto const& property_key, auto const& metadata) {
+            if (property_key.is_string() && metadata.attributes.is_enumerable())
+                result.properties.append(property_key);
+        });
+        return result;
+    }
+
+    result.properties.ensure_capacity(estimated_properties_count);
+
+    GC::ConservativeHashTable<PropertyKey> seen_non_enumerable_properties;
+    Optional<GC::ConservativeHashTable<PropertyKey>> seen_properties;
+    auto ensure_seen_properties = [&] {
+        if (seen_properties.has_value())
+            return;
+        // Prototype shadowing ignores enumerability, so once we start looking
+        // above the receiver we need an explicit visited set for names we have
+        // already decided to expose from lower objects.
+        seen_properties.emplace();
+        seen_properties->ensure_capacity(result.properties.size());
+        for (auto const& property : result.properties)
+            seen_properties->set(property);
+    };
+
+    bool in_prototype_chain = false;
+    for (auto object_to_check = GC::Ptr { &object }; object_to_check && !seen_objects.contains(*object_to_check); object_to_check = TRY(object_to_check->internal_get_prototype_of())) {
+        seen_objects.set(*object_to_check);
+
+        // Arrays keep a non-enumerable magical `length` property outside the shape
+        // table, but it still shadows enumerable `length` properties higher up the
+        // prototype chain during for-in.
+        if (object_to_check->has_magical_length_property())
+            seen_non_enumerable_properties.set(vm.names.length);
+
+        object_to_check->shape().for_each_property_in_insertion_order([&](auto const& property_key, auto const& metadata) {
+            if (!property_key.is_string())
+                return;
+
+            bool enumerable = metadata.attributes.is_enumerable();
+            if (!enumerable)
+                seen_non_enumerable_properties.set(property_key);
+            if (in_prototype_chain && enumerable) {
+                if (seen_non_enumerable_properties.contains(property_key))
+                    return;
+                ensure_seen_properties();
+                if (seen_properties->contains(property_key))
+                    return;
+            }
+            if (enumerable)
+                result.properties.append(property_key);
+            if (seen_properties.has_value())
+                seen_properties->set(property_key);
+        });
+        in_prototype_chain = true;
+    }
+
+    return result;
+}
 
 // 14.7.5.9 EnumerateObjectProperties ( O ), https://tc39.es/ecma262/#sec-enumerate-object-properties
-inline ThrowCompletionOr<IteratorRecordImpl> get_object_property_iterator(Interpreter& interpreter, Value value)
+inline ThrowCompletionOr<GC::Ref<PropertyNameIterator>> get_object_property_iterator(VM& vm, Value value, ObjectPropertyIteratorCache* cache = nullptr)
 {
     // While the spec does provide an algorithm, it allows us to implement it ourselves so long as we meet the following invariants:
     //    1- Returned property keys do not include keys that are Symbols
@@ -1543,30 +1700,65 @@ inline ThrowCompletionOr<IteratorRecordImpl> get_object_property_iterator(Interp
     //    8- EnumerateObjectProperties must obtain the own property keys of the target object by calling its [[OwnPropertyKeys]] internal method.
     //    9- Property attributes of the target object must be obtained by calling its [[GetOwnProperty]] internal method
 
-    auto& vm = interpreter.vm();
-
     // Invariant 3 effectively allows the implementation to ignore newly added keys, and we do so (similar to other implementations).
     auto object = TRY(value.to_object(vm));
     // Note: While the spec doesn't explicitly require these to be ordered, it says that the values should be retrieved via OwnPropertyKeys,
     //       so we just keep the order consistent anyway.
 
+    if (cache && cache->data) {
+        if (object_property_iterator_cache_matches(*object, *cache->data)) {
+            if (cache->reusable_property_name_iterator) {
+                // We keep one iterator object per bytecode site alive so hot
+                // loops can recycle it without allocating a new cell each time.
+                auto& iterator = static_cast<PropertyNameIterator&>(*cache->reusable_property_name_iterator);
+                cache->reusable_property_name_iterator = nullptr;
+                iterator.reset_with_cache_data(object, *cache->data, cache);
+                return iterator;
+            }
+
+            return PropertyNameIterator::create(vm.realm(), object, *cache->data, cache);
+        }
+    }
+
+    if (auto fast_iterator_data = TRY(try_get_fast_property_name_iterator_data(*object)); fast_iterator_data.has_value()) {
+        VERIFY(fast_iterator_data->shape);
+        auto cache_data = vm.heap().allocate<ObjectPropertyIteratorCacheData>(
+            vm,
+            move(fast_iterator_data->properties),
+            fast_iterator_data->fast_path,
+            fast_iterator_data->indexed_property_count,
+            fast_iterator_data->receiver_has_magical_length_property,
+            *fast_iterator_data->shape,
+            fast_iterator_data->prototype_chain_validity);
+        if (cache)
+            cache->data = cache_data;
+        if (cache && cache->reusable_property_name_iterator) {
+            auto& iterator = static_cast<PropertyNameIterator&>(*cache->reusable_property_name_iterator);
+            cache->reusable_property_name_iterator = nullptr;
+            iterator.reset_with_cache_data(object, cache_data, cache);
+            return iterator;
+        }
+
+        return PropertyNameIterator::create(vm.realm(), object, cache_data, cache);
+    }
+
     size_t estimated_properties_count = 0;
-    HashTable<GC::Ref<Object>> seen_objects;
+    GC::RootHashTable<GC::Ref<Object>> seen_objects;
     for (auto object_to_check = GC::Ptr { object.ptr() }; object_to_check && !seen_objects.contains(*object_to_check); object_to_check = TRY(object_to_check->internal_get_prototype_of())) {
         seen_objects.set(*object_to_check);
         estimated_properties_count += object_to_check->own_properties_count();
     }
     seen_objects.clear_with_capacity();
 
-    Vector<PropertyKey> properties;
+    GC::ConservativeVector<PropertyKey> properties;
     properties.ensure_capacity(estimated_properties_count);
 
-    HashTable<PropertyKey> seen_non_enumerable_properties;
-    Optional<HashTable<PropertyKey>> seen_properties;
+    GC::ConservativeHashTable<PropertyKey> seen_non_enumerable_properties;
+    Optional<GC::ConservativeHashTable<PropertyKey>> seen_properties;
     auto ensure_seen_properties = [&] {
         if (seen_properties.has_value())
             return;
-        seen_properties = HashTable<PropertyKey> {};
+        seen_properties.emplace();
         seen_properties->ensure_capacity(properties.size());
         for (auto const& property : properties)
             seen_properties->set(property);
@@ -1595,8 +1787,7 @@ inline ThrowCompletionOr<IteratorRecordImpl> get_object_property_iterator(Interp
         in_prototype_chain = true;
     }
 
-    auto iterator = interpreter.realm().create<PropertyNameIterator>(interpreter.realm(), object, move(properties));
-    return IteratorRecordImpl { .done = false, .iterator = iterator, .next_method = js_undefined() };
+    return PropertyNameIterator::create(vm.realm(), object, move(properties));
 }
 
 ByteString Instruction::to_byte_string(Bytecode::Executable const& executable) const
@@ -1618,47 +1809,44 @@ ByteString Instruction::to_byte_string(Bytecode::Executable const& executable) c
 
 namespace JS::Bytecode::Op {
 
-#define JS_DEFINE_EXECUTE_FOR_COMMON_BINARY_OP(OpTitleCase, op_snake_case)                      \
-    ThrowCompletionOr<void> OpTitleCase::execute_impl(Bytecode::Interpreter& interpreter) const \
-    {                                                                                           \
-        auto& vm = interpreter.vm();                                                            \
-        auto lhs = interpreter.get(m_lhs);                                                      \
-        auto rhs = interpreter.get(m_rhs);                                                      \
-        interpreter.set(m_dst, Value { TRY(op_snake_case(vm, lhs, rhs)) });                     \
-        return {};                                                                              \
+#define JS_DEFINE_EXECUTE_FOR_COMMON_BINARY_OP(OpTitleCase, op_snake_case) \
+    ThrowCompletionOr<void> OpTitleCase::execute_impl(VM& vm) const        \
+    {                                                                      \
+        auto lhs = vm.get(m_lhs);                                          \
+        auto rhs = vm.get(m_rhs);                                          \
+        vm.set(m_dst, Value { TRY(op_snake_case(vm, lhs, rhs)) });         \
+        return {};                                                         \
     }
 
 JS_ENUMERATE_COMMON_BINARY_OPS_WITHOUT_FAST_PATH(JS_DEFINE_EXECUTE_FOR_COMMON_BINARY_OP)
 
-ThrowCompletionOr<void> Add::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> Add::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
 
     if (lhs.is_number() && rhs.is_number()) [[likely]] {
         if (lhs.is_int32() && rhs.is_int32()) {
             if (!Checked<i32>::addition_would_overflow(lhs.as_i32(), rhs.as_i32())) [[likely]] {
-                interpreter.set(m_dst, Value(lhs.as_i32() + rhs.as_i32()));
+                vm.set(m_dst, Value(lhs.as_i32() + rhs.as_i32()));
                 return {};
             }
             auto result = static_cast<i64>(lhs.as_i32()) + static_cast<i64>(rhs.as_i32());
-            interpreter.set(m_dst, Value(result, Value::CannotFitInInt32::Indeed));
+            vm.set(m_dst, Value(result, Value::CannotFitInInt32::Indeed));
             return {};
         }
-        interpreter.set(m_dst, Value(lhs.as_double() + rhs.as_double()));
+        vm.set(m_dst, Value(lhs.as_double() + rhs.as_double()));
         return {};
     }
 
-    interpreter.set(m_dst, TRY(add(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(add(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> Mul::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> Mul::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
 
     if (lhs.is_number() && rhs.is_number()) [[likely]] {
         if (lhs.is_int32() && rhs.is_int32()) {
@@ -1667,318 +1855,299 @@ ThrowCompletionOr<void> Mul::execute_impl(Bytecode::Interpreter& interpreter) co
                 auto rhs_i32 = rhs.as_i32();
                 auto result = lhs_i32 * rhs_i32;
                 if (result != 0) [[likely]] {
-                    interpreter.set(m_dst, Value(result));
+                    vm.set(m_dst, Value(result));
                     return {};
                 }
                 // NB: When the mathematical result is zero, the sign depends on the operand
                 // signs. We can determine it directly here instead of widening to double.
                 auto is_negative_zero = (lhs_i32 < 0) != (rhs_i32 < 0);
-                interpreter.set(m_dst, is_negative_zero ? Value(-0.0) : Value(0));
+                vm.set(m_dst, is_negative_zero ? Value(-0.0) : Value(0));
                 return {};
             }
             auto result = static_cast<i64>(lhs.as_i32()) * static_cast<i64>(rhs.as_i32());
-            interpreter.set(m_dst, Value(result, Value::CannotFitInInt32::Indeed));
+            vm.set(m_dst, Value(result, Value::CannotFitInInt32::Indeed));
             return {};
         }
-        interpreter.set(m_dst, Value(lhs.as_double() * rhs.as_double()));
+        vm.set(m_dst, Value(lhs.as_double() * rhs.as_double()));
         return {};
     }
 
-    interpreter.set(m_dst, TRY(mul(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(mul(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> Div::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> Div::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
 
     if (lhs.is_number() && rhs.is_number()) [[likely]] {
-        interpreter.set(m_dst, Value(lhs.as_double() / rhs.as_double()));
+        vm.set(m_dst, Value(lhs.as_double() / rhs.as_double()));
         return {};
     }
 
-    interpreter.set(m_dst, TRY(div(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(div(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> Mod::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> Mod::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
 
     if (lhs.is_number() && rhs.is_number()) [[likely]] {
         if (lhs.is_int32() && rhs.is_int32()) {
             auto n = lhs.as_i32();
             auto d = rhs.as_i32();
             if (d == 0) {
-                interpreter.set(m_dst, js_nan());
+                vm.set(m_dst, js_nan());
                 return {};
             }
             if (n == NumericLimits<i32>::min() && d == -1) {
-                interpreter.set(m_dst, Value(-0.0));
+                vm.set(m_dst, Value(-0.0));
                 return {};
             }
             auto result = n % d;
             if (result == 0 && n < 0) {
-                interpreter.set(m_dst, Value(-0.0));
+                vm.set(m_dst, Value(-0.0));
                 return {};
             }
-            interpreter.set(m_dst, Value(result));
+            vm.set(m_dst, Value(result));
             return {};
         }
-        interpreter.set(m_dst, Value(fmod(lhs.as_double(), rhs.as_double())));
+        vm.set(m_dst, Value(fmod(lhs.as_double(), rhs.as_double())));
         return {};
     }
 
-    interpreter.set(m_dst, TRY(mod(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(mod(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> Sub::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> Sub::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
 
     if (lhs.is_number() && rhs.is_number()) [[likely]] {
         if (lhs.is_int32() && rhs.is_int32()) {
             if (!Checked<i32>::subtraction_would_overflow(lhs.as_i32(), rhs.as_i32())) [[likely]] {
-                interpreter.set(m_dst, Value(lhs.as_i32() - rhs.as_i32()));
+                vm.set(m_dst, Value(lhs.as_i32() - rhs.as_i32()));
                 return {};
             }
             auto result = static_cast<i64>(lhs.as_i32()) - static_cast<i64>(rhs.as_i32());
-            interpreter.set(m_dst, Value(result, Value::CannotFitInInt32::Indeed));
+            vm.set(m_dst, Value(result, Value::CannotFitInInt32::Indeed));
             return {};
         }
-        interpreter.set(m_dst, Value(lhs.as_double() - rhs.as_double()));
+        vm.set(m_dst, Value(lhs.as_double() - rhs.as_double()));
         return {};
     }
 
-    interpreter.set(m_dst, TRY(sub(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(sub(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> BitwiseXor::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> BitwiseXor::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
     if (lhs.is_int32() && rhs.is_int32()) {
-        interpreter.set(m_dst, Value(lhs.as_i32() ^ rhs.as_i32()));
+        vm.set(m_dst, Value(lhs.as_i32() ^ rhs.as_i32()));
         return {};
     }
-    interpreter.set(m_dst, TRY(bitwise_xor(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(bitwise_xor(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> BitwiseAnd::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> BitwiseAnd::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
     if (lhs.is_int32() && rhs.is_int32()) {
-        interpreter.set(m_dst, Value(lhs.as_i32() & rhs.as_i32()));
+        vm.set(m_dst, Value(lhs.as_i32() & rhs.as_i32()));
         return {};
     }
-    interpreter.set(m_dst, TRY(bitwise_and(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(bitwise_and(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> ToInt32::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ToInt32::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const value = interpreter.get(m_value);
+    auto const value = vm.get(m_value);
     if (value.is_int32()) [[likely]] {
-        interpreter.set(m_dst, value);
+        vm.set(m_dst, value);
         return {};
     }
-    interpreter.set(m_dst, Value(TRY(value.to_i32(vm))));
+    vm.set(m_dst, Value(TRY(value.to_i32(vm))));
     return {};
 }
 
-ThrowCompletionOr<void> ToString::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ToString::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    interpreter.set(m_dst, Value { TRY(interpreter.get(m_value).to_primitive_string(vm)) });
+    vm.set(m_dst, Value { TRY(vm.get(m_value).to_primitive_string(vm)) });
     return {};
 }
 
-ThrowCompletionOr<void> ToPrimitiveWithStringHint::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ToPrimitiveWithStringHint::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    interpreter.set(m_dst, TRY(interpreter.get(m_value).to_primitive(vm, Value::PreferredType::String)));
+    vm.set(m_dst, TRY(vm.get(m_value).to_primitive(vm, Value::PreferredType::String)));
     return {};
 }
 
-ThrowCompletionOr<void> BitwiseOr::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> BitwiseOr::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
     if (lhs.is_int32() && rhs.is_int32()) {
-        interpreter.set(m_dst, Value(lhs.as_i32() | rhs.as_i32()));
+        vm.set(m_dst, Value(lhs.as_i32() | rhs.as_i32()));
         return {};
     }
-    interpreter.set(m_dst, TRY(bitwise_or(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(bitwise_or(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> UnsignedRightShift::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> UnsignedRightShift::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
     if (lhs.is_int32() && rhs.is_int32()) {
         auto const shift_count = static_cast<u32>(rhs.as_i32()) % 32;
-        interpreter.set(m_dst, Value(static_cast<u32>(lhs.as_i32()) >> shift_count));
+        vm.set(m_dst, Value(static_cast<u32>(lhs.as_i32()) >> shift_count));
         return {};
     }
-    interpreter.set(m_dst, TRY(unsigned_right_shift(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(unsigned_right_shift(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> RightShift::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> RightShift::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
     if (lhs.is_int32() && rhs.is_int32()) {
         auto const shift_count = static_cast<u32>(rhs.as_i32()) % 32;
-        interpreter.set(m_dst, Value(lhs.as_i32() >> shift_count));
+        vm.set(m_dst, Value(lhs.as_i32() >> shift_count));
         return {};
     }
-    interpreter.set(m_dst, TRY(right_shift(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(right_shift(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> LeftShift::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> LeftShift::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
     if (lhs.is_int32() && rhs.is_int32()) {
         auto const shift_count = static_cast<u32>(rhs.as_i32()) % 32;
-        interpreter.set(m_dst, Value(lhs.as_i32() << shift_count));
+        vm.set(m_dst, Value(lhs.as_i32() << shift_count));
         return {};
     }
-    interpreter.set(m_dst, TRY(left_shift(vm, lhs, rhs)));
+    vm.set(m_dst, TRY(left_shift(vm, lhs, rhs)));
     return {};
 }
 
-ThrowCompletionOr<void> LessThan::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> LessThan::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
     if (lhs.is_number() && rhs.is_number()) [[likely]] {
         if (lhs.is_int32() && rhs.is_int32()) {
-            interpreter.set(m_dst, Value(lhs.as_i32() < rhs.as_i32()));
+            vm.set(m_dst, Value(lhs.as_i32() < rhs.as_i32()));
             return {};
         }
-        interpreter.set(m_dst, Value(lhs.as_double() < rhs.as_double()));
+        vm.set(m_dst, Value(lhs.as_double() < rhs.as_double()));
         return {};
     }
-    interpreter.set(m_dst, Value { TRY(less_than(vm, lhs, rhs)) });
+    vm.set(m_dst, Value { TRY(less_than(vm, lhs, rhs)) });
     return {};
 }
 
-ThrowCompletionOr<void> LessThanEquals::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> LessThanEquals::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
     if (lhs.is_number() && rhs.is_number()) [[likely]] {
         if (lhs.is_int32() && rhs.is_int32()) {
-            interpreter.set(m_dst, Value(lhs.as_i32() <= rhs.as_i32()));
+            vm.set(m_dst, Value(lhs.as_i32() <= rhs.as_i32()));
             return {};
         }
-        interpreter.set(m_dst, Value(lhs.as_double() <= rhs.as_double()));
+        vm.set(m_dst, Value(lhs.as_double() <= rhs.as_double()));
         return {};
     }
-    interpreter.set(m_dst, Value { TRY(less_than_equals(vm, lhs, rhs)) });
+    vm.set(m_dst, Value { TRY(less_than_equals(vm, lhs, rhs)) });
     return {};
 }
 
-ThrowCompletionOr<void> GreaterThan::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GreaterThan::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
     if (lhs.is_number() && rhs.is_number()) [[likely]] {
         if (lhs.is_int32() && rhs.is_int32()) {
-            interpreter.set(m_dst, Value(lhs.as_i32() > rhs.as_i32()));
+            vm.set(m_dst, Value(lhs.as_i32() > rhs.as_i32()));
             return {};
         }
-        interpreter.set(m_dst, Value(lhs.as_double() > rhs.as_double()));
+        vm.set(m_dst, Value(lhs.as_double() > rhs.as_double()));
         return {};
     }
-    interpreter.set(m_dst, Value { TRY(greater_than(vm, lhs, rhs)) });
+    vm.set(m_dst, Value { TRY(greater_than(vm, lhs, rhs)) });
     return {};
 }
 
-ThrowCompletionOr<void> GreaterThanEquals::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GreaterThanEquals::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const lhs = interpreter.get(m_lhs);
-    auto const rhs = interpreter.get(m_rhs);
+    auto const lhs = vm.get(m_lhs);
+    auto const rhs = vm.get(m_rhs);
     if (lhs.is_number() && rhs.is_number()) [[likely]] {
         if (lhs.is_int32() && rhs.is_int32()) {
-            interpreter.set(m_dst, Value(lhs.as_i32() >= rhs.as_i32()));
+            vm.set(m_dst, Value(lhs.as_i32() >= rhs.as_i32()));
             return {};
         }
-        interpreter.set(m_dst, Value(lhs.as_double() >= rhs.as_double()));
+        vm.set(m_dst, Value(lhs.as_double() >= rhs.as_double()));
         return {};
     }
-    interpreter.set(m_dst, Value { TRY(greater_than_equals(vm, lhs, rhs)) });
+    vm.set(m_dst, Value { TRY(greater_than_equals(vm, lhs, rhs)) });
     return {};
 }
 
-void Typeof::execute_impl(Interpreter& interpreter) const
+void Typeof::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    interpreter.set(dst(), interpreter.get(src()).typeof_(vm));
+    vm.set(dst(), vm.get(src()).typeof_(vm));
 }
 
-void Not::execute_impl(Interpreter& interpreter) const
+void Not::execute_impl(VM& vm) const
 {
-    interpreter.set(dst(), Value(!interpreter.get(src()).to_boolean()));
+    vm.set(dst(), Value(!vm.get(src()).to_boolean()));
 }
 
-#define JS_DEFINE_COMMON_UNARY_OP(OpTitleCase, op_snake_case)                                   \
-    ThrowCompletionOr<void> OpTitleCase::execute_impl(Bytecode::Interpreter& interpreter) const \
-    {                                                                                           \
-        auto& vm = interpreter.vm();                                                            \
-        interpreter.set(dst(), TRY(op_snake_case(vm, interpreter.get(src()))));                 \
-        return {};                                                                              \
+#define JS_DEFINE_COMMON_UNARY_OP(OpTitleCase, op_snake_case)       \
+    ThrowCompletionOr<void> OpTitleCase::execute_impl(VM& vm) const \
+    {                                                               \
+        vm.set(dst(), TRY(op_snake_case(vm, vm.get(src()))));       \
+        return {};                                                  \
     }
 
 JS_ENUMERATE_COMMON_UNARY_OPS(JS_DEFINE_COMMON_UNARY_OP)
 
-void NewArray::execute_impl(Bytecode::Interpreter& interpreter) const
+void NewArray::execute_impl(VM& vm) const
 {
-    auto array = MUST(Array::create(interpreter.realm(), m_element_count));
+    auto array = MUST(Array::create(vm.realm(), m_element_count));
     for (size_t i = 0; i < m_element_count; i++) {
-        array->indexed_properties().put(i, interpreter.get(m_elements[i]), default_attributes);
+        array->indexed_put(i, vm.get(m_elements[i]));
     }
-    interpreter.set(dst(), array);
+    vm.set(dst(), array);
 }
 
-void NewPrimitiveArray::execute_impl(Bytecode::Interpreter& interpreter) const
+void NewPrimitiveArray::execute_impl(VM& vm) const
 {
-    auto array = MUST(Array::create(interpreter.realm(), m_element_count));
+    auto array = MUST(Array::create(vm.realm(), m_element_count));
     for (size_t i = 0; i < m_element_count; i++)
-        array->indexed_properties().put(i, m_elements[i], default_attributes);
-    interpreter.set(dst(), array);
+        array->indexed_put(i, m_elements[i]);
+    vm.set(dst(), array);
 }
 
 // 13.2.8.4 GetTemplateObject ( templateLiteral ), https://tc39.es/ecma262/#sec-gettemplateobject
-void GetTemplateObject::execute_impl(Bytecode::Interpreter& interpreter) const
+void GetTemplateObject::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto& cache = interpreter.current_executable().template_object_caches[m_cache_index];
+    auto& cache = *vm.current_executable().template_object_caches[m_cache];
 
     // 1. Let realm be the current Realm Record.
     auto& realm = *vm.current_realm();
@@ -1988,7 +2157,7 @@ void GetTemplateObject::execute_impl(Bytecode::Interpreter& interpreter) const
     //    a. If e.[[Site]] is the same Parse Node as templateLiteral, then
     //       i. Return e.[[Array]].
     if (cache.cached_template_object) {
-        interpreter.set(dst(), cache.cached_template_object);
+        vm.set(dst(), cache.cached_template_object);
         return;
     }
 
@@ -2013,16 +2182,16 @@ void GetTemplateObject::execute_impl(Bytecode::Interpreter& interpreter) const
     for (size_t index = 0; index < count; index++) {
         // a. Let prop be ! ToString(𝔽(index)).
         // b. Let cookedValue be cookedStrings[index].
-        auto cooked_value = interpreter.get(m_strings[index]);
+        auto cooked_value = vm.get(m_strings[index]);
 
         // c. Perform ! DefinePropertyOrThrow(template, prop, PropertyDescriptor { [[Value]]: cookedValue, [[Writable]]: false, [[Enumerable]]: true, [[Configurable]]: false }).
-        template_object->indexed_properties().put(index, cooked_value, Attribute::Enumerable);
+        template_object->indexed_put(index, cooked_value, Attribute::Enumerable);
 
         // d. Let rawValue be the String value rawStrings[index].
-        auto raw_value = interpreter.get(m_strings[count + index]);
+        auto raw_value = vm.get(m_strings[count + index]);
 
         // e. Perform ! DefinePropertyOrThrow(rawObj, prop, PropertyDescriptor { [[Value]]: rawValue, [[Writable]]: false, [[Enumerable]]: true, [[Configurable]]: false }).
-        raw_object->indexed_properties().put(index, raw_value, Attribute::Enumerable);
+        raw_object->indexed_put(index, raw_value, Attribute::Enumerable);
 
         // f. Set index to index + 1.
     }
@@ -2040,50 +2209,51 @@ void GetTemplateObject::execute_impl(Bytecode::Interpreter& interpreter) const
     cache.cached_template_object = template_object;
 
     // 17. Return template.
-    interpreter.set(dst(), template_object);
+    vm.set(dst(), template_object);
 }
 
-ThrowCompletionOr<void> NewArrayWithLength::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> NewArrayWithLength::execute_impl(VM& vm) const
 {
-    auto length = static_cast<u64>(interpreter.get(m_array_length).as_double());
-    auto array = TRY(Array::create(interpreter.realm(), length));
-    interpreter.set(m_dst, array);
+    auto length = static_cast<u64>(vm.get(m_array_length).as_double());
+    auto array = TRY(Array::create(vm.realm(), length));
+    vm.set(m_dst, array);
     return {};
 }
 
-void AddPrivateName::execute_impl(Bytecode::Interpreter& interpreter) const
+void AddPrivateName::execute_impl(VM& vm) const
 {
-    auto const& name = interpreter.get_identifier(m_name);
-    interpreter.vm().running_execution_context().private_environment->add_private_name(name);
+    auto const& name = vm.get_identifier(m_name);
+    vm.running_execution_context().private_environment->add_private_name(name);
 }
 
-ThrowCompletionOr<void> ArrayAppend::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ArrayAppend::execute_impl(VM& vm) const
 {
-    return append(interpreter.vm(), interpreter.get(dst()), interpreter.get(src()), m_is_spread);
+    return append(vm, vm.get(dst()), vm.get(src()), m_is_spread);
 }
 
-ThrowCompletionOr<void> ImportCall::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ImportCall::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto specifier = interpreter.get(m_specifier);
-    auto options_value = interpreter.get(m_options);
-    interpreter.set(dst(), TRY(perform_import_call(vm, specifier, options_value)));
+    auto specifier = vm.get(m_specifier);
+    auto options_value = vm.get(m_options);
+    vm.set(dst(), TRY(perform_import_call(vm, specifier, options_value)));
     return {};
 }
 
-ThrowCompletionOr<void> IteratorToArray::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> IteratorToArray::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto& iterator_object = interpreter.get(m_iterator_object).as_object();
-    auto iterator_next_method = interpreter.get(m_iterator_next_method);
-    auto iterator_done_property = interpreter.get(m_iterator_done_property).as_bool();
+    auto& iterator_object = vm.get(m_iterator_object).as_object();
+    auto iterator_next_method = vm.get(m_iterator_next_method);
+    auto iterator_done_property = vm.get(m_iterator_done_property).as_bool();
     IteratorRecordImpl iterator_record { .done = iterator_done_property, .iterator = iterator_object, .next_method = iterator_next_method };
 
     auto array = MUST(Array::create(*vm.current_realm(), 0));
     size_t index = 0;
 
     while (true) {
-        auto value = TRY(iterator_step_value(vm, iterator_record));
+        auto value_or_error = iterator_step_value(vm, iterator_record);
+        if (iterator_record.done)
+            vm.set(m_iterator_done_property, Value(true));
+        auto value = TRY(value_or_error);
         if (!value.has_value())
             break;
 
@@ -2091,40 +2261,39 @@ ThrowCompletionOr<void> IteratorToArray::execute_impl(Bytecode::Interpreter& int
         index++;
     }
 
-    interpreter.set(dst(), array);
+    vm.set(dst(), array);
     return {};
 }
 
-void NewObject::execute_impl(Bytecode::Interpreter& interpreter) const
+void NewObject::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
     auto& realm = *vm.current_realm();
 
-    if (m_cache_index != NumericLimits<u32>::max()) {
-        auto& cache = interpreter.current_executable().object_shape_caches[m_cache_index];
+    if (m_cache != NumericLimits<u32>::max()) {
+        auto& cache = vm.current_executable().object_shape_caches[m_cache];
         auto cached_shape = cache.shape.ptr();
         if (cached_shape) {
-            interpreter.set(dst(), Object::create_with_premade_shape(*cached_shape));
+            vm.set(dst(), Object::create_with_premade_shape(*cached_shape));
             return;
         }
     }
 
-    interpreter.set(dst(), Object::create(realm, realm.intrinsics().object_prototype()));
+    vm.set(dst(), Object::create(realm, realm.intrinsics().object_prototype()));
 }
 
-void NewObjectWithNoPrototype::execute_impl(Bytecode::Interpreter& interpreter) const
+void NewObjectWithNoPrototype::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
     auto& realm = *vm.current_realm();
-    interpreter.set(dst(), Object::create(realm, nullptr));
+    vm.set(dst(), Object::create(realm, nullptr));
 }
 
-void CacheObjectShape::execute_impl(Bytecode::Interpreter& interpreter) const
+void CacheObjectShape::execute_impl(VM& vm) const
 {
-    auto& cache = interpreter.current_executable().object_shape_caches[m_cache_index];
+    auto& cache = vm.current_executable().object_shape_caches[m_cache];
     if (!cache.shape) {
-        auto& object = interpreter.get(m_object).as_object();
-        cache.shape = &object.shape();
+        auto& object = vm.get(m_object).as_object();
+        if (!object.shape().is_dictionary())
+            cache.shape = &object.shape();
     }
 }
 
@@ -2145,11 +2314,11 @@ COLD static void init_object_literal_property_slow(Object& object, PropertyKey c
     }
 }
 
-void InitObjectLiteralProperty::execute_impl(Bytecode::Interpreter& interpreter) const
+void InitObjectLiteralProperty::execute_impl(VM& vm) const
 {
-    auto& object = interpreter.get(m_object).as_object();
-    auto value = interpreter.get(m_src);
-    auto& cache = interpreter.current_executable().object_shape_caches[m_shape_cache_index];
+    auto& object = vm.get(m_object).as_object();
+    auto value = vm.get(m_src);
+    auto& cache = vm.current_executable().object_shape_caches[m_shape_cache_index];
 
     // Fast path: if we have a cached shape and it matches, write directly to the cached offset
     auto cached_shape = cache.shape.ptr();
@@ -2158,59 +2327,54 @@ void InitObjectLiteralProperty::execute_impl(Bytecode::Interpreter& interpreter)
         return;
     }
 
-    auto const& property_key = interpreter.current_executable().get_property_key(m_property);
+    auto const& property_key = vm.current_executable().get_property_key(m_property);
     init_object_literal_property_slow(object, property_key, value, cache, m_property_slot);
 }
 
-void NewRegExp::execute_impl(Bytecode::Interpreter& interpreter) const
+void NewRegExp::execute_impl(VM& vm) const
 {
-    interpreter.set(dst(),
+    vm.set(dst(),
         new_regexp(
-            interpreter.vm(),
-            interpreter.current_executable().regex_table->get(m_regex_index),
-            interpreter.current_executable().get_string(m_source_index),
-            interpreter.current_executable().get_string(m_flags_index)));
+            vm,
+            vm.current_executable().get_string(m_source_index),
+            vm.current_executable().get_string(m_flags_index)));
 }
 
-COLD void NewReferenceError::execute_impl(Interpreter& interpreter) const
+COLD void NewReferenceError::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
     auto& realm = *vm.current_realm();
-    interpreter.set(dst(), ReferenceError::create(realm, interpreter.current_executable().get_string(m_error_string)));
+    vm.set(dst(), ReferenceError::create(realm, vm.current_executable().get_string(m_error_string)));
 }
 
-COLD void NewTypeError::execute_impl(Bytecode::Interpreter& interpreter) const
+COLD void NewTypeError::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
     auto& realm = *vm.current_realm();
-    interpreter.set(dst(), TypeError::create(realm, interpreter.current_executable().get_string(m_error_string)));
+    vm.set(dst(), TypeError::create(realm, vm.current_executable().get_string(m_error_string)));
 }
 
-ThrowCompletionOr<void> CopyObjectExcludingProperties::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> CopyObjectExcludingProperties::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
     auto& realm = *vm.current_realm();
 
-    auto from_object = interpreter.get(m_from_object);
+    auto from_object = vm.get(m_from_object);
 
     auto to_object = Object::create(realm, realm.intrinsics().object_prototype());
 
-    HashTable<PropertyKey> excluded_names;
+    GC::ConservativeHashTable<PropertyKey> excluded_names;
     for (size_t i = 0; i < m_excluded_names_count; ++i) {
-        excluded_names.set(TRY(interpreter.get(m_excluded_names[i]).to_property_key(vm)));
+        excluded_names.set(TRY(vm.get(m_excluded_names[i]).to_property_key(vm)));
     }
 
     TRY(to_object->copy_data_properties(vm, from_object, excluded_names));
 
-    interpreter.set(dst(), to_object);
+    vm.set(dst(), to_object);
     return {};
 }
 
-ThrowCompletionOr<void> ConcatString::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ConcatString::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto string = TRY(interpreter.get(src()).to_primitive_string(vm));
-    interpreter.set(dst(), PrimitiveString::create(vm, interpreter.get(dst()).as_string(), string));
+    auto string = TRY(vm.get(src()).to_primitive_string(vm));
+    vm.set(dst(), PrimitiveString::create(vm, vm.get(dst()).as_string(), string));
     return {};
 }
 
@@ -2220,87 +2384,114 @@ enum class BindingIsKnownToBeInitialized {
 };
 
 template<BindingIsKnownToBeInitialized binding_is_known_to_be_initialized>
-static ThrowCompletionOr<void> get_binding(Interpreter& interpreter, Operand dst, IdentifierTableIndex identifier, Strict strict, EnvironmentCoordinate& cache)
+static ThrowCompletionOr<void> get_binding(VM& vm, Operand dst, EnvironmentCoordinate const& cache)
 {
-    auto& vm = interpreter.vm();
+    VERIFY(cache.is_valid());
 
-    if (cache.is_valid()) [[likely]] {
-        auto const* environment = interpreter.running_execution_context().lexical_environment.ptr();
-        for (size_t i = 0; i < cache.hops; ++i) {
-            if (environment->is_permanently_screwed_by_eval()) [[unlikely]]
-                goto slow_path;
-            environment = environment->outer_environment();
+    auto const* environment = vm.running_execution_context().lexical_environment.ptr();
+    for (size_t i = 0; i < cache.hops; ++i)
+        environment = environment->outer_environment();
+
+    Value value;
+    if constexpr (binding_is_known_to_be_initialized == BindingIsKnownToBeInitialized::No) {
+        value = TRY(static_cast<DeclarativeEnvironment const&>(*environment).get_binding_value_direct(vm, cache.index));
+    } else {
+        value = static_cast<DeclarativeEnvironment const&>(*environment).get_initialized_binding_value_direct(cache.index);
+    }
+    vm.set(dst, value);
+    return {};
+}
+
+template<BindingIsKnownToBeInitialized binding_is_known_to_be_initialized>
+static ThrowCompletionOr<void> dynamically_get_binding(VM& vm, Operand dst, IdentifierTableIndex identifier, Strict strict, EnvironmentCoordinate& cache)
+{
+    auto const* current_environment = vm.running_execution_context().lexical_environment.ptr();
+    if (auto const* environment = get_cached_environment(current_environment, cache)) [[likely]] {
+        Value value;
+        if constexpr (binding_is_known_to_be_initialized == BindingIsKnownToBeInitialized::No) {
+            value = TRY(static_cast<DeclarativeEnvironment const&>(*environment).get_binding_value_direct(vm, cache.index));
+        } else {
+            value = static_cast<DeclarativeEnvironment const&>(*environment).get_initialized_binding_value_direct(cache.index);
         }
-        if (!environment->is_permanently_screwed_by_eval()) [[likely]] {
-            Value value;
-            if constexpr (binding_is_known_to_be_initialized == BindingIsKnownToBeInitialized::No) {
-                value = TRY(static_cast<DeclarativeEnvironment const&>(*environment).get_binding_value_direct(vm, cache.index));
-            } else {
-                value = static_cast<DeclarativeEnvironment const&>(*environment).get_initialized_binding_value_direct(cache.index);
-            }
-            interpreter.set(dst, value);
-            return {};
-        }
-    slow_path:
-        cache = {};
+        vm.set(dst, value);
+        return {};
     }
 
-    auto& executable = interpreter.current_executable();
+    auto& executable = vm.current_executable();
     auto reference = TRY(vm.resolve_binding(executable.get_identifier(identifier), strict));
-    if (reference.environment_coordinate().has_value())
-        cache = reference.environment_coordinate().value();
+    update_environment_coordinate_cache(current_environment, reference, cache);
 
-    interpreter.set(dst, TRY(reference.get_value(vm)));
+    vm.set(dst, TRY(reference.get_value(vm)));
     return {};
 }
 
-ThrowCompletionOr<void> GetBinding::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GetBinding::execute_impl(VM& vm) const
 {
-    return get_binding<BindingIsKnownToBeInitialized::No>(interpreter, m_dst, m_identifier, strict(), m_cache);
+    return get_binding<BindingIsKnownToBeInitialized::No>(vm, m_dst, m_cache);
 }
 
-ThrowCompletionOr<void> GetInitializedBinding::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GetInitializedBinding::execute_impl(VM& vm) const
 {
-    return get_binding<BindingIsKnownToBeInitialized::Yes>(interpreter, m_dst, m_identifier, strict(), m_cache);
+    return get_binding<BindingIsKnownToBeInitialized::Yes>(vm, m_dst, m_cache);
 }
 
-ThrowCompletionOr<void> GetCalleeAndThisFromEnvironment::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> DynamicGetBinding::execute_impl(VM& vm) const
+{
+    return dynamically_get_binding<BindingIsKnownToBeInitialized::No>(vm, m_dst, m_identifier, strict(), vm.current_executable().environment_coordinate_caches[m_cache]);
+}
+
+ThrowCompletionOr<void> DynamicGetInitializedBinding::execute_impl(VM& vm) const
+{
+    return dynamically_get_binding<BindingIsKnownToBeInitialized::Yes>(vm, m_dst, m_identifier, strict(), vm.current_executable().environment_coordinate_caches[m_cache]);
+}
+
+ThrowCompletionOr<void> GetCalleeAndThisFromEnvironment::execute_impl(VM& vm) const
 {
     auto callee_and_this = TRY(get_callee_and_this_from_environment(
-        interpreter,
-        interpreter.get_identifier(m_identifier),
-        strict(),
+        vm,
         m_cache));
-    interpreter.set(m_callee, callee_and_this.callee);
-    interpreter.set(m_this_value, callee_and_this.this_value);
+    vm.set(m_callee, callee_and_this.callee);
+    vm.set(m_this_value, callee_and_this.this_value);
     return {};
 }
 
-ThrowCompletionOr<void> GetGlobal::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> DynamicGetCalleeAndThisFromEnvironment::execute_impl(VM& vm) const
 {
-    interpreter.set(dst(), TRY(get_global(interpreter, m_identifier, strict(), interpreter.current_executable().global_variable_caches.data()[m_cache_index])));
+    auto callee_and_this = TRY(dynamically_get_callee_and_this_from_environment(
+        vm,
+        vm.get_identifier(m_identifier),
+        strict(),
+        vm.current_executable().environment_coordinate_caches[m_cache]));
+    vm.set(m_callee, callee_and_this.callee);
+    vm.set(m_this_value, callee_and_this.this_value);
     return {};
 }
 
-ThrowCompletionOr<void> SetGlobal::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GetGlobal::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto& binding_object = interpreter.global_object();
-    auto& declarative_record = interpreter.global_declarative_environment();
+    vm.set(dst(), TRY(get_global(vm, m_identifier, strict(), vm.current_executable().global_variable_caches[m_cache])));
+    return {};
+}
 
-    auto& cache = interpreter.current_executable().global_variable_caches.data()[m_cache_index];
+ThrowCompletionOr<void> SetGlobal::execute_impl(VM& vm) const
+{
+    auto& binding_object = vm.global_object();
+    auto& declarative_record = vm.global_declarative_environment();
+
+    auto& cache = vm.current_executable().global_variable_caches[m_cache];
     auto& shape = binding_object.shape();
-    auto src = interpreter.get(m_src);
+    auto src = vm.get(m_src);
 
     if (cache.environment_serial_number == declarative_record.environment_serial_number()) {
         // OPTIMIZATION: For global var bindings, if the shape of the global object hasn't changed,
         //               we can use the cached property offset.
-        if (&shape == cache.entries[0].shape && (!shape.is_dictionary() || shape.dictionary_generation() == cache.entries[0].shape_dictionary_generation)) {
-            auto value = binding_object.get_direct(cache.entries[0].property_offset);
+        auto* entry = cache.first_entry();
+        if (entry && &shape == entry->shape && (!shape.is_dictionary() || shape.dictionary_generation() == entry->shape_dictionary_generation)) {
+            auto value = binding_object.get_direct(entry->property_offset);
             if (value.is_accessor())
                 TRY(call(vm, value.as_accessor().setter(), &binding_object, src));
             else
-                binding_object.put_direct(cache.entries[0].property_offset, src);
+                binding_object.put_direct(entry->property_offset, src);
             return {};
         }
 
@@ -2319,7 +2510,7 @@ ThrowCompletionOr<void> SetGlobal::execute_impl(Bytecode::Interpreter& interpret
 
     cache.environment_serial_number = declarative_record.environment_serial_number();
 
-    auto& identifier = interpreter.get_identifier(m_identifier);
+    auto& identifier = vm.get_identifier(m_identifier);
 
     if (auto* module = vm.running_execution_context().script_or_module.get_pointer<GC::Ref<Module>>()) {
         // NOTE: GetGlobal is used to access variables stored in the module environment and global environment.
@@ -2362,12 +2553,14 @@ ThrowCompletionOr<void> SetGlobal::execute_impl(Bytecode::Interpreter& interpret
             return vm.throw_completion<TypeError>(ErrorType::ObjectSetReturnedFalse);
         }
         if (cacheable_metadata.type == CacheableSetPropertyMetadata::Type::ChangeOwnProperty) {
-            cache.entries[0].shape = shape;
-            cache.entries[0].property_offset = cacheable_metadata.property_offset.value();
+            cache.update(PropertyLookupCache::Entry::Type::ChangeOwnProperty, [&](auto& entry) {
+                entry.shape = shape;
+                entry.property_offset = cacheable_metadata.property_offset.value();
 
-            if (shape.is_dictionary()) {
-                cache.entries[0].shape_dictionary_generation = shape.dictionary_generation();
-            }
+                if (shape.is_dictionary()) {
+                    entry.shape_dictionary_generation = shape.dictionary_generation();
+                }
+            });
         }
         return {};
     }
@@ -2378,129 +2571,139 @@ ThrowCompletionOr<void> SetGlobal::execute_impl(Bytecode::Interpreter& interpret
     return {};
 }
 
-COLD ThrowCompletionOr<void> DeleteVariable::execute_impl(Bytecode::Interpreter& interpreter) const
+COLD ThrowCompletionOr<void> DeleteVariable::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const& string = interpreter.get_identifier(m_identifier);
+    auto const& string = vm.get_identifier(m_identifier);
     auto reference = TRY(vm.resolve_binding(string, strict()));
-    interpreter.set(dst(), Value(TRY(reference.delete_(vm))));
+    vm.set(dst(), Value(TRY(reference.delete_(vm))));
     return {};
 }
 
-void CreateLexicalEnvironment::execute_impl(Bytecode::Interpreter& interpreter) const
+void CreateLexicalEnvironment::execute_impl(VM& vm) const
 {
-    auto& parent = as<Environment>(interpreter.get(m_parent).as_cell());
+    auto& parent = as<Environment>(vm.get(m_parent).as_cell());
     auto environment = new_declarative_environment(parent);
     environment->ensure_capacity(m_capacity);
-    interpreter.set(m_dst, environment);
-    interpreter.running_execution_context().lexical_environment = environment;
+    environment->set_is_catch_environment(m_is_catch_environment);
+    vm.set(m_dst, environment);
+    vm.running_execution_context().lexical_environment = environment;
 }
 
-void CreatePrivateEnvironment::execute_impl(Bytecode::Interpreter& interpreter) const
+void CreatePrivateEnvironment::execute_impl(VM& vm) const
 {
-    auto& running_execution_context = interpreter.vm().running_execution_context();
+    auto& running_execution_context = vm.running_execution_context();
     auto outer_private_environment = running_execution_context.private_environment;
-    running_execution_context.private_environment = new_private_environment(interpreter.vm(), outer_private_environment);
+    running_execution_context.private_environment = new_private_environment(vm, outer_private_environment);
 }
 
-void CreateVariableEnvironment::execute_impl(Bytecode::Interpreter& interpreter) const
+void CreateVariableEnvironment::execute_impl(VM& vm) const
 {
-    auto& running_execution_context = interpreter.running_execution_context();
+    auto& running_execution_context = vm.running_execution_context();
     auto var_environment = new_declarative_environment(*running_execution_context.lexical_environment);
+    if (auto* shared_data = vm.active_shared_function_data(); shared_data && m_capacity == shared_data->m_var_environment_bindings_count)
+        var_environment->set_environment_shape_cache(shared_data->m_var_environment_shape, m_capacity);
     var_environment->ensure_capacity(m_capacity);
     running_execution_context.variable_environment = var_environment;
     running_execution_context.lexical_environment = var_environment;
 }
 
-COLD ThrowCompletionOr<void> EnterObjectEnvironment::execute_impl(Bytecode::Interpreter& interpreter) const
+COLD ThrowCompletionOr<void> EnterObjectEnvironment::execute_impl(VM& vm) const
 {
-    auto object = TRY(interpreter.get(m_object).to_object(interpreter.vm()));
-    auto& old_environment = interpreter.running_execution_context().lexical_environment;
+    auto object = TRY(vm.get(m_object).to_object(vm));
+    auto& old_environment = vm.running_execution_context().lexical_environment;
     auto new_environment = new_object_environment(*object, true, old_environment);
-    interpreter.set(m_dst, new_environment);
-    interpreter.running_execution_context().lexical_environment = new_environment;
+    vm.set(m_dst, new_environment);
+    vm.running_execution_context().lexical_environment = new_environment;
     return {};
 }
 
-COLD void Catch::execute_impl(Bytecode::Interpreter& interpreter) const
+COLD void Catch::execute_impl(VM& vm) const
 {
-    interpreter.catch_exception(dst());
+    vm.catch_exception(dst());
 }
 
-ThrowCompletionOr<void> CreateVariable::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> CreateVariable::execute_impl(VM& vm) const
 {
-    auto const& name = interpreter.get_identifier(m_identifier);
-    return create_variable(interpreter.vm(), name, m_mode, m_is_global, m_is_immutable, m_is_strict);
+    auto const& name = vm.get_identifier(m_identifier);
+    return create_variable(vm, name, m_mode, m_is_global, m_is_immutable, m_is_strict);
 }
 
-void CreateRestParams::execute_impl(Bytecode::Interpreter& interpreter) const
+void CreateRestParams::execute_impl(VM& vm) const
 {
-    auto const arguments = interpreter.running_execution_context().arguments;
-    auto arguments_count = interpreter.running_execution_context().passed_argument_count;
-    auto array = MUST(Array::create(interpreter.realm(), 0));
+    auto const arguments = vm.running_execution_context().arguments_span();
+    auto arguments_count = vm.running_execution_context().passed_argument_count;
+    auto array = MUST(Array::create(vm.realm(), 0));
     for (size_t rest_index = m_rest_index; rest_index < arguments_count; ++rest_index)
-        array->indexed_properties().append(arguments[rest_index]);
-    interpreter.set(m_dst, array);
+        array->indexed_append(arguments[rest_index]);
+    vm.set(m_dst, array);
 }
 
-void CreateArguments::execute_impl(Bytecode::Interpreter& interpreter) const
+void CreateArguments::execute_impl(VM& vm) const
 {
-    auto const& function = interpreter.running_execution_context().function;
-    auto const arguments = interpreter.running_execution_context().arguments;
-    auto const& environment = interpreter.running_execution_context().lexical_environment;
+    auto const& function = vm.running_execution_context().function;
+    auto const arguments = vm.running_execution_context().arguments_span();
+    auto const& environment = vm.running_execution_context().lexical_environment;
 
-    auto passed_arguments = ReadonlySpan<Value> { arguments.data(), interpreter.running_execution_context().passed_argument_count };
+    auto passed_arguments = ReadonlySpan<Value> { arguments.data(), vm.running_execution_context().passed_argument_count };
     Object* arguments_object;
     if (m_kind == ArgumentsKind::Mapped) {
         auto const& ecma_function = static_cast<ECMAScriptFunctionObject const&>(*function);
-        arguments_object = create_mapped_arguments_object(interpreter.vm(), *function, ecma_function.parameter_names_for_mapped_arguments(), passed_arguments, *environment);
+        arguments_object = create_mapped_arguments_object(vm, *function, ecma_function.parameter_names_for_mapped_arguments(), passed_arguments, *environment);
     } else {
-        arguments_object = create_unmapped_arguments_object(interpreter.vm(), passed_arguments);
+        arguments_object = create_unmapped_arguments_object(vm, passed_arguments);
     }
 
     if (m_dst.has_value()) {
-        interpreter.set(*m_dst, arguments_object);
+        vm.set(*m_dst, arguments_object);
         return;
     }
 
     if (m_is_immutable) {
-        MUST(environment->create_immutable_binding(interpreter.vm(), interpreter.vm().names.arguments.as_string(), false));
+        MUST(environment->create_immutable_binding(vm, vm.names.arguments.as_string(), false));
     } else {
-        MUST(environment->create_mutable_binding(interpreter.vm(), interpreter.vm().names.arguments.as_string(), false));
+        MUST(environment->create_mutable_binding(vm, vm.names.arguments.as_string(), false));
     }
-    MUST(environment->initialize_binding(interpreter.vm(), interpreter.vm().names.arguments.as_string(), arguments_object, Environment::InitializeBindingHint::Normal));
+    MUST(environment->initialize_binding(vm, vm.names.arguments.as_string(), arguments_object, Environment::InitializeBindingHint::Normal));
 }
 
 template<EnvironmentMode environment_mode, BindingInitializationMode initialization_mode>
-static ThrowCompletionOr<void> initialize_or_set_binding(Interpreter& interpreter, IdentifierTableIndex identifier_index, Strict strict, Value value, EnvironmentCoordinate& cache)
+static ThrowCompletionOr<void> initialize_or_set_binding(VM& vm, Strict strict, Value value, EnvironmentCoordinate const& cache)
 {
-    auto& vm = interpreter.vm();
+    VERIFY(cache.is_valid());
 
     auto* environment = environment_mode == EnvironmentMode::Lexical
-        ? interpreter.running_execution_context().lexical_environment.ptr()
-        : interpreter.running_execution_context().variable_environment.ptr();
+        ? vm.running_execution_context().lexical_environment.ptr()
+        : vm.running_execution_context().variable_environment.ptr();
 
-    if (cache.is_valid()) [[likely]] {
-        for (size_t i = 0; i < cache.hops; ++i) {
-            if (environment->is_permanently_screwed_by_eval()) [[unlikely]]
-                goto slow_path;
-            environment = environment->outer_environment();
+    for (size_t i = 0; i < cache.hops; ++i)
+        environment = environment->outer_environment();
+
+    if constexpr (initialization_mode == BindingInitializationMode::Initialize) {
+        TRY(static_cast<DeclarativeEnvironment&>(*environment).initialize_binding_direct(vm, cache.index, value, Environment::InitializeBindingHint::Normal));
+    } else {
+        TRY(static_cast<DeclarativeEnvironment&>(*environment).set_mutable_binding_direct(vm, cache.index, value, strict == Strict::Yes));
+    }
+    return {};
+}
+
+template<EnvironmentMode environment_mode, BindingInitializationMode initialization_mode>
+static ThrowCompletionOr<void> dynamically_initialize_or_set_binding(VM& vm, IdentifierTableIndex identifier_index, Strict strict, Value value, EnvironmentCoordinate& cache)
+{
+    auto* environment = environment_mode == EnvironmentMode::Lexical
+        ? vm.running_execution_context().lexical_environment.ptr()
+        : vm.running_execution_context().variable_environment.ptr();
+
+    if (auto* cached_environment = get_cached_environment(environment, cache)) [[likely]] {
+        if constexpr (initialization_mode == BindingInitializationMode::Initialize) {
+            TRY(static_cast<DeclarativeEnvironment&>(*cached_environment).initialize_binding_direct(vm, cache.index, value, Environment::InitializeBindingHint::Normal));
+        } else if (initialization_mode == BindingInitializationMode::Set) {
+            TRY(static_cast<DeclarativeEnvironment&>(*cached_environment).set_mutable_binding_direct(vm, cache.index, value, strict == Strict::Yes));
         }
-        if (!environment->is_permanently_screwed_by_eval()) [[likely]] {
-            if constexpr (initialization_mode == BindingInitializationMode::Initialize) {
-                TRY(static_cast<DeclarativeEnvironment&>(*environment).initialize_binding_direct(vm, cache.index, value, Environment::InitializeBindingHint::Normal));
-            } else {
-                TRY(static_cast<DeclarativeEnvironment&>(*environment).set_mutable_binding_direct(vm, cache.index, value, strict == Strict::Yes));
-            }
-            return {};
-        }
-    slow_path:
-        cache = {};
+        return {};
     }
 
-    auto reference = TRY(vm.resolve_binding(interpreter.get_identifier(identifier_index), strict, environment));
-    if (reference.environment_coordinate().has_value())
-        cache = reference.environment_coordinate().value();
+    auto reference = TRY(vm.resolve_binding(vm.get_identifier(identifier_index), strict, environment));
+    update_environment_coordinate_cache(environment, reference, cache);
     if constexpr (initialization_mode == BindingInitializationMode::Initialize) {
         TRY(reference.initialize_referenced_binding(vm, value));
     } else if (initialization_mode == BindingInitializationMode::Set) {
@@ -2509,93 +2712,120 @@ static ThrowCompletionOr<void> initialize_or_set_binding(Interpreter& interprete
     return {};
 }
 
-ThrowCompletionOr<void> InitializeLexicalBinding::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> InitializeLexicalBinding::execute_impl(VM& vm) const
 {
-    return initialize_or_set_binding<EnvironmentMode::Lexical, BindingInitializationMode::Initialize>(interpreter, m_identifier, strict(), interpreter.get(m_src), m_cache);
+    return initialize_or_set_binding<EnvironmentMode::Lexical, BindingInitializationMode::Initialize>(vm, strict(), vm.get(m_src), m_cache);
 }
 
-ThrowCompletionOr<void> InitializeVariableBinding::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> InitializeVariableBinding::execute_impl(VM& vm) const
 {
-    return initialize_or_set_binding<EnvironmentMode::Var, BindingInitializationMode::Initialize>(interpreter, m_identifier, strict(), interpreter.get(m_src), m_cache);
+    return initialize_or_set_binding<EnvironmentMode::Var, BindingInitializationMode::Initialize>(vm, strict(), vm.get(m_src), m_cache);
 }
 
-ThrowCompletionOr<void> SetLexicalBinding::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> DynamicInitializeLexicalBinding::execute_impl(VM& vm) const
 {
-    return initialize_or_set_binding<EnvironmentMode::Lexical, BindingInitializationMode::Set>(interpreter, m_identifier, strict(), interpreter.get(m_src), m_cache);
+    return dynamically_initialize_or_set_binding<EnvironmentMode::Lexical, BindingInitializationMode::Initialize>(vm, m_identifier, strict(), vm.get(m_src), vm.current_executable().environment_coordinate_caches[m_cache]);
 }
 
-ThrowCompletionOr<void> SetVariableBinding::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> DynamicInitializeVariableBinding::execute_impl(VM& vm) const
 {
-    return initialize_or_set_binding<EnvironmentMode::Var, BindingInitializationMode::Set>(interpreter, m_identifier, strict(), interpreter.get(m_src), m_cache);
+    return dynamically_initialize_or_set_binding<EnvironmentMode::Var, BindingInitializationMode::Initialize>(vm, m_identifier, strict(), vm.get(m_src), vm.current_executable().environment_coordinate_caches[m_cache]);
 }
 
-ThrowCompletionOr<void> GetById::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> SetLexicalBinding::execute_impl(VM& vm) const
 {
-    auto base_value = interpreter.get(base());
-    auto& cache = interpreter.current_executable().property_lookup_caches.data()[m_cache_index];
+    return initialize_or_set_binding<EnvironmentMode::Lexical, BindingInitializationMode::Set>(vm, strict(), vm.get(m_src), m_cache);
+}
 
-    interpreter.set(dst(), TRY(get_by_id<GetByIdMode::Normal>(interpreter.vm(), [&] { return interpreter.get_identifier(m_base_identifier); }, [&] -> PropertyKey const& { return interpreter.get_property_key(m_property); }, base_value, base_value, cache)));
+ThrowCompletionOr<void> SetResolvedBinding::execute_impl(VM& vm) const
+{
+    auto const& identifier = vm.get_identifier(m_identifier);
+    auto environment = vm.get(m_environment);
+    auto reference = environment.is_null()
+        ? Reference { Reference::BaseType::Unresolvable, PropertyKey { identifier }, strict() }
+        : Reference { as<Environment>(environment.as_cell()), identifier, strict() };
+    return reference.put_value(vm, vm.get(m_src));
+}
+
+ThrowCompletionOr<void> SetVariableBinding::execute_impl(VM& vm) const
+{
+    return initialize_or_set_binding<EnvironmentMode::Var, BindingInitializationMode::Set>(vm, strict(), vm.get(m_src), m_cache);
+}
+
+ThrowCompletionOr<void> DynamicSetLexicalBinding::execute_impl(VM& vm) const
+{
+    return dynamically_initialize_or_set_binding<EnvironmentMode::Lexical, BindingInitializationMode::Set>(vm, m_identifier, strict(), vm.get(m_src), vm.current_executable().environment_coordinate_caches[m_cache]);
+}
+
+ThrowCompletionOr<void> DynamicSetVariableBinding::execute_impl(VM& vm) const
+{
+    return dynamically_initialize_or_set_binding<EnvironmentMode::Var, BindingInitializationMode::Set>(vm, m_identifier, strict(), vm.get(m_src), vm.current_executable().environment_coordinate_caches[m_cache]);
+}
+
+ThrowCompletionOr<void> GetById::execute_impl(VM& vm) const
+{
+    auto base_value = vm.get(base());
+    auto& cache = vm.current_executable().property_lookup_caches[m_cache];
+
+    vm.set(dst(), TRY(get_by_id<GetByIdMode::Normal>(vm, [&] { return vm.get_identifier(m_base_identifier); }, [&] -> PropertyKey const& { return vm.get_property_key(m_property); }, base_value, base_value, cache)));
     return {};
 }
 
-ThrowCompletionOr<void> GetByIdWithThis::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GetByIdWithThis::execute_impl(VM& vm) const
 {
-    auto base_value = interpreter.get(m_base);
-    auto this_value = interpreter.get(m_this_value);
-    auto& cache = interpreter.current_executable().property_lookup_caches.data()[m_cache_index];
-    interpreter.set(dst(), TRY(get_by_id<GetByIdMode::Normal>(interpreter.vm(), [] { return Optional<Utf16FlyString const&> {}; }, [&] -> PropertyKey const& { return interpreter.get_property_key(m_property); }, base_value, this_value, cache)));
+    auto base_value = vm.get(m_base);
+    auto this_value = vm.get(m_this_value);
+    auto& cache = vm.current_executable().property_lookup_caches[m_cache];
+    vm.set(dst(), TRY(get_by_id<GetByIdMode::Normal>(vm, [] { return Optional<Utf16FlyString const&> {}; }, [&] -> PropertyKey const& { return vm.get_property_key(m_property); }, base_value, this_value, cache)));
     return {};
 }
 
-ThrowCompletionOr<void> GetLength::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GetLength::execute_impl(VM& vm) const
 {
-    auto base_value = interpreter.get(base());
-    auto& executable = interpreter.current_executable();
-    auto& cache = executable.property_lookup_caches.data()[m_cache_index];
-    interpreter.set(dst(), TRY(get_by_id<GetByIdMode::Length>(interpreter.vm(), [&] { return interpreter.get_identifier(m_base_identifier); }, [&] { return executable.get_property_key(*executable.length_identifier); }, base_value, base_value, cache)));
+    auto base_value = vm.get(base());
+    auto& executable = vm.current_executable();
+    auto& cache = vm.current_executable().property_lookup_caches[m_cache];
+    vm.set(dst(), TRY(get_by_id<GetByIdMode::Length>(vm, [&] { return vm.get_identifier(m_base_identifier); }, [&] { return executable.get_property_key(*executable.length_identifier); }, base_value, base_value, cache)));
     return {};
 }
 
-ThrowCompletionOr<void> GetLengthWithThis::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GetLengthWithThis::execute_impl(VM& vm) const
 {
-    auto base_value = interpreter.get(m_base);
-    auto this_value = interpreter.get(m_this_value);
-    auto& executable = interpreter.current_executable();
-    auto& cache = executable.property_lookup_caches.data()[m_cache_index];
-    interpreter.set(dst(), TRY(get_by_id<GetByIdMode::Length>(interpreter.vm(), [] { return Optional<Utf16FlyString const&> {}; }, [&] -> PropertyKey const& { return executable.get_property_key(*executable.length_identifier); }, base_value, this_value, cache)));
+    auto base_value = vm.get(m_base);
+    auto this_value = vm.get(m_this_value);
+    auto& executable = vm.current_executable();
+    auto& cache = vm.current_executable().property_lookup_caches[m_cache];
+    vm.set(dst(), TRY(get_by_id<GetByIdMode::Length>(vm, [] { return Optional<Utf16FlyString const&> {}; }, [&] -> PropertyKey const& { return executable.get_property_key(*executable.length_identifier); }, base_value, this_value, cache)));
     return {};
 }
 
-ThrowCompletionOr<void> GetPrivateById::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GetPrivateById::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const& name = interpreter.get_identifier(m_property);
-    auto base_value = interpreter.get(m_base);
+    auto const& name = vm.get_identifier(m_property);
+    auto base_value = vm.get(m_base);
     auto private_reference = make_private_reference(vm, base_value, name);
-    interpreter.set(dst(), TRY(private_reference.get_value(vm)));
+    vm.set(dst(), TRY(private_reference.get_value(vm)));
     return {};
 }
 
-ThrowCompletionOr<void> HasPrivateId::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> HasPrivateId::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
 
-    auto base = interpreter.get(m_base);
+    auto base = vm.get(m_base);
     if (!base.is_object()) [[unlikely]]
         return vm.throw_completion<TypeError>(ErrorType::InOperatorWithObject);
 
-    auto private_environment = interpreter.running_execution_context().private_environment;
+    auto private_environment = vm.running_execution_context().private_environment;
     VERIFY(private_environment);
-    auto private_name = private_environment->resolve_private_identifier(interpreter.get_identifier(m_property));
-    interpreter.set(dst(), Value(base.as_object().private_element_find(private_name) != nullptr));
+    auto private_name = private_environment->resolve_private_identifier(vm.get_identifier(m_property));
+    vm.set(dst(), Value(base.as_object().private_element_find(private_name) != nullptr));
     return {};
 }
 
-ThrowCompletionOr<void> PutBySpread::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> PutBySpread::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto value = interpreter.get(m_src);
-    auto base = interpreter.get(m_base);
+    auto value = vm.get(m_src);
+    auto base = vm.get(m_base);
 
     // a. Let baseObj be ? ToObject(V.[[Base]]).
     auto object = TRY(base.to_object(vm));
@@ -2605,70 +2835,81 @@ ThrowCompletionOr<void> PutBySpread::execute_impl(Bytecode::Interpreter& interpr
     return {};
 }
 
-ThrowCompletionOr<void> PutById::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> PutById::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto value = interpreter.get(m_src);
-    auto base = interpreter.get(m_base);
-    auto const& base_identifier = interpreter.get_identifier(m_base_identifier);
-    auto const& property_key = interpreter.get_property_key(m_property);
-    auto& cache = interpreter.current_executable().property_lookup_caches.data()[m_cache_index];
+    auto value = vm.get(m_src);
+    auto base = vm.get(m_base);
+    auto const& base_identifier = vm.get_identifier(m_base_identifier);
+    auto const& property_key = vm.get_property_key(m_property);
+    auto& cache = vm.current_executable().property_lookup_caches[m_cache];
     TRY(put_by_property_key(vm, base, base, value, base_identifier, property_key, m_kind, strict(), &cache));
     return {};
 }
 
-ThrowCompletionOr<void> PutByIdWithThis::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> PutByIdWithThis::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto value = interpreter.get(m_src);
-    auto base = interpreter.get(m_base);
-    auto const& name = interpreter.get_property_key(m_property);
-    auto& cache = interpreter.current_executable().property_lookup_caches.data()[m_cache_index];
-    TRY(put_by_property_key(vm, base, interpreter.get(m_this_value), value, {}, name, m_kind, strict(), &cache));
+    auto value = vm.get(m_src);
+    auto base = vm.get(m_base);
+    auto const& name = vm.get_property_key(m_property);
+    auto& cache = vm.current_executable().property_lookup_caches[m_cache];
+    TRY(put_by_property_key(vm, base, vm.get(m_this_value), value, {}, name, m_kind, strict(), &cache));
     return {};
 }
 
-ThrowCompletionOr<void> PutPrivateById::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> PutPrivateById::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto value = interpreter.get(m_src);
-    auto object = TRY(interpreter.get(m_base).to_object(vm));
-    auto const& name = interpreter.get_identifier(m_property);
+    auto value = vm.get(m_src);
+    auto object = TRY(vm.get(m_base).to_object(vm));
+    auto const& name = vm.get_identifier(m_property);
     auto private_reference = make_private_reference(vm, object, name);
     TRY(private_reference.put_value(vm, value));
     return {};
 }
 
-COLD ThrowCompletionOr<void> DeleteById::execute_impl(Bytecode::Interpreter& interpreter) const
+COLD ThrowCompletionOr<void> DeleteById::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const& property_key = interpreter.get_property_key(m_property);
-    auto reference = Reference { interpreter.get(m_base), property_key, {}, strict() };
-    interpreter.set(dst(), Value(TRY(reference.delete_(vm))));
+    auto const& property_key = vm.get_property_key(m_property);
+    auto reference = Reference { vm.get(m_base), property_key, {}, strict() };
+    vm.set(dst(), Value(TRY(reference.delete_(vm))));
     return {};
 }
 
-ThrowCompletionOr<void> ResolveThisBinding::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ResolveBinding::execute_impl(VM& vm) const
 {
-    auto& cached_this_value = interpreter.reg(Register::this_value());
+    auto const& identifier = vm.get_identifier(m_identifier);
+    auto reference = TRY(vm.resolve_binding(identifier, strict()));
+    if (reference.is_unresolvable()) {
+        vm.set(dst(), js_null());
+        return {};
+    }
+
+    VERIFY(reference.is_environment_reference());
+    vm.set(dst(), &reference.base_environment());
+    return {};
+}
+
+ThrowCompletionOr<void> ResolveThisBinding::execute_impl(VM& vm) const
+{
+    auto& cached_this_value = vm.reg(Register::this_value());
     if (!cached_this_value.is_special_empty_value())
         return {};
     // OPTIMIZATION: Because the value of 'this' cannot be reassigned during a function execution, it's
     //               resolved once and then saved for subsequent use.
-    auto& running_execution_context = interpreter.running_execution_context();
-    if (auto function = running_execution_context.function; function && is<ECMAScriptFunctionObject>(*function) && !static_cast<ECMAScriptFunctionObject&>(*function).allocates_function_environment()) {
-        cached_this_value = running_execution_context.this_value.value();
-    } else {
-        auto& vm = interpreter.vm();
-        cached_this_value = TRY(vm.resolve_this_binding());
+    auto& running_execution_context = vm.running_execution_context();
+    if (auto function = running_execution_context.function; function && is<ECMAScriptFunctionObject>(*function)) {
+        auto& ecmascript_function = static_cast<ECMAScriptFunctionObject&>(*function);
+        if (!ecmascript_function.allocates_function_environment() && !ecmascript_function.this_value_needs_environment_resolution()) {
+            cached_this_value = running_execution_context.this_value.value();
+            return {};
+        }
     }
+    cached_this_value = TRY(vm.resolve_this_binding());
     return {};
 }
 
 // https://tc39.es/ecma262/#sec-makesuperpropertyreference
-ThrowCompletionOr<void> ResolveSuperBase::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ResolveSuperBase::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
 
     // 1. Let env be GetThisEnvironment().
     auto& env = as<FunctionEnvironment>(*get_this_environment(vm));
@@ -2677,79 +2918,41 @@ ThrowCompletionOr<void> ResolveSuperBase::execute_impl(Bytecode::Interpreter& in
     VERIFY(env.has_super_binding());
 
     // 3. Let baseValue be ? env.GetSuperBase().
-    interpreter.set(dst(), TRY(env.get_super_base()));
+    vm.set(dst(), TRY(env.get_super_base()));
 
     return {};
 }
 
-void GetNewTarget::execute_impl(Bytecode::Interpreter& interpreter) const
+void GetNewTarget::execute_impl(VM& vm) const
 {
-    interpreter.set(dst(), interpreter.vm().get_new_target());
+    vm.set(dst(), vm.get_new_target());
 }
 
-void GetImportMeta::execute_impl(Bytecode::Interpreter& interpreter) const
+// 13.3.7.2 GetSuperConstructor ( ), https://tc39.es/ecma262/#sec-getsuperconstructor
+void GetSuperConstructor::execute_impl(VM& vm) const
 {
-    interpreter.set(dst(), interpreter.vm().get_import_meta());
+    auto* super_constructor = get_super_constructor(vm);
+    vm.set(dst(), super_constructor ? Value(super_constructor) : js_null());
 }
 
-void GetLexicalEnvironment::execute_impl(Bytecode::Interpreter& interpreter) const
+void GetImportMeta::execute_impl(VM& vm) const
 {
-    interpreter.set(dst(), interpreter.running_execution_context().lexical_environment);
+    vm.set(dst(), vm.get_import_meta());
 }
 
-void SetLexicalEnvironment::execute_impl(Bytecode::Interpreter& interpreter) const
+void GetLexicalEnvironment::execute_impl(VM& vm) const
 {
-    interpreter.running_execution_context().lexical_environment = &as<Environment>(interpreter.get(m_environment).as_cell());
+    vm.set(dst(), vm.running_execution_context().lexical_environment);
 }
 
-static ThrowCompletionOr<Value> dispatch_builtin_call(Bytecode::Interpreter& interpreter, Bytecode::Builtin builtin, ReadonlySpan<Operand> arguments)
+void SetLexicalEnvironment::execute_impl(VM& vm) const
 {
-    switch (builtin) {
-    case Builtin::MathAbs:
-        return TRY(MathObject::abs_impl(interpreter.vm(), interpreter.get(arguments.data()[0])));
-    case Builtin::MathLog:
-        return TRY(MathObject::log_impl(interpreter.vm(), interpreter.get(arguments.data()[0])));
-    case Builtin::MathPow:
-        return TRY(MathObject::pow_impl(interpreter.vm(), interpreter.get(arguments.data()[0]), interpreter.get(arguments.data()[1])));
-    case Builtin::MathExp:
-        return TRY(MathObject::exp_impl(interpreter.vm(), interpreter.get(arguments.data()[0])));
-    case Builtin::MathCeil:
-        return TRY(MathObject::ceil_impl(interpreter.vm(), interpreter.get(arguments.data()[0])));
-    case Builtin::MathFloor:
-        return TRY(MathObject::floor_impl(interpreter.vm(), interpreter.get(arguments.data()[0])));
-    case Builtin::MathImul:
-        return TRY(MathObject::imul_impl(interpreter.vm(), interpreter.get(arguments.data()[0]), interpreter.get(arguments.data()[1])));
-    case Builtin::MathRandom:
-        return MathObject::random_impl();
-    case Builtin::MathRound:
-        return TRY(MathObject::round_impl(interpreter.vm(), interpreter.get(arguments.data()[0])));
-    case Builtin::MathSqrt:
-        return TRY(MathObject::sqrt_impl(interpreter.vm(), interpreter.get(arguments.data()[0])));
-    case Builtin::MathSin:
-        return TRY(MathObject::sin_impl(interpreter.vm(), interpreter.get(arguments.data()[0])));
-    case Builtin::MathCos:
-        return TRY(MathObject::cos_impl(interpreter.vm(), interpreter.get(arguments.data()[0])));
-    case Builtin::MathTan:
-        return TRY(MathObject::tan_impl(interpreter.vm(), interpreter.get(arguments.data()[0])));
-    case Builtin::RegExpPrototypeExec:
-    case Builtin::RegExpPrototypeReplace:
-    case Builtin::RegExpPrototypeSplit:
-    case Builtin::ArrayIteratorPrototypeNext:
-    case Builtin::MapIteratorPrototypeNext:
-    case Builtin::SetIteratorPrototypeNext:
-    case Builtin::StringIteratorPrototypeNext:
-        VERIFY_NOT_REACHED();
-    case Builtin::OrdinaryHasInstance:
-        VERIFY_NOT_REACHED();
-    case Bytecode::Builtin::__Count:
-        VERIFY_NOT_REACHED();
-    }
-    VERIFY_NOT_REACHED();
+    vm.running_execution_context().lexical_environment = &as<Environment>(vm.get(m_environment).as_cell());
 }
 
 template<CallType call_type>
 NEVER_INLINE static ThrowCompletionOr<void> execute_call(
-    Bytecode::Interpreter& interpreter,
+    VM& vm,
     Value callee,
     Value this_value,
     ReadonlySpan<Operand> arguments,
@@ -2757,75 +2960,159 @@ NEVER_INLINE static ThrowCompletionOr<void> execute_call(
     Optional<StringTableIndex> const expression_string,
     Strict strict)
 {
-    TRY(throw_if_needed_for_call(interpreter, callee, call_type, expression_string));
+    TRY(throw_if_needed_for_call(vm, callee, call_type, expression_string));
 
-    auto& vm = interpreter.vm();
     auto& function = callee.as_function();
 
     size_t registers_and_locals_count = 0;
-    size_t constants_count = 0;
+    ReadonlySpan<Value> constants;
     size_t argument_count = arguments.size();
-    function.get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    function.get_stack_frame_info(registers_and_locals_count, constants, argument_count);
 
     auto& stack = vm.interpreter_stack();
     auto* stack_mark = stack.top();
-    auto* callee_context = stack.allocate(registers_and_locals_count, constants_count, max(arguments.size(), argument_count));
+    auto* callee_context = stack.allocate(registers_and_locals_count, constants, max(arguments.size(), argument_count));
     if (!callee_context) [[unlikely]]
         return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
     ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
 
-    auto* callee_context_argument_values = callee_context->arguments.data();
-    auto const callee_context_argument_count = callee_context->arguments.size();
+    auto* callee_context_argument_values = callee_context->arguments_data();
+    auto const callee_context_argument_count = callee_context->argument_count;
     auto const insn_argument_count = arguments.size();
 
     for (size_t i = 0; i < insn_argument_count; ++i)
-        callee_context_argument_values[i] = interpreter.get(arguments.data()[i]);
+        callee_context_argument_values[i] = vm.get(arguments.data()[i]);
     for (size_t i = insn_argument_count; i < callee_context_argument_count; ++i)
         callee_context_argument_values[i] = js_undefined();
     callee_context->passed_argument_count = insn_argument_count;
 
     Value retval;
-    if (call_type == CallType::DirectEval && callee == interpreter.realm().intrinsics().eval_function()) {
-        retval = TRY(perform_eval(vm, !callee_context->arguments.is_empty() ? callee_context->arguments[0] : js_undefined(), strict == Strict::Yes ? CallerMode::Strict : CallerMode::NonStrict, EvalMode::Direct));
+    if (call_type == CallType::DirectEval && callee == vm.realm().intrinsics().eval_function()) {
+        retval = TRY(perform_eval(vm, callee_context->argument_count > 0 ? callee_context->arguments_data()[0] : js_undefined(), strict == Strict::Yes ? CallerMode::Strict : CallerMode::NonStrict, EvalMode::Direct));
     } else if (call_type == CallType::Construct) {
         retval = TRY(function.internal_construct(*callee_context, function));
     } else {
         retval = TRY(function.internal_call(*callee_context, this_value));
     }
-    interpreter.set(dst, retval);
+    vm.set(dst, retval);
     return {};
 }
 
-ThrowCompletionOr<void> Call::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> Call::execute_impl(VM& vm) const
 {
-    return execute_call<CallType::Call>(interpreter, interpreter.get(m_callee), interpreter.get(m_this_value), { m_arguments, m_argument_count }, m_dst, m_expression_string, strict());
+    return execute_call<CallType::Call>(vm, vm.get(m_callee), vm.get(m_this_value), { m_arguments, m_argument_count }, m_dst, m_expression_string, strict());
 }
 
-NEVER_INLINE ThrowCompletionOr<void> CallConstruct::execute_impl(Bytecode::Interpreter& interpreter) const
+NEVER_INLINE ThrowCompletionOr<void> CallConstruct::execute_impl(VM& vm) const
 {
-    return execute_call<CallType::Construct>(interpreter, interpreter.get(m_callee), js_undefined(), { m_arguments, m_argument_count }, m_dst, m_expression_string, strict());
+    return execute_call<CallType::Construct>(vm, vm.get(m_callee), js_undefined(), { m_arguments, m_argument_count }, m_dst, m_expression_string, strict());
 }
 
-ThrowCompletionOr<void> CallDirectEval::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> CallDirectEval::execute_impl(VM& vm) const
 {
-    return execute_call<CallType::DirectEval>(interpreter, interpreter.get(m_callee), interpreter.get(m_this_value), { m_arguments, m_argument_count }, m_dst, m_expression_string, strict());
+    return execute_call<CallType::DirectEval>(vm, vm.get(m_callee), vm.get(m_this_value), { m_arguments, m_argument_count }, m_dst, m_expression_string, strict());
 }
 
-ThrowCompletionOr<void> CallBuiltin::execute_impl(Bytecode::Interpreter& interpreter) const
+template<Builtin builtin, typename Callback>
+ALWAYS_INLINE static ThrowCompletionOr<void> execute_specialized_builtin_call(
+    VM& vm,
+    Operand callee_operand,
+    Operand this_value_operand,
+    ReadonlySpan<Operand> arguments,
+    Operand dst,
+    Optional<StringTableIndex> const expression_string,
+    Strict strict,
+    Callback callback)
 {
-    auto callee = interpreter.get(m_callee);
-
-    if (callee.is_function() && callee.as_function().builtin() == m_builtin) [[likely]] {
-        interpreter.set(dst(), TRY(dispatch_builtin_call(interpreter, m_builtin, { m_arguments, m_argument_count })));
+    auto callee = vm.get(callee_operand);
+    if (callee.is_function() && callee.as_function().builtin() == builtin) [[likely]] {
+        vm.set(dst, TRY(callback(arguments)));
         return {};
     }
-
-    return execute_call<CallType::Call>(interpreter, callee, interpreter.get(m_this_value), { m_arguments, m_argument_count }, m_dst, m_expression_string, strict());
+    return execute_call<CallType::Call>(vm, callee, vm.get(this_value_operand), arguments, dst, expression_string, strict);
 }
+
+#define JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(name, implementation)                                                                                                                                        \
+    ThrowCompletionOr<void> CallBuiltin##name::execute_impl(VM& vm) const                                                                                                                                      \
+    {                                                                                                                                                                                                          \
+        Operand arguments[] { m_argument };                                                                                                                                                                    \
+        return execute_specialized_builtin_call<Builtin::name>(vm, m_callee, m_this_value, arguments, m_dst, m_expression_string, strict(), [&](ReadonlySpan<Operand> arguments) -> ThrowCompletionOr<Value> { \
+            return implementation(vm, vm.get(arguments[0]));                                                                                                                                                   \
+        });                                                                                                                                                                                                    \
+    }
+
+#define JS_DEFINE_BINARY_BUILTIN_CALL_EXECUTE_IMPL(name, implementation)                                                                                                                                       \
+    ThrowCompletionOr<void> CallBuiltin##name::execute_impl(VM& vm) const                                                                                                                                      \
+    {                                                                                                                                                                                                          \
+        Operand arguments[] { m_argument0, m_argument1 };                                                                                                                                                      \
+        return execute_specialized_builtin_call<Builtin::name>(vm, m_callee, m_this_value, arguments, m_dst, m_expression_string, strict(), [&](ReadonlySpan<Operand> arguments) -> ThrowCompletionOr<Value> { \
+            return implementation(vm, vm.get(arguments[0]), vm.get(arguments[1]));                                                                                                                             \
+        });                                                                                                                                                                                                    \
+    }
+
+#define JS_DEFINE_NULLARY_BUILTIN_CALL_EXECUTE_IMPL(name, implementation)                                                                                                                     \
+    ThrowCompletionOr<void> CallBuiltin##name::execute_impl(VM& vm) const                                                                                                                     \
+    {                                                                                                                                                                                         \
+        return execute_specialized_builtin_call<Builtin::name>(vm, m_callee, m_this_value, {}, m_dst, m_expression_string, strict(), [&](ReadonlySpan<Operand>) -> ThrowCompletionOr<Value> { \
+            return implementation();                                                                                                                                                          \
+        });                                                                                                                                                                                   \
+    }
+
+#define JS_DEFINE_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(name, ...)                                                                     \
+    ThrowCompletionOr<void> CallBuiltin##name::execute_impl(VM& vm) const                                                          \
+    {                                                                                                                              \
+        return execute_call<CallType::Call>(vm, vm.get(m_callee), vm.get(m_this_value), {}, m_dst, m_expression_string, strict()); \
+    }
+
+#define JS_DEFINE_UNARY_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(name, ...)                                                                      \
+    ThrowCompletionOr<void> CallBuiltin##name::execute_impl(VM& vm) const                                                                 \
+    {                                                                                                                                     \
+        Operand arguments[] { m_argument };                                                                                               \
+        return execute_call<CallType::Call>(vm, vm.get(m_callee), vm.get(m_this_value), arguments, m_dst, m_expression_string, strict()); \
+    }
+
+#define JS_DEFINE_BINARY_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(name, ...)                                                                     \
+    ThrowCompletionOr<void> CallBuiltin##name::execute_impl(VM& vm) const                                                                 \
+    {                                                                                                                                     \
+        Operand arguments[] { m_argument0, m_argument1 };                                                                                 \
+        return execute_call<CallType::Call>(vm, vm.get(m_callee), vm.get(m_this_value), arguments, m_dst, m_expression_string, strict()); \
+    }
+
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(MathAbs, MathObject::abs_impl)
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(MathLog, MathObject::log_impl)
+JS_DEFINE_BINARY_BUILTIN_CALL_EXECUTE_IMPL(MathPow, MathObject::pow_impl)
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(MathExp, MathObject::exp_impl)
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(MathCeil, MathObject::ceil_impl)
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(MathFloor, MathObject::floor_impl)
+JS_DEFINE_BINARY_BUILTIN_CALL_EXECUTE_IMPL(MathImul, MathObject::imul_impl)
+JS_DEFINE_NULLARY_BUILTIN_CALL_EXECUTE_IMPL(MathRandom, MathObject::random_impl)
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(MathRound, MathObject::round_impl)
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(MathSqrt, MathObject::sqrt_impl)
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(MathSin, MathObject::sin_impl)
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(MathCos, MathObject::cos_impl)
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(MathTan, MathObject::tan_impl)
+JS_DEFINE_UNARY_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(RegExpPrototypeExec)
+JS_DEFINE_BINARY_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(RegExpPrototypeReplace)
+JS_DEFINE_BINARY_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(RegExpPrototypeSplit)
+JS_DEFINE_UNARY_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(OrdinaryHasInstance)
+JS_DEFINE_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(ArrayIteratorPrototypeNext)
+JS_DEFINE_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(MapIteratorPrototypeNext)
+JS_DEFINE_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(SetIteratorPrototypeNext)
+JS_DEFINE_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(StringIteratorPrototypeNext)
+JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL(StringFromCharCode, StringConstructor::from_char_code_impl)
+JS_DEFINE_UNARY_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(StringPrototypeCharCodeAt)
+JS_DEFINE_UNARY_GENERIC_BUILTIN_CALL_EXECUTE_IMPL(StringPrototypeCharAt)
+
+#undef JS_DEFINE_BINARY_GENERIC_BUILTIN_CALL_EXECUTE_IMPL
+#undef JS_DEFINE_UNARY_GENERIC_BUILTIN_CALL_EXECUTE_IMPL
+#undef JS_DEFINE_GENERIC_BUILTIN_CALL_EXECUTE_IMPL
+#undef JS_DEFINE_NULLARY_BUILTIN_CALL_EXECUTE_IMPL
+#undef JS_DEFINE_BINARY_BUILTIN_CALL_EXECUTE_IMPL
+#undef JS_DEFINE_UNARY_BUILTIN_CALL_EXECUTE_IMPL
 
 template<CallType call_type>
 NEVER_INLINE static ThrowCompletionOr<void> call_with_argument_array(
-    Bytecode::Interpreter& interpreter,
+    VM& vm,
     Value callee,
     Value this_value,
     Value arguments,
@@ -2833,32 +3120,31 @@ NEVER_INLINE static ThrowCompletionOr<void> call_with_argument_array(
     Optional<StringTableIndex> const expression_string,
     Strict strict)
 {
-    TRY(throw_if_needed_for_call(interpreter, callee, call_type, expression_string));
+    TRY(throw_if_needed_for_call(vm, callee, call_type, expression_string));
 
-    auto& vm = interpreter.vm();
     auto& function = callee.as_function();
 
-    auto& argument_array = arguments.as_array();
-    auto argument_array_length = argument_array.indexed_properties().array_like_size();
+    auto& argument_array = arguments.as_array_exotic_object();
+    auto argument_array_length = argument_array.indexed_array_like_size();
 
     size_t argument_count = argument_array_length;
     size_t registers_and_locals_count = 0;
-    size_t constants_count = 0;
-    function.get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    ReadonlySpan<Value> constants;
+    function.get_stack_frame_info(registers_and_locals_count, constants, argument_count);
 
     auto& stack = vm.interpreter_stack();
     auto* stack_mark = stack.top();
-    auto* callee_context = stack.allocate(registers_and_locals_count, constants_count, max(argument_array_length, argument_count));
+    auto* callee_context = stack.allocate(registers_and_locals_count, constants, max(argument_array_length, argument_count));
     if (!callee_context) [[unlikely]]
         return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
     ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
 
-    auto* callee_context_argument_values = callee_context->arguments.data();
-    auto const callee_context_argument_count = callee_context->arguments.size();
+    auto* callee_context_argument_values = callee_context->arguments_data();
+    auto const callee_context_argument_count = callee_context->argument_count;
     auto const insn_argument_count = argument_array_length;
 
     for (size_t i = 0; i < insn_argument_count; ++i) {
-        if (auto maybe_value = argument_array.indexed_properties().get(i); maybe_value.has_value())
+        if (auto maybe_value = argument_array.indexed_get(i); maybe_value.has_value())
             callee_context_argument_values[i] = maybe_value.release_value().value;
         else
             callee_context_argument_values[i] = js_undefined();
@@ -2868,37 +3154,36 @@ NEVER_INLINE static ThrowCompletionOr<void> call_with_argument_array(
     callee_context->passed_argument_count = insn_argument_count;
 
     Value retval;
-    if (call_type == CallType::DirectEval && callee == interpreter.realm().intrinsics().eval_function()) {
-        retval = TRY(perform_eval(vm, !callee_context->arguments.is_empty() ? callee_context->arguments[0] : js_undefined(), strict == Strict::Yes ? CallerMode::Strict : CallerMode::NonStrict, EvalMode::Direct));
+    if (call_type == CallType::DirectEval && callee == vm.realm().intrinsics().eval_function()) {
+        retval = TRY(perform_eval(vm, callee_context->argument_count > 0 ? callee_context->arguments_data()[0] : js_undefined(), strict == Strict::Yes ? CallerMode::Strict : CallerMode::NonStrict, EvalMode::Direct));
     } else if (call_type == CallType::Construct) {
         retval = TRY(function.internal_construct(*callee_context, function));
     } else {
         retval = TRY(function.internal_call(*callee_context, this_value));
     }
 
-    interpreter.set(dst, retval);
+    vm.set(dst, retval);
     return {};
 }
 
-ThrowCompletionOr<void> CallWithArgumentArray::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> CallWithArgumentArray::execute_impl(VM& vm) const
 {
-    return call_with_argument_array<CallType::Call>(interpreter, interpreter.get(callee()), interpreter.get(this_value()), interpreter.get(arguments()), dst(), expression_string(), strict());
+    return call_with_argument_array<CallType::Call>(vm, vm.get(callee()), vm.get(this_value()), vm.get(arguments()), dst(), expression_string(), strict());
 }
 
-ThrowCompletionOr<void> CallDirectEvalWithArgumentArray::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> CallDirectEvalWithArgumentArray::execute_impl(VM& vm) const
 {
-    return call_with_argument_array<CallType::DirectEval>(interpreter, interpreter.get(callee()), interpreter.get(this_value()), interpreter.get(arguments()), dst(), expression_string(), strict());
+    return call_with_argument_array<CallType::DirectEval>(vm, vm.get(callee()), vm.get(this_value()), vm.get(arguments()), dst(), expression_string(), strict());
 }
 
-ThrowCompletionOr<void> CallConstructWithArgumentArray::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> CallConstructWithArgumentArray::execute_impl(VM& vm) const
 {
-    return call_with_argument_array<CallType::Construct>(interpreter, interpreter.get(callee()), js_undefined(), interpreter.get(arguments()), dst(), expression_string(), strict());
+    return call_with_argument_array<CallType::Construct>(vm, vm.get(callee()), js_undefined(), vm.get(arguments()), dst(), expression_string(), strict());
 }
 
 // 13.3.7.1 Runtime Semantics: Evaluation, https://tc39.es/ecma262/#sec-super-keyword-runtime-semantics-evaluation
-ThrowCompletionOr<void> SuperCallWithArgumentArray::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> SuperCallWithArgumentArray::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
 
     // 1. Let newTarget be GetNewTarget().
     auto new_target = vm.get_new_target();
@@ -2906,40 +3191,41 @@ ThrowCompletionOr<void> SuperCallWithArgumentArray::execute_impl(Bytecode::Inter
     // 2. Assert: Type(newTarget) is Object.
     VERIFY(new_target.is_object());
 
-    // 3. Let func be GetSuperConstructor().
-    auto* func = get_super_constructor(vm);
+    // 3. Let _superConstructor_ be GetSuperConstructor().
+    auto super_constructor = vm.get(m_super_constructor);
 
-    // NON-STANDARD: We're doing this step earlier to streamline control flow.
-    // 5. If IsConstructor(func) is false, throw a TypeError exception.
-    if (!Value(func).is_constructor()) [[unlikely]]
+    // 4. Let _argList_ be ? ArgumentListEvaluation of |Arguments|.
+    // NOTE: The bytecode generator performs this step before emitting this instruction.
+
+    // 5. If IsConstructor(_superConstructor_) is *false*, throw a *TypeError* exception.
+    if (!super_constructor.is_constructor()) [[unlikely]]
         return vm.throw_completion<TypeError>(ErrorType::NotAConstructor, "Super constructor");
 
-    auto& function = static_cast<FunctionObject&>(*func);
+    auto& function = super_constructor.as_function();
 
-    // 4. Let argList be ? ArgumentListEvaluation of Arguments.
-    auto& argument_array = interpreter.get(m_arguments).as_array();
+    auto& argument_array = vm.get(m_arguments).as_array_exotic_object();
     size_t argument_array_length = 0;
 
     if (m_is_synthetic) {
         argument_array_length = MUST(length_of_array_like(vm, argument_array));
     } else {
-        argument_array_length = argument_array.indexed_properties().array_like_size();
+        argument_array_length = argument_array.indexed_array_like_size();
     }
 
     size_t argument_count = argument_array_length;
     size_t registers_and_locals_count = 0;
-    size_t constants_count = 0;
-    function.get_stack_frame_size(registers_and_locals_count, constants_count, argument_count);
+    ReadonlySpan<Value> constants;
+    function.get_stack_frame_info(registers_and_locals_count, constants, argument_count);
 
     auto& stack = vm.interpreter_stack();
     auto* stack_mark = stack.top();
-    auto* callee_context = stack.allocate(registers_and_locals_count, constants_count, max(argument_array_length, argument_count));
+    auto* callee_context = stack.allocate(registers_and_locals_count, constants, max(argument_array_length, argument_count));
     if (!callee_context) [[unlikely]]
         return vm.throw_completion<InternalError>(ErrorType::CallStackSizeExceeded);
     ScopeGuard deallocate_guard = [&stack, stack_mark] { stack.deallocate(stack_mark); };
 
-    auto* callee_context_argument_values = callee_context->arguments.data();
-    auto const callee_context_argument_count = callee_context->arguments.size();
+    auto* callee_context_argument_values = callee_context->arguments_data();
+    auto const callee_context_argument_count = callee_context->argument_count;
     auto const insn_argument_count = argument_array_length;
 
     if (m_is_synthetic) {
@@ -2947,7 +3233,7 @@ ThrowCompletionOr<void> SuperCallWithArgumentArray::execute_impl(Bytecode::Inter
             callee_context_argument_values[i] = argument_array.get_without_side_effects(PropertyKey { i });
     } else {
         for (size_t i = 0; i < insn_argument_count; ++i) {
-            if (auto maybe_value = argument_array.indexed_properties().get(i); maybe_value.has_value())
+            if (auto maybe_value = argument_array.indexed_get(i); maybe_value.has_value())
                 callee_context_argument_values[i] = maybe_value.release_value().value;
             else
                 callee_context_argument_values[i] = js_undefined();
@@ -2976,30 +3262,53 @@ ThrowCompletionOr<void> SuperCallWithArgumentArray::execute_impl(Bytecode::Inter
     TRY(result->initialize_instance_elements(f));
 
     // 12. Return result.
-    interpreter.set(m_dst, result);
+    vm.set(m_dst, result);
     return {};
 }
 
-void NewFunction::execute_impl(Bytecode::Interpreter& interpreter) const
+void NewFunction::execute_impl(VM& vm) const
 {
-    interpreter.set(dst(), new_function(interpreter, m_shared_function_data_index, m_home_object));
+    vm.set(dst(), new_function(vm, m_shared_function_data_index, m_home_object));
 }
 
-void Return::execute_impl(Bytecode::Interpreter& interpreter) const
+static Optional<StringView> function_name_prefix_to_string(Op::FunctionNamePrefix prefix)
 {
-    interpreter.do_return(interpreter.get(m_value));
+    switch (prefix) {
+    case Op::FunctionNamePrefix::None:
+        return {};
+    case Op::FunctionNamePrefix::Get:
+        return "get"sv;
+    case Op::FunctionNamePrefix::Set:
+        return "set"sv;
+    }
+    VERIFY_NOT_REACHED();
 }
 
-ThrowCompletionOr<void> Increment::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> SetFunctionName::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto old_value = interpreter.get(dst());
+    auto function = vm.get(m_function).as_if<ECMAScriptFunctionObject>();
+    if (!function || !function->name().is_empty())
+        return {};
+
+    auto property_key = TRY(vm.get(m_name).to_property_key(vm));
+    function->set_inferred_name(Variant<PropertyKey, PrivateName> { move(property_key) }, function_name_prefix_to_string(m_prefix));
+    return {};
+}
+
+void Return::execute_impl(VM& vm) const
+{
+    vm.do_return(vm.get(m_value));
+}
+
+ThrowCompletionOr<void> Increment::execute_impl(VM& vm) const
+{
+    auto old_value = vm.get(dst());
 
     // OPTIMIZATION: Fast path for Int32 values.
     if (old_value.is_int32()) [[likely]] {
         auto integer_value = old_value.as_i32();
         if (integer_value != NumericLimits<i32>::max()) [[likely]] {
-            interpreter.set(dst(), Value { integer_value + 1 });
+            vm.set(dst(), Value { integer_value + 1 });
             return {};
         }
     }
@@ -3007,376 +3316,395 @@ ThrowCompletionOr<void> Increment::execute_impl(Bytecode::Interpreter& interpret
     old_value = TRY(old_value.to_numeric(vm));
 
     if (old_value.is_number())
-        interpreter.set(dst(), Value(old_value.as_double() + 1));
+        vm.set(dst(), Value(old_value.as_double() + 1));
     else
-        interpreter.set(dst(), BigInt::create(vm, old_value.as_bigint().big_integer().plus(Crypto::SignedBigInteger { 1 })));
+        vm.set(dst(), BigInt::create(vm, old_value.as_bigint().big_integer().plus(Crypto::SignedBigInteger { 1 })));
     return {};
 }
 
-ThrowCompletionOr<void> PostfixIncrement::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> PostfixIncrement::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto old_value = interpreter.get(m_src);
+    auto old_value = vm.get(m_src);
 
     // OPTIMIZATION: Fast path for Int32 values.
     if (old_value.is_int32()) [[likely]] {
         auto integer_value = old_value.as_i32();
         if (integer_value != NumericLimits<i32>::max()) [[likely]] {
-            interpreter.set(m_dst, old_value);
-            interpreter.set(m_src, Value { integer_value + 1 });
+            vm.set(m_dst, old_value);
+            vm.set(m_src, Value { integer_value + 1 });
             return {};
         }
     }
 
     old_value = TRY(old_value.to_numeric(vm));
-    interpreter.set(m_dst, old_value);
+    vm.set(m_dst, old_value);
 
     if (old_value.is_number())
-        interpreter.set(m_src, Value(old_value.as_double() + 1));
+        vm.set(m_src, Value(old_value.as_double() + 1));
     else
-        interpreter.set(m_src, BigInt::create(vm, old_value.as_bigint().big_integer().plus(Crypto::SignedBigInteger { 1 })));
+        vm.set(m_src, BigInt::create(vm, old_value.as_bigint().big_integer().plus(Crypto::SignedBigInteger { 1 })));
     return {};
 }
 
-ThrowCompletionOr<void> Decrement::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> Decrement::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto old_value = interpreter.get(dst());
+    auto old_value = vm.get(dst());
 
     old_value = TRY(old_value.to_numeric(vm));
 
     if (old_value.is_number())
-        interpreter.set(dst(), Value(old_value.as_double() - 1));
+        vm.set(dst(), Value(old_value.as_double() - 1));
     else
-        interpreter.set(dst(), BigInt::create(vm, old_value.as_bigint().big_integer().minus(Crypto::SignedBigInteger { 1 })));
+        vm.set(dst(), BigInt::create(vm, old_value.as_bigint().big_integer().minus(Crypto::SignedBigInteger { 1 })));
     return {};
 }
 
-ThrowCompletionOr<void> PostfixDecrement::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> PostfixDecrement::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto old_value = interpreter.get(m_src);
+    auto old_value = vm.get(m_src);
 
     old_value = TRY(old_value.to_numeric(vm));
-    interpreter.set(m_dst, old_value);
+    vm.set(m_dst, old_value);
 
     if (old_value.is_number())
-        interpreter.set(m_src, Value(old_value.as_double() - 1));
+        vm.set(m_src, Value(old_value.as_double() - 1));
     else
-        interpreter.set(m_src, BigInt::create(vm, old_value.as_bigint().big_integer().minus(Crypto::SignedBigInteger { 1 })));
+        vm.set(m_src, BigInt::create(vm, old_value.as_bigint().big_integer().minus(Crypto::SignedBigInteger { 1 })));
     return {};
 }
 
-COLD ThrowCompletionOr<void> Throw::execute_impl(Bytecode::Interpreter& interpreter) const
+COLD ThrowCompletionOr<void> Throw::execute_impl(VM& vm) const
 {
-    return throw_completion(interpreter.get(src()));
+    return throw_completion(vm.get(src()));
 }
 
-ThrowCompletionOr<void> ThrowIfNotObject::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ThrowIfNotObject::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto src = interpreter.get(m_src);
+    auto src = vm.get(m_src);
     if (!src.is_object()) [[unlikely]]
         return vm.throw_completion<TypeError>(ErrorType::NotAnObject, src);
     return {};
 }
 
-ThrowCompletionOr<void> ThrowIfNullish::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ThrowIfNullish::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto value = interpreter.get(m_src);
+    auto value = vm.get(m_src);
     if (value.is_nullish()) [[unlikely]]
         return vm.throw_completion<TypeError>(ErrorType::NotObjectCoercible, value);
     return {};
 }
 
-ThrowCompletionOr<void> ThrowIfTDZ::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ThrowIfTDZ::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto value = interpreter.get(m_src);
+    auto value = vm.get(m_src);
     if (value.is_special_empty_value()) [[unlikely]]
         return vm.throw_completion<ReferenceError>(ErrorType::BindingNotInitialized, value);
     return {};
 }
 
-ThrowCompletionOr<void> ThrowConstAssignment::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ThrowConstAssignment::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
     return vm.throw_completion<TypeError>(ErrorType::InvalidAssignToConst);
 }
 
-void LeavePrivateEnvironment::execute_impl(Bytecode::Interpreter& interpreter) const
+void LeavePrivateEnvironment::execute_impl(VM& vm) const
 {
-    auto& running_execution_context = interpreter.vm().running_execution_context();
+    auto& running_execution_context = vm.running_execution_context();
     running_execution_context.private_environment = running_execution_context.private_environment->outer_environment();
 }
 
-void Yield::execute_impl(Bytecode::Interpreter& interpreter) const
+void Yield::execute_impl(VM& vm) const
 {
-    auto yielded_value = interpreter.get(m_value).is_special_empty_value() ? js_undefined() : interpreter.get(m_value);
-    interpreter.do_return(
-        interpreter.do_yield(yielded_value, m_continuation_label));
+    auto yielded_value = vm.get(m_value).is_special_empty_value() ? js_undefined() : vm.get(m_value);
+    vm.do_return(
+        vm.do_yield(yielded_value, m_continuation_label));
 }
 
-void Await::execute_impl(Bytecode::Interpreter& interpreter) const
+void YieldIteratorResult::execute_impl(VM& vm) const
 {
-    auto yielded_value = interpreter.get(m_argument).is_special_empty_value() ? js_undefined() : interpreter.get(m_argument);
-    // FIXME: If we get a pointer, which is not accurately representable as a double
-    //        will cause this to explode
-    auto continuation_value = Value(m_continuation_label.address());
-    auto result = interpreter.vm().heap().allocate<GeneratorResult>(yielded_value, continuation_value, true);
-    interpreter.do_return(result);
+    auto yielded_value = vm.get(m_value).is_special_empty_value() ? js_undefined() : vm.get(m_value);
+    vm.do_return(
+        vm.do_yield(yielded_value, m_continuation_label, true));
 }
 
-ThrowCompletionOr<void> GetByValue::execute_impl(Bytecode::Interpreter& interpreter) const
+void Await::execute_impl(VM& vm) const
 {
-    interpreter.set(dst(), TRY(get_by_value(interpreter.vm(), m_base_identifier, interpreter.get(m_base), interpreter.get(m_property), interpreter.current_executable())));
+    auto yielded_value = vm.get(m_argument).is_special_empty_value() ? js_undefined() : vm.get(m_argument);
+    auto& context = vm.running_execution_context();
+    context.yield_continuation = m_continuation_label.address();
+    context.yield_is_await = true;
+    context.yield_value_is_iterator_result = false;
+    vm.do_return(yielded_value);
+}
+
+ThrowCompletionOr<void> GetByValue::execute_impl(VM& vm) const
+{
+    vm.set(dst(), TRY(get_by_value(vm, m_base_identifier, vm.get(m_base), vm.get(m_property), vm.current_executable())));
     return {};
 }
 
-ThrowCompletionOr<void> GetByValueWithThis::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GetByValueWithThis::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto property_key_value = interpreter.get(m_property);
-    auto object = TRY(interpreter.get(m_base).to_object(vm));
+    auto property_key_value = vm.get(m_property);
+    auto object = TRY(vm.get(m_base).to_object(vm));
     auto property_key = TRY(property_key_value.to_property_key(vm));
-    interpreter.set(dst(), TRY(object->internal_get(property_key, interpreter.get(m_this_value))));
+    vm.set(dst(), TRY(object->internal_get(property_key, vm.get(m_this_value))));
     return {};
 }
 
-ThrowCompletionOr<void> PutByValue::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> PutByValue::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto value = interpreter.get(m_src);
-    auto base = interpreter.get(m_base);
-    auto const& base_identifier = interpreter.get_identifier(m_base_identifier);
-    auto property = interpreter.get(m_property);
+    auto value = vm.get(m_src);
+    auto base = vm.get(m_base);
+    auto const& base_identifier = vm.get_identifier(m_base_identifier);
+    auto property = vm.get(m_property);
     TRY(put_by_value(vm, base, base_identifier, property, value, m_kind, strict()));
     return {};
 }
 
-ThrowCompletionOr<void> PutByValueWithThis::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> PutByValueWithThis::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto value = interpreter.get(m_src);
-    auto base = interpreter.get(m_base);
-    auto this_value = interpreter.get(m_this_value);
-    auto property_key = TRY(interpreter.get(m_property).to_property_key(vm));
+    auto value = vm.get(m_src);
+    auto base = vm.get(m_base);
+    auto this_value = vm.get(m_this_value);
+    auto property_key = TRY(vm.get(m_property).to_property_key(vm));
     TRY(put_by_property_key(vm, base, this_value, value, {}, property_key, m_kind, strict()));
     return {};
 }
 
-COLD ThrowCompletionOr<void> DeleteByValue::execute_impl(Bytecode::Interpreter& interpreter) const
+COLD ThrowCompletionOr<void> DeleteByValue::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto property_key = TRY(interpreter.get(m_property).to_property_key(vm));
-    auto reference = Reference { interpreter.get(m_base), property_key, {}, strict() };
-    interpreter.set(m_dst, Value(TRY(reference.delete_(vm))));
+    auto property_key = TRY(vm.get(m_property).to_property_key(vm));
+    auto reference = Reference { vm.get(m_base), property_key, {}, strict() };
+    vm.set(m_dst, Value(TRY(reference.delete_(vm))));
     return {};
 }
 
-ThrowCompletionOr<void> GetIterator::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GetIterator::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto iterator_record = TRY(get_iterator_impl(vm, interpreter.get(iterable()), m_hint));
-    interpreter.set(m_dst_iterator_object, iterator_record.iterator);
-    interpreter.set(m_dst_iterator_next, iterator_record.next_method);
-    interpreter.set(m_dst_iterator_done, Value(iterator_record.done));
+    auto iterator_record = TRY(get_iterator_impl(vm, vm.get(iterable()), m_hint));
+    vm.set(m_dst_iterator_object, iterator_record.iterator);
+    vm.set(m_dst_iterator_next, iterator_record.next_method);
+    vm.set(m_dst_iterator_done, Value(iterator_record.done));
     return {};
 }
 
-ThrowCompletionOr<void> GetMethod::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> GetMethod::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto const& property_key = interpreter.get_property_key(m_property);
-    auto method = TRY(interpreter.get(m_object).get_method(vm, property_key));
-    interpreter.set(dst(), method ?: js_undefined());
+    auto const& property_key = vm.get_property_key(m_property);
+    auto method = TRY(vm.get(m_object).get_method(vm, property_key));
+    vm.set(dst(), method ?: js_undefined());
     return {};
 }
 
-NEVER_INLINE ThrowCompletionOr<void> GetObjectPropertyIterator::execute_impl(Bytecode::Interpreter& interpreter) const
+NEVER_INLINE ThrowCompletionOr<void> GetObjectPropertyIterator::execute_impl(VM& vm) const
 {
-    auto iterator_record = TRY(get_object_property_iterator(interpreter, interpreter.get(m_object)));
-    interpreter.set(m_dst_iterator_object, iterator_record.iterator);
-    interpreter.set(m_dst_iterator_next, iterator_record.next_method);
-    interpreter.set(m_dst_iterator_done, Value(iterator_record.done));
+    auto* cache = &vm.current_executable().object_property_iterator_caches[m_cache];
+    vm.set(m_dst_iterator, TRY(get_object_property_iterator(vm, vm.get(m_object), cache)));
     return {};
 }
 
-ThrowCompletionOr<void> IteratorClose::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> IteratorClose::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto& iterator_object = interpreter.get(m_iterator_object).as_object();
-    auto iterator_next_method = interpreter.get(m_iterator_next);
-    auto iterator_done_property = interpreter.get(m_iterator_done).as_bool();
+    auto& iterator_object = vm.get(m_iterator_object).as_object();
+    auto iterator_next_method = vm.get(m_iterator_next);
+    auto iterator_done_property = vm.get(m_iterator_done).as_bool();
     IteratorRecordImpl iterator_record { .done = iterator_done_property, .iterator = iterator_object, .next_method = iterator_next_method };
 
     // FIXME: Return the value of the resulting completion.
-    TRY(iterator_close(vm, iterator_record, Completion { m_completion_type, interpreter.get(m_completion_value) }));
+    TRY(iterator_close(vm, iterator_record, Completion { m_completion_type, vm.get(m_completion_value) }));
     return {};
 }
 
-ThrowCompletionOr<void> IteratorNext::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> IteratorNext::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto& iterator_object = interpreter.get(m_iterator_object).as_object();
-    auto iterator_next_method = interpreter.get(m_iterator_next);
-    auto iterator_done_property = interpreter.get(m_iterator_done).as_bool();
+    auto& iterator_object = vm.get(m_iterator_object).as_object();
+    auto iterator_next_method = vm.get(m_iterator_next);
+    auto iterator_done_property = vm.get(m_iterator_done).as_bool();
     IteratorRecordImpl iterator_record { .done = iterator_done_property, .iterator = iterator_object, .next_method = iterator_next_method };
-    interpreter.set(m_dst, TRY(JS::iterator_next(vm, iterator_record)));
-    if (iterator_done_property)
-        interpreter.set(m_iterator_done, Value(true));
+    auto result = JS::iterator_next(vm, iterator_record);
+    if (iterator_record.done)
+        vm.set(m_iterator_done, Value(true));
+    vm.set(m_dst, TRY(result));
     return {};
 }
 
-ThrowCompletionOr<void> IteratorNextUnpack::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> IteratorNextUnpack::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto& iterator_object = interpreter.get(m_iterator_object).as_object();
-    auto iterator_next_method = interpreter.get(m_iterator_next);
-    auto iterator_done_property = interpreter.get(m_iterator_done).as_bool();
+    auto& iterator_object = vm.get(m_iterator_object).as_object();
+    auto iterator_next_method = vm.get(m_iterator_next);
+    auto iterator_done_property = vm.get(m_iterator_done).as_bool();
     IteratorRecordImpl iterator_record { .done = iterator_done_property, .iterator = iterator_object, .next_method = iterator_next_method };
-    auto iteration_result_or_done = TRY(iterator_step(vm, iterator_record));
-    if (iterator_done_property)
-        interpreter.set(m_iterator_done, Value(true));
+    auto iteration_result_or_done_or_error = iterator_step(vm, iterator_record);
+    if (iterator_record.done)
+        vm.set(m_iterator_done, Value(true));
+    auto iteration_result_or_done = TRY(iteration_result_or_done_or_error);
     if (iteration_result_or_done.has<IterationDone>()) {
-        interpreter.set(m_dst_done, Value(true));
+        vm.set(m_dst_done, Value(true));
         return {};
     }
     auto& iteration_result = iteration_result_or_done.get<IterationResult>();
-    interpreter.set(m_dst_done, TRY(iteration_result.done));
-    interpreter.set(m_dst_value, TRY(iteration_result.value));
+    vm.set(m_dst_done, TRY(iteration_result.done));
+    auto value = move(iteration_result.value);
+    if (value.is_throw_completion())
+        vm.set(m_iterator_done, Value(true));
+    vm.set(m_dst_value, TRY(value));
     return {};
 }
 
-NEVER_INLINE ThrowCompletionOr<void> NewClass::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ObjectPropertyIteratorNext::execute_impl(VM& vm) const
+{
+    auto& iterator = static_cast<PropertyNameIterator&>(vm.get(m_iterator_object).as_object());
+    Value value;
+    bool done = false;
+    TRY(iterator.next(vm, done, value));
+    vm.set(m_dst_done, Value(done));
+    if (!done)
+        vm.set(m_dst_value, value);
+    return {};
+}
+
+NEVER_INLINE ThrowCompletionOr<void> NewClass::execute_impl(VM& vm) const
 {
     Value super_class;
     if (m_super_class.has_value())
-        super_class = interpreter.get(m_super_class.value());
-    Vector<Value> element_keys;
+        super_class = vm.get(m_super_class.value());
+    GC::RootVector<Value> element_keys;
     element_keys.ensure_capacity(m_element_keys_count);
     for (size_t i = 0; i < m_element_keys_count; ++i) {
         Value element_key;
         if (m_element_keys[i].has_value())
-            element_key = interpreter.get(m_element_keys[i].value());
+            element_key = vm.get(m_element_keys[i].value());
         element_keys.unchecked_append(element_key);
     }
 
-    auto& running_execution_context = interpreter.running_execution_context();
-    auto* class_environment = &as<Environment>(interpreter.get(m_class_environment).as_cell());
+    auto& running_execution_context = vm.running_execution_context();
+    auto* class_environment = &as<Environment>(vm.get(m_class_environment).as_cell());
     auto& outer_environment = running_execution_context.lexical_environment;
 
-    auto const& blueprint = interpreter.current_executable().class_blueprints[m_class_blueprint_index];
+    auto const& blueprint = vm.current_executable().class_blueprints[m_class_blueprint_index];
 
     Optional<Utf16FlyString> binding_name;
     Utf16FlyString class_name;
     if (!blueprint.has_name && m_lhs_name.has_value()) {
-        class_name = interpreter.get_identifier(m_lhs_name.value());
+        class_name = vm.get_identifier(m_lhs_name.value());
     } else {
         class_name = blueprint.name;
         binding_name = class_name;
     }
 
-    auto* retval = TRY(construct_class(interpreter.vm(), blueprint, interpreter.current_executable(), class_environment, outer_environment, super_class, element_keys, binding_name, class_name));
-    interpreter.set(dst(), retval);
+    auto* retval = TRY(construct_class(vm, blueprint, vm.current_executable(), class_environment, outer_environment, super_class, element_keys, binding_name, class_name));
+    vm.set(dst(), retval);
     return {};
 }
 
 // 13.5.3.1 Runtime Semantics: Evaluation, https://tc39.es/ecma262/#sec-typeof-operator-runtime-semantics-evaluation
-ThrowCompletionOr<void> TypeofBinding::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> TypeofBinding::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
+    VERIFY(m_cache.is_valid());
 
-    if (m_cache.is_valid()) [[likely]] {
-        auto const* environment = interpreter.running_execution_context().lexical_environment.ptr();
-        for (size_t i = 0; i < m_cache.hops; ++i) {
-            if (environment->is_permanently_screwed_by_eval()) [[unlikely]]
-                goto slow_path;
-            environment = environment->outer_environment();
-        }
-        if (!environment->is_permanently_screwed_by_eval()) [[likely]] {
-            auto value = TRY(static_cast<DeclarativeEnvironment const&>(*environment).get_binding_value_direct(vm, m_cache.index));
-            interpreter.set(dst(), value.typeof_(vm));
-            return {};
-        }
-    slow_path:
-        m_cache = {};
+    auto const* environment = vm.running_execution_context().lexical_environment.ptr();
+    for (size_t i = 0; i < m_cache.hops; ++i)
+        environment = environment->outer_environment();
+
+    auto value = TRY(static_cast<DeclarativeEnvironment const&>(*environment).get_binding_value_direct(vm, m_cache.index));
+    vm.set(dst(), value.typeof_(vm));
+    return {};
+}
+
+ThrowCompletionOr<void> DynamicTypeofBinding::execute_impl(VM& vm) const
+{
+    auto& cache = vm.current_executable().environment_coordinate_caches[m_cache];
+    auto const* current_environment = vm.running_execution_context().lexical_environment.ptr();
+    if (auto const* environment = get_cached_environment(current_environment, cache)) [[likely]] {
+        auto value = TRY(static_cast<DeclarativeEnvironment const&>(*environment).get_binding_value_direct(vm, cache.index));
+        vm.set(dst(), value.typeof_(vm));
+        return {};
     }
 
     // 1. Let val be the result of evaluating UnaryExpression.
-    auto reference = TRY(vm.resolve_binding(interpreter.get_identifier(m_identifier), strict()));
+    auto reference = TRY(vm.resolve_binding(vm.get_identifier(m_identifier), strict()));
 
     // 2. If val is a Reference Record, then
     //    a. If IsUnresolvableReference(val) is true, return "undefined".
     if (reference.is_unresolvable()) {
-        interpreter.set(dst(), PrimitiveString::create(vm, "undefined"_string));
+        vm.set(dst(), PrimitiveString::create(vm, "undefined"_string));
         return {};
     }
 
     // 3. Set val to ? GetValue(val).
-    auto value = TRY(reference.get_value(vm));
+    update_environment_coordinate_cache(current_environment, reference, cache);
 
-    if (reference.environment_coordinate().has_value())
-        m_cache = reference.environment_coordinate().value();
+    auto value = TRY(reference.get_value(vm));
 
     // 4. NOTE: This step is replaced in section B.3.6.3.
     // 5. Return a String according to Table 41.
-    interpreter.set(dst(), value.typeof_(vm));
+    vm.set(dst(), value.typeof_(vm));
     return {};
 }
 
-void GetCompletionFields::execute_impl(Bytecode::Interpreter& interpreter) const
+void GetCompletionFields::execute_impl(VM& vm) const
 {
-    auto const& completion_cell = static_cast<CompletionCell const&>(interpreter.get(m_completion).as_cell());
-    interpreter.set(m_value_dst, completion_cell.completion().value());
-    interpreter.set(m_type_dst, Value(to_underlying(completion_cell.completion().type())));
+    auto& completion_source = vm.get(m_completion).as_object();
+    if (is<GeneratorObject>(completion_source)) {
+        auto const& generator = as<GeneratorObject>(completion_source);
+        vm.set(m_value_dst, generator.pending_completion_value());
+        vm.set(m_type_dst, Value(to_underlying(generator.pending_completion_type())));
+        return;
+    }
+
+    auto const& async_generator = as<AsyncGenerator>(completion_source);
+    vm.set(m_value_dst, async_generator.pending_completion_value());
+    vm.set(m_type_dst, Value(to_underlying(async_generator.pending_completion_type())));
 }
 
-void SetCompletionType::execute_impl(Bytecode::Interpreter& interpreter) const
+void SetCompletionType::execute_impl(VM& vm) const
 {
-    auto& completion_cell = static_cast<CompletionCell&>(interpreter.get(m_completion).as_cell());
-    auto completion = completion_cell.completion();
-    completion_cell.set_completion(Completion { m_completion_type, completion.value() });
+    auto& completion_source = vm.get(m_completion).as_object();
+    if (is<GeneratorObject>(completion_source)) {
+        as<GeneratorObject>(completion_source).set_pending_completion_type(m_completion_type);
+        return;
+    }
+
+    as<AsyncGenerator>(completion_source).set_pending_completion_type(m_completion_type);
 }
 
-ThrowCompletionOr<void> CreateImmutableBinding::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> CreateImmutableBinding::execute_impl(VM& vm) const
 {
-    auto& environment = as<Environment>(interpreter.get(m_environment).as_cell());
-    return environment.create_immutable_binding(interpreter.vm(), interpreter.get_identifier(m_identifier), m_strict_binding);
+    auto& environment = as<Environment>(vm.get(m_environment).as_cell());
+    return environment.create_immutable_binding(vm, vm.get_identifier(m_identifier), m_strict_binding);
 }
 
-ThrowCompletionOr<void> CreateMutableBinding::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> CreateMutableBinding::execute_impl(VM& vm) const
 {
-    auto& environment = as<Environment>(interpreter.get(m_environment).as_cell());
-    return environment.create_mutable_binding(interpreter.vm(), interpreter.get_identifier(m_identifier), m_can_be_deleted);
+    auto& environment = as<Environment>(vm.get(m_environment).as_cell());
+    return environment.create_mutable_binding(vm, vm.get_identifier(m_identifier), m_can_be_deleted);
 }
 
-ThrowCompletionOr<void> ToObject::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ToObject::execute_impl(VM& vm) const
 {
-    interpreter.set(m_dst, TRY(interpreter.get(m_value).to_object(interpreter.vm())));
+    vm.set(m_dst, TRY(vm.get(m_value).to_object(vm)));
     return {};
 }
 
-void ToBoolean::execute_impl(Bytecode::Interpreter& interpreter) const
+void ToBoolean::execute_impl(VM& vm) const
 {
-    interpreter.set(m_dst, Value(interpreter.get(m_value).to_boolean()));
+    vm.set(m_dst, Value(vm.get(m_value).to_boolean()));
 }
 
-ThrowCompletionOr<void> ToLength::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> ToLength::execute_impl(VM& vm) const
 {
-    interpreter.set(m_dst, Value { TRY(interpreter.get(m_value).to_length(interpreter.vm())) });
+    vm.set(m_dst, Value { TRY(vm.get(m_value).to_length(vm)) });
     return {};
 }
 
-void CreateAsyncFromSyncIterator::execute_impl(Bytecode::Interpreter& interpreter) const
+void CreateAsyncFromSyncIterator::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto& realm = interpreter.realm();
+    auto& realm = vm.realm();
 
-    auto& iterator = interpreter.get(m_iterator).as_object();
-    auto next_method = interpreter.get(m_next_method);
-    auto done = interpreter.get(m_done).as_bool();
+    auto& iterator = vm.get(m_iterator).as_object();
+    auto next_method = vm.get(m_next_method);
+    auto done = vm.get(m_done).as_bool();
 
     auto iterator_record = realm.create<IteratorRecord>(iterator, next_method, done);
     auto async_from_sync_iterator = create_async_from_sync_iterator(vm, iterator_record);
@@ -3386,27 +3714,26 @@ void CreateAsyncFromSyncIterator::execute_impl(Bytecode::Interpreter& interprete
     iterator_object->define_direct_property(vm.names.nextMethod, async_from_sync_iterator.next_method, default_attributes);
     iterator_object->define_direct_property(vm.names.done, Value { async_from_sync_iterator.done }, default_attributes);
 
-    interpreter.set(m_dst, iterator_object);
+    vm.set(m_dst, iterator_object);
 }
 
-ThrowCompletionOr<void> CreateDataPropertyOrThrow::execute_impl(Bytecode::Interpreter& interpreter) const
+ThrowCompletionOr<void> CreateDataPropertyOrThrow::execute_impl(VM& vm) const
 {
-    auto& vm = interpreter.vm();
-    auto& object = interpreter.get(m_object).as_object();
-    auto property = TRY(interpreter.get(m_property).to_property_key(vm));
-    auto value = interpreter.get(m_value);
+    auto& object = vm.get(m_object).as_object();
+    auto property = TRY(vm.get(m_property).to_property_key(vm));
+    auto value = vm.get(m_value);
     TRY(object.create_data_property_or_throw(property, value));
     return {};
 }
 
-void IsCallable::execute_impl(Bytecode::Interpreter& interpreter) const
+void IsCallable::execute_impl(VM& vm) const
 {
-    interpreter.set(dst(), Value(interpreter.get(value()).is_function()));
+    vm.set(dst(), Value(vm.get(value()).is_function()));
 }
 
-void IsConstructor::execute_impl(Bytecode::Interpreter& interpreter) const
+void IsConstructor::execute_impl(VM& vm) const
 {
-    interpreter.set(dst(), Value(interpreter.get(value()).is_constructor()));
+    vm.set(dst(), Value(vm.get(value()).is_constructor()));
 }
 
 }

@@ -6,7 +6,7 @@
 
 #include <AK/String.h>
 #include <LibJS/Runtime/Array.h>
-#include <LibWeb/Bindings/IDBObjectStorePrototype.h>
+#include <LibWeb/Bindings/IDBObjectStore.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
@@ -27,8 +27,6 @@ IDBObjectStore::IDBObjectStore(JS::Realm& realm, GC::Ref<ObjectStore> store, GC:
     , m_transaction(transaction)
     , m_name(store->name())
 {
-    transaction->add_to_scope(store);
-
     // An object store handle has an index set, which is initialized to the set of indexes that reference the associated object store when the object store handle is created.
     m_indexes = MUST(store->index_set().clone());
 }
@@ -93,6 +91,9 @@ WebIDL::ExceptionOr<void> IDBObjectStore::set_name(String const& value)
     if (store->database()->object_store_with_name(name))
         return WebIDL::ConstraintError::create(realm, "Object store with the given name already exists"_utf16);
 
+    // AD-HOC: Log the rename for potential revert on abort.
+    store->mutation_log()->note_object_store_renamed(store->name());
+
     // 9. Set store’s name to name.
     store->set_name(name);
 
@@ -146,7 +147,7 @@ bool IDBObjectStore::auto_increment() const
 }
 
 // https://w3c.github.io/IndexedDB/#dom-idbobjectstore-createindex
-WebIDL::ExceptionOr<GC::Ref<IDBIndex>> IDBObjectStore::create_index(String const& name, KeyPath key_path, IDBIndexParameters options)
+WebIDL::ExceptionOr<GC::Ref<IDBIndex>> IDBObjectStore::create_index(String const& name, KeyPath key_path, Bindings::IDBIndexParameters const& options)
 {
     auto& realm = this->realm();
 
@@ -192,6 +193,9 @@ WebIDL::ExceptionOr<GC::Ref<IDBIndex>> IDBObjectStore::create_index(String const
 
     // 12. Add index to this's index set.
     this->index_set().set(name, index);
+
+    // AD-HOC: Log the creation for potential revert on abort.
+    store->mutation_log()->note_index_created(index);
 
     // 13. Return a new index handle associated with index and this.
     return IDBIndex::create(realm, index, *this);
@@ -256,6 +260,9 @@ WebIDL::ExceptionOr<void> IDBObjectStore::delete_index(String const& name)
 
     // AD-HOC: Mark the index as deleted so that stale handles throw InvalidStateError.
     index.value()->set_deleted(true);
+
+    // AD-HOC: Log the deletion for potential revert on abort.
+    store->mutation_log()->note_index_deleted(*index.value());
 
     // 8. Destroy index.
     store->index_set().remove(name);
@@ -441,7 +448,7 @@ WebIDL::ExceptionOr<GC::Ref<IDBRequest>> IDBObjectStore::get(JS::Value query)
 }
 
 // https://w3c.github.io/IndexedDB/#dom-idbobjectstore-opencursor
-WebIDL::ExceptionOr<GC::Ref<IDBRequest>> IDBObjectStore::open_cursor(JS::Value query, Bindings::IDBCursorDirection direction)
+WebIDL::ExceptionOr<GC::Ref<IDBRequest>> IDBObjectStore::open_cursor(Optional<JS::Value> query, Bindings::IDBCursorDirection direction)
 {
     auto& realm = this->realm();
 
@@ -591,11 +598,11 @@ WebIDL::ExceptionOr<GC::Ref<IDBRequest>> IDBObjectStore::get_all(Optional<JS::Va
 {
     // 1. Return the result of creating a request to retrieve multiple items with the current Realm record, this,
     //    "value", queryOrOptions, and count if given. Rethrow any exceptions.
-    return create_a_request_to_retrieve_multiple_items(realm(), GC::Ref(*this), RecordKind::Value, *query_or_options, count);
+    return create_a_request_to_retrieve_multiple_items(realm(), GC::Ref(*this), RecordKind::Value, query_or_options.value_or(JS::js_undefined()), count);
 }
 
 // https://w3c.github.io/IndexedDB/#dom-idbobjectstore-openkeycursor
-WebIDL::ExceptionOr<GC::Ref<IDBRequest>> IDBObjectStore::open_key_cursor(JS::Value query, Bindings::IDBCursorDirection direction)
+WebIDL::ExceptionOr<GC::Ref<IDBRequest>> IDBObjectStore::open_key_cursor(Optional<JS::Value> query, Bindings::IDBCursorDirection direction)
 {
     auto& realm = this->realm();
 
@@ -640,11 +647,11 @@ WebIDL::ExceptionOr<GC::Ref<IDBRequest>> IDBObjectStore::get_all_keys(Optional<J
 {
     // 1. Return the result of creating a request to retrieve multiple items with the current Realm record, this, "key",
     //    queryOrOptions, and count if given. Rethrow any exceptions.
-    return create_a_request_to_retrieve_multiple_items(realm(), GC::Ref(*this), RecordKind::Key, *query_or_options, count);
+    return create_a_request_to_retrieve_multiple_items(realm(), GC::Ref(*this), RecordKind::Key, query_or_options.value_or(JS::js_undefined()), count);
 }
 
 // https://pr-preview.s3.amazonaws.com/w3c/IndexedDB/pull/461.html#dom-idbobjectstore-getallrecords
-WebIDL::ExceptionOr<GC::Ref<IDBRequest>> IDBObjectStore::get_all_records(IDBGetAllOptions const& options)
+WebIDL::ExceptionOr<GC::Ref<IDBRequest>> IDBObjectStore::get_all_records(Bindings::IDBGetAllOptions const& options)
 {
     // 1. Return the result of creating a request to retrieve multiple items with the current Realm record, this,
     //    "record", and options. Rethrow any exceptions.

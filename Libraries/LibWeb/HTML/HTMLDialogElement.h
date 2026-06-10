@@ -21,10 +21,13 @@ class HTMLDialogElement final : public HTMLElement {
 public:
     virtual ~HTMLDialogElement() override;
 
-    virtual void removed_from(Node* old_parent, Node& old_root) override;
+    virtual void removed_from(IsSubtreeRoot, Node* old_ancestor, Node& old_root) override;
 
     // ^EventTarget
-    virtual bool is_focusable() const override { return true; }
+    virtual bool is_focusable() const override
+    {
+        return meets_focusable_area_rendering_requirements();
+    }
 
     String return_value() const;
     void set_return_value(String);

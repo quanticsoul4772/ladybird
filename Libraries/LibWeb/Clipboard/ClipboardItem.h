@@ -8,7 +8,7 @@
 
 #include <LibGC/Ptr.h>
 #include <LibJS/Runtime/PromiseCapability.h>
-#include <LibWeb/Bindings/ClipboardItemPrototype.h>
+#include <LibWeb/Bindings/ClipboardItem.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/DataTransfer.h>
@@ -23,10 +23,6 @@ constexpr inline Array MANDATORY_DATA_TYPES = {
     "text/plain"sv, "text/html"sv, "image/png"sv
 };
 
-struct ClipboardItemOptions {
-    Bindings::PresentationStyle presentation_style { Bindings::PresentationStyle::Unspecified };
-};
-
 // https://w3c.github.io/clipboard-apis/#clipboard-item-interface
 class ClipboardItem : public Bindings::PlatformObject {
     WEB_PLATFORM_OBJECT(ClipboardItem, Bindings::PlatformObject);
@@ -39,7 +35,7 @@ public:
         GC::Ref<WebIDL::Promise> data; // The actual data for this representation.
     };
 
-    static WebIDL::ExceptionOr<GC::Ref<ClipboardItem>> construct_impl(JS::Realm&, OrderedHashMap<String, GC::Root<WebIDL::Promise>> const& items, ClipboardItemOptions const& options = {});
+    static WebIDL::ExceptionOr<GC::Ref<ClipboardItem>> construct_impl(JS::Realm&, GC::OrderedRootHashMap<String, GC::Ref<WebIDL::Promise>> const& items, Bindings::ClipboardItemOptions const& options = {});
 
     virtual ~ClipboardItem() override;
 

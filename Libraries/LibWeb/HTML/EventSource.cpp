@@ -9,8 +9,9 @@
 #include <LibGC/Heap.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibJS/Runtime/VM.h>
-#include <LibWeb/Bindings/EventSourcePrototype.h>
+#include <LibWeb/Bindings/EventSource.h>
 #include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/MessageEvent.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Fetch/Fetching/Fetching.h>
 #include <LibWeb/Fetch/Infrastructure/FetchAlgorithms.h>
@@ -23,6 +24,7 @@
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/EventSource.h>
 #include <LibWeb/HTML/MessageEvent.h>
+#include <LibWeb/HTML/MessagePort.h>
 #include <LibWeb/HTML/PotentialCORSRequest.h>
 #include <LibWeb/HTML/Scripting/Environments.h>
 #include <LibWeb/HTML/WindowOrWorkerGlobalScope.h>
@@ -32,7 +34,7 @@ namespace Web::HTML {
 GC_DEFINE_ALLOCATOR(EventSource);
 
 // https://html.spec.whatwg.org/multipage/server-sent-events.html#dom-eventsource
-WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::construct_impl(JS::Realm& realm, StringView url, EventSourceInit event_source_init_dict)
+WebIDL::ExceptionOr<GC::Ref<EventSource>> EventSource::construct_impl(JS::Realm& realm, StringView url, Bindings::EventSourceInit const& event_source_init_dict)
 {
     auto& vm = realm.vm();
 
@@ -437,18 +439,17 @@ void EventSource::dispatch_the_event()
         data_buffer = data_buffer.substring_view(0, data_buffer.length() - 1);
 
     // 4. Let event be the result of creating an event using MessageEvent, in the relevant realm of the EventSource object.
-    // 5. Initialize event's type attribute to "message", its data attribute to data, its origin attribute to the serialization
-    //    of the origin of the event stream's final URL (i.e., the URL after redirects), and its lastEventId attribute to the
-    //    last event ID string of the event source.
+    // 5. Initialize event's type attribute to "message", its data attribute to data, its origin to the origin of the event
+    //    stream's final URL (i.e., the URL after redirects), and its lastEventId attribute to the last event ID string of
+    //    the event source.
     // 6. If the event type buffer has a value other than the empty string, change the type of the newly created event to equal
     //    the value of the event type buffer.
-    MessageEventInit init {};
+    Bindings::MessageEventInit init;
     init.data = JS::PrimitiveString::create(vm(), data_buffer);
-    init.origin = m_url.origin().serialize();
     init.last_event_id = last_event_id;
 
     auto type = m_event_type.is_empty() ? HTML::EventNames::message : m_event_type;
-    auto event = MessageEvent::create(realm(), type, init);
+    auto event = MessageEvent::create(realm(), type, init, m_url.origin());
 
     // 7. Set the data buffer and the event type buffer to the empty string.
     m_event_type = {};

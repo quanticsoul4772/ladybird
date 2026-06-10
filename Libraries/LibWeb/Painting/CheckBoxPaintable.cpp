@@ -15,8 +15,6 @@
 
 namespace Web::Painting {
 
-GC_DEFINE_ALLOCATOR(CheckBoxPaintable);
-
 static Gfx::Path check_mark_path(Gfx::IntRect checkbox_rect)
 {
     Gfx::Path path;
@@ -35,14 +33,14 @@ static Gfx::Path check_mark_path(Gfx::IntRect checkbox_rect)
     return path.copy_transformed(scale_checkmark_to_fit);
 }
 
-GC::Ref<CheckBoxPaintable>
+NonnullRefPtr<CheckBoxPaintable>
 CheckBoxPaintable::create(Layout::CheckBox const& layout_box)
 {
-    return layout_box.heap().allocate<CheckBoxPaintable>(layout_box);
+    return adopt_ref(*new CheckBoxPaintable(layout_box));
 }
 
 CheckBoxPaintable::CheckBoxPaintable(Layout::CheckBox const& layout_box)
-    : LabelablePaintable(layout_box)
+    : PaintableBox(layout_box)
 {
 }
 
@@ -57,7 +55,7 @@ void CheckBoxPaintable::paint(DisplayListRecordingContext& context, PaintPhase p
         return;
 
     auto const& checkbox = as<HTML::HTMLInputElement const>(*dom_node());
-    bool enabled = layout_box().dom_node().enabled();
+    bool enabled = checkbox.enabled();
     auto checkbox_rect = context.enclosing_device_rect(absolute_rect()).to_type<int>();
     auto checkbox_radius = checkbox_rect.width() / 5;
 
@@ -66,7 +64,8 @@ void CheckBoxPaintable::paint(DisplayListRecordingContext& context, PaintPhase p
     };
 
     auto modify_color = [&](Color color) {
-        if (being_pressed() && enabled)
+        // FIXME: Make this only take effect while this element or its labels are hovered.
+        if (checkbox.is_being_activated() && enabled)
             return shade(color, 0.3f);
         return color;
     };

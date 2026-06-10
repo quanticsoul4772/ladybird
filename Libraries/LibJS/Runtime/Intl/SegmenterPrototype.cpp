@@ -45,7 +45,7 @@ JS_DEFINE_NATIVE_FUNCTION(SegmenterPrototype::resolved_options)
     // 3. Let options be OrdinaryObjectCreate(%Object.prototype%).
     auto options = Object::create(realm, realm.intrinsics().object_prototype());
 
-    // 4. For each row of Table 32, except the header row, in table order, do
+    // 4. For each row of Table 34, except the header row, in table order, do
     //     a. Let p be the Property value of the current row.
     //     b. Let v be the value of segmenter's internal slot whose name is the Internal Slot value of the current row.
     //     c. Assert: v is not undefined.
@@ -67,10 +67,10 @@ JS_DEFINE_NATIVE_FUNCTION(SegmenterPrototype::segment)
     auto segmenter = TRY(typed_this_object(vm));
 
     // 3. Let string be ? ToString(string).
-    auto string = TRY(vm.argument(0).to_utf16_string(vm));
+    auto string = TRY(vm.argument(0).to_primitive_string(vm));
 
     // 4. Return ! CreateSegmentsObject(segmenter, string).
-    return Segments::create(realm, segmenter->segmenter(), move(string));
+    return Segments::create(realm, segmenter->segmenter(), string);
 }
 
 }

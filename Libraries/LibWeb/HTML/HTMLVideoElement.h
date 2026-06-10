@@ -8,6 +8,7 @@
 #pragma once
 
 #include <AK/Optional.h>
+#include <LibGfx/DecodedImageFrame.h>
 #include <LibGfx/Forward.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/Forward.h>
@@ -33,11 +34,14 @@ public:
     Layout::VideoBox* layout_node();
     Layout::VideoBox const* layout_node() const;
 
-    void set_video_width(u32 video_width) { m_video_width = video_width; }
+    void set_intrinsic_video_dimensions(Optional<Gfx::Size<u32>>);
     u32 video_width() const;
-
-    void set_video_height(u32 video_height) { m_video_height = video_height; }
     u32 video_height() const;
+
+    virtual bool update_intrinsic_video_dimensions() override;
+    virtual void update_natural_dimensions() override;
+    Optional<Gfx::Size<u32>> natural_media_size() const;
+    Optional<CSSPixelSize> natural_element_size() const;
 
     RefPtr<Gfx::Bitmap> const& poster_frame() const { return m_poster_frame; }
 
@@ -56,8 +60,7 @@ public:
     };
     Representation current_representation() const;
 
-    // FIXME: This is a hack for images used as CanvasImageSource. Do something more elegant.
-    RefPtr<Gfx::ImmutableBitmap> bitmap() const;
+    Optional<Gfx::DecodedImageFrame> current_decoded_image_frame() const;
 
 private:
     HTMLVideoElement(DOM::Document&, DOM::QualifiedName);
@@ -71,7 +74,7 @@ private:
     // https://html.spec.whatwg.org/multipage/media.html#the-video-element:dimension-attributes
     virtual bool supports_dimension_attributes() const override { return true; }
 
-    virtual GC::Ptr<Layout::Node> create_layout_node(GC::Ref<CSS::ComputedProperties>) override;
+    virtual RefPtr<Layout::Node> create_layout_node(CSS::ComputedProperties const&) override;
 
     WebIDL::ExceptionOr<void> determine_element_poster_frame(Optional<String> const& poster);
 
@@ -79,8 +82,8 @@ private:
     VideoFrame m_current_frame;
     RefPtr<Gfx::Bitmap> m_poster_frame;
 
-    u32 m_video_width { 0 };
-    u32 m_video_height { 0 };
+    Optional<Gfx::Size<u32>> m_intrinsic_video_dimensions;
+    Optional<CSSPixelSize> m_natural_dimensiosn;
 
     GC::Ptr<Fetch::Infrastructure::FetchController> m_fetch_controller;
     Optional<DOM::DocumentLoadEventDelayer> m_load_event_delayer;

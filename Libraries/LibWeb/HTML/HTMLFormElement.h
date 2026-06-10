@@ -10,7 +10,7 @@
 
 #include <AK/Time.h>
 #include <LibWeb/ARIA/Roles.h>
-#include <LibWeb/Bindings/NavigationPrototype.h>
+#include <LibWeb/Bindings/Navigation.h>
 #include <LibWeb/HTML/HTMLElement.h>
 #include <LibWeb/HTML/UserNavigationInvolvement.h>
 
@@ -116,6 +116,7 @@ private:
     // ^PlatformObject
     virtual Optional<JS::Value> item_value(size_t index) const override;
     virtual JS::Value named_item_value(FlyString const& name) const override;
+    virtual bool is_supported_property_name(FlyString const&) const override;
     virtual Vector<FlyString> supported_property_names() const override;
 
     virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;

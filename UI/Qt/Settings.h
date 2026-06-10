@@ -9,6 +9,7 @@
 #pragma once
 
 #include <AK/ByteString.h>
+#include <AK/Optional.h>
 #include <AK/OwnPtr.h>
 
 #include <QPoint>
@@ -41,14 +42,10 @@ public:
     bool is_maximized();
     void set_is_maximized(bool is_maximized);
 
-    bool show_menubar();
-    void set_show_menubar(bool show_menubar);
-
     bool network_monitoring_enabled();
     void set_network_monitoring_enabled(bool enabled);
 
 signals:
-    void show_menubar_changed(bool show_menubar);
     void network_monitoring_changed(bool enabled);
 
 protected:

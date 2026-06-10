@@ -7,6 +7,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/NeverDestroyed.h>
 #include <LibCrypto/BigFraction/BigFraction.h>
 #include <LibJS/Runtime/Date.h>
 #include <LibJS/Runtime/PropertyKey.h>
@@ -382,7 +383,7 @@ ThrowCompletionOr<UnitValue> get_temporal_unit_valued_option(VM& vm, Object cons
     // 2. Append "auto" to allowedStrings.
     // 3. NOTE: For each singular Temporal unit name that is contained within allowedStrings, the corresponding plural
     //    name is also contained within it.
-    static auto allowed_strings = [&]() {
+    static NeverDestroyed<Vector<StringView>> allowed_strings { [&]() {
         Vector<StringView> allowed_strings;
         allowed_strings.ensure_capacity((temporal_units.size() * 2) + 1);
 
@@ -393,7 +394,7 @@ ThrowCompletionOr<UnitValue> get_temporal_unit_valued_option(VM& vm, Object cons
 
         allowed_strings.unchecked_append("auto"sv);
         return allowed_strings;
-    }();
+    }() };
 
     // 4. If default is UNSET, then
     //     a. Let defaultValue be undefined.
@@ -406,7 +407,7 @@ ThrowCompletionOr<UnitValue> get_temporal_unit_valued_option(VM& vm, Object cons
         [](Unit unit) -> OptionDefault { return temporal_unit_to_string(unit); });
 
     // 6. Let value be ? GetOption(options, key, STRING, allowedStrings, defaultValue).
-    auto value = TRY(get_option(vm, options, key, OptionType::String, allowed_strings, default_value));
+    auto value = TRY(get_option(vm, options, key, OptionType::String, *allowed_strings, default_value));
 
     // 7. If value is undefined, return UNSET.
     if (value.is_undefined())
@@ -1152,14 +1153,14 @@ ThrowCompletionOr<ParsedISODateTime> parse_iso_date_time(VM& vm, StringView iso_
             // 3. If goal is TemporalYearMonthString and parseResult does not contain a DateDay Parse Node, then
             if (goal == Production::TemporalYearMonthString && !parse_result->date_day.has_value()) {
                 // a. If calendar is not EMPTY and the ASCII-lowercase of calendar is not "iso8601", throw a RangeError exception.
-                if (calendar.has_value() && !calendar->equals_ignoring_ascii_case("iso8601"sv))
+                if (calendar.has_value() && !calendar->equals_ignoring_ascii_case(ISO8601_CALENDAR))
                     return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarIdentifier, *calendar);
             }
 
             // 4. If goal is TemporalMonthDayString and parseResult does not contain a DateYear Parse Node, then
             if (goal == Production::TemporalMonthDayString && !parse_result->date_year.has_value()) {
                 // a. If calendar is not EMPTY and the ASCII-lowercase of calendar is not "iso8601", throw a RangeError exception.
-                if (calendar.has_value() && !calendar->equals_ignoring_ascii_case("iso8601"sv))
+                if (calendar.has_value() && !calendar->equals_ignoring_ascii_case(ISO8601_CALENDAR))
                     return vm.throw_completion<RangeError>(ErrorType::TemporalInvalidCalendarIdentifier, *calendar);
 
                 // b. Set yearAbsent to true.
@@ -1621,7 +1622,7 @@ ThrowCompletionOr<String> to_offset_string(VM& vm, Value argument)
 }
 
 // 13.42 ISODateToFields ( calendar, isoDate, type ), https://tc39.es/proposal-temporal/#sec-temporal-isodatetofields
-CalendarFields iso_date_to_fields(StringView calendar, ISODate iso_date, DateType type)
+CalendarFields iso_date_to_fields(String const& calendar, ISODate iso_date, DateType type)
 {
     // 1. Let fields be an empty Calendar Fields Record with all fields set to unset.
     auto fields = CalendarFields::unset();

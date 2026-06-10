@@ -6,12 +6,14 @@
  */
 
 #include <AK/Enumerate.h>
+#include <AK/StringView.h>
+#include <LibCore/TimeZone.h>
 #include <LibJS/Runtime/ArrayBuffer.h>
 #include <LibJS/Runtime/Date.h>
+#include <LibJS/Runtime/FinalizationRegistry.h>
 #include <LibJS/Runtime/TypedArray.h>
 #include <LibJS/Runtime/ValueInlines.h>
 #include <LibTest/JavaScriptTestRunner.h>
-#include <LibUnicode/TimeZone.h>
 
 TEST_ROOT("Tests/LibJS/Runtime");
 
@@ -19,10 +21,16 @@ TESTJS_PROGRAM_FLAG(test262_parser_tests, "Run test262 parser tests", "test262-p
 
 TESTJS_GLOBAL_FUNCTION(can_parse_source, canParseSource)
 {
-    auto source = TRY(vm.argument(0).to_utf16_string(vm));
-    auto parser = JS::Parser(JS::Lexer(JS::SourceCode::create({}, source)));
-    (void)parser.parse_program();
-    return JS::Value(!parser.has_errors());
+    auto& realm = *vm.current_realm();
+    auto source = TRY(vm.argument(0).to_string(vm));
+    auto script = JS::Script::parse(source, realm);
+    return JS::Value(!script.is_error());
+}
+
+TESTJS_GLOBAL_FUNCTION(collect_garbage, gc)
+{
+    vm.heap().collect_garbage();
+    return JS::js_undefined();
 }
 
 // Based on $262.evalScript
@@ -36,12 +44,36 @@ TESTJS_GLOBAL_FUNCTION(evaluate_source, evaluateSource)
     if (script.is_error())
         return vm.throw_completion<JS::SyntaxError>(script.error().first().to_string());
 
-    return vm.bytecode_interpreter().run(script.value());
+    return vm.run(script.value());
+}
+
+TESTJS_GLOBAL_FUNCTION(evaluate_module, evaluateModule)
+{
+    auto& realm = *vm.current_realm();
+
+    auto path = TRY(vm.argument(0).to_string(vm));
+    auto module = Test::JS::parse_module(path.to_byte_string(), realm);
+    if (module.is_error())
+        return vm.throw_completion<JS::SyntaxError>(module.error().error.to_string());
+
+    return vm.run(module.value());
 }
 
 TESTJS_GLOBAL_FUNCTION(run_queued_promise_jobs, runQueuedPromiseJobs)
 {
     vm.run_queued_promise_jobs();
+    return JS::js_undefined();
+}
+
+TESTJS_GLOBAL_FUNCTION(clear_kept_objects, clearKeptObjects)
+{
+    vm.finish_execution_generation();
+    return JS::js_undefined();
+}
+
+TESTJS_GLOBAL_FUNCTION(run_queued_finalization_registry_cleanup_jobs, runQueuedFinalizationRegistryCleanupJobs)
+{
+    vm.run_queued_finalization_registry_cleanup_jobs();
     return JS::js_undefined();
 }
 
@@ -51,7 +83,7 @@ TESTJS_GLOBAL_FUNCTION(get_weak_set_size, getWeakSetSize)
     if (!is<JS::WeakSet>(*object))
         return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "WeakSet");
     auto& weak_set = static_cast<JS::WeakSet&>(*object);
-    return JS::Value(weak_set.values().size());
+    return JS::Value(weak_set.weak_set_size());
 }
 
 TESTJS_GLOBAL_FUNCTION(get_weak_map_size, getWeakMapSize)
@@ -60,7 +92,7 @@ TESTJS_GLOBAL_FUNCTION(get_weak_map_size, getWeakMapSize)
     if (!is<JS::WeakMap>(*object))
         return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "WeakMap");
     auto& weak_map = static_cast<JS::WeakMap&>(*object);
-    return JS::Value(weak_map.values().size());
+    return JS::Value(weak_map.weak_map_size());
 }
 
 TESTJS_GLOBAL_FUNCTION(mark_as_garbage, markAsGarbage)
@@ -72,7 +104,7 @@ TESTJS_GLOBAL_FUNCTION(mark_as_garbage, markAsGarbage)
     auto& variable_name = argument.as_string();
 
     // In native functions we don't have a lexical environment so get the outer via the execution stack.
-    auto outer_environment = vm.execution_context_stack().last_matching([&](auto& execution_context) {
+    auto outer_environment = vm.last_execution_context_matching([&](auto* execution_context) {
         return execution_context->lexical_environment != nullptr;
     });
     if (!outer_environment.has_value())
@@ -85,9 +117,28 @@ TESTJS_GLOBAL_FUNCTION(mark_as_garbage, markAsGarbage)
     if (!can_be_held_weakly(value))
         return vm.throw_completion<JS::TypeError>(JS::ErrorType::CannotBeHeldWeakly, ByteString::formatted("Variable with name {}", variable_name.utf8_string_view()));
 
+    TRY(reference.put_value(vm, JS::js_undefined()));
+    (void)TRY(reference.delete_(vm));
     vm.heap().uproot_cell(&value.as_cell());
-    TRY(reference.delete_(vm));
 
+    return JS::js_undefined();
+}
+
+TESTJS_GLOBAL_FUNCTION(cleanup_finalization_registry, cleanupFinalizationRegistry)
+{
+    auto finalization_registry = vm.argument(0).as_if<JS::FinalizationRegistry>();
+    if (!finalization_registry)
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAnObjectOfType, "FinalizationRegistry");
+
+    auto callback = vm.argument(1);
+    if (vm.argument_count() > 1 && !callback.is_function())
+        return vm.throw_completion<JS::TypeError>(JS::ErrorType::NotAFunction, callback);
+
+    GC::Ptr<JS::JobCallback> cleanup_callback;
+    if (!callback.is_undefined())
+        cleanup_callback = vm.host_make_job_callback(callback.as_function());
+
+    TRY(finalization_registry->cleanup(cleanup_callback));
     return JS::js_undefined();
 }
 
@@ -103,10 +154,10 @@ TESTJS_GLOBAL_FUNCTION(detach_array_buffer, detachArrayBuffer)
 
 TESTJS_GLOBAL_FUNCTION(set_time_zone, setTimeZone)
 {
-    auto current_time_zone = JS::PrimitiveString::create(vm, Unicode::current_time_zone());
+    auto current_time_zone = JS::PrimitiveString::create(vm, Core::TimeZone::current_time_zone());
     auto time_zone = TRY(vm.argument(0).to_string(vm));
 
-    if (auto result = Unicode::set_current_time_zone(time_zone); result.is_error())
+    if (auto result = Core::TimeZone::set_current_time_zone(time_zone); result.is_error())
         return vm.throw_completion<JS::InternalError>(MUST(String::formatted("Could not set time zone: {}", result.error())));
 
     JS::clear_system_time_zone_cache();
@@ -124,6 +175,18 @@ TESTJS_GLOBAL_FUNCTION(to_utf8_bytes, toUTF8Bytes)
         typed_array->set_value_in_buffer(i, JS::Value { byte }, JS::ArrayBuffer::Order::SeqCst);
 
     return typed_array;
+}
+
+TESTJS_GLOBAL_FUNCTION(create_default_typed_array, createDefaultTypedArray)
+{
+    auto& realm = *vm.current_realm();
+
+    auto* typed_array = TRY(JS::typed_array_from(vm, vm.argument(0)));
+    auto length = TRY(vm.argument(1).to_index(vm));
+    if (length > NumericLimits<u32>::max())
+        return vm.throw_completion<JS::RangeError>(JS::ErrorType::InvalidLength, "typed array");
+
+    return TRY(typed_array->create_default(realm, length));
 }
 
 TESTJS_RUN_FILE_FUNCTION(ByteString const& test_file, JS::Realm& realm, JS::ExecutionContext&)
@@ -153,9 +216,9 @@ TESTJS_RUN_FILE_FUNCTION(ByteString const& test_file, JS::Realm& realm, JS::Exec
     else
         return Test::JS::RunFileHookResult::SkipFile;
 
-    auto program_type = path.basename().ends_with(".module.js"sv) ? JS::Program::Type::Module : JS::Program::Type::Script;
+    bool const is_module = path.basename().ends_with(".module.js"sv);
     bool parse_succeeded = false;
-    if (program_type == JS::Program::Type::Module)
+    if (is_module)
         parse_succeeded = !Test::JS::parse_module(test_file, realm).is_error();
     else
         parse_succeeded = !Test::JS::parse_script(test_file, realm).is_error();

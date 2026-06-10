@@ -5,30 +5,29 @@
  */
 
 #include <LibJS/Runtime/Realm.h>
-#include <LibWeb/Bindings/ANGLEInstancedArraysPrototype.h>
+#include <LibWeb/Bindings/ANGLEInstancedArrays.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/WebGL/Extensions/ANGLEInstancedArrays.h>
 #include <LibWeb/WebGL/OpenGLContext.h>
-#include <LibWeb/WebGL/WebGLRenderingContext.h>
+#include <LibWeb/WebGL/WebGLRenderingContextBase.h>
 
 #define GL_GLEXT_PROTOTYPES 1
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 
-namespace Web::WebGL::Extensions {
+namespace Web::WebGL {
 
 GC_DEFINE_ALLOCATOR(ANGLEInstancedArrays);
 
-JS::ThrowCompletionOr<GC::Ptr<ANGLEInstancedArrays>> ANGLEInstancedArrays::create(JS::Realm& realm, GC::Ref<WebGLRenderingContext> context)
+JS::ThrowCompletionOr<GC::Ref<JS::Object>> ANGLEInstancedArrays::create(JS::Realm& realm, GC::Ref<WebGLRenderingContextBase> context)
 {
     return realm.create<ANGLEInstancedArrays>(realm, context);
 }
 
-ANGLEInstancedArrays::ANGLEInstancedArrays(JS::Realm& realm, GC::Ref<WebGLRenderingContext> context)
+ANGLEInstancedArrays::ANGLEInstancedArrays(JS::Realm& realm, GC::Ref<WebGLRenderingContextBase> context)
     : PlatformObject(realm)
     , m_context(context)
 {
-    m_context->context().request_extension("GL_ANGLE_instanced_arrays");
 }
 
 void ANGLEInstancedArrays::vertex_attrib_divisor_angle(GLuint index, GLuint divisor)

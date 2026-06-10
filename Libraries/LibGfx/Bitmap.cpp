@@ -64,12 +64,12 @@ static bool size_would_overflow(BitmapFormat format, IntSize size)
 {
     if (size.width() < 0 || size.height() < 0)
         return true;
-    // This check is a bit arbitrary, but should protect us from most shenanigans:
-    if (size.width() >= INT16_MAX || size.height() >= INT16_MAX)
+
+    if (size.width() > UINT16_MAX || size.height() > UINT16_MAX)
         return true;
-    // In contrast, this check is absolutely necessary:
+
     size_t pitch = Bitmap::minimum_pitch(size.width(), format);
-    return Checked<size_t>::multiplication_would_overflow(pitch, size.height());
+    return Checked<int32_t>::multiplication_would_overflow(pitch, size.height());
 }
 
 ErrorOr<NonnullRefPtr<Bitmap>> Bitmap::create(BitmapFormat format, IntSize size)
@@ -108,8 +108,8 @@ Bitmap::Bitmap(BitmapFormat format, AlphaType alpha_type, IntSize size, BackingS
     VERIFY(!size_would_overflow(format, size));
     VERIFY(m_data);
     VERIFY(backing_store.size_in_bytes == size_in_bytes());
-    m_destruction_callback = [data = m_data, size_in_bytes = this->size_in_bytes()] {
-        kfree_sized(data, size_in_bytes);
+    m_destruction_callback = [data = m_data] {
+        kfree(data);
     };
 }
 

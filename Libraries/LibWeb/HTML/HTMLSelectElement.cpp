@@ -7,10 +7,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/HTMLSelectElementPrototype.h>
+#include <LibWeb/Bindings/HTMLSelectElement.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSStyleProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
+#include <LibWeb/CSS/Invalidation/ElementStateInvalidator.h>
+#include <LibWeb/CSS/Invalidation/FormControlInvalidator.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/DOM/Document.h>
@@ -179,7 +181,7 @@ HTMLOptionElement* HTMLSelectElement::named_item(FlyString const& name)
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#dom-select-add
-WebIDL::ExceptionOr<void> HTMLSelectElement::add(HTMLOptionOrOptGroupElement element, Optional<HTMLElementOrElementIndex> before)
+WebIDL::ExceptionOr<void> HTMLSelectElement::add(HTMLOptionOrOptGroupElement element, NullableHTMLElementOrElementIndex before)
 {
     // Similarly, the add(element, before) method must act like its namesake method on that same options collection.
     TRY(const_cast<HTMLOptionsCollection&>(*options()).add(move(element), move(before)));
@@ -336,7 +338,11 @@ WebIDL::Long HTMLSelectElement::selected_index() const
 WebIDL::ExceptionOr<void> HTMLSelectElement::set_selected_index(WebIDL::Long index)
 {
     // The selectedIndex setter steps are:
-    ScopeGuard guard { [&]() { update_inner_text_element(); } };
+    ScopeGuard guard { [&]() {
+        clone_selected_option_into_select_button();
+        // AD-HOC: Changing the selected option can change whether a required select satisfies its constraints.
+        CSS::Invalidation::invalidate_style_after_validity_change(*this);
+    } };
 
     // 1. Let firstMatchingOption be null.
     GC::Ptr<HTMLOptionElement> first_matching_option;
@@ -403,11 +409,11 @@ bool HTMLSelectElement::can_skip_children_changed_selectedness_update(ChildrenCh
     return false;
 }
 
-void HTMLSelectElement::children_changed(ChildrenChangedMetadata const* metadata)
+void HTMLSelectElement::children_changed(ChildrenChangedMetadata const& metadata)
 {
     Base::children_changed(metadata);
 
-    if (metadata && can_skip_children_changed_selectedness_update(*metadata))
+    if (can_skip_children_changed_selectedness_update(metadata))
         return;
 
     update_cached_list_of_options();
@@ -418,8 +424,8 @@ void HTMLSelectElement::children_changed(ChildrenChangedMetadata const* metadata
 String const& HTMLSelectElement::type() const
 {
     // The type IDL attribute, on getting, must return the string "select-one" if the multiple attribute is absent, and the string "select-multiple" if the multiple attribute is present.
-    static String const select_one = "select-one"_string;
-    static String const select_multiple = "select-multiple"_string;
+    static String const& select_one = *new String("select-one"_string);
+    static String const& select_multiple = *new String("select-multiple"_string);
 
     if (!has_attribute(AttributeNames::multiple))
         return select_one;
@@ -457,7 +463,11 @@ Utf16String HTMLSelectElement::value() const
 WebIDL::ExceptionOr<void> HTMLSelectElement::set_value(Utf16String const& value)
 {
     // The value setter steps are:
-    ScopeGuard guard { [&]() { update_inner_text_element(); } };
+    ScopeGuard guard { [&]() {
+        clone_selected_option_into_select_button();
+        // AD-HOC: Changing the selected option can change whether a required select satisfies its constraints.
+        CSS::Invalidation::invalidate_style_after_validity_change(*this);
+    } };
     update_cached_list_of_options();
 
     // 1. Let firstMatchingOption be null.
@@ -496,10 +506,14 @@ void HTMLSelectElement::send_select_update_notifications()
         // 1. Set the select element's user validity to true.
         m_user_validity = true;
 
+        // AD-HOC: Setting the user validity changes which of the :user-valid and :user-invalid pseudo-classes match.
+        CSS::Invalidation::invalidate_style_after_validity_change(*this);
+
         // 2. Run update a select's selectedcontent given element.
         MUST(update_selectedcontent());
 
-        // FIXME: 3. Run clone selected option into select button given element.
+        // 3. Run clone selected option into select button given element.
+        clone_selected_option_into_select_button();
 
         // 4. Fire an event named input at element, with the bubbles and composed attributes initialized to true.
         auto input_event = DOM::Event::create(realm(), HTML::EventNames::input);
@@ -520,7 +534,7 @@ void HTMLSelectElement::set_is_open(bool open)
         return;
 
     m_is_open = open;
-    invalidate_style(DOM::StyleInvalidationReason::HTMLSelectElementSetIsOpen);
+    CSS::Invalidation::invalidate_style_after_select_open_state_change(*this);
 }
 
 bool HTMLSelectElement::has_activation_behavior() const
@@ -659,7 +673,7 @@ void HTMLSelectElement::did_select_item(Optional<u32> const& id)
         }
     }
 
-    update_inner_text_element();
+    clone_selected_option_into_select_button();
     send_select_update_notifications();
 }
 
@@ -676,6 +690,10 @@ void HTMLSelectElement::form_associated_element_attribute_changed(FlyString cons
             update_selectedness();
         }
     }
+
+    // AD-HOC: Changing the required or multiple attribute can change whether the select satisfies its constraints.
+    if (name == HTML::AttributeNames::required || name == HTML::AttributeNames::multiple)
+        CSS::Invalidation::invalidate_style_after_validity_change(*this);
 }
 
 void HTMLSelectElement::computed_properties_changed()
@@ -733,28 +751,32 @@ void HTMLSelectElement::create_shadow_tree_if_needed()
 
     MUST(border->append_child(*m_chevron_icon_element));
 
-    update_inner_text_element();
+    clone_selected_option_into_select_button();
 }
 
-void HTMLSelectElement::update_inner_text_element(Badge<HTMLOptionElement>)
+// https://html.spec.whatwg.org/multipage/form-elements.html#clone-selected-option-into-select-button
+void HTMLSelectElement::clone_selected_option_into_select_button()
 {
-    update_cached_list_of_options();
-    update_inner_text_element();
-}
+    // To clone selected option into select button, given a select element select:
 
-// FIXME: This needs to be called any time the selected option's children are modified.
-void HTMLSelectElement::update_inner_text_element()
-{
     if (!m_inner_text_element)
         return;
 
-    // Update inner text element to the label of the selected option
-    for (auto const& option_element : m_cached_list_of_options) {
-        if (option_element->selected()) {
-            m_inner_text_element->string_replace_all(Infra::strip_and_collapse_whitespace(Utf16String::from_utf8(option_element->label())));
-            return;
-        }
-    }
+    update_cached_list_of_options();
+
+    // 1. Let option be the first element of select's option list whose selectedness is set to true,
+    //    if such an element exists; otherwise null.
+    auto option = find_value(m_cached_list_of_options, [](auto option) { return option->selected(); });
+
+    // 2. Let text be the empty string.
+    Utf16String text;
+
+    // 3. If option is not null, then set text to option's label.
+    if (option.has_value())
+        text = Utf16String::from_utf8((*option)->label());
+
+    // 4. Set select's select fallback button text to text.
+    m_inner_text_element->string_replace_all(move(text));
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#selectedness-setting-algorithm
@@ -810,15 +832,21 @@ void HTMLSelectElement::update_selectedness()
     }
 
     // 4. If updateSelectedcontent is true, then run update a select's selectedcontent given element.
-    if (should_update_selectedcontent) {
+    if (should_update_selectedcontent)
         MUST(update_selectedcontent());
-        update_inner_text_element();
-    }
+
+    // AD-HOC: The selectedness setting algorithm does not itself refresh the select's fallback button text, but the
+    //         set of selected options may have changed. Run the spec's "clone selected option into select button"
+    //         algorithm so the button stays in sync.
+    clone_selected_option_into_select_button();
+
+    // AD-HOC: A change to the selected option can change whether a required select satisfies its constraints.
+    CSS::Invalidation::invalidate_style_after_validity_change(*this);
 }
 
 bool HTMLSelectElement::is_focusable() const
 {
-    return enabled();
+    return enabled() && meets_focusable_area_rendering_requirements();
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#placeholder-label-option

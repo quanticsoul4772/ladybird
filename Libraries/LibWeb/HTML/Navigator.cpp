@@ -10,7 +10,7 @@
 #include <LibGC/Heap.h>
 #include <LibJS/Runtime/Realm.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/NavigatorPrototype.h>
+#include <LibWeb/Bindings/Navigator.h>
 #include <LibWeb/Clipboard/Clipboard.h>
 #include <LibWeb/CredentialManagement/CredentialsContainer.h>
 #include <LibWeb/Geolocation/Geolocation.h>
@@ -19,7 +19,9 @@
 #include <LibWeb/HTML/Window.h>
 #include <LibWeb/Internals/XRTest.h>
 #include <LibWeb/Loader/ResourceLoader.h>
+#include <LibWeb/MediaCapture/MediaDevices.h>
 #include <LibWeb/Page/Page.h>
+#include <LibWeb/PermissionsAPI/Permissions.h>
 #include <LibWeb/ServiceWorker/ServiceWorkerContainer.h>
 #include <LibWeb/WebXR/XRSystem.h>
 
@@ -51,7 +53,7 @@ bool Navigator::pdf_viewer_enabled() const
 {
     // The NavigatorPlugins mixin's pdfViewerEnabled getter steps are to return the user agent's PDF viewer supported.
     // NOTE: The NavigatorPlugins mixin should only be exposed on the Window object.
-    auto const& window = as<HTML::Window>(HTML::current_principal_global_object());
+    auto const& window = as<HTML::Window>(HTML::current_global_object());
     return window.page().pdf_viewer_supported();
 }
 
@@ -61,7 +63,7 @@ bool Navigator::webdriver() const
     // Returns true if webdriver-active flag is set, false otherwise.
 
     // NOTE: The NavigatorAutomationInformation interface should not be exposed on WorkerNavigator.
-    auto const& window = as<HTML::Window>(HTML::current_principal_global_object());
+    auto const& window = as<HTML::Window>(HTML::current_global_object());
     return window.page().is_webdriver_active();
 }
 
@@ -77,9 +79,11 @@ void Navigator::visit_edges(Cell::Visitor& visitor)
     visitor.visit(m_user_activation);
     visitor.visit(m_service_worker_container);
     visitor.visit(m_media_capabilities);
+    visitor.visit(m_media_devices);
     visitor.visit(m_credentials);
     visitor.visit(m_battery_promise);
     visitor.visit(m_xr);
+    visitor.visit(m_permissions);
 }
 
 GC::Ref<MimeTypeArray> Navigator::mime_types()
@@ -153,7 +157,7 @@ GC::Ref<WebXR::XRSystem> Navigator::xr()
 // https://w3c.github.io/pointerevents/#dom-navigator-maxtouchpoints
 WebIDL::Long Navigator::max_touch_points()
 {
-    dbgln("FIXME: Unimplemented Navigator.maxTouchPoints");
+    // FIXME: Implement this for touch-capable devices.
     return 0;
 }
 
@@ -171,31 +175,43 @@ GC::Ref<MediaCapabilitiesAPI::MediaCapabilities> Navigator::media_capabilities()
     return *m_media_capabilities;
 }
 
+GC::Ref<MediaCapture::MediaDevices> Navigator::media_devices()
+{
+    if (!m_media_devices)
+        m_media_devices = realm().create<MediaCapture::MediaDevices>(realm());
+    return *m_media_devices;
+}
+
 // https://w3c.github.io/battery/#the-getbattery-method
 GC::Ref<WebIDL::Promise> Navigator::get_battery()
 {
     auto& realm = this->realm();
 
-    // FIXME: 1. If this.[[BatteryPromise]] is null, then set it to a new promise in this's relevant realm.
-    if (!m_battery_promise) {
-        WebIDL::SimpleException exception {
-            WebIDL::SimpleExceptionType::TypeError,
-            "Battery Status API is not yet implemented"sv
-        };
-        m_battery_promise = WebIDL::create_rejected_promise_from_exception(realm, move(exception));
+    // 1. If this.[[BatteryPromise]] is null, then set it to a new promise in this's relevant realm.
+    if (!m_battery_promise)
+        m_battery_promise = WebIDL::create_promise(realm);
+
+    // 2. If this's relevant global object's associated Document is not allowed to use the "battery" policy-controlled
+    //    feature, then reject this.[[BatteryPromise]] with a "NotAllowedError" DOMException.
+    if (true) {
+        WebIDL::reject_promise(realm, *m_battery_promise, WebIDL::NotAllowedError::create(realm, "Battery Status API is not yet implemented"_utf16));
     }
-
-    // FIXME: 2. If this's relevant global object's associated Document is not allowed to use the "battery"
-    // policy-controlled feature, then reject this.[[BatteryPromise]] with a "NotAllowedError" DOMException.
-
-    // FIXME: 3. Otherwise:
-    //    1. If this.[[BatteryManager]] is null, then set it to the result of creating a new BatteryManager
-    //       in this's relevant realm.
-
-    //    2. Resolve this.[[BatteryPromise]] with this.[[BatteryManager]].
+    // 3. Otherwise:
+    else {
+        // FIXME: 1. If this.[[BatteryManager]] is null, then set it to the result of creating a new BatteryManager in this's
+        //           relevant realm.
+        // FIXME: 2. Resolve this.[[BatteryPromise]] with this.[[BatteryManager]].
+    }
 
     // 4. Return this.[[BatteryPromise]].
     return *m_battery_promise;
+}
+
+GC::Ref<PermissionsAPI::Permissions> Navigator::permissions()
+{
+    if (!m_permissions)
+        m_permissions = realm().create<PermissionsAPI::Permissions>(realm());
+    return *m_permissions;
 }
 
 }

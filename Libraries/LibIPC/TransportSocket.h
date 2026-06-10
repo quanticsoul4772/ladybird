@@ -10,9 +10,11 @@
 #include <AK/MemoryStream.h>
 #include <AK/Queue.h>
 #include <LibCore/Socket.h>
+#include <LibIPC/Attachment.h>
 #include <LibIPC/AutoCloseFileDescriptor.h>
-#include <LibIPC/File.h>
-#include <LibThreading/ConditionVariable.h>
+#include <LibIPC/TransportHandle.h>
+#include <LibSync/ConditionVariable.h>
+#include <LibSync/Mutex.h>
 #include <LibThreading/Forward.h>
 
 namespace IPC {
@@ -30,7 +32,7 @@ public:
 private:
     AllocatingMemoryStream m_stream;
     Vector<int> m_fds;
-    Threading::Mutex m_mutex;
+    Sync::Mutex m_mutex;
 };
 
 class TransportSocket {
@@ -39,6 +41,13 @@ class TransportSocket {
 
 public:
     static constexpr socklen_t SOCKET_BUFFER_SIZE = 128 * KiB;
+
+    struct Paired {
+        NonnullOwnPtr<TransportSocket> local;
+        TransportHandle remote_handle;
+    };
+    static ErrorOr<Paired> create_paired();
+    static ErrorOr<NonnullOwnPtr<TransportSocket>> from_socket(NonnullOwnPtr<Core::LocalSocket> socket);
 
     explicit TransportSocket(NonnullOwnPtr<Core::LocalSocket> socket);
     ~TransportSocket();
@@ -51,7 +60,7 @@ public:
 
     void wait_until_readable();
 
-    void post_message(Vector<u8> const&, Vector<NonnullRefPtr<AutoCloseFileDescriptor>> const&);
+    void post_message(Vector<u8> const&, Vector<Attachment>& attachments);
 
     enum class ShouldShutdown {
         No,
@@ -59,14 +68,11 @@ public:
     };
     struct Message {
         Vector<u8> bytes;
-        Queue<File> fds;
+        Queue<Attachment> attachments;
     };
     ShouldShutdown read_as_many_messages_as_possible_without_blocking(Function<void(Message&&)>&&);
 
-    // Obnoxious name to make it clear that this is a dangerous operation.
-    ErrorOr<int> release_underlying_transport_for_transfer();
-
-    ErrorOr<IPC::File> clone_for_transfer();
+    ErrorOr<TransportHandle> release_for_transfer();
 
 private:
     enum class TransferState {
@@ -86,6 +92,7 @@ private:
     void stop_io_thread(IOThreadState desired_state);
     void wake_io_thread();
     void read_incoming_messages();
+    void notify_read_available();
 
     NonnullOwnPtr<Core::LocalSocket> m_socket;
 
@@ -93,16 +100,17 @@ private:
     // This is necessary to handle a specific behavior of the macOS kernel, which may prematurely garbage-collect the file
     // descriptor contained in the message before the peer receives it. https://openradar.me/9477351
     Queue<NonnullRefPtr<AutoCloseFileDescriptor>> m_fds_retained_until_received_by_peer;
-    Threading::Mutex m_fds_retained_until_received_by_peer_mutex;
+    Sync::Mutex m_fds_retained_until_received_by_peer_mutex;
 
     RefPtr<Threading::Thread> m_io_thread;
     RefPtr<SendQueue> m_send_queue;
     Atomic<IOThreadState> m_io_thread_state { IOThreadState::Running };
+    Atomic<bool> m_is_being_transferred { false };
     Atomic<bool> m_peer_eof { false };
     ByteBuffer m_unprocessed_bytes;
-    Queue<File> m_unprocessed_fds;
-    Threading::Mutex m_incoming_mutex;
-    Threading::ConditionVariable m_incoming_cv { m_incoming_mutex };
+    Queue<Attachment> m_unprocessed_attachments;
+    Sync::Mutex m_incoming_mutex;
+    Sync::ConditionVariable m_incoming_cv { m_incoming_mutex };
     Vector<NonnullOwnPtr<Message>> m_incoming_messages;
 
     RefPtr<AutoCloseFileDescriptor> m_wakeup_io_thread_read_fd;

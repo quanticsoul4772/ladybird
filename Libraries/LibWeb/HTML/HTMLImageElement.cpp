@@ -5,13 +5,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/NeverDestroyed.h>
 #include <LibCore/Timer.h>
 #include <LibGC/Weak.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/ImmutableBitmap.h>
+#include <LibGfx/DecodedImageFrame.h>
 #include <LibWeb/ARIA/Roles.h>
-#include <LibWeb/Bindings/HTMLImageElementPrototype.h>
-#include <LibWeb/CSS/CascadedProperties.h>
+#include <LibWeb/Bindings/HTMLImageElement.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/StyleComputer.h>
@@ -38,14 +38,110 @@
 #include <LibWeb/HTML/PotentialCORSRequest.h>
 #include <LibWeb/HTML/Scripting/TemporaryExecutionContext.h>
 #include <LibWeb/HTML/SharedResourceRequest.h>
+#include <LibWeb/HTML/SupportedImageTypes.h>
 #include <LibWeb/Layout/ImageBox.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/Painting/PaintableBox.h>
+#include <LibWeb/Painting/ViewportPaintable.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
 #include <LibWeb/Platform/ImageCodecPlugin.h>
 #include <LibWeb/SVG/SVGDecodedImageData.h>
 
 namespace Web::HTML {
+
+// We batch handling of successfully fetched images to avoid interleaving 1 image, 1 layout, 1 image, 1 layout, etc.
+// The processing timer is 1ms instead of 0ms, since layout is driven by a 0ms timer, and if we use 0ms here,
+// the event loop will process them in insertion order. This is a bit of a hack, but it works.
+struct BatchingDispatcher {
+public:
+    BatchingDispatcher()
+        : m_timer(Core::Timer::create_single_shot(1, [this] { process(); }))
+    {
+    }
+
+    void enqueue(GC::Root<GC::Function<void()>> callback)
+    {
+        // NOTE: We don't want to flush the queue on every image load, since that would be slow.
+        //       However, we don't want to keep growing the batch forever either.
+        static constexpr size_t max_loads_to_batch_before_flushing = 16;
+
+        m_queue.append(move(callback));
+        if (m_queue.size() < max_loads_to_batch_before_flushing)
+            m_timer->restart();
+    }
+
+private:
+    void process()
+    {
+        auto queue = move(m_queue);
+        for (auto& callback : queue)
+            callback->function()();
+    }
+
+    NonnullRefPtr<Core::Timer> m_timer;
+    Vector<GC::Root<GC::Function<void()>>> m_queue;
+};
+
+static BatchingDispatcher& batching_dispatcher()
+{
+    static NeverDestroyed<BatchingDispatcher> dispatcher;
+    return *dispatcher;
+}
+
+static bool image_element_dimensions_may_depend_on_intrinsic_size(Layout::ImageBox const& image_box)
+{
+    auto const& computed_values = image_box.computed_values();
+
+    auto size_is_definite = [](CSS::Size const& size) {
+        return size.is_length() || (size.is_calculated() && !size.contains_percentage());
+    };
+    auto size_constraint_is_definite_or_none = [&](CSS::Size const& size) {
+        return size.is_none() || size_is_definite(size);
+    };
+
+    auto const& width = computed_values.width();
+    auto const& height = computed_values.height();
+    if (!size_is_definite(width) || !size_is_definite(height))
+        return true;
+
+    auto const& min_width = computed_values.min_width();
+    auto const& min_height = computed_values.min_height();
+    if (!size_is_definite(min_width) || !size_is_definite(min_height))
+        return true;
+
+    auto const& max_width = computed_values.max_width();
+    auto const& max_height = computed_values.max_height();
+    if (!size_constraint_is_definite_or_none(max_width) || !size_constraint_is_definite_or_none(max_height))
+        return true;
+
+    return false;
+}
+
+static void reset_intrinsic_size_caches_after_image_data_change(Layout::ImageBox& image_box)
+{
+    image_box.reset_cached_intrinsic_sizes();
+    for (auto* ancestor = image_box.parent(); ancestor; ancestor = ancestor->parent()) {
+        auto* box = as_if<Layout::Box>(ancestor);
+        if (!box)
+            continue;
+        box->reset_cached_intrinsic_sizes();
+        if (box->is_absolutely_positioned() || box->is_svg_svg_box())
+            break;
+    }
+}
+
+static void set_needs_layout_update_or_repaint_after_image_data_change(HTMLImageElement& image_element, DOM::SetNeedsLayoutReason reason)
+{
+    auto layout_node = image_element.unsafe_layout_node();
+    auto* image_box = as_if<Layout::ImageBox>(layout_node);
+    if (!image_box || image_element_dimensions_may_depend_on_intrinsic_size(*image_box)) {
+        image_element.set_needs_layout_update(reason);
+        return;
+    }
+
+    reset_intrinsic_size_caches_after_image_data_change(*image_box);
+    image_element.set_needs_repaint();
+}
 
 GC_DEFINE_ALLOCATOR(HTMLImageElement);
 
@@ -82,6 +178,17 @@ void HTMLImageElement::initialize(JS::Realm& realm)
     m_document_observer->set_document_became_inactive([this]() {
         m_load_event_delayer.clear();
         m_animation_timer->stop();
+        m_animation_paused_by_visibility = false;
+    });
+    m_document_observer->set_document_visibility_state_observer([this](HTML::VisibilityState visibility_state) {
+        if (visibility_state == HTML::VisibilityState::Hidden) {
+            m_animation_paused_by_visibility = m_animation_timer->is_active();
+            m_animation_timer->stop();
+            return;
+        }
+
+        if (m_animation_paused_by_visibility)
+            start_animation_timer_if_visible();
     });
 }
 
@@ -100,7 +207,6 @@ void HTMLImageElement::adopted_from(DOM::Document& old_document)
 void HTMLImageElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    image_provider_visit_edges(visitor);
     visitor.visit(m_current_request);
     visitor.visit(m_pending_request);
     visitor.visit(m_document_observer);
@@ -135,33 +241,33 @@ bool HTMLImageElement::is_presentational_hint(FlyString const& name) const
         HTML::AttributeNames::border);
 }
 
-void HTMLImageElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
+void HTMLImageElement::apply_presentational_hints(Vector<CSS::StyleProperty>& properties) const
 {
-    Base::apply_presentational_hints(cascaded_properties);
+    Base::apply_presentational_hints(properties);
     for_each_attribute([&](auto& name, auto& value) {
         if (name == HTML::AttributeNames::hspace) {
             if (auto parsed_value = parse_dimension_value(value)) {
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::MarginLeft, *parsed_value);
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::MarginRight, *parsed_value);
+                properties.append({ .property_id = CSS::PropertyID::MarginLeft, .value = *parsed_value });
+                properties.append({ .property_id = CSS::PropertyID::MarginRight, .value = *parsed_value });
             }
         } else if (name == HTML::AttributeNames::vspace) {
             if (auto parsed_value = parse_dimension_value(value)) {
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::MarginTop, *parsed_value);
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::MarginBottom, *parsed_value);
+                properties.append({ .property_id = CSS::PropertyID::MarginTop, .value = *parsed_value });
+                properties.append({ .property_id = CSS::PropertyID::MarginBottom, .value = *parsed_value });
             }
         } else if (name == HTML::AttributeNames::border) {
             if (auto parsed_value = parse_non_negative_integer(value); parsed_value.has_value()) {
                 auto width_value = CSS::LengthStyleValue::create(CSS::Length::make_px(*parsed_value));
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderTopWidth, width_value);
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderRightWidth, width_value);
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderBottomWidth, width_value);
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderLeftWidth, width_value);
+                properties.append({ .property_id = CSS::PropertyID::BorderTopWidth, .value = width_value });
+                properties.append({ .property_id = CSS::PropertyID::BorderRightWidth, .value = width_value });
+                properties.append({ .property_id = CSS::PropertyID::BorderBottomWidth, .value = width_value });
+                properties.append({ .property_id = CSS::PropertyID::BorderLeftWidth, .value = width_value });
 
                 auto solid_value = CSS::KeywordStyleValue::create(CSS::Keyword::Solid);
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderTopStyle, solid_value);
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderRightStyle, solid_value);
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderBottomStyle, solid_value);
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::BorderLeftStyle, solid_value);
+                properties.append({ .property_id = CSS::PropertyID::BorderTopStyle, .value = solid_value });
+                properties.append({ .property_id = CSS::PropertyID::BorderRightStyle, .value = solid_value });
+                properties.append({ .property_id = CSS::PropertyID::BorderBottomStyle, .value = solid_value });
+                properties.append({ .property_id = CSS::PropertyID::BorderLeftStyle, .value = solid_value });
             }
         }
     });
@@ -184,14 +290,14 @@ void HTMLImageElement::form_associated_element_attribute_changed(FlyString const
     }
 
     if (name == HTML::AttributeNames::decoding) {
-        if (value.has_value() && (value->equals_ignoring_ascii_case("sync"sv) || value->equals_ignoring_ascii_case("async"sv)))
-            dbgln("FIXME: HTMLImageElement.decoding = '{}' is not implemented yet", value->to_ascii_lowercase());
+        if (value.has_value() && value->equals_ignoring_ascii_case("sync"sv))
+            dbgln("FIXME: HTMLImageElement.decoding = 'sync' is not implemented yet");
     }
 }
 
-GC::Ptr<Layout::Node> HTMLImageElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+RefPtr<Layout::Node> HTMLImageElement::create_layout_node(CSS::ComputedProperties const& style)
 {
-    return heap().allocate<Layout::ImageBox>(document(), *this, move(style), *this);
+    return make_ref_counted<Layout::ImageBox>(document(), *this, style, *this);
 }
 
 void HTMLImageElement::adjust_computed_style(CSS::ComputedProperties& style)
@@ -201,16 +307,11 @@ void HTMLImageElement::adjust_computed_style(CSS::ComputedProperties& style)
         style.set_property(CSS::PropertyID::Display, CSS::DisplayStyleValue::create(CSS::Display::from_short(CSS::Display::Short::None)));
 }
 
-RefPtr<Gfx::ImmutableBitmap> HTMLImageElement::immutable_bitmap() const
-{
-    return current_image_bitmap();
-}
-
-RefPtr<Gfx::ImmutableBitmap> HTMLImageElement::default_image_bitmap_sized(Gfx::IntSize size) const
+Optional<Gfx::DecodedImageFrame> HTMLImageElement::default_image_frame_sized(Gfx::IntSize size) const
 {
     if (auto data = m_current_request->image_data())
-        return data->bitmap(0, size);
-    return nullptr;
+        return data->frame(0, size);
+    return {};
 }
 
 bool HTMLImageElement::is_image_available() const
@@ -239,11 +340,11 @@ Optional<CSSPixelFraction> HTMLImageElement::intrinsic_aspect_ratio() const
     return {};
 }
 
-RefPtr<Gfx::ImmutableBitmap> HTMLImageElement::current_image_bitmap_sized(Gfx::IntSize size) const
+Optional<Gfx::DecodedImageFrame> HTMLImageElement::current_image_frame_sized(Gfx::IntSize size) const
 {
     if (auto data = m_current_request->image_data())
-        return data->bitmap(m_current_frame_index, size);
-    return nullptr;
+        return data->frame(m_current_frame_index, size);
+    return {};
 }
 
 void HTMLImageElement::set_visible_in_viewport(bool)
@@ -257,7 +358,7 @@ WebIDL::UnsignedLong HTMLImageElement::width() const
     const_cast<DOM::Document&>(document()).update_layout_if_needed_for_node(*this, DOM::UpdateLayoutReason::HTMLImageElementWidth);
 
     // Return the rendered width of the image, in CSS pixels, if the image is being rendered.
-    if (auto* paintable_box = this->paintable_box())
+    if (auto paintable_box = this->paintable_box())
         return paintable_box->content_width().to_int();
 
     // On setting [the width or height IDL attribute], they must act as if they reflected the respective content attributes of the same name.
@@ -268,7 +369,7 @@ WebIDL::UnsignedLong HTMLImageElement::width() const
 
     // ...or else the density-corrected intrinsic width and height of the image, in CSS pixels,
     // if the image has intrinsic dimensions and is available but not being rendered.
-    if (auto bitmap = current_image_bitmap())
+    if (auto bitmap = current_image_frame(); bitmap.has_value())
         return bitmap->width();
 
     // ...or else 0, if the image is not available or does not have intrinsic dimensions.
@@ -288,7 +389,7 @@ WebIDL::UnsignedLong HTMLImageElement::height() const
     const_cast<DOM::Document&>(document()).update_layout_if_needed_for_node(*this, DOM::UpdateLayoutReason::HTMLImageElementHeight);
 
     // Return the rendered height of the image, in CSS pixels, if the image is being rendered.
-    if (auto* paintable_box = this->paintable_box())
+    if (auto paintable_box = this->paintable_box())
         return paintable_box->content_height().to_int();
 
     // On setting [the width or height IDL attribute], they must act as if they reflected the respective content attributes of the same name.
@@ -299,7 +400,7 @@ WebIDL::UnsignedLong HTMLImageElement::height() const
 
     // ...or else the density-corrected intrinsic height and height of the image, in CSS pixels,
     // if the image has intrinsic dimensions and is available but not being rendered.
-    if (auto bitmap = current_image_bitmap())
+    if (auto bitmap = current_image_frame(); bitmap.has_value())
         return bitmap->height();
 
     // ...or else 0, if the image is not available or does not have intrinsic dimensions.
@@ -318,7 +419,7 @@ unsigned HTMLImageElement::natural_width() const
 {
     // Return the density-corrected intrinsic width of the image, in CSS pixels,
     // if the image has intrinsic dimensions and is available.
-    if (auto bitmap = current_image_bitmap())
+    if (auto bitmap = current_image_frame(); bitmap.has_value())
         return bitmap->width();
 
     // ...or else 0.
@@ -330,7 +431,7 @@ unsigned HTMLImageElement::natural_height() const
 {
     // Return the density-corrected intrinsic height of the image, in CSS pixels,
     // if the image has intrinsic dimensions and is available.
-    if (auto bitmap = current_image_bitmap())
+    if (auto bitmap = current_image_frame(); bitmap.has_value())
         return bitmap->height();
 
     // ...or else 0.
@@ -345,13 +446,13 @@ int HTMLImageElement::x() const
     // to the element and its ancestors, or zero if there is no box.
     const_cast<DOM::Document&>(document()).update_layout_if_needed_for_node(*this, DOM::UpdateLayoutReason::HTMLImageElementX);
 
-    auto const* paintable_box = this->paintable_box();
+    auto paintable_box = this->paintable_box();
     if (!paintable_box)
         return 0;
 
     CSSPixels scroll_offset_x = 0;
-    if (auto enclosing_scroll = paintable_box->enclosing_scroll_frame(); enclosing_scroll)
-        scroll_offset_x = enclosing_scroll->cumulative_offset().x();
+    if (auto idx = paintable_box->enclosing_scroll_frame_index(); idx.value())
+        scroll_offset_x = paintable_box->document().paintable()->scroll_state().cumulative_offset(idx).x();
 
     return (paintable_box->absolute_border_box_rect().x() - scroll_offset_x).to_int();
 }
@@ -364,13 +465,13 @@ int HTMLImageElement::y() const
     // to the element and its ancestors, or zero if there is no box.
     const_cast<DOM::Document&>(document()).update_layout_if_needed_for_node(*this, DOM::UpdateLayoutReason::HTMLImageElementY);
 
-    auto const* paintable_box = this->paintable_box();
+    auto paintable_box = this->paintable_box();
     if (!paintable_box)
         return 0;
 
     CSSPixels scroll_offset_y = 0;
-    if (auto enclosing_scroll = paintable_box->enclosing_scroll_frame(); enclosing_scroll)
-        scroll_offset_y = enclosing_scroll->cumulative_offset().y();
+    if (auto idx = paintable_box->enclosing_scroll_frame_index(); idx.value())
+        scroll_offset_y = paintable_box->document().paintable()->scroll_state().cumulative_offset(idx).y();
 
     return (paintable_box->absolute_border_box_rect().y() - scroll_offset_y).to_int();
 }
@@ -463,27 +564,38 @@ WebIDL::ExceptionOr<GC::Ref<WebIDL::Promise>> HTMLImageElement::decode() const
             return;
         }
 
-        current_request.add_callbacks(
-            [weak_this, expected_request, queue_resolve_task, queue_reject_task] {
-                if (!weak_this) {
-                    queue_reject_task("Image element no longer available"_utf16);
-                    return;
-                }
-                auto& image = *weak_this;
+        if (!current_request.shared_resource_request()) {
+            queue_reject_task("Current request changed or was mutated"_utf16);
+            return;
+        }
 
-                if (!image.document().is_fully_active()) {
-                    queue_reject_task("Node document not fully active"_utf16);
-                    return;
-                }
-                if (image.m_current_request != expected_request) {
-                    queue_reject_task("Current request changed or was mutated"_utf16);
-                    return;
-                }
-                if (image.current_request().state() == ImageRequest::State::Broken) {
-                    queue_reject_task("Current request state is broken"_utf16);
-                    return;
-                }
-                queue_resolve_task();
+        current_request.add_callbacks(
+            // AD-HOC: Enqueue on the batching dispatcher to preserve ordering relative to update_the_image_data's step
+            //         16, which also goes through the batching dispatcher. Otherwise decode() can resolve before the
+            //         current request transitions to CompletelyAvailable, leaving the image dimensions at zero when
+            //         callers inspect them.
+            [weak_this, expected_request, queue_resolve_task, queue_reject_task, &realm] {
+                batching_dispatcher().enqueue(GC::create_function(realm.heap(), [weak_this, expected_request, queue_resolve_task, queue_reject_task] {
+                    if (!weak_this) {
+                        queue_reject_task("Image element no longer available"_utf16);
+                        return;
+                    }
+                    auto& image = *weak_this;
+
+                    if (!image.document().is_fully_active()) {
+                        queue_reject_task("Node document not fully active"_utf16);
+                        return;
+                    }
+                    if (image.m_current_request != expected_request) {
+                        queue_reject_task("Current request changed or was mutated"_utf16);
+                        return;
+                    }
+                    if (image.current_request().state() == ImageRequest::State::Broken) {
+                        queue_reject_task("Current request state is broken"_utf16);
+                        return;
+                    }
+                    queue_resolve_task();
+                }));
             },
             [weak_this, expected_request, queue_reject_task] {
                 if (!weak_this) {
@@ -530,45 +642,6 @@ bool HTMLImageElement::uses_srcset_or_picture() const
     // An img element is said to use srcset or picture if it has a srcset attribute specified
     // or if it has a parent that is a picture element.
     return has_attribute(HTML::AttributeNames::srcset) || (parent() && is<HTMLPictureElement>(*parent()));
-}
-
-// We batch handling of successfully fetched images to avoid interleaving 1 image, 1 layout, 1 image, 1 layout, etc.
-// The processing timer is 1ms instead of 0ms, since layout is driven by a 0ms timer, and if we use 0ms here,
-// the event loop will process them in insertion order. This is a bit of a hack, but it works.
-struct BatchingDispatcher {
-public:
-    BatchingDispatcher()
-        : m_timer(Core::Timer::create_single_shot(1, [this] { process(); }))
-    {
-    }
-
-    void enqueue(GC::Root<GC::Function<void()>> callback)
-    {
-        // NOTE: We don't want to flush the queue on every image load, since that would be slow.
-        //       However, we don't want to keep growing the batch forever either.
-        static constexpr size_t max_loads_to_batch_before_flushing = 16;
-
-        m_queue.append(move(callback));
-        if (m_queue.size() < max_loads_to_batch_before_flushing)
-            m_timer->restart();
-    }
-
-private:
-    void process()
-    {
-        auto queue = move(m_queue);
-        for (auto& callback : queue)
-            callback->function()();
-    }
-
-    NonnullRefPtr<Core::Timer> m_timer;
-    Vector<GC::Root<GC::Function<void()>>> m_queue;
-};
-
-static BatchingDispatcher& batching_dispatcher()
-{
-    static BatchingDispatcher dispatcher;
-    return dispatcher;
 }
 
 // https://html.spec.whatwg.org/multipage/images.html#update-the-image-data
@@ -661,7 +734,7 @@ void HTMLImageElement::update_the_image_data_impl(bool restart_animations, bool 
             m_pending_request = nullptr;
 
             // 4. Set the current request to a new image request whose image data is that of the entry and whose state is completely available.
-            m_current_request = ImageRequest::create(realm(), document().page());
+            m_current_request = ImageRequest::create(document().realm(), document().page());
             m_current_request->set_image_data(entry->image_data);
             m_current_request->set_state(ImageRequest::State::CompletelyAvailable);
             m_current_frame_index = 0;
@@ -688,7 +761,10 @@ void HTMLImageElement::update_the_image_data_impl(bool restart_animations, bool 
                     restart_the_animation();
 
                 // 2. Set the current request's current URL to urlString.
-                m_current_request->set_current_url(realm(), *url_string);
+                m_current_request->set_current_url(document().realm(), *url_string);
+
+                set_needs_style_update(true);
+                set_needs_layout_update_or_repaint_after_image_data_change(*this, DOM::SetNeedsLayoutReason::HTMLImageElementUpdateTheImageData);
 
                 // 3. If maybe omit events is not set or previousURL is not equal to urlString, then fire an event named load at the img element.
                 if (!maybe_omit_events || previous_url != url_string)
@@ -743,7 +819,7 @@ after_step_7:
                 }
 
                 // 1. Change the current request's current URL to the empty string.
-                m_current_request->set_current_url(realm(), String {});
+                m_current_request->set_current_url(document().realm(), String {});
 
                 // 2. If all of the following conditions are true:
                 //    - the element has a src attribute or it uses srcset or picture; and
@@ -784,7 +860,7 @@ after_step_7:
                 }
 
                 // 1. Change the current request's current URL to selected source.
-                m_current_request->set_current_url(realm(), selected_source.value().url);
+                m_current_request->set_current_url(document().realm(), selected_source.value().url);
 
                 // 2. If maybe omit events is not set or previousURL is not equal to selected source, then fire an event named error at the img element.
                 if (!maybe_omit_events || previous_url != selected_source.value().url)
@@ -820,8 +896,8 @@ after_step_7:
         //         multiple image elements (as well as CSS background-images, etc.)
 
         // 17. Set image request to a new image request whose current URL is urlString.
-        auto image_request = ImageRequest::create(realm(), document().page());
-        image_request->set_current_url(realm(), *url_string);
+        auto image_request = ImageRequest::create(document().realm(), document().page());
+        image_request->set_current_url(document().realm(), *url_string);
 
         // 18. If the current request's state is unavailable or broken, then set the current request to image request.
         //     Otherwise, set the pending request to image request.
@@ -869,7 +945,7 @@ after_step_7:
         if (will_lazy_load_element()) {
             // 1. Set the img's lazy load resumption steps to the rest of this algorithm starting with the step labeled fetch the image.
             set_lazy_load_resumption_steps([this, request, image_request]() {
-                image_request->fetch_image(realm(), request);
+                image_request->fetch_image(document().realm(), request);
             });
 
             // 2. Start intersection-observing a lazy loading element for the img element.
@@ -879,7 +955,7 @@ after_step_7:
             return;
         }
 
-        image_request->fetch_image(realm(), request);
+        image_request->fetch_image(document().realm(), request);
     }));
 }
 
@@ -925,9 +1001,10 @@ void HTMLImageElement::add_callbacks_to_image_request(GC::Ref<ImageRequest> imag
 
                 // 3. Add the image to the list of available images using the key key, with the ignore higher-layer caching flag set.
                 document().list_of_available_images().add(key, *image_data, true);
+                document().prune_image_resource_caches();
 
                 set_needs_style_update(true);
-                set_needs_layout_update(DOM::SetNeedsLayoutReason::HTMLImageElementUpdateTheImageData);
+                set_needs_layout_update_or_repaint_after_image_data_change(*this, DOM::SetNeedsLayoutReason::HTMLImageElementUpdateTheImageData);
 
                 // 4. If maybe omit events is not set or previousURL is not equal to urlString, then fire an event named load at the img element.
                 if (!maybe_omit_events || previous_url != url_string)
@@ -937,7 +1014,7 @@ void HTMLImageElement::add_callbacks_to_image_request(GC::Ref<ImageRequest> imag
                 m_animation_timer->stop();
                 if (image_data->is_animated() && image_data->frame_count() > 1) {
                     m_animation_timer->set_interval(image_data->frame_duration(0));
-                    m_animation_timer->start();
+                    start_animation_timer_if_visible();
                 }
 
                 m_load_event_delayer.clear();
@@ -1049,8 +1126,8 @@ void HTMLImageElement::react_to_changes_in_the_environment()
         key.origin = document().origin();
 
     // 12. ⌛ Let image request be a new image request whose current URL is urlString
-    auto image_request = ImageRequest::create(realm(), document().page());
-    image_request->set_current_url(realm(), *url_string);
+    auto image_request = ImageRequest::create(document().realm(), document().page());
+    image_request->set_current_url(document().realm(), *url_string);
 
     // 13. ⌛ Set the element's pending request to image request.
     m_pending_request = image_request;
@@ -1075,6 +1152,7 @@ void HTMLImageElement::react_to_changes_in_the_environment()
 
             // 4. Add the image to the list of available images using the key key, with the ignore higher-layer caching flag set.
             document().list_of_available_images().add(key, image_data, true);
+            document().prune_image_resource_caches();
 
             // 5. Upgrade the pending request to the current request.
             upgrade_pending_request_to_current_request();
@@ -1083,7 +1161,7 @@ void HTMLImageElement::react_to_changes_in_the_environment()
             image_request->prepare_for_presentation(*this);
             // FIXME: This is ad-hoc, updating the layout here should probably be handled by prepare_for_presentation().
             set_needs_style_update(true);
-            set_needs_layout_update(DOM::SetNeedsLayoutReason::HTMLImageElementReactToChangesInTheEnvironment);
+            set_needs_layout_update_or_repaint_after_image_data_change(*this, DOM::SetNeedsLayoutReason::HTMLImageElementReactToChangesInTheEnvironment);
 
             // 7. Fire an event named load at the img element.
             dispatch_event(DOM::Event::create(realm(), HTML::EventNames::load));
@@ -1149,7 +1227,7 @@ void HTMLImageElement::react_to_changes_in_the_environment()
             });
 
         // 5. Let response be the result of fetching request.
-        image_request->fetch_image(realm(), request);
+        image_request->fetch_image(document().realm(), request);
     }
 }
 
@@ -1175,39 +1253,36 @@ void HTMLImageElement::restart_the_animation()
 {
     m_current_frame_index = 0;
 
-    auto image_data = m_current_request->image_data();
-    if (image_data && image_data->frame_count() > 1) {
-        m_animation_timer->start();
+    if (current_request_has_running_animation()) {
+        start_animation_timer_if_visible();
     } else {
         m_animation_timer->stop();
+        m_animation_paused_by_visibility = false;
     }
 }
 
-static bool is_supported_image_type(String const& type)
+bool HTMLImageElement::current_request_has_running_animation() const
 {
-    if (type.is_empty())
-        return true;
-    if (!type.starts_with_bytes("image/"sv, CaseSensitivity::CaseInsensitive))
-        return false;
-    // FIXME: These should be derived from ImageDecoder
-    if (type.equals_ignoring_ascii_case("image/bmp"sv)
-        || type.equals_ignoring_ascii_case("image/gif"sv)
-        || type.equals_ignoring_ascii_case("image/vnd.microsoft.icon"sv)
-        || type.equals_ignoring_ascii_case("image/x-icon"sv)
-        || type.equals_ignoring_ascii_case("image/jpeg"sv)
-        || type.equals_ignoring_ascii_case("image/jpg"sv)
-        || type.equals_ignoring_ascii_case("image/pjpeg"sv)
-        || type.equals_ignoring_ascii_case("image/jxl"sv)
-        || type.equals_ignoring_ascii_case("image/png"sv)
-        || type.equals_ignoring_ascii_case("image/apng"sv)
-        || type.equals_ignoring_ascii_case("image/x-png"sv)
-        || type.equals_ignoring_ascii_case("image/tiff"sv)
-        || type.equals_ignoring_ascii_case("image/tinyvg"sv)
-        || type.equals_ignoring_ascii_case("image/webp"sv)
-        || type.equals_ignoring_ascii_case("image/svg+xml"sv))
-        return true;
+    auto image_data = m_current_request->image_data();
+    return image_data && image_data->is_animated() && image_data->frame_count() > 1;
+}
 
-    return false;
+void HTMLImageElement::start_animation_timer_if_visible()
+{
+    if (!current_request_has_running_animation()) {
+        m_animation_timer->stop();
+        m_animation_paused_by_visibility = false;
+        return;
+    }
+
+    if (document().visibility_state_value() == VisibilityState::Hidden) {
+        m_animation_timer->stop();
+        m_animation_paused_by_visibility = true;
+        return;
+    }
+
+    m_animation_paused_by_visibility = false;
+    m_animation_timer->start();
 }
 
 // https://html.spec.whatwg.org/multipage/images.html#update-the-source-set
@@ -1223,7 +1298,7 @@ static void update_the_source_set(DOM::Element& element)
         TODO();
 
     // 2. Let elements be « el ».
-    GC::RootVector<DOM::Element*> elements(element.heap());
+    GC::RootVector<DOM::Element*> elements;
     elements.append(&element);
 
     // 3. If el is an img element whose parent node is a picture element,
@@ -1372,6 +1447,12 @@ void HTMLImageElement::set_source_set(SourceSet source_set)
 
 void HTMLImageElement::animate()
 {
+    if (document().visibility_state_value() == VisibilityState::Hidden) {
+        m_animation_timer->stop();
+        m_animation_paused_by_visibility = true;
+        return;
+    }
+
     auto image_data = m_current_request->image_data();
     if (!image_data) {
         return;
@@ -1389,6 +1470,7 @@ void HTMLImageElement::animate()
         ++m_loops_completed;
         if (m_loops_completed > 0 && m_loops_completed == image_data->loop_count()) {
             m_animation_timer->stop();
+            m_animation_paused_by_visibility = false;
         }
     }
 

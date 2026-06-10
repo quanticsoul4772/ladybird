@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/HTMLMeterElementPrototype.h>
+#include <LibWeb/Bindings/HTMLMeterElement.h>
 #include <LibWeb/CSS/CSSStyleProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
@@ -187,12 +187,12 @@ void HTMLMeterElement::create_shadow_tree_if_needed()
     set_shadow_root(shadow_root);
 
     auto meter_bar_element = MUST(DOM::create_element(document(), HTML::TagNames::div, Namespace::HTML));
-    meter_bar_element->set_use_pseudo_element(CSS::PseudoElement::SliderTrack);
     MUST(shadow_root->append_child(*meter_bar_element));
+    meter_bar_element->set_associated_shadow_host_pseudo_element(CSS::PseudoElement::SliderTrack);
 
     m_meter_value_element = MUST(DOM::create_element(document(), HTML::TagNames::div, Namespace::HTML));
-    m_meter_value_element->set_use_pseudo_element(CSS::PseudoElement::SliderFill);
     MUST(meter_bar_element->append_child(*m_meter_value_element));
+    m_meter_value_element->set_associated_shadow_host_pseudo_element(CSS::PseudoElement::SliderFill);
     update_meter_value_element();
 }
 

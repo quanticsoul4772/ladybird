@@ -7,21 +7,26 @@
 
 #pragma once
 
+#include <AK/Assertions.h>
 #include <AK/HashTable.h>
+#include <AK/OwnPtr.h>
 #include <AK/String.h>
 #include <AK/Tuple.h>
+#include <LibCore/Forward.h>
 #include <LibJS/Heap/Cell.h>
-#include <LibWeb/Bindings/NavigationPrototype.h>
+#include <LibWeb/Bindings/Navigation.h>
+#include <LibWeb/Compositor/CompositorHost.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/HTML/ActivateTab.h>
+#include <LibWeb/HTML/DocumentState.h>
 #include <LibWeb/HTML/HistoryHandlingBehavior.h>
 #include <LibWeb/HTML/InitialInsertion.h>
 #include <LibWeb/HTML/NavigationObserver.h>
 #include <LibWeb/HTML/NavigationParams.h>
 #include <LibWeb/HTML/POSTResource.h>
-#include <LibWeb/HTML/RenderingThread.h>
+#include <LibWeb/HTML/PaintConfig.h>
 #include <LibWeb/HTML/SandboxingFlagSet.h>
 #include <LibWeb/HTML/SourceSnapshotParams.h>
 #include <LibWeb/HTML/StructuredSerializeTypes.h>
@@ -29,11 +34,21 @@
 #include <LibWeb/HTML/WindowType.h>
 #include <LibWeb/InvalidateDisplayList.h>
 #include <LibWeb/Page/EventHandler.h>
-#include <LibWeb/Painting/BackingStoreManager.h>
+#include <LibWeb/Painting/DisplayListResourceStorage.h>
 #include <LibWeb/PixelUnits.h>
 #include <LibWeb/XHR/FormDataEntry.h>
 
 namespace Web::HTML {
+
+struct PopulateSessionHistoryEntryDocumentOutput;
+
+enum class HistoryStepResult {
+    InitiatorDisallowed,
+    CanceledByBeforeUnload,
+    CanceledByNavigate,
+    Applied,
+};
+using OnApplyHistoryStepComplete = GC::Function<void(HistoryStepResult)>;
 
 // https://html.spec.whatwg.org/multipage/browsing-the-web.html#target-snapshot-params
 struct TargetSnapshotParams {
@@ -53,7 +68,7 @@ public:
     using NullOrError = Optional<String>;
     using NavigationParamsVariant = Variant<NullOrError, GC::Ref<NavigationParams>, GC::Ref<NonFetchSchemeNavigationParams>>;
 
-    ErrorOr<void> initialize_navigable(GC::Ref<DocumentState> document_state, GC::Ptr<Navigable> parent);
+    void initialize_navigable(NonnullRefPtr<DocumentState> document_state, GC::Ptr<Navigable> parent, GC::Ref<DOM::Document> document);
 
     void register_navigation_observer(Badge<NavigationObserver>, NavigationObserver&);
     void unregister_navigation_observer(Badge<NavigationObserver>, NavigationObserver&);
@@ -75,21 +90,26 @@ public:
     void set_delaying_load_events(bool value);
     bool is_delaying_load_events() const { return m_delaying_the_load_event.has_value(); }
 
-    GC::Ptr<SessionHistoryEntry> active_session_history_entry() const { return m_active_session_history_entry; }
-    void set_active_session_history_entry(GC::Ptr<SessionHistoryEntry> entry) { m_active_session_history_entry = entry; }
-    GC::Ptr<SessionHistoryEntry> current_session_history_entry() const { return m_current_session_history_entry; }
-    void set_current_session_history_entry(GC::Ptr<SessionHistoryEntry> entry) { m_current_session_history_entry = entry; }
+    void set_navigation_load_event_guard(DOM::Document& parent_doc);
+    void clear_navigation_load_event_guard();
 
-    Vector<GC::Ref<SessionHistoryEntry>>& get_session_history_entries() const;
+    RefPtr<SessionHistoryEntry> active_session_history_entry() const;
+    void set_active_session_history_entry(RefPtr<SessionHistoryEntry>);
+    RefPtr<SessionHistoryEntry> current_session_history_entry() const;
+    void set_current_session_history_entry(RefPtr<SessionHistoryEntry>);
 
-    void activate_history_entry(GC::Ptr<SessionHistoryEntry>);
+    Vector<NonnullRefPtr<SessionHistoryEntry>>& get_session_history_entries() const;
+
+    void activate_history_entry(RefPtr<SessionHistoryEntry>, GC::Ref<DOM::Document>);
 
     GC::Ptr<DOM::Document> active_document() const;
+    Optional<UniqueNodeID> active_document_id() const;
+    void set_active_document(GC::Ptr<DOM::Document>);
     GC::Ptr<BrowsingContext> active_browsing_context();
     GC::Ptr<WindowProxy> active_window_proxy();
     GC::Ptr<Window> active_window();
 
-    GC::Ptr<SessionHistoryEntry> get_the_target_history_entry(int target_step) const;
+    RefPtr<SessionHistoryEntry> get_the_target_history_entry(int target_step) const;
 
     String target_name() const;
 
@@ -112,26 +132,38 @@ public:
 
     GC::Ptr<Navigable> find_a_navigable_by_target_name(StringView name);
 
-    static GC::Ptr<Navigable> navigable_with_active_document(GC::Ref<DOM::Document>);
-
     enum class Traversal {
         Tag
     };
 
+    enum class NavigationAPIAbortBehavior {
+        Abort,
+        Preserve
+    };
+
     Variant<Empty, Traversal, String> ongoing_navigation() const { return m_ongoing_navigation; }
-    void set_ongoing_navigation(Variant<Empty, Traversal, String> ongoing_navigation);
+    void set_ongoing_navigation(Variant<Empty, Traversal, String> ongoing_navigation, NavigationAPIAbortBehavior = NavigationAPIAbortBehavior::Abort);
 
     void populate_session_history_entry_document(
-        GC::Ptr<SessionHistoryEntry> entry,
-        SourceSnapshotParams const& source_snapshot_params,
+        URL::URL url,
+        Variant<Empty, String, POSTResource> document_resource,
+        Fetch::Infrastructure::Request::ReferrerType request_referrer,
+        ReferrerPolicy::ReferrerPolicy request_referrer_policy,
+        Optional<URL::Origin> initiator_origin,
+        Optional<URL::Origin> origin,
+        Variant<SerializedPolicyContainer, DocumentState::Client> history_policy_container,
+        Optional<URL::URL> about_base_url,
+        String navigable_target_name,
+        bool reload_pending,
+        bool ever_populated,
+        GC::Ref<SourceSnapshotParams> source_snapshot_params,
         TargetSnapshotParams const& target_snapshot_params,
         UserNavigationInvolvement user_involvement,
-        NonnullRefPtr<Core::Promise<Empty>> signal_to_continue_session_history_processing,
-        Optional<String> navigation_id = {},
-        NavigationParamsVariant navigation_params = Navigable::NullOrError {},
-        ContentSecurityPolicy::Directives::Directive::NavigationType csp_navigation_type = ContentSecurityPolicy::Directives::Directive::NavigationType::Other,
-        bool allow_POST = false,
-        GC::Ptr<GC::Function<void()>> completion_steps = {});
+        Optional<String> navigation_id,
+        NavigationParamsVariant navigation_params,
+        ContentSecurityPolicy::Directives::Directive::NavigationType csp_navigation_type,
+        bool allow_POST,
+        GC::Ptr<GC::Function<void(GC::Ptr<PopulateSessionHistoryEntryDocumentOutput>)>> completion_steps);
 
     struct NavigateParams {
         URL::URL url;
@@ -161,7 +193,8 @@ public:
 
     // https://github.com/whatwg/html/issues/9690
     [[nodiscard]] bool has_been_destroyed() const { return m_has_been_destroyed; }
-    void set_has_been_destroyed() { m_has_been_destroyed = true; }
+    void set_has_been_destroyed();
+    void remove_from_all_navigables();
 
     CSSPixelPoint to_top_level_position(CSSPixelPoint);
     CSSPixelRect to_top_level_rect(CSSPixelRect const&);
@@ -171,9 +204,9 @@ public:
     CSSPixelSize viewport_size() const { return m_viewport_size; }
     void set_viewport_size(CSSPixelSize, InvalidateDisplayList = InvalidateDisplayList::No);
     void perform_scroll_of_viewport_scrolling_box(CSSPixelPoint position);
+    void adopt_pending_async_scroll_offsets();
+    void wait_for_async_scroll_operation(Compositor::AsyncScrollOperationID, GC::Ref<WebIDL::Promise>);
     void clamp_viewport_scroll_offset();
-
-    Painting::BackingStoreManager& backing_store_manager() { return *m_backing_store_manager; }
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#rendering-opportunity
     [[nodiscard]] bool has_a_rendering_opportunity() const;
@@ -184,8 +217,12 @@ public:
     Page const& page() const { return m_page; }
 
     String selected_text() const;
+    String cut_selected_text() const;
     void select_all();
     void paste(Utf16String const&);
+    void set_marked_text_from_input_method(Utf16String const& text);
+    void commit_text_from_input_method(Utf16String const& text);
+    void unmark_text_from_input_method();
 
     Web::EventHandler& event_handler() { return m_event_handler; }
     Web::EventHandler const& event_handler() const { return m_event_handler; }
@@ -201,25 +238,37 @@ public:
     void inform_the_navigation_api_about_child_navigable_destruction();
 
     bool has_pending_navigations() const { return !m_pending_navigations.is_empty(); }
+    void clear_pending_navigations() { m_pending_navigations.clear(); }
 
-    void ready_to_paint();
-    void record_display_list_and_scroll_state(PaintConfig);
+    bool record_display_list_and_scroll_state(PaintConfig);
     void paint_next_frame();
     void render_screenshot(Gfx::PaintingSurface&, PaintConfig, Function<void()>&& callback);
+    Painting::DisplayListResourceStorage& display_list_resource_storage() { return m_display_list_resource_storage; }
+    Painting::DisplayListResourceStorage const& display_list_resource_storage() const { return m_display_list_resource_storage; }
 
     bool needs_repaint() const { return m_needs_repaint; }
     void set_needs_repaint() { m_needs_repaint = true; }
+    void set_needs_to_record_display_list() { m_needs_to_record_display_list = true; }
+    void repaint_after_compositor_process_reconnect();
 
     [[nodiscard]] bool has_inclusive_ancestor_with_visibility_hidden() const;
 
-    RefPtr<Gfx::SkiaBackendContext> skia_backend_context() const;
+    Compositor::CompositorContextHandle& compositor_context()
+    {
+        VERIFY(m_compositor_context);
+        return *m_compositor_context;
+    }
+    bool has_compositor_context() const { return m_compositor_context; }
 
-    RenderingThread& rendering_thread() { return m_rendering_thread; }
+    Painting::CompositorSurfaceId compositor_surface_id() const;
+    bool has_compositor_surface_id() const { return m_compositor_surface_id.has_value(); }
 
     void set_pending_set_browser_zoom_request(bool value) { m_pending_set_browser_zoom_request = value; }
     bool pending_set_browser_zoom_request() const { return m_pending_set_browser_zoom_request; }
 
-    void set_should_show_line_box_borders(bool value) { m_should_show_line_box_borders = value; }
+    void set_should_show_line_box_borders(bool);
+    void set_should_show_caret_hit_test_debug_overlay(bool);
+    bool should_show_caret_hit_test_debug_overlay() const { return m_should_show_caret_hit_test_debug_overlay; }
 
     bool is_svg_page() const { return m_is_svg_page; }
 
@@ -231,7 +280,10 @@ public:
     void reset_zoom();
 
 protected:
-    explicit Navigable(GC::Ref<Page>, bool is_svg_page);
+    explicit Navigable(
+        GC::Ref<Page>,
+        bool is_svg_page,
+        Compositor::PagePresentationRegistration = Compositor::PagePresentationRegistration::No);
 
     virtual void visit_edges(Cell::Visitor&) override;
     virtual void finalize() override;
@@ -247,8 +299,15 @@ private:
     void reset_cursor_blink_cycle();
 
     void scroll_offset_did_change();
+    void clear_compositor_surface();
+    void destroy_compositor_context();
 
     void inform_the_navigation_api_about_aborting_navigation();
+    void resolve_async_scroll_operation(Compositor::AsyncScrollOperationID);
+    void resolve_all_pending_async_scroll_operations();
+    void schedule_hover_update_after_async_scroll();
+    void update_hover_after_async_scroll_stops();
+    void cancel_hover_update_after_async_scroll();
 
     // https://html.spec.whatwg.org/multipage/document-sequences.html#nav-id
     String m_id;
@@ -257,16 +316,30 @@ private:
     GC::Ptr<Navigable> m_parent;
 
     // https://html.spec.whatwg.org/multipage/document-sequences.html#nav-current-history-entry
-    GC::Ptr<SessionHistoryEntry> m_current_session_history_entry;
+    RefPtr<SessionHistoryEntry> m_current_session_history_entry;
 
     // https://html.spec.whatwg.org/multipage/document-sequences.html#nav-active-history-entry
-    GC::Ptr<SessionHistoryEntry> m_active_session_history_entry;
+    RefPtr<SessionHistoryEntry> m_active_session_history_entry;
+
+    // AD-HOC: Direct reference to the active document, decoupled from session history.
+    //         This is the authoritative source for active_document().
+    GC::Ptr<DOM::Document> m_active_document;
+
+    // AD-HOC: Active IME composition state. While a composition is in progress, m_input_method_composition_node and
+    //         m_input_method_composition_offset record the start of the marked (preedit) text; the marked text spans
+    //         from there to the caret. A null node means no composition is in progress.
+    void replace_input_method_marked_text(Utf16String const& text);
+    GC::Ptr<DOM::Node> m_input_method_composition_node;
+    size_t m_input_method_composition_offset { 0 };
 
     // https://html.spec.whatwg.org/multipage/document-sequences.html#is-closing
     bool m_closing { false };
 
     // https://html.spec.whatwg.org/multipage/document-sequences.html#delaying-load-events-mode
     Optional<DOM::DocumentLoadEventDelayer> m_delaying_the_load_event;
+
+    // AD-HOC: Guards the parent document's load event delay count during cross-document navigation.
+    Optional<DOM::DocumentLoadEventDelayer> m_navigation_load_event_guard;
 
     // Implied link between navigable and its container.
     GC::Ptr<NavigableContainer> m_container;
@@ -288,17 +361,49 @@ private:
 
     bool m_is_svg_page { false };
     bool m_needs_repaint { true };
+    bool m_needs_to_record_display_list { true };
     bool m_pending_set_browser_zoom_request { false };
     bool m_should_show_line_box_borders { false };
-    GC::Ref<Painting::BackingStoreManager> m_backing_store_manager;
-    RefPtr<Gfx::SkiaBackendContext> m_skia_backend_context;
-    RenderingThread m_rendering_thread;
+    bool m_should_show_caret_hit_test_debug_overlay { false };
+    Optional<PaintConfig> m_compositor_display_list_paint_config;
+    Painting::DisplayListResourceStorage m_display_list_resource_storage;
+    Painting::DisplayListResourceSet m_compositor_display_list_resources;
+    OwnPtr<Compositor::CompositorContextHandle> m_compositor_context;
+    Optional<Painting::CompositorSurfaceId> m_compositor_surface_id;
+    RefPtr<Core::Timer> m_async_scroll_hover_update_timer;
+
+    struct PendingAsyncScrollOperation {
+        Compositor::AsyncScrollOperationID operation_id { 0 };
+        GC::Ref<WebIDL::Promise> promise;
+    };
+    Vector<PendingAsyncScrollOperation> m_pending_async_scroll_operations;
+};
+
+struct PopulateSessionHistoryEntryDocumentOutput final : public JS::Cell {
+    GC_CELL(PopulateSessionHistoryEntryDocumentOutput, JS::Cell);
+    GC_DECLARE_ALLOCATOR(PopulateSessionHistoryEntryDocumentOutput);
+
+public:
+    GC::Ptr<DOM::Document> document;
+
+    Navigable::NavigationParamsVariant navigation_params { Navigable::NullOrError {} };
+    bool save_extra_document_state = true;
+
+    Optional<URL::URL> redirected_url;
+    Optional<SerializationRecord> classic_history_api_state;
+    RefPtr<DocumentState> replacement_document_state;
+    bool resource_cleared = false;
+
+    void apply_to(NonnullRefPtr<SessionHistoryEntry> entry);
+
+private:
+    virtual void visit_edges(Cell::Visitor&) override;
 };
 
 WEB_API HashTable<GC::RawRef<Navigable>>& all_navigables();
 
 bool navigation_must_be_a_replace(URL::URL const& url, DOM::Document const& document);
-void finalize_a_cross_document_navigation(GC::Ref<Navigable>, HistoryHandlingBehavior, UserNavigationInvolvement, GC::Ref<SessionHistoryEntry>);
+void finalize_a_cross_document_navigation(GC::Ref<Navigable>, HistoryHandlingBehavior, UserNavigationInvolvement, NonnullRefPtr<SessionHistoryEntry>, GC::Ptr<DOM::Document> pending_document, GC::Ref<OnApplyHistoryStepComplete> on_complete);
 void perform_url_and_history_update_steps(DOM::Document& document, URL::URL new_url, Optional<SerializationRecord> = {}, HistoryHandlingBehavior history_handling = HistoryHandlingBehavior::Replace);
 
 }

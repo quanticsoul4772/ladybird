@@ -7,6 +7,7 @@
 #pragma once
 
 #include <LibWeb/Layout/Box.h>
+#include <LibWeb/Layout/FlexLayoutData.h>
 #include <LibWeb/Layout/FormattingContext.h>
 
 namespace Web::Layout {
@@ -54,7 +55,7 @@ private:
     };
 
     struct FlexItem {
-        GC::Ref<Box> box;
+        Box& box;
         LayoutState::UsedValues& used_values;
         Optional<CSS::FlexBasis> used_flex_basis {};
         bool used_flex_basis_is_definite { false };
@@ -112,8 +113,10 @@ private:
     struct FlexLine {
         Vector<FlexItem&> items;
         CSSPixels cross_size { 0 };
+        bool has_baseline_aligned_items { false };
         Optional<CSSPixels> remaining_free_space;
         double chosen_flex_fraction { 0 };
+        FlexLayoutGrowthState growth_state { FlexLayoutGrowthState::Shrinking };
 
         double sum_of_flex_factor_of_unfrozen_items() const;
         double sum_of_scaled_flex_shrink_factor_of_unfrozen_items() const;
@@ -182,6 +185,7 @@ private:
 
     void resolve_flexible_lengths();
     void resolve_flexible_lengths_for_line(FlexLine&);
+    void save_flex_layout_data() const;
 
     void resolve_cross_axis_auto_margins();
 
@@ -199,10 +203,17 @@ private:
 
     void align_all_flex_items_along_the_cross_axis();
 
+    void resolve_baseline_aligned_items();
+
     void align_all_flex_lines();
 
     bool is_row_layout() const { return m_flex_direction == CSS::FlexDirection::Row || m_flex_direction == CSS::FlexDirection::RowReverse; }
     bool is_single_line() const { return flex_container().computed_values().flex_wrap() == CSS::FlexWrap::Nowrap; }
+    bool inline_axis_is_horizontal(Box const&) const;
+    bool main_axis_is_horizontal() const;
+    bool cross_axis_is_horizontal() const { return !main_axis_is_horizontal(); }
+    bool main_axis_is_parallel_to_inline_axis(Box const&) const;
+    bool cross_axis_is_reverse() const;
     bool is_direction_reverse() const;
     void populate_specified_margins(FlexItem&, CSS::FlexDirection) const;
 

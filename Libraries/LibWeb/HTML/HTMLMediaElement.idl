@@ -1,12 +1,3 @@
-#import <HTML/AudioTrackList.idl>
-#import <HTML/HTMLElement.idl>
-#import <HTML/MediaError.idl>
-#import <HTML/TextTrack.idl>
-#import <HTML/TextTrackList.idl>
-#import <HTML/TimeRanges.idl>
-#import <HTML/VideoTrackList.idl>
-#import <HTML/Scripting/Fetching.idl>
-
 // https://html.spec.whatwg.org/multipage/media.html#attr-media-preload
 [MissingValueDefault=metadata, InvalidValueDefault=metadata]
 enum Preload {
@@ -22,6 +13,8 @@ enum CanPlayTypeResult {
     "probably"
 };
 
+typedef (MediaSource or Blob) MediaProvider;
+
 // https://html.spec.whatwg.org/multipage/media.html#htmlmediaelement
 [Exposed=Window]
 interface HTMLMediaElement : HTMLElement {
@@ -31,7 +24,7 @@ interface HTMLMediaElement : HTMLElement {
 
     // network state
     [Reflect, CEReactions, URL] attribute USVString src;
-    [FIXME] attribute MediaProvider? srcObject;
+    attribute MediaProvider? srcObject;
     readonly attribute USVString currentSrc;
     [Reflect=crossorigin, CEReactions, Enumerated=CORSSettingsAttribute] attribute DOMString? crossOrigin;
     const unsigned short NETWORK_EMPTY = 0;
@@ -57,7 +50,7 @@ interface HTMLMediaElement : HTMLElement {
     attribute double currentTime;
     undefined fastSeek(double time);
     readonly attribute unrestricted double duration;
-    [FIXME] object getStartDate();
+    object getStartDate();
     readonly attribute boolean paused;
     attribute double defaultPlaybackRate;
     attribute double playbackRate;

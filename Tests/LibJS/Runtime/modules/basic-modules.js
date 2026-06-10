@@ -148,10 +148,25 @@ describe("in- and exports", () => {
         expect(result).toHaveProperty("namedVarValue", 3 + 3);
     });
 
+    test("for-in can enumerate module namespace objects", () => {
+        const result = expectModulePassed("./basic-export-types.mjs");
+        const keys = [];
+        for (const key in result) {
+            keys.push(key);
+        }
+
+        expect(keys).toEqual(Object.keys(result));
+    });
+
     test("default exports", () => {
         const result = expectModulePassed("./module-with-default.mjs");
         expect(result).toHaveProperty("defaultValue");
         expect(result.default).toBe(result.defaultValue);
+    });
+
+    test("can re-export an imported binding as default", () => {
+        const result = expectModulePassed("./re-export-imported-binding-as-default.mjs");
+        expect(result.default()).toBe("PASS");
     });
 
     test("declaration exports which can be used in the module it self", () => {
@@ -193,6 +208,10 @@ describe("in- and exports", () => {
         expectModulePassed("./re-export-namespace-via-binding.mjs");
     });
 
+    test("can merge matching namespace re-exports", () => {
+        expectModulePassed("./namespace-re-export-entry.mjs");
+    });
+
     test("import variable before import statement behaves as undefined and non mutable variable", () => {
         expectModulePassed("./accessing-var-import-before-decl.mjs");
     });
@@ -219,6 +238,21 @@ describe("in- and exports", () => {
         expect(result.default.toString()).toBe(/foo/.toString());
     });
 
+    test("hoisted var declarations can be exported", () => {
+        const result = expectModulePassed("./hoisted-var-export.mjs");
+        expect(result.forVar).toBe(1);
+        expect(result.ifVar).toBe(2);
+        expect(result.blockVar).toBe(3);
+        expect(result.doWhileVar).toBe(5);
+        expect(result.tryVar).toBe(6);
+        expect(result.finallyVar).toBe(8);
+        expect(result.switchVar).toBe(9);
+        expect(result.labelVar).toBe(10);
+        expect(result.multiA).toBe(11);
+        expect(result.multiB).toBe(12);
+        expect(result.multiC).toBe(13);
+    });
+
     test("importing a non-existent file results in a SyntaxError", () => {
         expectedModuleToThrowSyntaxError("./i-do-no-exist.mjs", "Cannot find/open module");
     });
@@ -227,6 +261,19 @@ describe("in- and exports", () => {
 describe("loops", () => {
     test("import and export from own file", () => {
         expectModulePassed("./loop-self.mjs");
+    });
+
+    test("entry module can import itself before evaluation", () => {
+        evaluateModule("./modules/entry-self-import.mjs");
+    });
+
+    test("entry module can dynamically import itself during evaluation", () => {
+        evaluateModule("./modules/dynamic-self-import-default-export.mjs");
+        expect(globalThis.dynamicSelfImportDefaultExportPassed).toBeTrue();
+    });
+
+    test("async parent modules execute in evaluation order", () => {
+        expectModulePassed("./async-evaluation-order.mjs");
     });
 
     test("import something which imports a cycle", () => {

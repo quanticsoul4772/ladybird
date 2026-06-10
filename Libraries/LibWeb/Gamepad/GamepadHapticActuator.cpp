@@ -83,7 +83,7 @@ void GamepadHapticActuator::visit_edges(Cell::Visitor& visitor)
 }
 
 // https://w3c.github.io/gamepad/#dfn-valid-effect
-static bool is_valid_effect(Bindings::GamepadHapticEffectType type, GamepadEffectParameters const& params)
+static bool is_valid_effect(Bindings::GamepadHapticEffectType type, Bindings::GamepadEffectParameters const& params)
 {
     // 1. Given the value of GamepadHapticEffectType type, switch on:
     //    "dual-rumble"
@@ -139,7 +139,7 @@ static bool is_valid_effect(Bindings::GamepadHapticEffectType type, GamepadEffec
 }
 
 // https://w3c.github.io/gamepad/#dom-gamepadhapticactuator-playeffect
-GC::Ref<WebIDL::Promise> GamepadHapticActuator::play_effect(Bindings::GamepadHapticEffectType type, GamepadEffectParameters const& params)
+GC::Ref<WebIDL::Promise> GamepadHapticActuator::play_effect(Bindings::GamepadHapticEffectType type, Bindings::GamepadEffectParameters const& params)
 {
     auto& realm = this->realm();
 
@@ -148,7 +148,7 @@ GC::Ref<WebIDL::Promise> GamepadHapticActuator::play_effect(Bindings::GamepadHap
         return WebIDL::create_rejected_promise_from_exception(realm, WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Invalid effect"_string });
 
     // 2. Let document be the current settings object's relevant global object's associated Document.
-    auto& window = as<HTML::Window>(HTML::current_principal_settings_object().global_object());
+    auto& window = as<HTML::Window>(HTML::current_settings_object().global_object());
     auto& document = window.associated_document();
 
     // 3. If document is null or document is not fully active or document's visibility state is "hidden", return a
@@ -225,7 +225,7 @@ GC::Ref<WebIDL::Promise> GamepadHapticActuator::reset()
     auto& realm = this->realm();
 
     // 1. Let document be the current settings object's relevant global object's associated Document.
-    auto& window = as<HTML::Window>(HTML::current_principal_settings_object().global_object());
+    auto& window = as<HTML::Window>(HTML::current_settings_object().global_object());
     auto& document = window.associated_document();
 
     // 2. If document is null or document is not fully active or document's visibility state is "hidden", return a
@@ -310,7 +310,7 @@ void GamepadHapticActuator::document_became_hidden()
 }
 
 // https://w3c.github.io/gamepad/#dfn-issue-a-haptic-effect
-void GamepadHapticActuator::issue_haptic_effect(Bindings::GamepadHapticEffectType type, GamepadEffectParameters const& params, GC::Ref<GC::Function<void()>> on_complete)
+void GamepadHapticActuator::issue_haptic_effect(Bindings::GamepadHapticEffectType type, Bindings::GamepadEffectParameters const& params, GC::Ref<GC::Function<void()>> on_complete)
 {
     auto& heap = this->heap();
 

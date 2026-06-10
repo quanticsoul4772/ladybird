@@ -5,7 +5,7 @@
  */
 
 #include <AK/ScopeGuard.h>
-#include <LibWeb/Bindings/HTMLLabelElementPrototype.h>
+#include <LibWeb/Bindings/HTMLLabelElement.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Focus.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
@@ -32,6 +32,13 @@ void HTMLLabelElement::initialize(JS::Realm& realm)
     Base::initialize(realm);
 }
 
+void HTMLLabelElement::set_being_activated(bool activated)
+{
+    Base::set_being_activated(activated);
+    if (auto labeled_control = control())
+        labeled_control->set_being_activated(activated);
+}
+
 bool HTMLLabelElement::has_activation_behavior() const
 {
     return true;
@@ -54,10 +61,14 @@ void HTMLLabelElement::activation_behavior(DOM::Event const& event)
     if (!control_element)
         return;
 
-    // NB: If the click resulted in a selection being made on the label element, do not propagate the click event to the
-    //     input element. This allows the user to e.g. copy the label's text.
-    if (auto selection = document().get_selection(); selection && !selection->is_collapsed())
-        return;
+    // NB: If a click was fired after a drag selection was made on the label element, do not propagate the click event
+    //     to the input element. This allows the user to e.g. copy the label's text.
+    if (event.type() == EventNames::click) {
+        auto const& mouse_event = as<UIEvents::MouseEvent>(event);
+        auto selection = document().get_selection();
+        if (mouse_event.detail() == 1 && selection && !selection->is_collapsed())
+            return;
+    }
 
     if (auto* form_control = as_if<FormAssociatedElement>(*control_element)) {
         if (!form_control->enabled())
@@ -75,7 +86,7 @@ void HTMLLabelElement::activation_behavior(DOM::Event const& event)
         document().update_layout(DOM::UpdateLayoutReason::HTMLLabelElementActivationBehavior);
 
         // Recompute offsetX/offsetY relative to the control element, since the original values are relative to the label.
-        if (auto const* paintable = control_element->paintable(); paintable && document().navigable()) {
+        if (auto paintable = control_element->paintable(); paintable && document().navigable()) {
             auto scroll_offset = document().navigable()->viewport_scroll_offset();
             auto page_position = CSSPixelPoint { CSSPixels(mouse_event.client_x()) + scroll_offset.x(), CSSPixels(mouse_event.client_y()) + scroll_offset.y() };
             auto box_position = paintable->box_type_agnostic_position();
@@ -90,8 +101,7 @@ void HTMLLabelElement::activation_behavior(DOM::Event const& event)
         control_element->dispatch_event(click_event);
     }
 
-    if (control_element->is_focusable())
-        HTML::run_focusing_steps(control_element);
+    HTML::run_focusing_steps(control_element);
 }
 
 // https://html.spec.whatwg.org/multipage/forms.html#labeled-control

@@ -7,11 +7,13 @@
 #pragma once
 
 #include <AK/Optional.h>
+#include <LibWeb/Bindings/HTMLElement.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/HTML/EventNames.h>
+#include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/GlobalEventHandlers.h>
-#include <LibWeb/HTML/HTMLOrSVGElement.h>
+#include <LibWeb/HTML/HTMLOrSVGOrMathMLElement.h>
 #include <LibWeb/HTML/ToggleTaskTracker.h>
 #include <LibWeb/HTML/TokenizedFeatures.h>
 
@@ -31,15 +33,7 @@ enum class ContentEditableState : u8 {
     Inherit,
 };
 
-struct ShowPopoverOptions {
-    GC::Ptr<HTMLElement> source;
-};
-
-struct TogglePopoverOptions : public ShowPopoverOptions {
-    Optional<bool> force {};
-};
-
-using TogglePopoverOptionsOrForceBoolean = Variant<TogglePopoverOptions, bool>;
+using TogglePopoverOptionsOrForceBoolean = Variant<Bindings::TogglePopoverOptions, bool>;
 
 enum class ThrowExceptions {
     Yes,
@@ -74,7 +68,8 @@ enum class IsPopover {
 class WEB_API HTMLElement
     : public DOM::Element
     , public HTML::GlobalEventHandlers
-    , public HTML::HTMLOrSVGElement<HTMLElement> {
+    , public HTML::HTMLOrSVGOrMathMLElement<HTMLElement>
+    , public FormAssociatedElement {
     WEB_PLATFORM_OBJECT(HTMLElement, DOM::Element);
     GC_DECLARE_ALLOCATOR(HTMLElement);
 
@@ -108,8 +103,8 @@ public:
     GC::Ptr<Element> offset_parent() const;
     GC::Ptr<Element> scroll_parent() const;
 
-    Variant<bool, double, String> hidden() const;
-    void set_hidden(Variant<bool, double, String> const&);
+    Variant<bool, double, String, Empty> hidden() const;
+    void set_hidden(Variant<bool, double, String, Empty> const&);
 
     void click();
 
@@ -145,7 +140,7 @@ public:
     bool fire_a_synthetic_pointer_event(FlyString const& type, DOM::Element& target, bool not_trusted);
 
     // https://html.spec.whatwg.org/multipage/forms.html#category-label
-    virtual bool is_labelable() const { return false; }
+    virtual bool is_labelable() const { return is_form_associated_custom_element(); }
 
     GC::Ptr<DOM::NodeList> labels();
 
@@ -157,7 +152,8 @@ public:
     Optional<String> popover() const;
     Optional<String> opened_in_popover_mode() const { return m_opened_in_popover_mode; }
 
-    virtual void removed_from(Node* old_parent, Node& old_root) override;
+    virtual void removed_from(IsSubtreeRoot, Node* old_ancestor, Node& old_root) override;
+    virtual void moved_from(IsSubtreeRoot, GC::Ptr<DOM::Node> old_ancestor) override;
 
     enum class PopoverVisibilityState : u8 {
         Hidden,
@@ -165,7 +161,7 @@ public:
     };
     PopoverVisibilityState popover_visibility_state() const { return m_popover_visibility_state; }
 
-    WebIDL::ExceptionOr<void> show_popover_for_bindings(ShowPopoverOptions const& = {});
+    WebIDL::ExceptionOr<void> show_popover_for_bindings(Bindings::ShowPopoverOptions const& = {});
     WebIDL::ExceptionOr<void> hide_popover_for_bindings();
     WebIDL::ExceptionOr<bool> toggle_popover(TogglePopoverOptionsOrForceBoolean const&);
 
@@ -186,7 +182,7 @@ public:
     virtual bool is_valid_command(String&) { return false; }
     virtual void command_steps(DOM::Element&, String&) { }
 
-    bool is_form_associated_custom_element();
+    bool is_form_associated_custom_element() const;
 
     // https://html.spec.whatwg.org/multipage/rendering.html#button-layout
     virtual bool uses_button_layout() const { return false; }
@@ -212,6 +208,9 @@ protected:
 
 private:
     virtual bool is_html_element() const final { return true; }
+
+    // ^FormAssociatedElement
+    virtual HTMLElement& form_associated_element_to_html_element() override { return *this; }
 
     virtual void adjust_computed_style(CSS::ComputedProperties&) override;
 

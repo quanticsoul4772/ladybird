@@ -6,147 +6,22 @@
 
 //! Build script that generates Rust bytecode instruction types from Bytecode.def.
 //!
-//! This mirrors Meta/generate-libjs-bytecode-def-derived.py but generates Rust
+//! This mirrors Meta/Generators/generate_libjs_bytecode_def_derived.py but generates Rust
 //! code instead of C++. The generated code lives in $OUT_DIR/instruction_generated.rs
 //! and is included! from src/bytecode/instruction.rs.
 
+use bytecode_def::Field;
+use bytecode_def::OpDef;
+use bytecode_def::STRUCT_ALIGN;
+use bytecode_def::compute_layouts;
+use bytecode_def::field_type_info;
+use bytecode_def::find_m_length_offset;
+use bytecode_def::round_up;
+use bytecode_def::user_fields;
 use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-
-// ---------------------------------------------------------------------------
-// .def file parser (mirrors Meta/libjs_bytecode_def.py)
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-struct Field {
-    name: String,
-    ty: String,
-    is_array: bool,
-}
-
-#[derive(Debug)]
-struct OpDef {
-    name: String,
-    fields: Vec<Field>,
-    is_terminator: bool,
-}
-
-fn parse_bytecode_def(path: &std::path::Path) -> Vec<OpDef> {
-    let content = fs::read_to_string(path).expect("Failed to read Bytecode.def");
-    let mut ops = Vec::new();
-    let mut current: Option<OpDef> = None;
-    let mut in_op = false;
-
-    for raw_line in content.lines() {
-        let stripped = raw_line.trim();
-        if stripped.is_empty() || stripped.starts_with("//") || stripped.starts_with('#') {
-            continue;
-        }
-
-        if stripped.starts_with("op ") {
-            assert!(!in_op, "Nested op blocks");
-            in_op = true;
-            let rest = stripped.strip_prefix("op ").unwrap().trim();
-            let name = if let Some(idx) = rest.find('<') {
-                rest[..idx].trim().to_string()
-            } else {
-                rest.to_string()
-            };
-            current = Some(OpDef {
-                name,
-                fields: Vec::new(),
-                is_terminator: false,
-            });
-            continue;
-        }
-
-        if stripped == "endop" {
-            assert!(in_op && current.is_some(), "endop without op");
-            ops.push(current.take().unwrap());
-            in_op = false;
-            continue;
-        }
-
-        if !in_op {
-            continue;
-        }
-
-        if stripped.starts_with('@') {
-            if stripped == "@terminator" {
-                current.as_mut().unwrap().is_terminator = true;
-            }
-            // @nothrow is C++-only, ignore
-            continue;
-        }
-
-        let (lhs, rhs) = stripped.split_once(':').expect("Malformed field line");
-        let field_name = lhs.trim().to_string();
-        let mut field_type = rhs.trim().to_string();
-        let is_array = field_type.ends_with("[]");
-        if is_array {
-            field_type = field_type[..field_type.len() - 2].trim().to_string();
-        }
-        current.as_mut().unwrap().fields.push(Field {
-            name: field_name,
-            ty: field_type,
-            is_array,
-        });
-    }
-    assert!(!in_op, "Unclosed op block");
-
-    // Remove the base "Instruction" definition (not an actual opcode).
-    ops.retain(|op| op.name != "Instruction");
-    ops
-}
-
-struct FieldType {
-    r_type: &'static str,
-    align: usize,
-    size: usize,
-    kind: &'static str,
-}
-
-impl From<(&'static str, usize, usize, &'static str)> for FieldType {
-    fn from(v: (&'static str, usize, usize, &'static str)) -> Self {
-        Self {
-            r_type: v.0,
-            align: v.1,
-            size: v.2,
-            kind: v.3,
-        }
-    }
-}
-
-fn field_type_info(ty: &str) -> FieldType {
-    match ty {
-        "bool" => ("bool", 1, 1, "bool"),
-        "u32" => ("u32", 4, 4, "u32"),
-        "Operand" => ("Operand", 4, 4, "operand"),
-        "Optional<Operand>" => ("Option<Operand>", 4, 4, "optional_operand"),
-        "Label" => ("Label", 4, 4, "label"),
-        "Optional<Label>" => ("Option<Label>", 4, 8, "optional_label"),
-        "IdentifierTableIndex" => ("IdentifierTableIndex", 4, 4, "u32_newtype"),
-        "Optional<IdentifierTableIndex>" => {
-            ("Option<IdentifierTableIndex>", 4, 4, "optional_u32_newtype")
-        }
-        "PropertyKeyTableIndex" => ("PropertyKeyTableIndex", 4, 4, "u32_newtype"),
-        "StringTableIndex" => ("StringTableIndex", 4, 4, "u32_newtype"),
-        "Optional<StringTableIndex>" => ("Option<StringTableIndex>", 4, 4, "optional_u32_newtype"),
-        "RegexTableIndex" => ("RegexTableIndex", 4, 4, "u32_newtype"),
-        "EnvironmentCoordinate" => ("EnvironmentCoordinate", 4, 8, "env_coord"),
-        "Builtin" => ("u8", 1, 1, "u8"),
-        "Completion::Type" => ("u32", 4, 4, "u32"),
-        "IteratorHint" => ("u32", 4, 4, "u32"),
-        "EnvironmentMode" => ("u32", 4, 4, "u32"),
-        "PutKind" => ("u32", 4, 4, "u32"),
-        "ArgumentsKind" => ("u32", 4, 4, "u32"),
-        "Value" => ("u64", 8, 8, "u64"),
-        _ => unreachable!("Unknown field type: {ty}"),
-    }
-    .into()
-}
 
 fn rust_field_name(name: &str) -> String {
     if let Some(stripped) = name.strip_prefix("m_") {
@@ -156,56 +31,365 @@ fn rust_field_name(name: &str) -> String {
     }
 }
 
-fn round_up(value: usize, align: usize) -> usize {
-    assert!(align.is_power_of_two());
-    (value + align - 1) & !(align - 1)
-}
-
-/// The alignment of the C++ Instruction base class (`alignas(void*)`).
-/// On 64-bit: alignof(void*) = 8.
-const STRUCT_ALIGN: usize = 8;
-
-/// Compute the byte offset of the m_length field within the C++ struct.
-fn find_m_length_offset(fields: &[Field]) -> usize {
-    let mut offset: usize = 2; // after m_type + m_strict
-    for f in fields {
-        if f.is_array {
-            continue;
-        }
-        if f.name == "m_type" || f.name == "m_strict" {
-            continue;
-        }
-        let FieldType { align, size, .. } = field_type_info(&f.ty);
-        offset = round_up(offset, align);
-        if f.name == "m_length" {
-            return offset;
-        }
-        offset += size;
+/// Find the count field corresponding to a given array field, using the same
+/// heuristic as the Python generator: prefer `<name>_count`, fall back to
+/// `<singularized name>_count`. Panics if no matching u32/size_t field is
+/// found, mirroring the Python `find_count_field_name_or_die`.
+fn find_count_field_name(op: &OpDef, array_field: &Field) -> String {
+    let mut candidates = vec![format!("{}_count", array_field.name)];
+    if let Some(stripped) = array_field.name.strip_suffix('s') {
+        candidates.push(format!("{stripped}_count"));
     }
-    panic!("m_length field not found");
+    for candidate in &candidates {
+        for f in &op.fields {
+            if f.is_array {
+                continue;
+            }
+            if &f.name == candidate && (f.ty == "u32" || f.ty == "size_t") {
+                return candidate.clone();
+            }
+        }
+    }
+    panic!(
+        "No count field (u32/size_t) found for array field '{}' in op '{}'",
+        array_field.name, op.name
+    );
 }
 
 fn generate_rust_code(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
-    writeln!(
-        w,
-        "// @generated from Libraries/LibJS/Bytecode/Bytecode.def"
-    )?;
+    writeln!(w, "// @generated from Libraries/LibJS/Bytecode/Bytecode.def")?;
     writeln!(w, "// Do not edit manually.")?;
     writeln!(w)?;
     writeln!(w, "use super::operand::*;")?;
     writeln!(w)?;
 
     generate_opcode_enum(&mut w, ops)?;
+    generate_num_opcodes_const(&mut w, ops)?;
     generate_instruction_enum(&mut w, ops)?;
     generate_instruction_impl(&mut w, ops)?;
+    generate_instruction_length_from_bytes(&mut w, ops)?;
+    generate_validate_instruction(&mut w, ops)?;
 
     Ok(())
 }
 
-fn generate_opcode_enum(
+fn generate_num_opcodes_const(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
+    writeln!(w, "/// Number of distinct opcodes (the valid range for the type byte).")?;
+    writeln!(w, "pub const NUM_OPCODES: u32 = {};", ops.len())?;
+    writeln!(w)?;
+    Ok(())
+}
+
+fn generate_instruction_length_from_bytes(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
+    writeln!(
+        w,
+        "/// Returns the encoded length in bytes of the instruction at `bytes[at..]`."
+    )?;
+    writeln!(
+        w,
+        "/// Reads `m_length` from the buffer for variable-length instructions; for fixed-"
+    )?;
+    writeln!(w, "/// length instructions, returns the statically-known size.")?;
+    writeln!(
+        w,
+        "pub fn instruction_length_from_bytes(opcode: u8, bytes: &[u8], at: usize) -> Result<usize, super::validator::ValidationErrorKind> {{"
+    )?;
+    writeln!(w, "    use super::validator::ValidationErrorKind;")?;
+    writeln!(w, "    match opcode {{")?;
+
+    for (i, op) in ops.iter().enumerate() {
+        let has_array = op.fields.iter().any(|f| f.is_array);
+
+        if !has_array {
+            let mut offset: usize = 2;
+            for f in &op.fields {
+                if f.is_array || f.name == "m_type" || f.name == "m_strict" {
+                    continue;
+                }
+                let info = field_type_info(&f.ty);
+                offset = round_up(offset, info.align);
+                offset += info.size;
+            }
+            let final_size = round_up(offset, STRUCT_ALIGN);
+            let op_name = &op.name;
+            writeln!(w, "        {i} => Ok({final_size}), // {op_name}")?;
+        } else {
+            let mut fixed_offset: usize = 2;
+            for f in &op.fields {
+                if f.is_array || f.name == "m_type" || f.name == "m_strict" {
+                    continue;
+                }
+                let info = field_type_info(&f.ty);
+                fixed_offset = round_up(fixed_offset, info.align);
+                fixed_offset += info.size;
+            }
+            let minimum_length = round_up(fixed_offset, STRUCT_ALIGN);
+            let m_length_offset = find_m_length_offset(&op.fields);
+            let op_name = &op.name;
+            writeln!(w, "        {i} => {{ // {op_name} (variable-length)")?;
+            writeln!(w, "            let m_length_end = at + {m_length_offset} + 4;")?;
+            writeln!(w, "            if m_length_end > bytes.len() {{")?;
+            writeln!(
+                w,
+                "                return Err(ValidationErrorKind::TruncatedInstruction);"
+            )?;
+            writeln!(w, "            }}")?;
+            writeln!(
+                w,
+                "            let raw = u32::from_ne_bytes(bytes[at + {m_length_offset}..m_length_end].try_into().unwrap());"
+            )?;
+            writeln!(w, "            if raw < {minimum_length} {{")?;
+            writeln!(w, "                return Err(ValidationErrorKind::InvalidLength);")?;
+            writeln!(w, "            }}")?;
+            writeln!(w, "            Ok(raw as usize)")?;
+            writeln!(w, "        }}")?;
+        }
+    }
+
+    writeln!(w, "        _ => Err(ValidationErrorKind::UnknownOpcode),")?;
+    writeln!(w, "    }}")?;
+    writeln!(w, "}}")?;
+    writeln!(w)?;
+    Ok(())
+}
+
+fn emit_scalar_field_check(
     mut w: impl Write,
-    ops: &[OpDef],
+    field_name: &str,
+    ty: &str,
+    offset: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    match ty {
+        "Operand" => writeln!(w, "            validate_operand(read_u32(bytes, at + {offset}), ctx)?;")?,
+        "Optional<Operand>" => writeln!(
+            w,
+            "            validate_optional_operand(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "Label" => writeln!(w, "            validate_label(read_u32(bytes, at + {offset}), ctx)?;")?,
+        "Optional<Label>" => {
+            // Encoded as 8 bytes: u32 value + u8 has_value + 3 bytes pad.
+            writeln!(w, "            if bytes[at + {offset} + 4] != 0 {{")?;
+            writeln!(
+                w,
+                "                validate_label(read_u32(bytes, at + {offset}), ctx)?;"
+            )?;
+            writeln!(w, "            }}")?;
+        }
+        "IdentifierTableIndex" => writeln!(
+            w,
+            "            validate_identifier_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "Optional<IdentifierTableIndex>" => writeln!(
+            w,
+            "            validate_optional_identifier_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "StringTableIndex" => writeln!(
+            w,
+            "            validate_string_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "Optional<StringTableIndex>" => writeln!(
+            w,
+            "            validate_optional_string_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "PropertyKeyTableIndex" => writeln!(
+            w,
+            "            validate_property_key_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "RegexTableIndex" => {
+            // The regex table is not consulted at runtime; skip range-checking.
+        }
+        "PropertyLookupCacheIndex" => writeln!(
+            w,
+            "            validate_property_lookup_cache_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "GlobalVariableCacheIndex" => writeln!(
+            w,
+            "            validate_global_variable_cache_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "EnvironmentCoordinateCacheIndex" => writeln!(
+            w,
+            "            validate_environment_coordinate_cache_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "TemplateObjectCacheIndex" => writeln!(
+            w,
+            "            validate_template_object_cache_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "ObjectShapeCacheIndex" => writeln!(
+            w,
+            "            validate_object_shape_cache_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "ObjectPropertyIteratorCacheIndex" => writeln!(
+            w,
+            "            validate_object_property_iterator_cache_index(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "u32" => {
+            // The .def gives us no first-class types for SFD, class-blueprint,
+            // or object-shape cache references stored as u32. Recognize the
+            // canonical field names so these still get range-checked.
+            if field_name == "m_shared_function_data_index" {
+                writeln!(
+                    w,
+                    "            validate_shared_function_data_index(read_u32(bytes, at + {offset}), ctx)?;"
+                )?;
+            } else if field_name == "m_class_blueprint_index" {
+                writeln!(
+                    w,
+                    "            validate_class_blueprint_index(read_u32(bytes, at + {offset}), ctx)?;"
+                )?;
+            } else if field_name == "m_shape_cache_index" {
+                writeln!(
+                    w,
+                    "            validate_object_shape_cache_index(read_u32(bytes, at + {offset}), ctx)?;"
+                )?;
+            }
+        }
+        "Completion::Type" => writeln!(
+            w,
+            "            validate_completion_type(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "IteratorHint" => writeln!(
+            w,
+            "            validate_iterator_hint(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "EnvironmentMode" => writeln!(
+            w,
+            "            validate_environment_mode(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "PutKind" => writeln!(
+            w,
+            "            validate_put_kind(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "ArgumentsKind" => writeln!(
+            w,
+            "            validate_arguments_kind(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        "FunctionNamePrefix" => writeln!(
+            w,
+            "            validate_function_name_prefix(read_u32(bytes, at + {offset}), ctx)?;"
+        )?,
+        // bool, u64, Value, EnvironmentCoordinate, Builtin: no per-field
+        // bound applied here.
+        _ => {}
+    }
+    Ok(())
+}
+
+fn emit_array_elem_check(mut w: impl Write, ty: &str) -> Result<(), Box<dyn std::error::Error>> {
+    match ty {
+        "Operand" => writeln!(w, "                validate_operand(read_u32(bytes, __off), ctx)?;")?,
+        "Optional<Operand>" => writeln!(
+            w,
+            "                validate_optional_operand(read_u32(bytes, __off), ctx)?;"
+        )?,
+        "Value" => {
+            // Trailing Value array (NewPrimitiveArray): no per-element check;
+            // the count was already bounded against the instruction length.
+        }
+        other => panic!("Array element type not supported: {other}"),
+    }
+    Ok(())
+}
+
+fn generate_validate_instruction(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
+    let layouts = compute_layouts(ops);
+
+    writeln!(
+        w,
+        "/// Per-opcode field validation, dispatched by Pass 2 of the validator."
+    )?;
+    writeln!(
+        w,
+        "pub fn validate_instruction(opcode: u8, ctx: &super::validator::ValidationContext, at: usize) -> Result<(), super::validator::ValidationErrorKind> {{"
+    )?;
+    writeln!(w, "    use super::validator::*;")?;
+    writeln!(w, "    let bytes = ctx.bytes;")?;
+    writeln!(w, "    match opcode {{")?;
+
+    for (i, op) in ops.iter().enumerate() {
+        let layout = layouts.get(&op.name).expect("layout missing for op");
+        let arrays: Vec<&Field> = op.fields.iter().filter(|f| f.is_array).collect();
+        let has_array = !arrays.is_empty();
+
+        // Map each count field's name to the array it sizes, so we can skip
+        // the count field when emitting scalar checks (it gets read alongside
+        // the array bound below) and avoid duplicate work.
+        let mut count_field_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for af in &arrays {
+            count_field_names.insert(find_count_field_name(op, af));
+        }
+
+        let op_name = &op.name;
+        writeln!(w, "        {i} => {{ // {op_name}")?;
+
+        for f in &op.fields {
+            if f.is_array {
+                continue;
+            }
+            if f.name == "m_type" || f.name == "m_strict" || f.name == "m_length" {
+                continue;
+            }
+            if count_field_names.contains(&f.name) {
+                continue;
+            }
+            let offset = *layout.field_offsets.get(&f.name).expect("missing field offset");
+            emit_scalar_field_check(&mut w, &f.name, &f.ty, offset)?;
+        }
+
+        if has_array {
+            let m_length_offset = *layout
+                .field_offsets
+                .get("m_length")
+                .expect("variable-length op missing m_length");
+            // All variable-length ops in Bytecode.def carry exactly one trailing
+            // array; if that ever changes, this loop validates each independently.
+            for af in &arrays {
+                let array_offset = *layout.field_offsets.get(&af.name).expect("missing array offset");
+                let count_field = find_count_field_name(op, af);
+                let count_offset = *layout
+                    .field_offsets
+                    .get(&count_field)
+                    .expect("missing count field offset");
+                let elem_size = field_type_info(&af.ty).size;
+
+                writeln!(
+                    w,
+                    "            let __m_length = read_u32(bytes, at + {m_length_offset}) as usize;"
+                )?;
+                writeln!(
+                    w,
+                    "            let __count = read_u32(bytes, at + {count_offset}) as usize;"
+                )?;
+                writeln!(
+                    w,
+                    "            let __array_bytes = __count.saturating_mul({elem_size});"
+                )?;
+                writeln!(
+                    w,
+                    "            if {array_offset}usize.saturating_add(__array_bytes) > __m_length {{"
+                )?;
+                writeln!(w, "                return Err(ValidationErrorKind::InvalidLength);")?;
+                writeln!(w, "            }}")?;
+                writeln!(w, "            let __array_off = at + {array_offset};")?;
+                writeln!(w, "            for __i in 0..__count {{")?;
+                writeln!(w, "                let __off = __array_off + __i * {elem_size};")?;
+                emit_array_elem_check(&mut w, &af.ty)?;
+                writeln!(w, "            }}")?;
+            }
+        }
+
+        writeln!(w, "        }}")?;
+    }
+
+    writeln!(w, "        _ => {{}}")?;
+    writeln!(w, "    }}")?;
+    writeln!(w, "    Ok(())")?;
+    writeln!(w, "}}")?;
+    writeln!(w)?;
+
+    Ok(())
+}
+
+fn generate_opcode_enum(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(
         w,
         "/// Bytecode opcode (u8), matching the C++ `Instruction::Type` enum."
@@ -222,16 +406,10 @@ fn generate_opcode_enum(
     Ok(())
 }
 
-fn generate_instruction_enum(
-    mut w: impl Write,
-    ops: &[OpDef],
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_instruction_enum(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(w, "/// A bytecode instruction with typed fields.")?;
     writeln!(w, "///")?;
-    writeln!(
-        w,
-        "/// Each variant corresponds to one C++ instruction class."
-    )?;
+    writeln!(w, "/// Each variant corresponds to one C++ instruction class.")?;
     writeln!(
         w,
         "/// During codegen, instructions are stored as these typed variants."
@@ -249,12 +427,12 @@ fn generate_instruction_enum(
         } else {
             writeln!(w, "    {} {{", op.name)?;
             for f in &fields {
-                let FieldType { r_type, .. } = field_type_info(&f.ty);
+                let info = field_type_info(&f.ty);
                 let r_name = rust_field_name(&f.name);
                 if f.is_array {
-                    writeln!(w, "        {}: Vec<{}>,", r_name, r_type)?;
+                    writeln!(w, "        {}: Vec<{}>,", r_name, info.rust_type)?;
                 } else {
-                    writeln!(w, "        {}: {},", r_name, r_type)?;
+                    writeln!(w, "        {}: {},", r_name, info.rust_type)?;
                 }
             }
             writeln!(w, "    }},")?;
@@ -266,18 +444,7 @@ fn generate_instruction_enum(
     Ok(())
 }
 
-/// Returns the user-visible fields (excludes m_type, m_strict, m_length).
-fn user_fields(op: &OpDef) -> Vec<&Field> {
-    op.fields
-        .iter()
-        .filter(|f| f.name != "m_type" && f.name != "m_strict" && f.name != "m_length")
-        .collect()
-}
-
-fn generate_instruction_impl(
-    mut w: impl Write,
-    ops: &[OpDef],
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_instruction_impl(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(w, "impl Instruction {{").unwrap();
     generate_opcode_method(&mut w, ops)?;
     generate_is_terminator_method(&mut w, ops)?;
@@ -289,20 +456,13 @@ fn generate_instruction_impl(
     Ok(())
 }
 
-fn generate_opcode_method(
-    mut w: impl Write,
-    ops: &[OpDef],
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_opcode_method(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(w, "    pub fn opcode(&self) -> OpCode {{")?;
     writeln!(w, "        match self {{")?;
     for op in ops {
         let fields = user_fields(op);
         if fields.is_empty() {
-            writeln!(
-                w,
-                "            Instruction::{} => OpCode::{},",
-                op.name, op.name
-            )?;
+            writeln!(w, "            Instruction::{} => OpCode::{},", op.name, op.name)?;
         } else {
             writeln!(
                 w,
@@ -318,10 +478,7 @@ fn generate_opcode_method(
     Ok(())
 }
 
-fn generate_is_terminator_method(
-    mut w: impl Write,
-    ops: &[OpDef],
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_is_terminator_method(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(w, "    pub fn is_terminator(&self) -> bool {{")?;
     writeln!(w, "        matches!(self, ")?;
     let terminators: Vec<&OpDef> = ops.iter().filter(|op| op.is_terminator).collect();
@@ -341,14 +498,8 @@ fn generate_is_terminator_method(
     Ok(())
 }
 
-fn generate_encoded_size_method(
-    mut w: impl Write,
-    ops: &[OpDef],
-) -> Result<(), Box<dyn std::error::Error>> {
-    writeln!(
-        w,
-        "    /// Returns the encoded size of this instruction in bytes."
-    )?;
+fn generate_encoded_size_method(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
+    writeln!(w, "    /// Returns the encoded size of this instruction in bytes.")?;
     writeln!(w, "    pub fn encoded_size(&self) -> usize {{")?;
     writeln!(w, "        match self {{")?;
 
@@ -363,9 +514,9 @@ fn generate_encoded_size_method(
                 if f.is_array || f.name == "m_type" || f.name == "m_strict" {
                     continue;
                 }
-                let FieldType { align, size, .. } = field_type_info(&f.ty);
-                offset = round_up(offset, align);
-                offset += size;
+                let info = field_type_info(&f.ty);
+                offset = round_up(offset, info.align);
+                offset += info.size;
             }
             let final_size = round_up(offset, 8);
             let pat = if fields.is_empty() {
@@ -373,7 +524,7 @@ fn generate_encoded_size_method(
             } else {
                 format!("Instruction::{} {{ .. }}", op.name)
             };
-            writeln!(w, "            {} => {},", pat, final_size)?;
+            writeln!(w, "            {pat} => {final_size},")?;
         } else {
             // Variable-length: depends on array size
             // Compute fixed part size
@@ -382,16 +533,16 @@ fn generate_encoded_size_method(
                 if f.is_array || f.name == "m_type" || f.name == "m_strict" {
                     continue;
                 }
-                let FieldType { align, size, .. } = field_type_info(&f.ty);
-                fixed_offset = round_up(fixed_offset, align);
-                fixed_offset += size;
+                let info = field_type_info(&f.ty);
+                fixed_offset = round_up(fixed_offset, info.align);
+                fixed_offset += info.size;
             }
 
             // Find the array field and its element size
             let Some(array_field) = op.fields.iter().find(|f| f.is_array) else {
                 continue;
             };
-            let FieldType { size, .. } = field_type_info(&array_field.ty);
+            let info = field_type_info(&array_field.ty);
             let arr_name = rust_field_name(&array_field.name);
             // C++ computes m_length as:
             //   round_up(alignof(void*), sizeof(*this) + sizeof(elem) * count)
@@ -406,7 +557,7 @@ fn generate_encoded_size_method(
                     if rname == arr_name {
                         rname
                     } else {
-                        format!("{}: _", rname)
+                        format!("{rname}: _")
                     }
                 })
                 .collect();
@@ -419,7 +570,7 @@ fn generate_encoded_size_method(
             writeln!(
                 w,
                 "                let base = {} + {}.len() * {};",
-                sizeof_this, arr_name, size
+                sizeof_this, arr_name, info.size
             )?;
             writeln!(w, "                (base + 7) & !7 // round up to 8")?;
             writeln!(w, "            }}")?;
@@ -433,18 +584,12 @@ fn generate_encoded_size_method(
     Ok(())
 }
 
-fn generate_encode_method(
-    mut w: impl Write,
-    ops: &[OpDef],
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_encode_method(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(
         w,
         "    /// Encode this instruction into bytes matching the C++ struct layout."
     )?;
-    writeln!(
-        w,
-        "    pub fn encode(&self, strict: bool, buf: &mut Vec<u8>) {{"
-    )?;
+    writeln!(w, "    pub fn encode(&self, strict: bool, buf: &mut Vec<u8>) {{")?;
     writeln!(w, "        let start = buf.len();")?;
     writeln!(w, "        match self {{")?;
 
@@ -485,15 +630,13 @@ fn generate_encode_method(
                 continue;
             }
 
-            let FieldType {
-                align, size, kind, ..
-            } = field_type_info(&f.ty);
+            let info = field_type_info(&f.ty);
 
             // Pad to alignment
-            let aligned_offset = round_up(offset, align);
+            let aligned_offset = round_up(offset, info.align);
             let pad = aligned_offset - offset;
             if pad > 0 {
-                writeln!(w, "                buf.extend_from_slice(&[0u8; {}]);", pad)?;
+                writeln!(w, "                buf.extend_from_slice(&[0u8; {pad}]);")?;
             }
             offset = aligned_offset;
 
@@ -505,9 +648,9 @@ fn generate_encode_method(
                 )?;
             } else {
                 let rname = rust_field_name(&f.name);
-                emit_field_write(&mut w, &rname, kind, false)?;
+                emit_field_write(&mut w, &rname, info.kind, false)?;
             }
-            offset += size;
+            offset += info.size;
         }
 
         // Write trailing array elements
@@ -519,20 +662,18 @@ fn generate_encode_method(
                 if !f.is_array {
                     continue;
                 }
-                let FieldType {
-                    align, size, kind, ..
-                } = field_type_info(&f.ty);
+                let info = field_type_info(&f.ty);
                 let rname = rust_field_name(&f.name);
 
                 // Pad before first element if needed
-                let aligned_offset = round_up(offset, align);
+                let aligned_offset = round_up(offset, info.align);
                 let pad = aligned_offset - offset;
                 if pad > 0 {
-                    writeln!(w, "                buf.extend_from_slice(&[0u8; {}]);", pad)?;
+                    writeln!(w, "                buf.extend_from_slice(&[0u8; {pad}]);")?;
                 }
 
-                writeln!(w, "                for item in {} {{", rname)?;
-                emit_field_write(&mut w, "item", kind, true)?;
+                writeln!(w, "                for item in {rname} {{")?;
+                emit_field_write(&mut w, "item", info.kind, true)?;
                 writeln!(w, "                }}")?;
 
                 // Compute target size matching C++:
@@ -540,7 +681,7 @@ fn generate_encode_method(
                 writeln!(
                     w,
                     "                let target = ({} + {}.len() * {} + 7) & !7;",
-                    sizeof_this, rname, size
+                    sizeof_this, rname, info.size
                 )?;
                 writeln!(
                     w,
@@ -551,10 +692,7 @@ fn generate_encode_method(
             if has_m_length {
                 // Patch m_length: it's the first u32 field after the header
                 let m_length_offset = find_m_length_offset(&op.fields);
-                writeln!(
-                    w,
-                    "                let total_len = (buf.len() - start) as u32;"
-                )?;
+                writeln!(w, "                let total_len = (buf.len() - start) as u32;")?;
                 writeln!(
                     w,
                     "                buf[start + {}..start + {}].copy_from_slice(&total_len.to_ne_bytes());",
@@ -567,11 +705,7 @@ fn generate_encode_method(
             let final_size = round_up(offset, 8);
             let tail_pad = final_size - offset;
             if tail_pad > 0 {
-                writeln!(
-                    w,
-                    "                buf.extend_from_slice(&[0u8; {}]);",
-                    tail_pad
-                )?;
+                writeln!(w, "                buf.extend_from_slice(&[0u8; {tail_pad}]);")?;
             }
         }
 
@@ -597,101 +731,53 @@ fn emit_field_write(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let prefix = " ".repeat(if is_loop_item { 20 } else { 16 });
     match kind {
-        "bool" => writeln!(w, "{}buf.push(*{} as u8);", prefix, name)?,
-        "u8" => writeln!(w, "{}buf.push(*{});", prefix, name)?,
-        "u32" => writeln!(
-            w,
-            "{}buf.extend_from_slice(&{}.to_ne_bytes());",
-            prefix, name
-        )?,
-        "u64" => writeln!(
-            w,
-            "{}buf.extend_from_slice(&{}.to_ne_bytes());",
-            prefix, name
-        )?,
-        "operand" => writeln!(
-            w,
-            "{}buf.extend_from_slice(&{}.raw().to_ne_bytes());",
-            prefix, name
-        )?,
+        "bool" => writeln!(w, "{prefix}buf.push(*{name} as u8);")?,
+        "u8" => writeln!(w, "{prefix}buf.push(*{name});")?,
+        "u32" => writeln!(w, "{prefix}buf.extend_from_slice(&{name}.to_ne_bytes());")?,
+        "u64" => writeln!(w, "{prefix}buf.extend_from_slice(&{name}.to_ne_bytes());")?,
+        "operand" => writeln!(w, "{prefix}buf.extend_from_slice(&{name}.raw().to_ne_bytes());")?,
         "optional_operand" => {
-            writeln!(w, "{}match {} {{", prefix, name)?;
+            writeln!(w, "{prefix}match {name} {{")?;
             writeln!(
                 w,
-                "{}    Some(op) => buf.extend_from_slice(&op.raw().to_ne_bytes()),",
-                prefix
+                "{prefix}    Some(op) => buf.extend_from_slice(&op.raw().to_ne_bytes()),"
             )?;
             writeln!(
                 w,
-                "{}    None => buf.extend_from_slice(&Operand::INVALID.to_ne_bytes()),",
-                prefix
+                "{prefix}    None => buf.extend_from_slice(&Operand::INVALID.to_ne_bytes()),"
             )?;
-            writeln!(w, "{}}}", prefix)?;
+            writeln!(w, "{prefix}}}")?;
         }
-        "label" => writeln!(
-            w,
-            "{}buf.extend_from_slice(&{}.0.to_ne_bytes());",
-            prefix, name
-        )?,
+        "label" => writeln!(w, "{prefix}buf.extend_from_slice(&{name}.0.to_ne_bytes());")?,
         "optional_label" => {
             // C++ Optional<Label> layw: u32 value, bool has_value, 3 bytes padding = 8 bytes total
-            writeln!(w, "{}match {} {{", prefix, name)?;
-            writeln!(w, "{}    Some(lbl) => {{", prefix)?;
-            writeln!(
-                w,
-                "{}        buf.extend_from_slice(&lbl.0.to_ne_bytes());",
-                prefix
-            )?;
-            writeln!(
-                w,
-                "{}        buf.push(1); buf.push(0); buf.push(0); buf.push(0);",
-                prefix
-            )?;
-            writeln!(w, "{}    }}", prefix)?;
-            writeln!(w, "{}    None => {{", prefix)?;
-            writeln!(
-                w,
-                "{}        buf.extend_from_slice(&0u32.to_ne_bytes());",
-                prefix
-            )?;
-            writeln!(
-                w,
-                "{}        buf.push(0); buf.push(0); buf.push(0); buf.push(0);",
-                prefix
-            )?;
-            writeln!(w, "{}    }}", prefix)?;
-            writeln!(w, "{}}}", prefix)?;
+            writeln!(w, "{prefix}match {name} {{")?;
+            writeln!(w, "{prefix}    Some(lbl) => {{")?;
+            writeln!(w, "{prefix}        buf.extend_from_slice(&lbl.0.to_ne_bytes());")?;
+            writeln!(w, "{prefix}        buf.push(1); buf.push(0); buf.push(0); buf.push(0);")?;
+            writeln!(w, "{prefix}    }}")?;
+            writeln!(w, "{prefix}    None => {{")?;
+            writeln!(w, "{prefix}        buf.extend_from_slice(&0u32.to_ne_bytes());")?;
+            writeln!(w, "{prefix}        buf.push(0); buf.push(0); buf.push(0); buf.push(0);")?;
+            writeln!(w, "{prefix}    }}")?;
+            writeln!(w, "{prefix}}}")?;
         }
-        "u32_newtype" => writeln!(
-            w,
-            "{}buf.extend_from_slice(&{}.0.to_ne_bytes());",
-            prefix, name
-        )?,
+        "u32_newtype" => writeln!(w, "{prefix}buf.extend_from_slice(&{name}.0.to_ne_bytes());")?,
         "optional_u32_newtype" => {
-            writeln!(w, "{}match {} {{", prefix, name)?;
+            writeln!(w, "{prefix}match {name} {{")?;
             writeln!(
                 w,
-                "{}    Some(idx) => buf.extend_from_slice(&idx.0.to_ne_bytes()),",
-                prefix
+                "{prefix}    Some(idx) => buf.extend_from_slice(&idx.0.to_ne_bytes()),"
             )?;
             writeln!(
                 w,
-                "{}    None => buf.extend_from_slice(&0xFFFF_FFFFu32.to_ne_bytes()),",
-                prefix
+                "{prefix}    None => buf.extend_from_slice(&0xFFFF_FFFFu32.to_ne_bytes()),"
             )?;
-            writeln!(w, "{}}}", prefix)?;
+            writeln!(w, "{prefix}}}")?;
         }
         "env_coord" => {
-            writeln!(
-                w,
-                "{}buf.extend_from_slice(&{}.hops.to_ne_bytes());",
-                prefix, name
-            )?;
-            writeln!(
-                w,
-                "{}buf.extend_from_slice(&{}.index.to_ne_bytes());",
-                prefix, name
-            )?;
+            writeln!(w, "{prefix}buf.extend_from_slice(&{name}.hops.to_ne_bytes());")?;
+            writeln!(w, "{prefix}buf.extend_from_slice(&{name}.index.to_ne_bytes());")?;
         }
         other => panic!("Unknown encoding kind: {other}"),
     }
@@ -699,14 +785,8 @@ fn emit_field_write(
     Ok(())
 }
 
-fn generate_visit_operands_method(
-    mut w: impl Write,
-    ops: &[OpDef],
-) -> Result<(), Box<dyn std::error::Error>> {
-    writeln!(
-        w,
-        "    /// Visit all `Operand` fields (for operand rewriting)."
-    )?;
+fn generate_visit_operands_method(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
+    writeln!(w, "    /// Visit all `Operand` fields (for operand rewriting).")?;
     writeln!(
         w,
         "    pub fn visit_operands(&mut self, visitor: &mut dyn FnMut(&mut Operand)) {{"
@@ -726,7 +806,7 @@ fn generate_visit_operands_method(
             } else {
                 format!("Instruction::{} {{ .. }}", op.name)
             };
-            writeln!(w, "            {} => {{}}", pat)?;
+            writeln!(w, "            {pat} => {{}}")?;
             continue;
         }
 
@@ -738,7 +818,7 @@ fn generate_visit_operands_method(
                 if f.ty == "Operand" || f.ty == "Optional<Operand>" {
                     rname
                 } else {
-                    format!("{}: _", rname)
+                    format!("{rname}: _")
                 }
             })
             .collect();
@@ -755,24 +835,15 @@ fn generate_visit_operands_method(
                 if f.ty == "Optional<Operand>" {
                     writeln!(
                         w,
-                        "                for op in {}.iter_mut().flatten() {{ visitor(op); }}",
-                        rname
+                        "                for op in {rname}.iter_mut().flatten() {{ visitor(op); }}"
                     )?;
                 } else {
-                    writeln!(
-                        w,
-                        "                for item in {}.iter_mut() {{ visitor(item); }}",
-                        rname
-                    )?;
+                    writeln!(w, "                for item in {rname}.iter_mut() {{ visitor(item); }}")?;
                 }
             } else if f.ty == "Optional<Operand>" {
-                writeln!(
-                    w,
-                    "                if let Some(op) = {} {{ visitor(op); }}",
-                    rname
-                )?;
+                writeln!(w, "                if let Some(op) = {rname} {{ visitor(op); }}")?;
             } else {
-                writeln!(w, "                visitor({});", rname)?;
+                writeln!(w, "                visitor({rname});")?;
             }
         }
 
@@ -786,10 +857,7 @@ fn generate_visit_operands_method(
     Ok(())
 }
 
-fn generate_visit_labels_method(
-    mut w: impl Write,
-    ops: &[OpDef],
-) -> Result<(), Box<dyn std::error::Error>> {
+fn generate_visit_labels_method(mut w: impl Write, ops: &[OpDef]) -> Result<(), Box<dyn std::error::Error>> {
     writeln!(w, "    /// Visit all `Label` fields (for label linking).")?;
     writeln!(
         w,
@@ -810,7 +878,7 @@ fn generate_visit_labels_method(
             } else {
                 format!("Instruction::{} {{ .. }}", op.name)
             };
-            writeln!(w, "            {} => {{}}", pat)?;
+            writeln!(w, "            {pat} => {{}}")?;
             continue;
         }
 
@@ -821,7 +889,7 @@ fn generate_visit_labels_method(
                 if f.ty == "Label" || f.ty == "Optional<Label>" {
                     rname
                 } else {
-                    format!("{}: _", rname)
+                    format!("{rname}: _")
                 }
             })
             .collect();
@@ -836,27 +904,16 @@ fn generate_visit_labels_method(
             let rname = rust_field_name(&f.name);
             if f.is_array {
                 if f.ty == "Optional<Label>" {
-                    writeln!(w, "                for item in {}.iter_mut() {{", rname)?;
-                    writeln!(
-                        w,
-                        "                    if let Some(lbl) = item {{ visitor(lbl); }}"
-                    )?;
+                    writeln!(w, "                for item in {rname}.iter_mut() {{")?;
+                    writeln!(w, "                    if let Some(lbl) = item {{ visitor(lbl); }}")?;
                     writeln!(w, "                }}")?;
                 } else {
-                    writeln!(
-                        w,
-                        "                for item in {}.iter_mut() {{ visitor(item); }}",
-                        rname
-                    )?;
+                    writeln!(w, "                for item in {rname}.iter_mut() {{ visitor(item); }}")?;
                 }
             } else if f.ty == "Optional<Label>" {
-                writeln!(
-                    w,
-                    "                if let Some(lbl) = {} {{ visitor(lbl); }}",
-                    rname
-                )?;
+                writeln!(w, "                if let Some(lbl) = {rname} {{ visitor(lbl); }}")?;
             } else {
-                writeln!(w, "                visitor({});", rname)?;
+                writeln!(w, "                visitor({rname});")?;
             }
         }
 
@@ -874,13 +931,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:rerun-if-changed={}", def_path.display());
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=cbindgen.toml");
+    println!("cargo:rerun-if-env-changed=FFI_OUTPUT_DIR");
+    println!("cargo:rerun-if-changed=src");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+
+    let ffi_out_dir = env::var("FFI_OUTPUT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| out_dir.clone());
+
+    cbindgen::generate(manifest_dir).map_or_else(
+        |error| match error {
+            cbindgen::Error::ParseSyntaxError { .. } => {}
+            e => panic!("{e:?}"),
+        },
+        |bindings| {
+            let header_path = out_dir.join("RustFFI.h");
+            bindings.write_to_file(&header_path);
+
+            if ffi_out_dir != out_dir {
+                bindings.write_to_file(ffi_out_dir.join("RustFFI.h"));
+            }
+        },
+    );
+
     let file = fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true) // empties contents of the file
         .open(out_dir.join("instruction_generated.rs"))?;
-    let ops = parse_bytecode_def(&def_path);
+    let content = fs::read_to_string(&def_path).expect("Failed to read Bytecode.def");
+    let ops = bytecode_def::parse_bytecode_def(&content);
     generate_rust_code(file, &ops)
 }

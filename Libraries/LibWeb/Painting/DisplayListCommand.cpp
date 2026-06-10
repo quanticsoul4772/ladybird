@@ -5,29 +5,19 @@
  */
 
 #include <LibWeb/Painting/DisplayListCommand.h>
-#include <LibWeb/Painting/ShadowPainting.h>
 
 namespace Web::Painting {
 
 Gfx::IntRect PaintOuterBoxShadow::bounding_rect() const
 {
-    auto shadow_rect = box_shadow_params.device_content_rect;
-    auto spread = box_shadow_params.blur_radius * 2 + box_shadow_params.spread_distance;
-    shadow_rect.inflate(spread, spread, spread, spread);
-    auto offset_x = box_shadow_params.offset_x;
-    auto offset_y = box_shadow_params.offset_y;
-    shadow_rect.translate_by(offset_x, offset_y);
-    return shadow_rect;
+    auto rect = shadow_rect;
+    rect.inflate(blur_radius * 2, blur_radius * 2, blur_radius * 2, blur_radius * 2);
+    return rect;
 }
 
 Gfx::IntRect PaintInnerBoxShadow::bounding_rect() const
 {
-    return box_shadow_params.device_content_rect;
-}
-
-Gfx::IntRect DrawGlyphRun::bounding_rect() const
-{
-    return glyph_run->cached_blob_bounds().translated(translation).to_rounded<int>();
+    return device_content_rect;
 }
 
 void DrawGlyphRun::dump(StringBuilder& builder) const
@@ -40,17 +30,22 @@ void FillRect::dump(StringBuilder& builder) const
     builder.appendff(" rect={} color={}", rect, color);
 }
 
-void DrawScaledImmutableBitmap::dump(StringBuilder& builder) const
+void DrawScaledDecodedImageFrame::dump(StringBuilder& builder) const
+{
+    builder.appendff(" dst_rect={}", dst_rect);
+}
+
+void DrawRepeatedDecodedImageFrame::dump(StringBuilder& builder) const
 {
     builder.appendff(" dst_rect={} clip_rect={}", dst_rect, clip_rect);
 }
 
-void DrawRepeatedImmutableBitmap::dump(StringBuilder& builder) const
+void DrawCompositorSurface::dump(StringBuilder& builder) const
 {
-    builder.appendff(" dst_rect={} clip_rect={}", dst_rect, clip_rect);
+    builder.appendff(" dst_rect={}", dst_rect);
 }
 
-void DrawExternalContent::dump(StringBuilder& builder) const
+void DrawVideoFrame::dump(StringBuilder& builder) const
 {
     builder.appendff(" dst_rect={}", dst_rect);
 }
@@ -89,17 +84,17 @@ void PaintRadialGradient::dump(StringBuilder& builder) const
 
 void PaintConicGradient::dump(StringBuilder& builder) const
 {
-    builder.appendff(" rect={} position={} angle={}", rect, position, conic_gradient_data.start_angle);
+    builder.appendff(" rect={} position={} angle={}", rect, position, start_angle);
 }
 
 void PaintOuterBoxShadow::dump(StringBuilder& builder) const
 {
-    builder.appendff(" content_rect={} offset=({},{}) blur_radius={} spread_distance={} color={}", box_shadow_params.device_content_rect, box_shadow_params.offset_x, box_shadow_params.offset_y, box_shadow_params.blur_radius, box_shadow_params.spread_distance, box_shadow_params.color);
+    builder.appendff(" content_rect={} shadow_rect={} blur_radius={} color={}", device_content_rect, shadow_rect, blur_radius, color);
 }
 
 void PaintInnerBoxShadow::dump(StringBuilder& builder) const
 {
-    builder.appendff(" content_rect={} offset=({},{}) blur_radius={} spread_distance={} color={}", box_shadow_params.device_content_rect, box_shadow_params.offset_x, box_shadow_params.offset_y, box_shadow_params.blur_radius, box_shadow_params.spread_distance, box_shadow_params.color);
+    builder.appendff(" content_rect={} outer_shadow_rect={} inner_shadow_rect={} blur_radius={} color={}", device_content_rect, outer_shadow_rect, inner_shadow_rect, blur_radius, color);
 }
 
 void PaintTextShadow::dump(StringBuilder& builder) const
@@ -156,13 +151,73 @@ void PaintNestedDisplayList::dump(StringBuilder& builder) const
     builder.appendff(" rect={}", rect);
 }
 
+void CompositorScrollNode::dump(StringBuilder& builder) const
+{
+    builder.appendff(" scroll_frame_index={} parent_scroll_frame_index={} scrollport_rect={} max_scroll_offset={} is_viewport={}",
+        scroll_frame_index, parent_scroll_frame_index, scrollport_rect, max_scroll_offset, is_viewport);
+}
+
+static void dump_optional_float(StringBuilder& builder, Optional<float> value)
+{
+    if (value.has_value())
+        builder.appendff("{}", *value);
+    else
+        builder.append("none"sv);
+}
+
+void CompositorStickyArea::dump(StringBuilder& builder) const
+{
+    builder.appendff(" scroll_frame_index={} parent_scroll_frame_index={} nearest_scrolling_ancestor_index={} position_relative_to_scroll_ancestor={} border_box_size={} scrollport_size={} containing_block_region={} needs_parent_offset_adjustment={} inset_top=",
+        scroll_frame_index, parent_scroll_frame_index, nearest_scrolling_ancestor_index, position_relative_to_scroll_ancestor, border_box_size, scrollport_size, containing_block_region, needs_parent_offset_adjustment);
+    dump_optional_float(builder, inset_top);
+    builder.append(" inset_right="sv);
+    dump_optional_float(builder, inset_right);
+    builder.append(" inset_bottom="sv);
+    dump_optional_float(builder, inset_bottom);
+    builder.append(" inset_left="sv);
+    dump_optional_float(builder, inset_left);
+}
+
+void CompositorBlockingWheelEventRegion::dump(StringBuilder& builder) const
+{
+    builder.appendff(" rect={}", rect);
+}
+
+void CompositorWheelHitTestTarget::dump(StringBuilder& builder) const
+{
+    builder.appendff(" target_scroll_frame_index={} rect={}", target_scroll_frame_index, rect);
+}
+
+void CompositorWheelHitTestTargetWithCornerRadii::dump(StringBuilder& builder) const
+{
+    builder.appendff(" target_scroll_frame_index={} rect={}", target_scroll_frame_index, rect);
+    if (corner_radii.has_any_radius()) {
+        builder.appendff(" corner_radii=[{}x{},{}x{},{}x{},{}x{}]",
+            corner_radii.top_left.horizontal_radius, corner_radii.top_left.vertical_radius,
+            corner_radii.top_right.horizontal_radius, corner_radii.top_right.vertical_radius,
+            corner_radii.bottom_right.horizontal_radius, corner_radii.bottom_right.vertical_radius,
+            corner_radii.bottom_left.horizontal_radius, corner_radii.bottom_left.vertical_radius);
+    }
+}
+
+void CompositorMainThreadWheelEventRegion::dump(StringBuilder& builder) const
+{
+    builder.appendff(" rect={}", rect);
+}
+
+void CompositorViewportScrollbar::dump(StringBuilder& builder) const
+{
+    builder.appendff(" scroll_frame_index={} gutter_rect={} thumb_rect={} expanded_gutter_rect={} expanded_thumb_rect={} scroll_size={} expanded_scroll_size={} max_scroll_offset={} thumb_color={} track_color={} vertical={}",
+        scroll_frame_index, gutter_rect, thumb_rect, expanded_gutter_rect, expanded_thumb_rect, scroll_size, expanded_scroll_size, max_scroll_offset, thumb_color, track_color, vertical);
+}
+
 void PaintScrollBar::dump(StringBuilder&) const
 {
 }
 
 void ApplyEffects::dump(StringBuilder& builder) const
 {
-    builder.appendff(" opacity={} has_filter={}", opacity, filter.has_value());
+    builder.appendff(" opacity={} has_filter={}", opacity, has_filter);
 }
 
 }

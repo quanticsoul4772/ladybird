@@ -6,7 +6,7 @@
 
 #include <LibJS/Runtime/Realm.h>
 #include <LibJS/Runtime/VM.h>
-#include <LibWeb/Bindings/AudioTrackListPrototype.h>
+#include <LibWeb/Bindings/AudioTrackList.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/HTML/AudioTrackList.h>
 #include <LibWeb/HTML/EventNames.h>
@@ -44,16 +44,18 @@ JS::ThrowCompletionOr<Optional<JS::PropertyDescriptor>> AudioTrackList::internal
     return Base::internal_get_own_property(property_name);
 }
 
-void AudioTrackList::add_track(Badge<HTMLMediaElement>, GC::Ref<AudioTrack> audio_track)
+void AudioTrackList::add_track(GC::Ref<AudioTrack> audio_track)
 {
     m_audio_tracks.append(audio_track);
     audio_track->set_audio_track_list({}, this);
 }
 
-void AudioTrackList::remove_all_tracks(Badge<HTMLMediaElement>)
+void AudioTrackList::remove_all_tracks()
 {
-    for (auto& audio_track : m_audio_tracks)
+    for (auto& audio_track : m_audio_tracks) {
         audio_track->set_enabled(false);
+        audio_track->set_audio_track_list({}, nullptr);
+    }
     m_audio_tracks.clear();
 }
 

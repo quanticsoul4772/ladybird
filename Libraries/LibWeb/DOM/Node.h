@@ -8,9 +8,12 @@
 
 #include <AK/DistinctNumeric.h>
 #include <AK/FlyString.h>
+#include <AK/Function.h>
 #include <AK/GenericShorthands.h>
+#include <AK/RefPtr.h>
 #include <AK/TypeCasts.h>
 #include <AK/Vector.h>
+#include <LibWeb/Bindings/Node.h>
 #include <LibWeb/CSS/InvalidationSet.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/DOM/FragmentSerializationMode.h>
@@ -25,13 +28,21 @@
 
 namespace Web::DOM {
 
+class Document;
+
+}
+
+namespace Web::CSS {
+
+class StyleScope;
+
+}
+
+namespace Web::DOM {
+
 enum class NameOrDescription {
     Name,
     Description
-};
-
-struct GetRootNodeOptions {
-    bool composed { false };
 };
 
 enum class IsDescendant {
@@ -51,6 +62,7 @@ enum class ShouldComputeRole {
     X(HTMLCanvasElementWidthOrHeightChange)           \
     X(HTMLImageElementReactToChangesInTheEnvironment) \
     X(HTMLImageElementUpdateTheImageData)             \
+    X(HTMLVideoElementNaturalDimensionsChanged)       \
     X(HTMLVideoElementSetVideoTrack)                  \
     X(KeyframeEffect)                                 \
     X(LayoutTreeUpdate)                               \
@@ -70,6 +82,7 @@ enum class SetNeedsLayoutReason {
 [[nodiscard]] StringView to_string(SetNeedsLayoutReason);
 
 #define ENUMERATE_SET_NEEDS_LAYOUT_TREE_UPDATE_REASONS(X) \
+    X(CharacterDataReplaceData)                           \
     X(ElementSetInnerHTML)                                \
     X(ElementSetShadowRoot)                               \
     X(DetailsElementOpenedOrClosed)                       \
@@ -82,6 +95,7 @@ enum class SetNeedsLayoutReason {
     X(NodeRemove)                                         \
     X(NodeSetTextContent)                                 \
     X(None)                                               \
+    X(ShadowRootSetInnerHTML)                             \
     X(StyleChange)
 
 enum class SetNeedsLayoutTreeUpdateReason {
@@ -226,8 +240,8 @@ public:
 
     WebIDL::ExceptionOr<GC::Ref<Node>> replace_child(GC::Ref<Node> node, GC::Ref<Node> child);
 
-    WebIDL::ExceptionOr<GC::Ref<Node>> clone_node(Document* document = nullptr, bool subtree = false, Node* parent = nullptr) const;
-    WebIDL::ExceptionOr<GC::Ref<Node>> clone_single_node(Document&) const;
+    WebIDL::ExceptionOr<GC::Ref<Node>> clone_node(GC::Ptr<Document> document = nullptr, bool subtree = false, GC::Ptr<Node> parent = nullptr, GC::Ptr<HTML::CustomElementRegistry> fallback_registry = nullptr) const;
+    WebIDL::ExceptionOr<GC::Ref<Node>> clone_single_node(Document&, GC::Ptr<HTML::CustomElementRegistry> fallback_registry) const;
     WebIDL::ExceptionOr<GC::Ref<Node>> clone_node_binding(bool subtree);
 
     WebIDL::ExceptionOr<void> move_node(Node& new_parent, Node* child);
@@ -273,7 +287,11 @@ public:
 
     bool is_closed_shadow_hidden_from(Node const&) const;
 
-    bool is_connected() const;
+    bool is_connected() const { return m_is_connected; }
+    void set_is_connected(bool is_connected) { m_is_connected = is_connected; }
+    bool inside_blocking_wheel_event_handler() const { return m_inside_blocking_wheel_event_handler; }
+    void update_inside_blocking_wheel_event_handler_state();
+    void update_inside_blocking_wheel_event_handler_state_for_subtree();
 
     [[nodiscard]] bool is_browsing_context_connected() const;
 
@@ -285,8 +303,12 @@ public:
 
     MUST_UPCALL virtual void inserted();
     virtual void post_connection();
-    MUST_UPCALL virtual void removed_from(Node* old_parent, Node& old_root);
-    MUST_UPCALL virtual void moved_from(GC::Ptr<Node> old_parent);
+    enum class IsSubtreeRoot : u8 {
+        No,
+        Yes,
+    };
+    MUST_UPCALL virtual void removed_from(IsSubtreeRoot, Node* old_ancestor, Node& old_root);
+    MUST_UPCALL virtual void moved_from(IsSubtreeRoot, GC::Ptr<Node> old_ancestor);
 
     struct ChildrenChangedMetadata {
         enum class Type {
@@ -298,7 +320,7 @@ public:
         GC::Ref<Node> node;
     };
     // FIXME: It would be good if we could always provide this metadata for use in optimizations.
-    virtual void children_changed(ChildrenChangedMetadata const*) { }
+    virtual void children_changed(ChildrenChangedMetadata const&) { }
 
     virtual void adopted_from(Document&) { }
     virtual WebIDL::ExceptionOr<void> cloned(Node&, bool) const { return {}; }
@@ -306,26 +328,27 @@ public:
     Layout::Node const* layout_node() const;
     Layout::Node* layout_node();
 
-    Layout::Node const* unsafe_layout_node() const { return m_layout_node; }
-    Layout::Node* unsafe_layout_node() { return m_layout_node; }
+    Layout::Node const* unsafe_layout_node() const { return m_layout_node.ptr(); }
+    Layout::Node* unsafe_layout_node() { return m_layout_node.ptr(); }
 
-    Painting::PaintableBox const* paintable_box() const;
-    Painting::PaintableBox* paintable_box();
-    Painting::Paintable const* paintable() const;
-    Painting::Paintable* paintable();
+    RefPtr<Painting::PaintableBox const> paintable_box() const;
+    RefPtr<Painting::PaintableBox> paintable_box();
+    RefPtr<Painting::Paintable const> paintable() const;
+    RefPtr<Painting::Paintable> paintable();
 
-    Painting::PaintableBox const* unsafe_paintable_box() const;
-    Painting::PaintableBox* unsafe_paintable_box();
-    Painting::Paintable const* unsafe_paintable() const { return m_paintable; }
-    Painting::Paintable* unsafe_paintable() { return m_paintable; }
+    RefPtr<Painting::PaintableBox const> unsafe_paintable_box() const;
+    RefPtr<Painting::PaintableBox> unsafe_paintable_box();
+    RefPtr<Painting::Paintable const> unsafe_paintable() const;
+    RefPtr<Painting::Paintable> unsafe_paintable();
 
-    void set_paintable(GC::Ptr<Painting::Paintable>);
+    void set_paintable(WeakPtr<Painting::Paintable>);
     void clear_paintable();
 
     void set_needs_repaint(InvalidateDisplayList = InvalidateDisplayList::Yes);
     void set_needs_layout_update(SetNeedsLayoutReason);
 
-    void set_layout_node(Badge<Layout::Node>, GC::Ref<Layout::Node>);
+    void clear_layout_node_and_paintable(Badge<Document>);
+    void set_layout_node(Badge<Layout::Node>, Layout::Node&);
     void detach_layout_node(Badge<Layout::TreeBuilder>);
 
     virtual bool is_child_allowed(Node const&) const { return true; }
@@ -346,8 +369,14 @@ public:
     [[nodiscard]] bool entire_subtree_needs_style_update() const { return m_entire_subtree_needs_style_update; }
     void set_entire_subtree_needs_style_update(bool b) { m_entire_subtree_needs_style_update = b; }
 
+    [[nodiscard]] bool children_may_depend_on_non_inherited_property_inheritance() const { return m_children_may_depend_on_non_inherited_property_inheritance; }
+    void set_children_may_depend_on_non_inherited_property_inheritance() { m_children_may_depend_on_non_inherited_property_inheritance = true; }
+
     void invalidate_style(StyleInvalidationReason);
     void invalidate_style(StyleInvalidationReason, Vector<CSS::InvalidationSet::Property> const&, StyleInvalidationOptions);
+    CSS::StyleScope& style_scope();
+    CSS::StyleScope const& style_scope() const { return const_cast<Node*>(this)->style_scope(); }
+    void for_each_style_scope_which_may_observe_the_node(Function<void(CSS::StyleScope&)> const&);
 
     void set_document(Badge<Document>, Document&);
     void set_document(Badge<NamedNodeMap>, Document&);
@@ -356,6 +385,11 @@ public:
 
     template<typename T>
     bool fast_is() const = delete;
+
+    template<typename T>
+    T* fast_as() = delete;
+    template<typename T>
+    T const* fast_as() const = delete;
 
     WebIDL::ExceptionOr<void> ensure_pre_insertion_validity(JS::Realm&, GC::Ref<Node> node, GC::Ptr<Node> child) const;
 
@@ -386,7 +420,7 @@ public:
     bool is_same_node(Node const*) const;
     bool is_equal_node(Node const*) const;
 
-    GC::Ref<Node> get_root_node(GetRootNodeOptions const& options = {});
+    GC::Ref<Node> get_root_node(Bindings::GetRootNodeOptions const& options = {});
 
     bool is_uninteresting_whitespace_node() const;
 
@@ -453,7 +487,8 @@ public:
 
     bool is_inert() const;
 
-    bool has_inclusive_ancestor_with_display_none();
+    bool has_inclusive_ancestor_with_display_none_ignoring_animations() const;
+    bool has_inclusive_ancestor_with_event_listener(FlyString const& type) const;
 
     GC::Ptr<ShadowRoot> containing_shadow_root();
     GC::Ptr<ShadowRoot const> containing_shadow_root() const
@@ -469,10 +504,11 @@ protected:
 
     virtual void visit_edges(Cell::Visitor&) override;
     virtual void finalize() override;
+    virtual size_t external_memory_size() const override;
 
     GC::Ptr<Document> m_document;
-    GC::Ptr<Layout::Node> m_layout_node;
-    GC::Ptr<Painting::Paintable> m_paintable;
+    WeakPtr<Layout::Node> m_layout_node;
+    WeakPtr<Painting::Paintable> m_paintable;
     NodeType m_type { NodeType::INVALID };
     bool m_needs_layout_tree_update { false };
     bool m_child_needs_layout_tree_update { false };
@@ -480,7 +516,10 @@ protected:
     bool m_needs_style_update { false };
     bool m_child_needs_style_update { false };
     bool m_entire_subtree_needs_style_update { false };
+    bool m_children_may_depend_on_non_inherited_property_inheritance { false };
     bool m_in_editable_subtree { false };
+    bool m_is_connected { false };
+    bool m_inside_blocking_wheel_event_handler { false };
 
     UniqueNodeID m_unique_id;
 

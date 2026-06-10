@@ -8,38 +8,36 @@
  */
 
 #include <LibGfx/Font/Font.h>
+#include <LibGfx/TextLayout.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Position.h>
-#include <LibWeb/DOM/Range.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/Layout/BlockContainer.h>
 #include <LibWeb/Layout/InlineNode.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Painting/DisplayListRecorder.h>
+#include <LibWeb/Painting/HitTestDisplayList.h>
 #include <LibWeb/Painting/PaintableWithLines.h>
 #include <LibWeb/Painting/ShadowPainting.h>
+#include <LibWeb/Painting/StackingContext.h>
 #include <LibWeb/Painting/TextPaintable.h>
-#include <LibWeb/Painting/ViewportPaintable.h>
-#include <LibWeb/Selection/Selection.h>
 
 namespace Web::Painting {
-
-GC_DEFINE_ALLOCATOR(PaintableWithLines);
 
 static void paint_text_decoration(DisplayListRecordingContext&, TextPaintable const&, PaintableFragment::FragmentSpan const&);
 static Gfx::Path build_triangle_wave_path(Gfx::IntPoint from, Gfx::IntPoint to, float amplitude);
 static void compute_render_spans(PaintableFragment const&, Vector<PaintableFragment::FragmentSpan, 4>&);
 static void paint_text_fragment(DisplayListRecordingContext&, PaintableFragment::FragmentSpan const&);
 
-GC::Ref<PaintableWithLines> PaintableWithLines::create(Layout::BlockContainer const& block_container)
+NonnullRefPtr<PaintableWithLines> PaintableWithLines::create(Layout::BlockContainer const& block_container)
 {
-    return block_container.heap().allocate<PaintableWithLines>(block_container);
+    return adopt_ref(*new PaintableWithLines(block_container));
 }
 
-GC::Ref<PaintableWithLines> PaintableWithLines::create(Layout::InlineNode const& inline_node, size_t line_index)
+NonnullRefPtr<PaintableWithLines> PaintableWithLines::create(Layout::InlineNode const& inline_node, size_t line_index)
 {
-    return inline_node.heap().allocate<PaintableWithLines>(inline_node, line_index);
+    return adopt_ref(*new PaintableWithLines(inline_node, line_index));
 }
 
 PaintableWithLines::PaintableWithLines(Layout::BlockContainer const& layout_box)
@@ -74,209 +72,72 @@ void PaintableWithLines::paint_text_fragment_debug_highlight(DisplayListRecordin
     context.display_list_recorder().draw_line(baseline_start, baseline_end, Color::Red);
 }
 
-TraversalDecision PaintableWithLines::hit_test(CSSPixelPoint position, HitTestType type, Function<TraversalDecision(HitTestResult)> const& callback) const
+void PaintableWithLines::record_hit_test_items(DisplayListRecordingContext& context, PaintPhase phase) const
 {
-    auto const is_visible = computed_values().visibility() == CSS::Visibility::Visible;
-    auto pixel_ratio = static_cast<float>(document().page().client().device_pixels_per_css_pixel());
-    auto const& scroll_state = document().paintable()->scroll_state_snapshot();
+    PaintableBox::record_hit_test_items(context, phase);
 
-    Optional<CSSPixelPoint> local_position;
-    bool acquired_local_position = false;
+    if (phase != PaintPhase::Foreground)
+        return;
 
-    auto ensure_local_position = [&]() {
-        if (exchange(acquired_local_position, true))
-            return;
+    auto* hit_test_display_list = context.hit_test_display_list();
+    if (!hit_test_display_list)
+        return;
 
-        if (auto state = accumulated_visual_context()) {
-            auto result = state->transform_point_for_hit_test(position.to_type<float>() * pixel_ratio, scroll_state);
-            if (result.has_value())
-                local_position = (*result / pixel_ratio).to_type<CSSPixels>();
-        } else {
-            local_position = position;
-        }
-    };
-
-    // TextCursor hit testing mode should be able to place cursor in contenteditable elements even if they are empty.
     if (m_fragments.is_empty()
         && !has_children()
-        && type == HitTestType::TextCursor
         && layout_node().dom_node()
         && layout_node().dom_node()->is_editable_or_editing_host()
-        && is_visible
+        && is_visible()
         && visible_for_hit_testing()) {
-        ensure_local_position();
-
-        if (local_position.has_value() && absolute_border_box_rect().contains(*local_position)) {
-            HitTestResult const hit_test_result {
-                .paintable = const_cast<PaintableWithLines&>(*this),
-                .index_in_node = 0,
-                .vertical_distance = 0,
-                .horizontal_distance = 0,
-            };
-
-            if (callback(hit_test_result) == TraversalDecision::Break)
-                return TraversalDecision::Break;
-        }
+        hit_test_display_list->append_empty_editable(*this, absolute_border_box_rect(), accumulated_visual_context_index());
+        return;
     }
 
-    if (!layout_node().children_are_inline())
-        return PaintableBox::hit_test(position, type, callback);
+    for (auto const& fragment : m_fragments)
+        hit_test_display_list->append_text_fragment(fragment, accumulated_visual_context_for_descendants_index());
 
-    // Only hit test chrome for visible elements.
-    if (is_visible) {
-        if (hit_test_chrome(position, callback) == TraversalDecision::Break)
-            return TraversalDecision::Break;
+    if (stacking_context()
+        && is_inline()
+        && is_visible()
+        && visible_for_hit_testing()) {
+        hit_test_display_list->append_box(*this, const_cast<PaintableWithLines&>(*this), absolute_border_box_rect(), accumulated_visual_context_index(), border_radii_data());
     }
-
-    if (hit_test_children(position, type, callback) == TraversalDecision::Break)
-        return TraversalDecision::Break;
-
-    // Hidden elements and elements with pointer-events: none shouldn't be hit.
-    if (!is_visible || !visible_for_hit_testing())
-        return TraversalDecision::Continue;
-
-    ensure_local_position();
-    if (!local_position.has_value())
-        return TraversalDecision::Continue;
-
-    // Fragments are descendants of this element, so use the descendants' visual context to account for this element's
-    // own scroll offset during fragment hit testing.
-    auto avc_for_descendants = accumulated_visual_context_for_descendants();
-    Optional<CSSPixelPoint> local_position_for_fragments;
-    if (avc_for_descendants) {
-        auto result = avc_for_descendants->transform_point_for_hit_test(position.to_type<float>() * pixel_ratio, scroll_state);
-        if (result.has_value())
-            local_position_for_fragments = (*result / pixel_ratio).to_type<CSSPixels>();
-    } else {
-        local_position_for_fragments = local_position;
-    }
-    if (local_position_for_fragments.has_value()) {
-        if (hit_test_fragments(position, local_position_for_fragments.value(), type, callback) == TraversalDecision::Break)
-            return TraversalDecision::Break;
-    }
-
-    if (!stacking_context() && (!layout_node().is_anonymous() || is_positioned())
-        && absolute_border_box_rect().contains(local_position.value())) {
-        if (callback(HitTestResult { const_cast<PaintableWithLines&>(*this) }) == TraversalDecision::Break)
-            return TraversalDecision::Break;
-    }
-
-    return TraversalDecision::Continue;
-}
-
-TraversalDecision PaintableWithLines::hit_test_fragments(CSSPixelPoint position, CSSPixelPoint local_position, HitTestType type, Function<TraversalDecision(HitTestResult)> const& callback) const
-{
-    for (auto const& fragment : fragments()) {
-        if (fragment.paintable().has_stacking_context() || !fragment.paintable().is_visible() || !fragment.paintable().visible_for_hit_testing())
-            continue;
-        auto fragment_absolute_rect = fragment.absolute_rect();
-        if (fragment_absolute_rect.contains(local_position)) {
-            if (fragment.paintable().hit_test(position, type, callback) == TraversalDecision::Break)
-                return TraversalDecision::Break;
-            HitTestResult hit_test_result { const_cast<Paintable&>(fragment.paintable()), fragment.index_in_node_for_point(local_position), 0, 0 };
-            if (callback(hit_test_result) == TraversalDecision::Break)
-                return TraversalDecision::Break;
-        } else if (type == HitTestType::TextCursor) {
-            auto const* common_ancestor_parent = [&]() -> DOM::Node const* {
-                auto selection = document().get_selection();
-                if (!selection)
-                    return nullptr;
-                auto range = selection->range();
-                if (!range)
-                    return nullptr;
-                auto common_ancestor = range->common_ancestor_container();
-                if (common_ancestor->parent())
-                    return common_ancestor->parent();
-                return common_ancestor;
-            }();
-
-            // If we reached this point, the position is not within the fragment. However, the fragment start or end might be
-            // the place to place the cursor, so long as it does not have user-select: none.
-            if (fragment.layout_node().user_select_used_value() == CSS::UserSelect::None)
-                continue;
-
-            auto const* fragment_dom_node = fragment.layout_node().dom_node();
-            if (common_ancestor_parent && fragment_dom_node && common_ancestor_parent->is_ancestor_of(*fragment_dom_node)) {
-                // To determine the best place, we first find the closest fragment horizontally to the cursor. If we could not
-                // find one, then find for the closest vertically above the cursor. If we knew the direction of selection, we
-                // would look above if selecting upward.
-                if (fragment_absolute_rect.bottom() - 1 <= local_position.y()) { // fully below the fragment
-                    HitTestResult hit_test_result {
-                        .paintable = const_cast<Paintable&>(fragment.paintable()),
-                        .index_in_node = fragment.start_offset() + fragment.length_in_code_units(),
-                        .vertical_distance = local_position.y() - fragment_absolute_rect.bottom(),
-                    };
-                    if (callback(hit_test_result) == TraversalDecision::Break)
-                        return TraversalDecision::Break;
-                } else if (local_position.y() < fragment_absolute_rect.top()) { // fully above the fragment
-                    HitTestResult hit_test_result {
-                        .paintable = const_cast<Paintable&>(fragment.paintable()),
-                        .index_in_node = fragment.start_offset(),
-                        .vertical_distance = fragment_absolute_rect.top() - local_position.y(),
-                    };
-                    if (callback(hit_test_result) == TraversalDecision::Break)
-                        return TraversalDecision::Break;
-                } else if (fragment_absolute_rect.top() <= local_position.y()) { // vertically within the fragment
-                    if (local_position.x() < fragment_absolute_rect.left()) {
-                        HitTestResult hit_test_result {
-                            .paintable = const_cast<Paintable&>(fragment.paintable()),
-                            .index_in_node = fragment.start_offset(),
-                            .vertical_distance = 0,
-                            .horizontal_distance = fragment_absolute_rect.left() - local_position.x(),
-                        };
-                        if (callback(hit_test_result) == TraversalDecision::Break)
-                            return TraversalDecision::Break;
-                    } else if (local_position.x() > fragment_absolute_rect.right()) {
-                        HitTestResult hit_test_result {
-                            .paintable = const_cast<Paintable&>(fragment.paintable()),
-                            .index_in_node = fragment.start_offset() + fragment.length_in_code_units(),
-                            .vertical_distance = 0,
-                            .horizontal_distance = local_position.x() - fragment_absolute_rect.right(),
-                        };
-                        if (callback(hit_test_result) == TraversalDecision::Break)
-                            return TraversalDecision::Break;
-                    }
-                }
-            }
-        }
-    }
-    return TraversalDecision::Continue;
 }
 
 static void resolve_text_fragment_properties(PaintableWithLines const& paintable_with_lines)
 {
     auto const& parent_layout_node = paintable_with_lines.layout_node();
     for (auto& fragment : const_cast<PaintableWithLines&>(paintable_with_lines).fragments()) {
-        auto const& fragment_layout_node = fragment.layout_node();
-        if (!fragment_layout_node.is_text_node())
+        auto const* text_node = as_if<Layout::TextNode>(fragment.layout_node());
+        if (!text_node)
             continue;
-        auto const& text_node = static_cast<Layout::TextNode const&>(fragment_layout_node);
 
-        auto const& font = fragment_layout_node.first_available_font();
+        auto const& font = text_node->first_available_font();
         auto const glyph_height = CSSPixels::nearest_value_for(font.pixel_size());
-        auto const css_line_thickness = [&] {
-            auto const& thickness = text_node.computed_values().text_decoration_thickness();
+        auto const line_thickness = [&] {
+            auto const& thickness = text_node->computed_values().text_decoration_thickness();
             return thickness.value.visit(
                 [glyph_height](CSS::TextDecorationThickness::Auto) {
-                    // The UA chooses an appropriate thickness for text decoration lines; see below.
                     // https://drafts.csswg.org/css-text-decor-4/#valdef-text-decoration-thickness-auto
+                    // The UA chooses an appropriate thickness for text decoration lines; see below.
                     return max(glyph_height.scaled(0.1), 1);
                 },
                 [glyph_height](CSS::TextDecorationThickness::FromFont) {
+                    // https://drafts.csswg.org/css-text-decor-4/#valdef-text-decoration-thickness-from-font
                     // If the first available font has metrics indicating a preferred underline width, use that width,
                     // otherwise behaves as auto.
-                    // https://drafts.csswg.org/css-text-decor-4/#valdef-text-decoration-thickness-from-font
                     // FIXME: Implement this properly.
                     return max(glyph_height.scaled(0.1), 1);
                 },
                 [&](CSS::LengthPercentage const& length_percentage) {
-                    auto resolved_length = length_percentage.resolved(text_node, CSS::Length(1, CSS::LengthUnit::Em).to_px(text_node)).to_px(fragment_layout_node);
+                    // https://drafts.csswg.org/css-text-decor-4/#valdef-text-decoration-thickness-length-percentage
+                    auto resolved_length = length_percentage.resolved(*text_node, CSS::Length(1, CSS::LengthUnit::Em).to_px(*text_node)).to_px(*text_node);
                     return max(resolved_length, 1);
                 });
         }();
-        fragment.set_text_decoration_thickness(css_line_thickness);
+        fragment.set_text_decoration_thickness(line_thickness);
 
-        auto const& text_shadow = text_node.computed_values().text_shadow();
+        auto const& text_shadow = text_node->computed_values().text_shadow();
         Vector<ShadowData> resolved_shadow_data;
         if (!text_shadow.is_empty()) {
             resolved_shadow_data.ensure_capacity(text_shadow.size());
@@ -321,8 +182,8 @@ void PaintableWithLines::paint(DisplayListRecordingContext& context, PaintPhase 
 
 void compute_render_spans(PaintableFragment const& fragment, Vector<PaintableFragment::FragmentSpan, 4>& spans)
 {
-    auto const* text_paintable = as_if<TextPaintable>(fragment.paintable());
-    if (!text_paintable) {
+    auto const* maybe_text_paintable = as_if<TextPaintable>(fragment.paintable());
+    if (!maybe_text_paintable) {
         // Non-text fragments still need shadow painting.
         spans.append({
             .fragment = fragment,
@@ -335,11 +196,12 @@ void compute_render_spans(PaintableFragment const& fragment, Vector<PaintableFra
         });
         return;
     }
+    auto const& text_paintable = *maybe_text_paintable;
 
-    if (!text_paintable->is_visible())
+    if (!text_paintable.is_visible())
         return;
 
-    auto text_color = text_paintable->computed_values().webkit_text_fill_color();
+    auto text_color = text_paintable.computed_values().webkit_text_fill_color();
     auto selection_offsets = fragment.selection_offsets();
 
     // No selection: single span with base styling.
@@ -357,7 +219,7 @@ void compute_render_spans(PaintableFragment const& fragment, Vector<PaintableFra
     }
 
     auto [selection_start, selection_end, _] = *selection_offsets;
-    auto selection_style = text_paintable->selection_style();
+    auto selection_style = text_paintable.selection_style();
     auto selection_text_color = selection_style.text_color.value_or(text_color);
 
     // Convert selection text decoration to fragment text decoration data.
@@ -442,8 +304,8 @@ void paint_text_fragment(DisplayListRecordingContext& context, PaintableFragment
         painter.draw_glyph_run(baseline_start, *glyph_run, span.text_color, fragment_device_rect, scale, fragment.orientation());
     } else {
         auto range_rect = fragment.range_rect(Paintable::SelectionState::StartAndEnd,
-            fragment.start_offset() + span.start_code_unit,
-            fragment.start_offset() + span.end_code_unit);
+            fragment.dom_start_offset_in_node() + span.start_code_unit,
+            fragment.dom_start_offset_in_node() + span.end_code_unit);
         auto span_rect = context.rounded_device_rect(range_rect).to_type<int>();
         painter.save();
         painter.add_clip_rect(span_rect);
@@ -460,9 +322,9 @@ Optional<PaintableFragment const&> PaintableWithLines::fragment_at_position(DOM:
         auto const* text_paintable = as_if<TextPaintable>(fragment.paintable());
         if (!text_paintable)
             return false;
-        if (position.offset() < fragment.start_offset())
+        if (position.offset() < fragment.dom_start_offset_in_node())
             return false;
-        if (position.offset() > fragment.start_offset() + fragment.length_in_code_units())
+        if (position.offset() > fragment.dom_end_offset_in_node())
             return false;
         return position.node() == text_paintable->dom_node();
     });
@@ -482,7 +344,7 @@ void PaintableWithLines::paint_cursor(DisplayListRecordingContext& context) cons
 
     auto active_element_is_editable = false;
     if (auto const* text_control = as_if<HTML::FormAssociatedTextControlElement>(document().active_element()))
-        active_element_is_editable = text_control->is_mutable();
+        active_element_is_editable = text_control->text_control_to_html_element().is_mutable();
     if (!active_element_is_editable && !dom_node->is_editable_or_editing_host())
         return;
 
@@ -512,6 +374,68 @@ void PaintableWithLines::paint_cursor(DisplayListRecordingContext& context) cons
     context.display_list_recorder().fill_rect(cursor_device_rect, caret_color);
 }
 
+struct DecorationSegment {
+    int start_x;
+    int end_x;
+};
+
+// https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property
+static Vector<DecorationSegment> compute_skip_ink_segments(
+    PaintableFragment const& fragment,
+    DisplayListRecordingContext const& context,
+    int span_start_x,
+    int span_end_x,
+    int line_y,
+    int line_thickness,
+    float font_size)
+{
+    auto glyph_run = fragment.glyph_run();
+    if (!glyph_run)
+        return { { span_start_x, span_end_x } };
+
+    // The text blob is drawn at baseline_start on the canvas. Compute that same origin so we can convert between
+    // device-pixel coordinates and blob-local coordinates.
+    auto scale = context.device_pixels_per_css_pixel();
+    auto fragment_absolute_rect = fragment.absolute_rect();
+    float blob_origin_x = fragment_absolute_rect.x().to_float() * static_cast<float>(scale);
+    float blob_origin_y = (fragment_absolute_rect.y().to_float() + fragment.baseline().to_float()) * static_cast<float>(scale);
+
+    // Convert the underline's y-band from device pixels to blob-local coordinates.
+    float half_thickness = line_thickness / 2.f;
+    float y_top = line_y - half_thickness - blob_origin_y;
+    float y_bottom = line_y + half_thickness - blob_origin_y;
+
+    auto intervals = glyph_run->get_glyph_intercepts(scale, y_top, y_bottom);
+    if (intervals.is_empty())
+        return { { span_start_x, span_end_x } };
+
+    // Use the full fragment's X range for gap computation so intercepts aren't cut off at span boundaries.
+    auto full_fragment_rect = context.rounded_device_rect(fragment_absolute_rect);
+    int fragment_start_x = full_fragment_rect.left().value();
+
+    // Convert intercepts from blob-local x to device pixels, and dilate to create visible gaps.
+    float dilation = max(font_size / 20.f, 2.f) * static_cast<float>(scale);
+
+    Vector<DecorationSegment> segments;
+    int current_x = fragment_start_x;
+    for (size_t i = 0; i + 1 < intervals.size(); i += 2) {
+        int gap_start = static_cast<int>(floorf(intervals[i] + blob_origin_x - dilation));
+        int gap_end = static_cast<int>(ceilf(intervals[i + 1] + blob_origin_x + dilation));
+
+        int seg_start = max(current_x, span_start_x);
+        int seg_end = min(gap_start, span_end_x);
+        if (seg_start < seg_end)
+            segments.append({ seg_start, seg_end });
+        current_x = max(gap_end, current_x);
+    }
+
+    int seg_start = max(current_x, span_start_x);
+    if (seg_start < span_end_x)
+        segments.append({ seg_start, span_end_x });
+
+    return segments;
+}
+
 void paint_text_decoration(DisplayListRecordingContext& context, TextPaintable const& paintable, PaintableFragment::FragmentSpan const& span)
 {
     auto const& fragment = span.fragment;
@@ -533,29 +457,27 @@ void paint_text_decoration(DisplayListRecordingContext& context, TextPaintable c
         line_style = paintable.computed_values().text_decoration_style();
         text_decoration_lines = paintable.computed_values().text_decoration_line();
     }
-    auto device_line_thickness = context.rounded_device_pixels(fragment.text_decoration_thickness());
 
     // Compute the decoration box for this span.
-    CSSPixelRect fragment_box;
-    if (span.start_code_unit == 0 && span.end_code_unit == fragment.length_in_code_units()) {
-        fragment_box = fragment.absolute_rect();
-    } else {
-        fragment_box = fragment.range_rect(Paintable::SelectionState::StartAndEnd,
-            fragment.start_offset() + span.start_code_unit,
-            fragment.start_offset() + span.end_code_unit);
+    auto fragment_box = fragment.absolute_rect();
+    if (span.start_code_unit != 0 || span.end_code_unit != fragment.length_in_code_units()) {
+        auto span_rect = fragment.range_rect(Paintable::SelectionState::StartAndEnd,
+            fragment.dom_start_offset_in_node() + span.start_code_unit,
+            fragment.dom_start_offset_in_node() + span.end_code_unit);
+        fragment_box.set_x(span_rect.x());
+        fragment_box.set_width(span_rect.width());
     }
     auto text_underline_offset = paintable.computed_values().text_underline_offset();
     auto text_underline_position = paintable.computed_values().text_underline_position();
     for (auto line : text_decoration_lines) {
-        DevicePixelPoint line_start_point {};
-        DevicePixelPoint line_end_point {};
+        auto line_thickness = fragment.text_decoration_thickness();
 
         if (line == CSS::TextDecorationLine::SpellingError) {
             // https://drafts.csswg.org/css-text-decor-4/#valdef-text-decoration-line-spelling-error
             // This value indicates the type of text decoration used by the user agent to highlight spelling mistakes.
             // Its appearance is UA-defined, and may be platform-dependent. It is often rendered as a red wavy underline.
             line_color = Color::Red;
-            device_line_thickness = context.rounded_device_pixels(1);
+            line_thickness = CSSPixels(1);
             line_style = CSS::TextDecorationStyle::Wavy;
             line = CSS::TextDecorationLine::Underline;
 
@@ -568,7 +490,7 @@ void paint_text_decoration(DisplayListRecordingContext& context, TextPaintable c
             // This value indicates the type of text decoration used by the user agent to highlight grammar mistakes.
             // Its appearance is UA defined, and may be platform-dependent. It is often rendered as a green wavy underline.
             line_color = Color::DarkGreen;
-            device_line_thickness = context.rounded_device_pixels(1);
+            line_thickness = CSSPixels(1);
             line_style = CSS::TextDecorationStyle::Wavy;
             line = CSS::TextDecorationLine::Underline;
 
@@ -578,15 +500,20 @@ void paint_text_decoration(DisplayListRecordingContext& context, TextPaintable c
             text_underline_offset = CSS::InitialValues::text_underline_offset();
         }
 
+        auto device_line_thickness = context.rounded_device_pixels(line_thickness);
+
+        // Compute the center Y of the decoration stroke. For underline and overline, offset by half the thickness
+        // so the near edge of the stroke aligns with the intended position.
+        CSSPixels line_center_y;
         switch (line) {
         case CSS::TextDecorationLine::None:
             return;
         case CSS::TextDecorationLine::Underline: {
             // https://drafts.csswg.org/css-text-decor-4/#text-underline-position-property
-            auto underline_position_without_offset = [&]() {
+            auto underline_top_edge = [&]() {
                 // FIXME: Support text-decoration: underline on vertical text
                 switch (text_underline_position.horizontal) {
-                case Web::CSS::TextUnderlinePositionHorizontal::Auto:
+                case CSS::TextUnderlinePositionHorizontal::Auto:
                     // The user agent may use any algorithm to determine the underline’s position; however it must be
                     // placed at or under the alphabetic baseline.
 
@@ -596,32 +523,27 @@ void paint_text_decoration(DisplayListRecordingContext& context, TextPaintable c
                     //            glyphs from Asian scripts such as Han or Tibetan for which an alphabetic underline is
                     //            too high: in such cases, shifting the underline lower or aligning to the em box edge
                     //            as described for under may be more appropriate.
-                    return fragment.baseline();
-                case Web::CSS::TextUnderlinePositionHorizontal::FromFont:
+                    return fragment.baseline() + text_underline_offset;
+                case CSS::TextUnderlinePositionHorizontal::FromFont:
                     // FIXME: If the first available font has metrics indicating a preferred underline offset, use that
                     //        offset, otherwise behaves as auto.
-                    return fragment.baseline();
-                case Web::CSS::TextUnderlinePositionHorizontal::Under:
+                    return fragment.baseline() + text_underline_offset;
+                case CSS::TextUnderlinePositionHorizontal::Under:
                     // The underline is positioned under the element’s text content. In this case the underline usually
                     // does not cross the descenders. (This is sometimes called “accounting” underline.)
-                    return fragment.baseline() + CSSPixels { font.pixel_metrics().descent };
+                    return fragment.baseline() + CSSPixels { font.pixel_metrics().descent } + text_underline_offset;
                 }
-
                 VERIFY_NOT_REACHED();
             }();
-
-            line_start_point = context.rounded_device_point(fragment_box.top_left().translated(0, underline_position_without_offset + text_underline_offset));
-            line_end_point = context.rounded_device_point(fragment_box.top_right().translated(0, underline_position_without_offset + text_underline_offset));
+            line_center_y = underline_top_edge + line_thickness / 2;
             break;
         }
         case CSS::TextDecorationLine::Overline:
-            line_start_point = context.rounded_device_point(fragment_box.top_left().translated(0, baseline - glyph_height));
-            line_end_point = context.rounded_device_point(fragment_box.top_right().translated(0, baseline - glyph_height));
+            line_center_y = baseline - glyph_height - line_thickness / 2;
             break;
         case CSS::TextDecorationLine::LineThrough: {
             auto x_height = font.x_height();
-            line_start_point = context.rounded_device_point(fragment_box.top_left().translated(0, baseline - x_height * CSSPixels(0.5f)));
-            line_end_point = context.rounded_device_point(fragment_box.top_right().translated(0, baseline - x_height * CSSPixels(0.5f)));
+            line_center_y = baseline - x_height * CSSPixels(0.5f);
             break;
         }
         case CSS::TextDecorationLine::Blink:
@@ -633,64 +555,100 @@ void paint_text_decoration(DisplayListRecordingContext& context, TextPaintable c
             VERIFY_NOT_REACHED();
         }
 
+        auto line_start_point = context.rounded_device_point(fragment_box.top_left().translated(0, line_center_y));
+        auto line_end_point = context.rounded_device_point(fragment_box.top_right().translated(0, line_center_y));
+
+        // https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property
+        // FIXME: For text-decoration-skip-ink: auto, skip CJK ideographs and symbols from the intercept
+        //        computation, since their complex strokes would create too many gaps in the decoration line.
+        auto skip_ink = paintable.computed_values().text_decoration_skip_ink();
+        bool should_skip_ink = skip_ink != CSS::TextDecorationSkipInk::None
+            && first_is_one_of(line, CSS::TextDecorationLine::Underline, CSS::TextDecorationLine::Overline);
+
+        auto draw_line_for_segment = [&](DecorationSegment segment, int y, Gfx::LineStyle style = Gfx::LineStyle::Solid) {
+            recorder.draw_line({ segment.start_x, y }, { segment.end_x, y }, line_color, device_line_thickness.value(), style);
+        };
+
+        auto segments = [&] -> Vector<DecorationSegment> {
+            if (!should_skip_ink)
+                return { { line_start_point.x().value(), line_end_point.x().value() } };
+            return compute_skip_ink_segments(fragment, context, line_start_point.x().value(), line_end_point.x().value(),
+                line_start_point.y().value(), device_line_thickness.value(), font.pixel_size());
+        }();
+
+        auto line_y = line_start_point.y().value();
+
         switch (line_style) {
         case CSS::TextDecorationStyle::Solid:
-            recorder.draw_line(line_start_point.to_type<int>(), line_end_point.to_type<int>(), line_color, device_line_thickness.value(), Gfx::LineStyle::Solid);
+            for (auto segment : segments)
+                draw_line_for_segment(segment, line_y);
             break;
-        case CSS::TextDecorationStyle::Double:
+        case CSS::TextDecorationStyle::Double: {
+            // Two parallel lines with a 1px gap, expanding away from the text.
+            int step = device_line_thickness.value() + 1;
+            int first_y = line_y;
+            int second_y = line_y;
             switch (line) {
             case CSS::TextDecorationLine::Underline:
+                second_y += step;
                 break;
             case CSS::TextDecorationLine::Overline:
-                line_start_point.translate_by(0, -device_line_thickness - context.rounded_device_pixels(1));
-                line_end_point.translate_by(0, -device_line_thickness - context.rounded_device_pixels(1));
+                second_y -= step;
                 break;
             case CSS::TextDecorationLine::LineThrough:
-                line_start_point.translate_by(0, -device_line_thickness / 2);
-                line_end_point.translate_by(0, -device_line_thickness / 2);
+                first_y -= step / 2;
+                second_y = first_y + step;
                 break;
             default:
                 VERIFY_NOT_REACHED();
             }
-
-            recorder.draw_line(line_start_point.to_type<int>(), line_end_point.to_type<int>(), line_color, device_line_thickness.value());
-            recorder.draw_line(line_start_point.translated(0, device_line_thickness + 1).to_type<int>(), line_end_point.translated(0, device_line_thickness + 1).to_type<int>(), line_color, device_line_thickness.value());
+            for (auto segment : segments) {
+                draw_line_for_segment(segment, first_y);
+                draw_line_for_segment(segment, second_y);
+            }
             break;
+        }
         case CSS::TextDecorationStyle::Dashed:
-            recorder.draw_line(line_start_point.to_type<int>(), line_end_point.to_type<int>(), line_color, device_line_thickness.value(), Gfx::LineStyle::Dashed);
+            for (auto segment : segments)
+                draw_line_for_segment(segment, line_y, Gfx::LineStyle::Dashed);
             break;
         case CSS::TextDecorationStyle::Dotted:
-            recorder.draw_line(line_start_point.to_type<int>(), line_end_point.to_type<int>(), line_color, device_line_thickness.value(), Gfx::LineStyle::Dotted);
+            for (auto segment : segments)
+                draw_line_for_segment(segment, line_y, Gfx::LineStyle::Dotted);
             break;
-        case CSS::TextDecorationStyle::Wavy:
-            auto amplitude = device_line_thickness.value() * 3;
+        case CSS::TextDecorationStyle::Wavy: {
+            // The wave oscillates amplitude/2 above and below its center, so shift the center away from the text so the
+            // near peaks don’t overlap it.
+            int amplitude = device_line_thickness.value() * 3;
+            int wave_y = line_y;
             switch (line) {
             case CSS::TextDecorationLine::Underline:
-                line_start_point.translate_by(0, device_line_thickness + context.rounded_device_pixels(1));
-                line_end_point.translate_by(0, device_line_thickness + context.rounded_device_pixels(1));
+                wave_y += device_line_thickness.value() / 2 + 1;
                 break;
             case CSS::TextDecorationLine::Overline:
-                line_start_point.translate_by(0, -device_line_thickness - context.rounded_device_pixels(1));
-                line_end_point.translate_by(0, -device_line_thickness - context.rounded_device_pixels(1));
+                wave_y -= device_line_thickness.value() / 2 + 1;
                 break;
             case CSS::TextDecorationLine::LineThrough:
-                line_start_point.translate_by(0, -device_line_thickness / 2);
-                line_end_point.translate_by(0, -device_line_thickness / 2);
                 break;
             default:
                 VERIFY_NOT_REACHED();
             }
-            recorder.stroke_path({
-                .cap_style = Gfx::Path::CapStyle::Round,
-                .join_style = Gfx::Path::JoinStyle::Round,
-                .miter_limit = 0,
-                .dash_array = {},
-                .dash_offset = 0,
-                .path = build_triangle_wave_path(line_start_point.to_type<int>(), line_end_point.to_type<int>(), amplitude),
-                .paint_style_or_color = line_color,
-                .thickness = static_cast<float>(device_line_thickness.value()),
-            });
+            for (auto segment : segments) {
+                Gfx::IntPoint from { segment.start_x, wave_y };
+                Gfx::IntPoint to { segment.end_x, wave_y };
+                recorder.stroke_path({
+                    .cap_style = Gfx::Path::CapStyle::Round,
+                    .join_style = Gfx::Path::JoinStyle::Round,
+                    .miter_limit = 0,
+                    .dash_array = {},
+                    .dash_offset = 0,
+                    .path = build_triangle_wave_path(from, to, amplitude),
+                    .paint_style_or_color = line_color,
+                    .thickness = static_cast<float>(device_line_thickness.value()),
+                });
+            }
             break;
+        }
         }
     }
 }

@@ -1,5 +1,3 @@
-#import <DOM/AbortSignal.idl>
-
 // https://dom.spec.whatwg.org/#eventtarget
 [Exposed=*]
 interface EventTarget {
@@ -9,11 +7,6 @@ interface EventTarget {
     undefined removeEventListener(DOMString type, EventListener? callback, optional (EventListenerOptions or boolean) options = {});
     [ImplementedAs=dispatch_event_binding] boolean dispatchEvent(Event event);
 };
-
-// FIXME: support callback interface
-//callback interface EventListener {
-//    undefined handleEvent(Event event);
-//};
 
 dictionary EventListenerOptions {
     boolean capture = false;

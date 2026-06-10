@@ -6,16 +6,20 @@
 
 #pragma once
 
-#include <LibGC/Root.h>
+#include <AK/RefCounted.h>
+#include <AK/WeakPtr.h>
+#include <AK/Weakable.h>
+#include <LibGC/Ptr.h>
 #include <LibWeb/CSS/ComputedValues.h>
 #include <LibWeb/CSS/Display.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/InvalidateDisplayList.h>
+#include <LibWeb/Painting/ChromeWidget.h>
+#include <LibWeb/Painting/HitTestResult.h>
 #include <LibWeb/Painting/ShadowData.h>
 #include <LibWeb/PixelUnits.h>
-#include <LibWeb/TraversalDecision.h>
-#include <LibWeb/TreeNode.h>
+#include <LibWeb/RefCountedTreeNode.h>
 
 namespace Web::Painting {
 
@@ -28,40 +32,15 @@ enum class PaintPhase {
     Overlay,
 };
 
-struct HitTestResult {
-    GC::Root<Paintable> paintable;
-    size_t index_in_node { 0 };
-    Optional<CSSPixels> vertical_distance {};
-    Optional<CSSPixels> horizontal_distance {};
-    Optional<CSS::CursorPredefined> cursor_override {};
-    enum InternalPosition {
-        None,
-        Before,
-        Inside,
-        After,
-    };
-    InternalPosition internal_position { None };
-
-    DOM::Node* dom_node();
-    DOM::Node const* dom_node() const;
-};
-
-enum class HitTestType {
-    Exact,      // Exact matches only
-    TextCursor, // Clicking past the right/bottom edge of text will still hit the text
-};
-
 class WEB_API Paintable
-    : public JS::Cell
-    , public TreeNode<Paintable> {
-    GC_CELL(Paintable, JS::Cell);
+    : public RefCounted<Paintable>
+    , public Weakable<Paintable>
+    , public RefCountedTreeNode<Paintable> {
 
 public:
-    static constexpr bool OVERRIDES_FINALIZE = true;
-
     virtual ~Paintable();
 
-    void detach_from_layout_node();
+    virtual StringView class_name() const { return "Paintable"sv; }
 
     [[nodiscard]] bool is_visible() const
     {
@@ -77,33 +56,21 @@ public:
     [[nodiscard]] CSS::Display display() const { return m_display; }
 
     bool has_stacking_context() const;
-    StackingContext* enclosing_stacking_context();
+    RefPtr<StackingContext> enclosing_stacking_context();
 
     virtual void paint(DisplayListRecordingContext&, PaintPhase) const { }
     void paint_inspector_overlay(DisplayListRecordingContext&) const;
 
-    [[nodiscard]] virtual TraversalDecision hit_test(CSSPixelPoint, HitTestType, Function<TraversalDecision(HitTestResult)> const& callback) const;
-
-    virtual bool wants_mouse_events() const { return false; }
-
     virtual bool forms_unconnected_subtree() const { return false; }
 
-    enum class DispatchEventOfSameName {
-        Yes,
-        No,
-    };
-    // When these methods return true, the DOM event with the same name will be
-    // dispatch at the mouse_event_target if it returns a valid DOM::Node, or
-    // the layout node's associated DOM node if it doesn't.
-    virtual DispatchEventOfSameName handle_mousedown(Badge<EventHandler>, CSSPixelPoint, unsigned button, unsigned modifiers);
-    virtual DispatchEventOfSameName handle_mouseup(Badge<EventHandler>, CSSPixelPoint, unsigned button, unsigned modifiers);
-    virtual DispatchEventOfSameName handle_mousemove(Badge<EventHandler>, CSSPixelPoint, unsigned buttons, unsigned modifiers);
-    virtual void handle_mouseleave(Badge<EventHandler>) { }
+    virtual bool handle_mousewheel(Badge<EventHandler>, CSSPixelPoint, unsigned buttons, unsigned modifiers, double wheel_delta_x, double wheel_delta_y);
 
-    virtual bool handle_mousewheel(Badge<EventHandler>, CSSPixelPoint, unsigned buttons, unsigned modifiers, int wheel_delta_x, int wheel_delta_y);
-
-    Layout::Node const& layout_node() const { return m_layout_node; }
-    Layout::Node& layout_node() { return const_cast<Layout::Node&>(*m_layout_node); }
+    Layout::Node const& layout_node() const
+    {
+        VERIFY(m_layout_node);
+        return *m_layout_node;
+    }
+    Layout::Node& layout_node() { return const_cast<Layout::Node&>(const_cast<Paintable const&>(*this).layout_node()); }
 
     [[nodiscard]] GC::Ptr<DOM::Node> dom_node();
     [[nodiscard]] GC::Ptr<DOM::Node const> dom_node() const;
@@ -117,7 +84,7 @@ public:
 
     virtual void set_needs_repaint(InvalidateDisplayList = InvalidateDisplayList::Yes);
 
-    PaintableBox* containing_block() const;
+    RefPtr<PaintableBox> containing_block() const;
 
     template<typename T>
     bool fast_is() const = delete;
@@ -171,22 +138,26 @@ public:
 
     [[nodiscard]] String debug_description() const;
 
-    virtual void finalize() override;
-
     friend class Layout::Node;
 
 protected:
     explicit Paintable(Layout::Node const&);
 
-    virtual void paint_inspector_overlay_internal(DisplayListRecordingContext&) const { }
-    virtual void visit_edges(Cell::Visitor&) override;
+    void paint_with_inspector_overlay_context(DisplayListRecordingContext&, Function<void()> const&) const;
+    bool has_layout_node() const { return m_layout_node; }
 
-    Optional<GC::Ptr<PaintableBox>> mutable m_containing_block;
+    virtual void paint_inspector_overlay_internal(DisplayListRecordingContext&) const { }
+    Optional<WeakPtr<PaintableBox>> mutable m_containing_block;
 
 private:
-    IntrusiveListNode<Paintable> m_list_node;
-    GC::Ptr<DOM::Node> m_dom_node;
-    GC::Ref<Layout::Node const> m_layout_node;
+    void detach_from_layout_node(Badge<Layout::Node>)
+    {
+        m_containing_block.clear();
+        m_layout_node.clear();
+    }
+
+    GC::Weak<DOM::Node> m_dom_node;
+    WeakPtr<Layout::Node const> m_layout_node;
 
     SelectionState m_selection_state { SelectionState::None };
 
@@ -199,16 +170,6 @@ private:
     CSS::Display m_display;
 };
 
-inline DOM::Node* HitTestResult::dom_node()
-{
-    return paintable->dom_node();
-}
-
-inline DOM::Node const* HitTestResult::dom_node() const
-{
-    return paintable->dom_node();
-}
-
 template<>
 inline bool Paintable::fast_is<PaintableBox>() const { return is_paintable_box(); }
 
@@ -218,6 +179,6 @@ inline bool Paintable::fast_is<PaintableWithLines>() const { return is_paintable
 template<>
 inline bool Paintable::fast_is<TextPaintable>() const { return is_text_paintable(); }
 
-WEB_API Painting::BorderRadiiData normalize_border_radii_data(Layout::Node const& node, CSSPixelRect const& rect, CSS::BorderRadiusData const& top_left_radius, CSS::BorderRadiusData const& top_right_radius, CSS::BorderRadiusData const& bottom_right_radius, CSS::BorderRadiusData const& bottom_left_radius);
+WEB_API Painting::BorderRadiiData normalize_border_radii_data(Layout::Node const& node, CSSPixelRect const& border_rect, CSSPixelRect const& reference_rect, CSS::BorderRadiusData const& top_left_radius, CSS::BorderRadiusData const& top_right_radius, CSS::BorderRadiusData const& bottom_right_radius, CSS::BorderRadiusData const& bottom_left_radius);
 
 }

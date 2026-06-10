@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025, Tim Flynn <trflynn89@ladybird.org>
+ * Copyright (c) 2021-2026, Tim Flynn <trflynn89@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,8 +7,11 @@
 #include <AK/AllOf.h>
 #include <AK/Array.h>
 #include <AK/GenericLexer.h>
+#include <AK/GenericShorthands.h>
 #include <AK/StringBuilder.h>
 #include <AK/TypeCasts.h>
+#include <LibUnicode/Calendars/AdjustedEraCalendar.h>
+#include <LibUnicode/Calendars/ChineseDangiCalendar.h>
 #include <LibUnicode/DateTimeFormat.h>
 #include <LibUnicode/ICU.h>
 #include <LibUnicode/Locale.h>
@@ -304,7 +307,7 @@ String CalendarPattern::to_pattern() const
     if (minute.has_value()) {
         switch (*minute) {
         case CalendarPatternStyle::Numeric:
-            builder.append("m"sv);
+            builder.append(time_zone_name.has_value() ? "mm"sv : "m"sv);
             break;
         case CalendarPatternStyle::TwoDigit:
             builder.append("mm"sv);
@@ -316,7 +319,7 @@ String CalendarPattern::to_pattern() const
     if (second.has_value()) {
         switch (*second) {
         case CalendarPatternStyle::Numeric:
-            builder.append("s"sv);
+            builder.append(time_zone_name.has_value() ? "ss"sv : "s"sv);
             break;
         case CalendarPatternStyle::TwoDigit:
             builder.append("ss"sv);
@@ -358,7 +361,7 @@ String CalendarPattern::to_pattern() const
 }
 
 // https://unicode.org/reports/tr35/tr35-dates.html#Date_Field_Symbol_Table
-CalendarPattern CalendarPattern::create_from_pattern(StringView pattern)
+CalendarPattern CalendarPattern::create_from_pattern(String pattern)
 {
     GenericLexer lexer { pattern };
     CalendarPattern format {};
@@ -494,6 +497,7 @@ CalendarPattern CalendarPattern::create_from_pattern(StringView pattern)
         }
     }
 
+    format.pattern = move(pattern);
     return format;
 }
 
@@ -627,12 +631,20 @@ static void apply_time_zone_to_formatter(icu::SimpleDateFormat& formatter, icu::
     auto* calendar = icu::Calendar::createInstance(time_zone_data->time_zone(), locale, status);
     verify_icu_success(status);
 
-    if (calendar->getDynamicClassID() == icu::GregorianCalendar::getStaticClassID()) {
+    if (auto const* calendar_type = calendar->getType(); first_is_one_of(calendar_type, "chinese"sv, "dangi"sv)) {
+        calendar = new ChineseDangiCalendar(adopt_own(*calendar), locale, status);
+        verify_icu_success(status);
+    } else if (calendar_type == "coptic"sv) {
+        calendar = new AdjustedEraCalendar(adopt_own(*calendar), locale, status, AdjustedEraCalendar::EraMode::SingleEra);
+        verify_icu_success(status);
+    } else if (first_is_one_of(calendar_type, "islamic"sv, "islamic-civil"sv, "islamic-tbla"sv, "islamic-umalqura"sv)) {
+        calendar = new AdjustedEraCalendar(adopt_own(*calendar), locale, status, AdjustedEraCalendar::EraMode::DualEra);
+        verify_icu_success(status);
+    } else if (auto* gregorian_calendar = as_if<icu::GregorianCalendar>(*calendar)) {
         // https://tc39.es/ecma262/#sec-time-values-and-time-range
         // A time value supports a slightly smaller range of -8,640,000,000,000,000 to 8,640,000,000,000,000 milliseconds.
         static constexpr double ECMA_262_MINIMUM_TIME = -8.64E15;
 
-        auto* gregorian_calendar = static_cast<icu::GregorianCalendar*>(calendar);
         gregorian_calendar->setGregorianChange(ECMA_262_MINIMUM_TIME, status);
         verify_icu_success(status);
     }
@@ -928,9 +940,15 @@ NonnullOwnPtr<DateTimeFormat> DateTimeFormat::create_for_pattern_options(
     auto locale_data = LocaleData::for_locale(locale);
     VERIFY(locale_data.has_value());
 
-    auto skeleton = icu_string(options.to_pattern());
-    auto pattern = locale_data->date_time_pattern_generator().getBestPattern(skeleton, UDATPG_MATCH_ALL_FIELDS_LENGTH, status);
-    verify_icu_success(status);
+    icu::UnicodeString pattern;
+
+    if (options.pattern.has_value()) {
+        pattern = icu_string(*options.pattern);
+    } else {
+        auto skeleton = icu_string(options.to_pattern());
+        pattern = locale_data->date_time_pattern_generator().getBestPattern(skeleton, UDATPG_MATCH_ALL_FIELDS_LENGTH, status);
+        verify_icu_success(status);
+    }
 
     apply_hour_cycle_to_skeleton(pattern, options.hour_cycle, {});
 

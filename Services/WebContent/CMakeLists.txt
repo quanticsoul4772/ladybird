@@ -1,13 +1,14 @@
 include(audio)
-include(SDL3)
 
 set(SOURCES
+    CompositorConnection.cpp
     ConnectionFromClient.cpp
     ConsoleGlobalEnvironmentExtensions.cpp
     DevToolsConsoleClient.cpp
     FormMonitor.cpp
     PageClient.cpp
     PageHost.cpp
+    WebContentCompositorHost.cpp
     WebContentConsoleClient.cpp
     WebDriverConnection.cpp
     WebUIConnection.cpp
@@ -31,16 +32,24 @@ target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${CMAKE_CU
 target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${LADYBIRD_SOURCE_DIR}>)
 target_include_directories(webcontentservice PUBLIC $<BUILD_INTERFACE:${LADYBIRD_SOURCE_DIR}/Services/>)
 
-target_link_libraries(webcontentservice PUBLIC LibCore LibCrypto LibDatabase LibFileSystem LibGfx LibHTTP LibIPC LibJS LibMain LibMedia LibWeb LibWebSocket LibRequests LibWebView LibImageDecoderClient LibGC sentinelservice)
+target_link_libraries(webcontentservice PUBLIC LibCore LibCrypto LibDatabase LibFileSystem LibGfx LibHTTP LibIPC LibJS LibMain LibMedia LibWasm LibWeb LibWebSocket LibRequests LibWebView LibImageDecoderClient LibGC sentinelservice)
 target_link_libraries(webcontentservice PRIVATE OpenSSL::Crypto OpenSSL::SSL)
 target_link_libraries(webcontentservice PRIVATE SDL3::SDL3)
+target_compile_options(webcontentservice PRIVATE $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wexit-time-destructors>)
 
 add_executable(WebContent main.cpp)
 
-target_link_libraries(WebContent PRIVATE webcontentservice LibURL)
+if (LINUX)
+    target_sources(WebContent PRIVATE ../RendererSandboxLinux.cpp)
+else()
+    target_sources(WebContent PRIVATE ../RendererSandboxUnimplemented.cpp)
+endif()
+
+target_link_libraries(WebContent PRIVATE webcontentservice LibSandbox LibURL)
+target_compile_options(WebContent PRIVATE $<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:-Wexit-time-destructors>)
 
 if(WIN32)
-    lagom_windows_bin(WebContent CONSOLE)
+    ladybird_windows_bin(WebContent CONSOLE)
 endif()
 
 
@@ -51,6 +60,7 @@ target_sources(webcontentservice PUBLIC FILE_SET server TYPE HEADERS
           FormMonitor.h
           Forward.h
           PageHost.h
+          WebContentCompositorHost.h
           WebContentConsoleClient.h
           WebDriverConnection.h
 )

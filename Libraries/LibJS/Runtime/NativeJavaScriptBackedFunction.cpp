@@ -5,13 +5,12 @@
  */
 
 #include <AK/TypeCasts.h>
-#include <LibJS/Bytecode/BuiltinAbstractOperationsEnabled.h>
-#include <LibJS/Bytecode/Generator.h>
-#include <LibJS/Bytecode/Interpreter.h>
+#include <LibJS/Bytecode/Debug.h>
 #include <LibJS/Runtime/AsyncFunctionDriverWrapper.h>
 #include <LibJS/Runtime/AsyncGenerator.h>
 #include <LibJS/Runtime/GeneratorObject.h>
 #include <LibJS/Runtime/NativeJavaScriptBackedFunction.h>
+#include <LibJS/Runtime/VM.h>
 #include <LibJS/RustIntegration.h>
 
 namespace JS {
@@ -62,11 +61,11 @@ void NativeJavaScriptBackedFunction::visit_edges(Visitor& visitor)
     visitor.visit(m_shared_function_instance_data);
 }
 
-void NativeJavaScriptBackedFunction::get_stack_frame_size(size_t& registers_and_locals_count, size_t& constants_count, size_t& argument_count)
+void NativeJavaScriptBackedFunction::get_stack_frame_info(size_t& registers_and_locals_count, ReadonlySpan<Value>& constants, size_t& argument_count)
 {
     auto& bytecode_executable = this->bytecode_executable();
     registers_and_locals_count = bytecode_executable.registers_and_locals_count;
-    constants_count = bytecode_executable.constants.size();
+    constants = bytecode_executable.constants;
     argument_count = max(argument_count, m_shared_function_instance_data->m_function_length);
 }
 
@@ -74,7 +73,7 @@ ThrowCompletionOr<Value> NativeJavaScriptBackedFunction::call()
 {
     auto& vm = this->vm();
 
-    auto result = TRY(vm.bytecode_interpreter().run_executable(vm.running_execution_context(), bytecode_executable(), {}));
+    auto result = TRY(vm.run_executable(vm.running_execution_context(), bytecode_executable(), {}));
 
     auto kind = this->kind();
     if (kind == FunctionKind::Normal)
@@ -82,12 +81,11 @@ ThrowCompletionOr<Value> NativeJavaScriptBackedFunction::call()
 
     auto& realm = *vm.current_realm();
     if (kind == FunctionKind::AsyncGenerator)
-        return AsyncGenerator::create(realm, result, GC::Ref { *this }, vm.running_execution_context().copy());
+        return AsyncGenerator::create(realm, GC::Ref { *this }, vm.running_execution_context().copy());
 
-    auto generator_object = GeneratorObject::create(realm, result, GC::Ref { *this }, vm.running_execution_context().copy());
+    auto generator_object = GeneratorObject::create(realm, GC::Ref { *this }, vm.running_execution_context().copy());
 
-    // NOTE: Async functions are entirely transformed to generator functions, and wrapped in a custom driver that returns a promise
-    //       See AwaitExpression::generate_bytecode() for the transformation.
+    // NOTE: Async functions are entirely transformed to generator functions, and wrapped in a custom driver that returns a promise.
     if (kind == FunctionKind::Async)
         return AsyncFunctionDriverWrapper::create(realm, generator_object);
 
@@ -97,17 +95,15 @@ ThrowCompletionOr<Value> NativeJavaScriptBackedFunction::call()
 
 Bytecode::Executable& NativeJavaScriptBackedFunction::bytecode_executable()
 {
-    auto& executable = m_shared_function_instance_data->m_executable;
+    auto executable = m_shared_function_instance_data->m_executable;
     if (!executable) {
         auto rust_executable = RustIntegration::compile_function(vm(), *m_shared_function_instance_data, true);
-        if (rust_executable) {
-            executable = rust_executable;
-            executable->name = m_shared_function_instance_data->m_name;
-            if (Bytecode::g_dump_bytecode)
-                executable->dump();
-        } else {
-            executable = Bytecode::compile(vm(), m_shared_function_instance_data, Bytecode::BuiltinAbstractOperationsEnabled::Yes);
-        }
+        VERIFY(rust_executable);
+        m_shared_function_instance_data->set_executable(rust_executable);
+        executable = rust_executable;
+        executable->name = m_shared_function_instance_data->m_name;
+        if (Bytecode::g_dump_bytecode)
+            executable->dump();
         m_shared_function_instance_data->clear_compile_inputs();
     }
 

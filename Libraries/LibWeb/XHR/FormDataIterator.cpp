@@ -6,7 +6,7 @@
 
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Iterator.h>
-#include <LibWeb/Bindings/FormDataIteratorPrototype.h>
+#include <LibWeb/Bindings/FormData.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/FileAPI/File.h>
 #include <LibWeb/XHR/FormDataIterator.h>
@@ -64,8 +64,8 @@ JS::Object* FormDataIterator::next()
         return create_iterator_result_object(vm, JS::PrimitiveString::create(vm, entry.name), false);
 
     auto entry_value = entry.value.visit(
-        [&](GC::Root<FileAPI::File> const& file) -> JS::Value {
-            return file.cell();
+        [&](GC::Ref<FileAPI::File> file) -> JS::Value {
+            return file;
         },
         [&](String const& string) -> JS::Value {
             return JS::PrimitiveString::create(vm, string);

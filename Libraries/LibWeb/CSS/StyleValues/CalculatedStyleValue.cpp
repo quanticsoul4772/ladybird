@@ -44,7 +44,7 @@ CalculationContext CalculationContext::for_property(PropertyNameAndID const& pro
     return {
         .percentages_resolve_as = property_resolves_percentages_relative_to(property.id()),
         .resolve_numbers_as_integers = property_accepts_type(property.id(), ValueType::Integer),
-        .accepted_type_ranges = property_accepted_type_ranges(property.id()),
+        .accepted_ranges_by_type = property_accepted_ranges_by_value_type(property.id()),
     };
 }
 
@@ -158,18 +158,18 @@ static CalculationNode::NumericValue clamp_and_censor_numeric_value(NumericCalcu
 {
     auto value = node.value();
 
-    Optional<AcceptedTypeRange> accepted_range = value.visit(
-        [&](Number const&) { return context.resolve_numbers_as_integers ? context.accepted_type_ranges.get(ValueType::Integer) : context.accepted_type_ranges.get(ValueType::Number); },
-        [&](Angle const&) { return context.accepted_type_ranges.get(ValueType::Angle); },
-        [&](Flex const&) { return context.accepted_type_ranges.get(ValueType::Flex); },
-        [&](Frequency const&) { return context.accepted_type_ranges.get(ValueType::Frequency); },
-        [&](Length const&) { return context.accepted_type_ranges.get(ValueType::Length); },
-        [&](Percentage const&) { return context.accepted_type_ranges.get(ValueType::Percentage); },
-        [&](Resolution const&) { return context.accepted_type_ranges.get(ValueType::Resolution); },
-        [&](Time const&) { return context.accepted_type_ranges.get(ValueType::Time); });
+    Optional<NumericRange> accepted_range = value.visit(
+        [&](Number const&) { return context.resolve_numbers_as_integers ? context.accepted_ranges_by_type.get(ValueType::Integer) : context.accepted_ranges_by_type.get(ValueType::Number); },
+        [&](Angle const&) { return context.accepted_ranges_by_type.get(ValueType::Angle); },
+        [&](Flex const&) { return context.accepted_ranges_by_type.get(ValueType::Flex); },
+        [&](Frequency const&) { return context.accepted_ranges_by_type.get(ValueType::Frequency); },
+        [&](Length const&) { return context.accepted_ranges_by_type.get(ValueType::Length); },
+        [&](Percentage const&) { return context.accepted_ranges_by_type.get(ValueType::Percentage); },
+        [&](Resolution const&) { return context.accepted_ranges_by_type.get(ValueType::Resolution); },
+        [&](Time const&) { return context.accepted_ranges_by_type.get(ValueType::Time); });
 
     if (!accepted_range.has_value()) {
-        dbgln_if(LIBWEB_CSS_DEBUG, "FIXME: Calculation context missing accepted type range {}", node.numeric_type());
+        dbgln_if(LIBWEB_CSS_DEBUG, "FIXME: Calculation context missing accepted range {}", node.numeric_type());
         // FIXME: Min and max values for Integer should be based on i32 rather than float
         accepted_range = { AK::NumericLimits<float>::lowest(), AK::NumericLimits<float>::max() };
     }
@@ -216,7 +216,7 @@ static CalculationNode::NumericValue clamp_and_censor_numeric_value(NumericCalcu
 
 static GC::Ptr<CSSNumericArray> reify_children(JS::Realm& realm, ReadonlySpan<NonnullRefPtr<CalculationNode const>> children)
 {
-    GC::RootVector<GC::Ref<CSSNumericValue>> reified_children { realm.heap() };
+    GC::RootVector<GC::Ref<CSSNumericValue>> reified_children;
     for (auto const& child : children) {
         auto reified_child = child->reify(realm);
         if (!reified_child)
@@ -847,6 +847,13 @@ bool NumericCalculationNode::equals(CalculationNode const& other) const
     return m_value == static_cast<NumericCalculationNode const&>(other).m_value;
 }
 
+bool NumericCalculationNode::is_computationally_independent() const
+{
+    return m_value.visit(
+        [](Length const& length) { return length.is_computationally_independent(); },
+        [](auto const&) { return true; });
+}
+
 GC::Ptr<CSSNumericValue> NumericCalculationNode::reify(JS::Realm& realm) const
 {
     return m_value.visit(
@@ -908,6 +915,11 @@ bool SumCalculationNode::equals(CalculationNode const& other) const
             return false;
     }
     return true;
+}
+
+bool SumCalculationNode::is_computationally_independent() const
+{
+    return all_of(m_values, [](NonnullRefPtr<CalculationNode const> const& value) { return value->is_computationally_independent(); });
 }
 
 GC::Ptr<CSSNumericValue> SumCalculationNode::reify(JS::Realm& realm) const
@@ -972,6 +984,11 @@ bool ProductCalculationNode::equals(CalculationNode const& other) const
     return true;
 }
 
+bool ProductCalculationNode::is_computationally_independent() const
+{
+    return all_of(m_values, [](NonnullRefPtr<CalculationNode const> const& value) { return value->is_computationally_independent(); });
+}
+
 GC::Ptr<CSSNumericValue> ProductCalculationNode::reify(JS::Realm& realm) const
 {
     auto reified_children = reify_children(realm, m_values);
@@ -1017,6 +1034,11 @@ bool NegateCalculationNode::equals(CalculationNode const& other) const
     if (type() != other.type())
         return false;
     return m_value->equals(*static_cast<NegateCalculationNode const&>(other).m_value);
+}
+
+bool NegateCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
 }
 
 GC::Ptr<CSSNumericValue> NegateCalculationNode::reify(JS::Realm& realm) const
@@ -1070,6 +1092,11 @@ bool InvertCalculationNode::equals(CalculationNode const& other) const
     if (type() != other.type())
         return false;
     return m_value->equals(*static_cast<InvertCalculationNode const&>(other).m_value);
+}
+
+bool InvertCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
 }
 
 GC::Ptr<CSSNumericValue> InvertCalculationNode::reify(JS::Realm& realm) const
@@ -1186,6 +1213,11 @@ bool MinCalculationNode::equals(CalculationNode const& other) const
     return true;
 }
 
+bool MinCalculationNode::is_computationally_independent() const
+{
+    return all_of(m_values, [](NonnullRefPtr<CalculationNode const> const& value) { return value->is_computationally_independent(); });
+}
+
 GC::Ptr<CSSNumericValue> MinCalculationNode::reify(JS::Realm& realm) const
 {
     auto reified_children = reify_children(realm, m_values);
@@ -1251,6 +1283,11 @@ bool MaxCalculationNode::equals(CalculationNode const& other) const
             return false;
     }
     return true;
+}
+
+bool MaxCalculationNode::is_computationally_independent() const
+{
+    return all_of(m_values, [](NonnullRefPtr<CalculationNode const> const& value) { return value->is_computationally_independent(); });
 }
 
 GC::Ptr<CSSNumericValue> MaxCalculationNode::reify(JS::Realm& realm) const
@@ -1353,6 +1390,13 @@ bool ClampCalculationNode::equals(CalculationNode const& other) const
         && m_max_value->equals(*static_cast<ClampCalculationNode const&>(other).m_max_value);
 }
 
+bool ClampCalculationNode::is_computationally_independent() const
+{
+    return m_min_value->is_computationally_independent()
+        && m_center_value->is_computationally_independent()
+        && m_max_value->is_computationally_independent();
+}
+
 GC::Ptr<CSSNumericValue> ClampCalculationNode::reify(JS::Realm& realm) const
 {
     auto lower = m_min_value->reify(realm);
@@ -1413,6 +1457,11 @@ bool AbsCalculationNode::equals(CalculationNode const& other) const
     if (type() != other.type())
         return false;
     return m_value->equals(*static_cast<AbsCalculationNode const&>(other).m_value);
+}
+
+bool AbsCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
 }
 
 NonnullRefPtr<SignCalculationNode const> SignCalculationNode::create(NonnullRefPtr<CalculationNode const> value)
@@ -1488,6 +1537,11 @@ bool SignCalculationNode::equals(CalculationNode const& other) const
     if (type() != other.type())
         return false;
     return m_value->equals(*static_cast<SignCalculationNode const&>(other).m_value);
+}
+
+bool SignCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
 }
 
 NonnullRefPtr<SinCalculationNode const> SinCalculationNode::create(NonnullRefPtr<CalculationNode const> value)
@@ -1574,6 +1628,11 @@ bool SinCalculationNode::equals(CalculationNode const& other) const
     return m_value->equals(*static_cast<SinCalculationNode const&>(other).m_value);
 }
 
+bool SinCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
+}
+
 NonnullRefPtr<CosCalculationNode const> CosCalculationNode::create(NonnullRefPtr<CalculationNode const> value)
 {
     return adopt_ref(*new (nothrow) CosCalculationNode(move(value)));
@@ -1620,6 +1679,11 @@ bool CosCalculationNode::equals(CalculationNode const& other) const
     return m_value->equals(*static_cast<CosCalculationNode const&>(other).m_value);
 }
 
+bool CosCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
+}
+
 NonnullRefPtr<TanCalculationNode const> TanCalculationNode::create(NonnullRefPtr<CalculationNode const> value)
 {
     return adopt_ref(*new (nothrow) TanCalculationNode(move(value)));
@@ -1664,6 +1728,11 @@ bool TanCalculationNode::equals(CalculationNode const& other) const
     if (type() != other.type())
         return false;
     return m_value->equals(*static_cast<TanCalculationNode const&>(other).m_value);
+}
+
+bool TanCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
 }
 
 NonnullRefPtr<AsinCalculationNode const> AsinCalculationNode::create(NonnullRefPtr<CalculationNode const> value)
@@ -1756,6 +1825,11 @@ bool AsinCalculationNode::equals(CalculationNode const& other) const
     return m_value->equals(*static_cast<AsinCalculationNode const&>(other).m_value);
 }
 
+bool AsinCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
+}
+
 NonnullRefPtr<AcosCalculationNode const> AcosCalculationNode::create(NonnullRefPtr<CalculationNode const> value)
 {
     return adopt_ref(*new (nothrow) AcosCalculationNode(move(value)));
@@ -1802,6 +1876,11 @@ bool AcosCalculationNode::equals(CalculationNode const& other) const
     return m_value->equals(*static_cast<AcosCalculationNode const&>(other).m_value);
 }
 
+bool AcosCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
+}
+
 NonnullRefPtr<AtanCalculationNode const> AtanCalculationNode::create(NonnullRefPtr<CalculationNode const> value)
 {
     return adopt_ref(*new (nothrow) AtanCalculationNode(move(value)));
@@ -1846,6 +1925,11 @@ bool AtanCalculationNode::equals(CalculationNode const& other) const
     if (type() != other.type())
         return false;
     return m_value->equals(*static_cast<AtanCalculationNode const&>(other).m_value);
+}
+
+bool AtanCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
 }
 
 NonnullRefPtr<Atan2CalculationNode const> Atan2CalculationNode::create(NonnullRefPtr<CalculationNode const> y, NonnullRefPtr<CalculationNode const> x)
@@ -1919,6 +2003,11 @@ bool Atan2CalculationNode::equals(CalculationNode const& other) const
         && m_y->equals(*static_cast<Atan2CalculationNode const&>(other).m_y);
 }
 
+bool Atan2CalculationNode::is_computationally_independent() const
+{
+    return m_x->is_computationally_independent() && m_y->is_computationally_independent();
+}
+
 NonnullRefPtr<PowCalculationNode const> PowCalculationNode::create(NonnullRefPtr<CalculationNode const> x, NonnullRefPtr<CalculationNode const> y)
 {
     return adopt_ref(*new (nothrow) PowCalculationNode(move(x), move(y)));
@@ -1975,6 +2064,11 @@ bool PowCalculationNode::equals(CalculationNode const& other) const
         && m_y->equals(*static_cast<PowCalculationNode const&>(other).m_y);
 }
 
+bool PowCalculationNode::is_computationally_independent() const
+{
+    return m_x->is_computationally_independent() && m_y->is_computationally_independent();
+}
+
 NonnullRefPtr<SqrtCalculationNode const> SqrtCalculationNode::create(NonnullRefPtr<CalculationNode const> value)
 {
     return adopt_ref(*new (nothrow) SqrtCalculationNode(move(value)));
@@ -2026,6 +2120,11 @@ bool SqrtCalculationNode::equals(CalculationNode const& other) const
     if (type() != other.type())
         return false;
     return m_value->equals(*static_cast<SqrtCalculationNode const&>(other).m_value);
+}
+
+bool SqrtCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
 }
 
 NonnullRefPtr<HypotCalculationNode const> HypotCalculationNode::create(Vector<NonnullRefPtr<CalculationNode const>> values)
@@ -2113,6 +2212,11 @@ bool HypotCalculationNode::equals(CalculationNode const& other) const
     return true;
 }
 
+bool HypotCalculationNode::is_computationally_independent() const
+{
+    return all_of(m_values, [](NonnullRefPtr<CalculationNode const> const& value) { return value->is_computationally_independent(); });
+}
+
 NonnullRefPtr<LogCalculationNode const> LogCalculationNode::create(NonnullRefPtr<CalculationNode const> x, NonnullRefPtr<CalculationNode const> y)
 {
     return adopt_ref(*new (nothrow) LogCalculationNode(move(x), move(y)));
@@ -2170,6 +2274,11 @@ bool LogCalculationNode::equals(CalculationNode const& other) const
         && m_y->equals(*static_cast<LogCalculationNode const&>(other).m_y);
 }
 
+bool LogCalculationNode::is_computationally_independent() const
+{
+    return m_x->is_computationally_independent() && m_y->is_computationally_independent();
+}
+
 NonnullRefPtr<ExpCalculationNode const> ExpCalculationNode::create(NonnullRefPtr<CalculationNode const> value)
 {
     return adopt_ref(*new (nothrow) ExpCalculationNode(move(value)));
@@ -2220,6 +2329,11 @@ bool ExpCalculationNode::equals(CalculationNode const& other) const
     if (type() != other.type())
         return false;
     return m_value->equals(*static_cast<ExpCalculationNode const&>(other).m_value);
+}
+
+bool ExpCalculationNode::is_computationally_independent() const
+{
+    return m_value->is_computationally_independent();
 }
 
 NonnullRefPtr<RoundCalculationNode const> RoundCalculationNode::create(RoundingStrategy strategy, NonnullRefPtr<CalculationNode const> x, NonnullRefPtr<CalculationNode const> y)
@@ -2394,6 +2508,11 @@ bool RoundCalculationNode::equals(CalculationNode const& other) const
         && m_y->equals(*static_cast<RoundCalculationNode const&>(other).m_y);
 }
 
+bool RoundCalculationNode::is_computationally_independent() const
+{
+    return m_x->is_computationally_independent() && m_y->is_computationally_independent();
+}
+
 NonnullRefPtr<ModCalculationNode const> ModCalculationNode::create(NonnullRefPtr<CalculationNode const> x, NonnullRefPtr<CalculationNode const> y)
 {
     // https://www.w3.org/TR/css-values-4/#determine-the-type-of-a-calculation
@@ -2482,6 +2601,11 @@ bool ModCalculationNode::equals(CalculationNode const& other) const
         return false;
     return m_x->equals(*static_cast<ModCalculationNode const&>(other).m_x)
         && m_y->equals(*static_cast<ModCalculationNode const&>(other).m_y);
+}
+
+bool ModCalculationNode::is_computationally_independent() const
+{
+    return m_x->is_computationally_independent() && m_y->is_computationally_independent();
 }
 
 NonnullRefPtr<RandomCalculationNode const> RandomCalculationNode::create(NonnullRefPtr<RandomValueSharingStyleValue const> random_value_sharing, NonnullRefPtr<CalculationNode const> minimum, NonnullRefPtr<CalculationNode const> maximum, RefPtr<CalculationNode const> step)
@@ -2682,6 +2806,14 @@ bool RandomCalculationNode::equals(CalculationNode const& other) const
         && m_step == other_random.m_step;
 }
 
+bool RandomCalculationNode::is_computationally_independent() const
+{
+    return m_random_value_sharing->is_computationally_independent()
+        && m_minimum->is_computationally_independent()
+        && m_maximum->is_computationally_independent()
+        && (!m_step || m_step->is_computationally_independent());
+}
+
 NonnullRefPtr<RemCalculationNode const> RemCalculationNode::create(NonnullRefPtr<CalculationNode const> x, NonnullRefPtr<CalculationNode const> y)
 {
     // https://www.w3.org/TR/css-values-4/#determine-the-type-of-a-calculation
@@ -2732,6 +2864,11 @@ bool RemCalculationNode::equals(CalculationNode const& other) const
         && m_y->equals(*static_cast<RemCalculationNode const&>(other).m_y);
 }
 
+bool RemCalculationNode::is_computationally_independent() const
+{
+    return m_x->is_computationally_independent() && m_y->is_computationally_independent();
+}
+
 NonnullRefPtr<NonMathFunctionCalculationNode const> NonMathFunctionCalculationNode::create(AbstractNonMathCalcFunctionStyleValue const& function, NumericType numeric_type)
 {
     return adopt_ref(*new (nothrow) NonMathFunctionCalculationNode(move(function), move(numeric_type)));
@@ -2759,6 +2896,11 @@ bool NonMathFunctionCalculationNode::equals(CalculationNode const& other) const
         return false;
 
     return static_cast<NonMathFunctionCalculationNode const&>(other).function() == m_function;
+}
+
+bool NonMathFunctionCalculationNode::is_computationally_independent() const
+{
+    return m_function->is_computationally_independent();
 }
 
 CalculatedStyleValue::CalculationResult CalculatedStyleValue::CalculationResult::from_value(Value const& value, CalculationResolutionContext const& context, Optional<NumericType> numeric_type)
@@ -2884,8 +3026,13 @@ bool CalculatedStyleValue::equals(StyleValue const& other) const
     return m_calculation->equals(*other.as_calculated().m_calculation);
 }
 
+bool CalculatedStyleValue::is_computationally_independent() const
+{
+    return m_calculation->is_computationally_independent();
+}
+
 // https://drafts.csswg.org/css-values-4/#calc-computed-value
-Optional<CalculatedStyleValue::ResolvedValue> CalculatedStyleValue::resolve_value(CalculationResolutionContext const& resolution_context) const
+Optional<CalculatedStyleValue::ResolvedValue> CalculatedStyleValue::resolve_value(CalculationResolutionContext const& resolution_context, bool apply_censoring_and_clamping) const
 {
     // The calculation tree is again simplified at used value time; with used value time information.
     // NOTE: Any nodes which rely on dynamic state should have been simplified away in absolutized so we can pass a nullptr here
@@ -2900,41 +3047,43 @@ Optional<CalculatedStyleValue::ResolvedValue> CalculatedStyleValue::resolve_valu
 
     auto raw_value = value->value();
 
-    // https://drafts.csswg.org/css-values/#calc-ieee
-    // NaN does not escape a top-level calculation; it’s censored into a zero value.
-    if (isnan(raw_value))
-        raw_value = 0;
+    if (apply_censoring_and_clamping) {
+        // https://drafts.csswg.org/css-values/#calc-ieee
+        // NaN does not escape a top-level calculation; it’s censored into a zero value.
+        if (isnan(raw_value))
+            raw_value = 0;
 
-    // https://drafts.csswg.org/css-values/#calc-range
-    // the value resulting from a top-level calculation must be clamped to the range allowed in the target context.
-    // Clamping is performed on computed values to the extent possible, and also on used values if computation was
-    // unable to sufficiently simplify the expression to allow range-checking.
-    Optional<AcceptedTypeRange> accepted_range;
+        // https://drafts.csswg.org/css-values/#calc-range
+        // the value resulting from a top-level calculation must be clamped to the range allowed in the target context.
+        // Clamping is performed on computed values to the extent possible, and also on used values if computation was
+        // unable to sufficiently simplify the expression to allow range-checking.
+        Optional<NumericRange> accepted_range;
 
-    if (value->type()->matches_number(m_context.percentages_resolve_as))
-        accepted_range = m_context.resolve_numbers_as_integers ? m_context.accepted_type_ranges.get(ValueType::Integer) : m_context.accepted_type_ranges.get(ValueType::Number);
-    else if (value->type()->matches_angle(m_context.percentages_resolve_as))
-        accepted_range = m_context.accepted_type_ranges.get(ValueType::Angle);
-    else if (value->type()->matches_flex(m_context.percentages_resolve_as))
-        accepted_range = m_context.accepted_type_ranges.get(ValueType::Flex);
-    else if (value->type()->matches_frequency(m_context.percentages_resolve_as))
-        accepted_range = m_context.accepted_type_ranges.get(ValueType::Frequency);
-    else if (value->type()->matches_length(m_context.percentages_resolve_as))
-        accepted_range = m_context.accepted_type_ranges.get(ValueType::Length);
-    else if (value->type()->matches_percentage())
-        accepted_range = m_context.accepted_type_ranges.get(ValueType::Percentage);
-    else if (value->type()->matches_resolution(m_context.percentages_resolve_as))
-        accepted_range = m_context.accepted_type_ranges.get(ValueType::Resolution);
-    else if (value->type()->matches_time(m_context.percentages_resolve_as))
-        accepted_range = m_context.accepted_type_ranges.get(ValueType::Time);
+        if (value->type()->matches_number(m_context.percentages_resolve_as))
+            accepted_range = m_context.resolve_numbers_as_integers ? m_context.accepted_ranges_by_type.get(ValueType::Integer) : m_context.accepted_ranges_by_type.get(ValueType::Number);
+        else if (value->type()->matches_angle(m_context.percentages_resolve_as))
+            accepted_range = m_context.accepted_ranges_by_type.get(ValueType::Angle);
+        else if (value->type()->matches_flex(m_context.percentages_resolve_as))
+            accepted_range = m_context.accepted_ranges_by_type.get(ValueType::Flex);
+        else if (value->type()->matches_frequency(m_context.percentages_resolve_as))
+            accepted_range = m_context.accepted_ranges_by_type.get(ValueType::Frequency);
+        else if (value->type()->matches_length(m_context.percentages_resolve_as))
+            accepted_range = m_context.accepted_ranges_by_type.get(ValueType::Length);
+        else if (value->type()->matches_percentage())
+            accepted_range = m_context.accepted_ranges_by_type.get(ValueType::Percentage);
+        else if (value->type()->matches_resolution(m_context.percentages_resolve_as))
+            accepted_range = m_context.accepted_ranges_by_type.get(ValueType::Resolution);
+        else if (value->type()->matches_time(m_context.percentages_resolve_as))
+            accepted_range = m_context.accepted_ranges_by_type.get(ValueType::Time);
 
-    if (!accepted_range.has_value()) {
-        dbgln_if(LIBWEB_CSS_DEBUG, "FIXME: Calculation context missing accepted type range {}", value->type());
-        // FIXME: Infinity for integers should be i32 max rather than float max
-        accepted_range = { AK::NumericLimits<float>::lowest(), AK::NumericLimits<float>::max() };
+        if (!accepted_range.has_value()) {
+            dbgln_if(LIBWEB_CSS_DEBUG, "FIXME: Calculation context missing accepted range {}", value->type());
+            // FIXME: Infinity for integers should be i32 max rather than float max
+            accepted_range = { AK::NumericLimits<float>::lowest(), AK::NumericLimits<float>::max() };
+        }
+
+        raw_value = clamp(raw_value, accepted_range->min, accepted_range->max);
     }
-
-    raw_value = clamp(raw_value, accepted_range->min, accepted_range->max);
 
     return ResolvedValue { raw_value, value->type() };
 }
@@ -2979,6 +3128,16 @@ Optional<Length> CalculatedStyleValue::resolve_length(CalculationResolutionConte
     return {};
 }
 
+Optional<double> CalculatedStyleValue::resolve_raw_length(CalculationResolutionContext const& context) const
+{
+    auto result = resolve_value(context, false);
+
+    if (result.has_value() && result->type.has_value() && result->type->matches_length(m_context.percentages_resolve_as))
+        return result->value;
+
+    return {};
+}
+
 Optional<Percentage> CalculatedStyleValue::resolve_percentage(CalculationResolutionContext const& context) const
 {
     auto result = resolve_value(context);
@@ -3019,12 +3178,12 @@ Optional<double> CalculatedStyleValue::resolve_number(CalculationResolutionConte
     return {};
 }
 
-Optional<i64> CalculatedStyleValue::resolve_integer(CalculationResolutionContext const& context) const
+Optional<i32> CalculatedStyleValue::resolve_integer(CalculationResolutionContext const& context) const
 {
     auto result = resolve_value(context);
 
     if (result.has_value() && result->type.has_value() && result->type->matches_number(m_context.percentages_resolve_as))
-        return llround(result->value);
+        return round_to_nearest_integer(result->value);
 
     return {};
 }
@@ -3032,6 +3191,11 @@ Optional<i64> CalculatedStyleValue::resolve_integer(CalculationResolutionContext
 bool CalculatedStyleValue::contains_percentage() const
 {
     return m_calculation->contains_percentage();
+}
+
+bool CalculatedStyleValue::is_fully_simplified() const
+{
+    return resolve_value({}).has_value();
 }
 
 String CalculatedStyleValue::dump() const
@@ -3042,7 +3206,7 @@ String CalculatedStyleValue::dump() const
 }
 
 // https://drafts.css-houdini.org/css-typed-om-1/#reify-a-math-expression
-GC::Ref<CSSStyleValue> CalculatedStyleValue::reify(JS::Realm& realm, FlyString const& associated_property) const
+GC::Ref<CSSStyleValue> CalculatedStyleValue::reify(JS::Realm& realm, Utf16FlyString const& associated_property) const
 {
     // NB: This spec algorithm isn't really implementable here - it's incomplete, and assumes we don't already have a
     //     calculation tree. So we have a per-node method instead.

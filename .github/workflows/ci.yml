@@ -20,7 +20,7 @@ jobs:
         # (Sentinel requires Linux-only dependencies: YARA, iptables, nftables)
         os_name: ['Linux']
         arch: ['x86_64']
-        build_preset: ['Sanitizer']
+        build_preset: ['Release']
         toolchain: ['GNU']
         clang_plugins: [false]
         runner_labels: ['["ubuntu-24.04"]']
@@ -42,3 +42,4 @@ jobs:
       arch: ${{ matrix.arch }}
       build_preset: ${{ matrix.build_preset }}
       clang_plugins: ${{ matrix.clang_plugins }}
+      container: ${{ matrix.container }}

@@ -4,46 +4,46 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibCore/Socket.h>
-#include <LibCore/System.h>
+#include <LibIPC/Transport.h>
+#include <LibIPC/TransportHandle.h>
 #include <LibWebView/WebContentClient.h>
 #include <LibWebView/WebUI.h>
+#include <LibWebView/WebUI/BookmarksUI.h>
 #include <LibWebView/WebUI/ProcessesUI.h>
 #include <LibWebView/WebUI/SecurityUI.h>
 #include <LibWebView/WebUI/SettingsUI.h>
+#include <LibWebView/WebUI/VersionUI.h>
 
 namespace WebView {
 
 template<typename WebUIType>
-static ErrorOr<NonnullRefPtr<WebUIType>> create_web_ui(WebContentClient& client, String host)
+static ErrorOr<NonnullRefPtr<WebUIType>> create_web_ui(WebContentClient& client, u64 page_id, String host)
 {
-    Array<int, 2> socket_fds { 0, 0 };
-    TRY(Core::System::socketpair(AF_LOCAL, SOCK_STREAM, 0, socket_fds.data()));
+    VERIFY(page_id > 0);
 
-    auto client_socket = Core::LocalSocket::adopt_fd(socket_fds[0]);
-    if (client_socket.is_error()) {
-        close(socket_fds[0]);
-        close(socket_fds[1]);
+    auto paired = TRY(IPC::Transport::create_paired());
+    auto handle = move(paired.remote_handle);
 
-        return client_socket.release_error();
-    }
-
-    auto web_ui = WebUIType::create(client, make<IPC::Transport>(client_socket.release_value()), move(host));
-    client.async_connect_to_web_ui(0, IPC::File::adopt_fd(socket_fds[1]));
+    auto web_ui = WebUIType::create(client, move(paired.local), move(host));
+    client.async_connect_to_web_ui(page_id, move(handle));
 
     return web_ui;
 }
 
-ErrorOr<RefPtr<WebUI>> WebUI::create(WebContentClient& client, String host)
+ErrorOr<RefPtr<WebUI>> WebUI::create(WebContentClient& client, u64 page_id, String host)
 {
     RefPtr<WebUI> web_ui;
 
-    if (host == "processes"sv)
-        web_ui = TRY(create_web_ui<ProcessesUI>(client, move(host)));
+    if (host == "bookmarks"sv)
+        web_ui = TRY(create_web_ui<BookmarksUI>(client, page_id, move(host)));
+    else if (host == "processes"sv)
+        web_ui = TRY(create_web_ui<ProcessesUI>(client, page_id, move(host)));
     else if (host == "security"sv)
-        web_ui = TRY(create_web_ui<SecurityUI>(client, move(host)));
+        web_ui = TRY(create_web_ui<SecurityUI>(client, page_id, move(host)));
     else if (host == "settings"sv)
-        web_ui = TRY(create_web_ui<SettingsUI>(client, move(host)));
+        web_ui = TRY(create_web_ui<SettingsUI>(client, page_id, move(host)));
+    else if (host == "version"sv)
+        web_ui = TRY(create_web_ui<VersionUI>(client, page_id, move(host)));
 
     if (web_ui)
         web_ui->register_interfaces();

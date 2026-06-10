@@ -15,10 +15,10 @@ set(AK_TEST_SOURCES
     TestByteString.cpp
     TestCharacterTypes.cpp
     TestChecked.cpp
+    TestSaturatingMath.cpp
     TestCircularBuffer.cpp
     TestCircularQueue.cpp
     TestDemangle.cpp
-    TestDisjointChunks.cpp
     TestDistinctNumeric.cpp
     TestDoublyLinkedList.cpp
     TestEndian.cpp
@@ -26,7 +26,6 @@ set(AK_TEST_SOURCES
     TestEnumerate.cpp
     TestFind.cpp
     TestFixedArray.cpp
-    TestFixedPoint.cpp
     TestFunction.cpp
     TestFlyString.cpp
     TestFormat.cpp
@@ -42,7 +41,6 @@ set(AK_TEST_SOURCES
     TestInsertionSort.cpp
     TestIntegerMath.cpp
     TestIntrusiveList.cpp
-    TestIntrusiveRedBlackTree.cpp
     TestJSON.cpp
     TestLEB128.cpp
     TestMemory.cpp
@@ -59,12 +57,10 @@ set(AK_TEST_SOURCES
     TestRandom.cpp
     TestRedBlackTree.cpp
     TestRefPtr.cpp
-    TestSegmentedVector.cpp
     TestSinglyLinkedList.cpp
     TestSourceGenerator.cpp
     TestSourceLocation.cpp
     TestSpan.cpp
-    TestStack.cpp
     TestStdLibExtras.cpp
     TestString.cpp
     TestStringConversions.cpp
@@ -102,14 +98,11 @@ if (WIN32)
     target_link_libraries(TestUFixedBigInt PRIVATE clang_rt.builtins-x86_64.lib)
 endif()
 
-if (CXX_COMPILER_SUPPORTS_BLOCKS)
+if (APPLE)
     ladybird_test(TestFunctionObjC.mm AK NAME TestFunctionObjC)
-    target_link_libraries(TestFunctionObjC PRIVATE ${BLOCKS_REQUIRED_LIBRARIES})
-endif()
-if (CXX_COMPILER_SUPPORTS_OBJC_ARC)
+
     ladybird_test(TestFunctionObjC.mm AK NAME TestFunctionObjCArc)
     target_compile_options(TestFunctionObjCArc PRIVATE -fobjc-arc)
-    target_link_libraries(TestFunctionObjCArc PRIVATE ${BLOCKS_REQUIRED_LIBRARIES})
 endif()
 
 target_link_libraries(TestString PRIVATE LibUnicode)

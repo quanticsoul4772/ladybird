@@ -7,9 +7,12 @@
  */
 
 #include <AK/String.h>
+#include <AK/StringBuilder.h>
 #include <LibFileSystem/FileSystem.h>
 #include <LibURL/Parser.h>
 #include <LibURL/PublicSuffixData.h>
+#include <LibWebView/Application.h>
+#include <LibWebView/Autocomplete.h>
 #include <LibWebView/URL.h>
 
 namespace WebView {
@@ -60,7 +63,7 @@ Optional<URL::URL> sanitize_url(StringView location, Optional<SearchEngine> cons
         if (any_of(RESERVED_TLDS, [&](StringView const& tld) { return domain.byte_count() > tld.length() && domain.ends_with_bytes(tld); }))
             return url;
 
-        auto public_suffix = URL::PublicSuffixData::the()->get_public_suffix(domain);
+        auto public_suffix = URL::PublicSuffixData::find_matching_public_suffix(domain);
         if (!public_suffix.has_value() || *public_suffix == domain) {
             if (append_tld == AppendTLD::Yes)
                 url->set_host(MUST(String::formatted("{}.com", domain)));
@@ -72,7 +75,91 @@ Optional<URL::URL> sanitize_url(StringView location, Optional<SearchEngine> cons
     return url;
 }
 
-Vector<URL::URL> sanitize_urls(ReadonlySpan<ByteString> raw_urls, URL::URL const& new_tab_page_url)
+bool location_looks_like_url(StringView location, AppendTLD append_tld)
+{
+    return sanitize_url(location, {}, append_tld).has_value();
+}
+
+static String normalized_web_url_for_autocomplete_comparison(URL::URL const& url)
+{
+    VERIFY(url.scheme().is_one_of("http"sv, "https"sv));
+
+    // Address bar suggestions intentionally treat `http` and `https` variants
+    // of the same web location as equivalent. Normalize away the scheme,
+    // leading `www.`, default root slash, and default port so comparisons
+    // match what the user actually typed.
+    StringBuilder builder;
+
+    if (!url.username().is_empty() || !url.password().is_empty()) {
+        builder.append(url.username());
+        if (!url.password().is_empty()) {
+            builder.append(':');
+            builder.append(url.password());
+        }
+        builder.append('@');
+    }
+
+    auto host = url.serialized_host();
+    auto host_view = host.bytes_as_string_view();
+    if (host_view.starts_with("www."sv, CaseSensitivity::CaseInsensitive))
+        host_view = host_view.substring_view(4);
+    builder.append(host_view);
+
+    auto default_port = URL::default_port_for_scheme(url.scheme());
+    if (url.port().has_value() && (!default_port.has_value() || *url.port() != *default_port))
+        builder.appendff(":{}", *url.port());
+
+    auto path = url.serialize_path();
+    if (path != "/"sv)
+        builder.append(path);
+
+    if (url.query().has_value()) {
+        builder.append('?');
+        builder.append(*url.query());
+    }
+
+    return MUST(builder.to_string());
+}
+
+static String normalized_url_for_autocomplete_prefix_matching(URL::URL const& url)
+{
+    if (url.scheme().is_one_of("http"sv, "https"sv))
+        return normalized_web_url_for_autocomplete_comparison(url);
+
+    return url.serialize(URL::ExcludeFragment::Yes);
+}
+
+bool autocomplete_urls_match(StringView left, StringView right)
+{
+    auto left_url = sanitize_url(left);
+    auto right_url = sanitize_url(right);
+    if (!left_url.has_value() || !right_url.has_value())
+        return false;
+
+    if (left_url->scheme().is_one_of("http"sv, "https"sv)
+        && right_url->scheme().is_one_of("http"sv, "https"sv))
+        return normalized_web_url_for_autocomplete_comparison(*left_url) == normalized_web_url_for_autocomplete_comparison(*right_url);
+
+    return left_url->equals(*right_url, URL::ExcludeFragment::Yes);
+}
+
+bool autocomplete_url_can_complete(StringView query, StringView suggestion)
+{
+    auto query_url = sanitize_url(query);
+    auto suggestion_url = sanitize_url(suggestion);
+    if (!query_url.has_value() || !suggestion_url.has_value())
+        return false;
+
+    auto normalized_query = normalized_url_for_autocomplete_prefix_matching(*query_url);
+    auto normalized_suggestion = normalized_url_for_autocomplete_prefix_matching(*suggestion_url);
+
+    if (normalized_suggestion.bytes_as_string_view().length() <= normalized_query.bytes_as_string_view().length())
+        return false;
+
+    return normalized_suggestion.starts_with_bytes(normalized_query, CaseSensitivity::CaseInsensitive);
+}
+
+Vector<URL::URL> sanitize_urls(ReadonlySpan<ByteString> raw_urls)
 {
     Vector<URL::URL> sanitized_urls;
     sanitized_urls.ensure_capacity(raw_urls.size());
@@ -83,9 +170,51 @@ Vector<URL::URL> sanitize_urls(ReadonlySpan<ByteString> raw_urls, URL::URL const
     }
 
     if (sanitized_urls.is_empty())
-        sanitized_urls.append(new_tab_page_url);
+        sanitized_urls.append(Application::settings().new_tab_page_url());
 
     return sanitized_urls;
+}
+
+String url_for_display(URL::URL const& url)
+{
+    if (!url.scheme().is_one_of("http"sv, "https"sv))
+        return url.serialize();
+
+    StringBuilder builder;
+
+    if (!url.username().is_empty() || !url.password().is_empty()) {
+        builder.append(url.username());
+        if (!url.password().is_empty()) {
+            builder.append(':');
+            builder.append(url.password());
+        }
+        builder.append('@');
+    }
+
+    auto host = url.serialized_host();
+    auto host_view = host.bytes_as_string_view();
+    if (host_view.starts_with("www."sv, CaseSensitivity::CaseInsensitive))
+        host_view = host_view.substring_view(4);
+    builder.append(host_view);
+
+    if (url.port().has_value())
+        builder.appendff(":{}", *url.port());
+
+    auto path = url.serialize_path();
+    if (path != "/"sv || url.query().has_value() || url.fragment().has_value())
+        builder.append(path);
+
+    if (url.query().has_value()) {
+        builder.append('?');
+        builder.append(*url.query());
+    }
+
+    if (url.fragment().has_value()) {
+        builder.append('#');
+        builder.append(*url.fragment());
+    }
+
+    return MUST(builder.to_string());
 }
 
 static URLParts break_internal_url_into_parts(URL::URL const& url, StringView url_string)
@@ -119,7 +248,7 @@ static URLParts break_web_url_into_parts(URL::URL const& url, StringView url_str
         domain = url_without_scheme;
     }
 
-    auto public_suffix = URL::PublicSuffixData::the()->get_public_suffix(domain);
+    auto public_suffix = URL::PublicSuffixData::find_matching_public_suffix(domain);
     if (!public_suffix.has_value() || !domain.ends_with(*public_suffix))
         return { scheme, domain, remainder };
 

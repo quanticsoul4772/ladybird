@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <LibGfx/AffineTransform.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/PixelUnits.h>
 
@@ -42,7 +43,7 @@ public:
     void set_onscrollend(WebIDL::CallbackType*);
     WebIDL::CallbackType* onscrollend();
 
-    void scroll_by(CSSPixelPoint delta) { m_offset += delta; }
+    void scroll_by(CSSPixelPoint delta);
 
     [[nodiscard]] Gfx::AffineTransform transform() const;
     void zoom(CSSPixelPoint position, double scale_delta);
@@ -54,6 +55,8 @@ private:
 
     virtual void initialize(JS::Realm&) override;
     virtual void visit_edges(Cell::Visitor&) override;
+
+    void update_accumulated_visual_context();
 
     GC::Ref<DOM::Document> m_document;
     CSSPixelPoint m_offset;

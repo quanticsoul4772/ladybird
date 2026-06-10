@@ -44,6 +44,10 @@ public:
     {
         return PlaybackState::Playing;
     }
+    virtual AvailableData available_data() override
+    {
+        return AvailableData::Future;
+    }
 
     virtual void enter_buffering() override
     {

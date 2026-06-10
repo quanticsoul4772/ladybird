@@ -137,6 +137,7 @@
     M(OutOfMemory, "Out of memory")                                                                                                 \
     M(OverloadResolutionFailed, "Overload resolution failed")                                                                       \
     M(PrivateFieldAlreadyDeclared, "Private field '{}' has already been declared")                                                  \
+    M(PrivateFieldNotDeclared, "Reference to undeclared private field or method '{}'")                                              \
     M(PrivateFieldDoesNotExistOnObject, "Private field '{}' does not exist on object")                                              \
     M(PrivateFieldGetAccessorWithoutGetter, "Cannot get private field '{}' as accessor without getter")                             \
     M(PrivateFieldSetAccessorWithoutSetter, "Cannot set private field '{}' as accessor without setter")                             \
@@ -227,6 +228,7 @@
     M(ReferenceNullishSetProperty, "Cannot set property '{}' of {}")                                                                \
     M(ReferencePrimitiveSetProperty, "Cannot set property '{}' of {} '{}'")                                                         \
     M(ReferenceUnresolvable, "Unresolvable reference")                                                                              \
+    M(RegExpBacktrackLimitExceeded, "Regular expression backtrack limit exceeded")                                                  \
     M(RegExpCompileError, "RegExp compile error: {}")                                                                               \
     M(RegExpObjectBadFlag, "Invalid RegExp flag '{}'")                                                                              \
     M(RegExpObjectIncompatibleFlags, "RegExp flag '{}' is incompatible with flag '{}'")                                             \
@@ -236,8 +238,6 @@
     M(RestrictedGlobalProperty, "Cannot declare global property '{}'")                                                              \
     M(SetLegacyRegExpStaticPropertyThisValueMismatch,                                                                               \
         "Legacy RegExp static property setter must be called with the RegExp constructor for the this value")                       \
-    M(ShadowRealmEvaluateAbruptCompletion, "The evaluated script did not complete normally")                                        \
-    M(ShadowRealmWrappedValueNonFunctionObject, "Wrapped value must be primitive or a function object, got {}")                     \
     M(SharedArrayBuffer, "The array buffer object cannot be a SharedArrayBuffer")                                                   \
     M(SpeciesConstructorDidNotCreate, "Species constructor did not create {}")                                                      \
     M(SpeciesConstructorReturned, "Species constructor returned {}")                                                                \
@@ -287,6 +287,7 @@
     M(ToObjectNullOrUndefinedWithProperty, "Cannot access property \"{}\" on {} object")                                            \
     M(ToObjectNullOrUndefinedWithPropertyAndName, "Cannot access property \"{}\" on {} object \"{}\"")                              \
     M(TopLevelVariableAlreadyDeclared, "Redeclaration of top level variable '{}'")                                                  \
+    M(EvalVarHoistingConflict, "Cannot declare var '{}': there is already a lexical declaration with that name in scope")           \
     M(ToPrimitiveReturnedObject, "Can't convert {} to primitive with hint \"{}\", its @@toPrimitive method returned an object")     \
     M(TypedArrayContentTypeMismatch, "Can't create {} from {}")                                                                     \
     M(TypedArrayInvalidBufferLength, "Invalid buffer length for {}: must be a multiple of {}, got {}")                              \
@@ -313,7 +314,7 @@ namespace JS {
 class JS_API ErrorType {
 public:
 #define __ENUMERATE_JS_ERROR(name, message) \
-    static const ErrorType name;
+    static ErrorType const& name;
     JS_ENUMERATE_ERROR_TYPES(__ENUMERATE_JS_ERROR)
 #undef __ENUMERATE_JS_ERROR
 

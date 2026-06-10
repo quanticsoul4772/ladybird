@@ -11,6 +11,7 @@
 #include <LibMedia/Containers/Matroska/Utilities.h>
 #include <LibMedia/DecoderError.h>
 #include <LibMedia/MediaStream.h>
+#include <LibMedia/SeekMode.h>
 
 #include "MatroskaDemuxer.h"
 
@@ -24,8 +25,10 @@ DecoderErrorOr<NonnullRefPtr<MatroskaDemuxer>> MatroskaDemuxer::from_stream(Nonn
 
 MatroskaDemuxer::MatroskaDemuxer(NonnullRefPtr<MediaStream> const& stream, Reader&& reader)
     : m_stream(stream)
+    , m_buffered_scan_cursor(stream->create_cursor())
     , m_reader(move(reader))
 {
+    m_buffered_scan_cursor->set_is_blocking(false);
 }
 
 MatroskaDemuxer::~MatroskaDemuxer() = default;
@@ -45,57 +48,10 @@ static TrackEntry::TrackType matroska_track_type_from_track_type(TrackType type)
     VERIFY_NOT_REACHED();
 }
 
-static TrackType track_type_from_matroska_track_type(TrackEntry::TrackType type)
-{
-    switch (type) {
-    case TrackEntry::TrackType::Video:
-        return TrackType::Video;
-    case TrackEntry::TrackType::Audio:
-        return TrackType::Audio;
-    case TrackEntry::TrackType::Subtitle:
-        return TrackType::Subtitles;
-    case TrackEntry::TrackType::Invalid:
-        return TrackType::Unknown;
-    case TrackEntry::TrackType::Complex:
-    case TrackEntry::TrackType::Logo:
-    case TrackEntry::TrackType::Buttons:
-    case TrackEntry::TrackType::Control:
-    case TrackEntry::TrackType::Metadata:
-        break;
-    }
-    VERIFY_NOT_REACHED();
-}
-
-static Track track_from_track_entry(TrackEntry const& track_entry)
-{
-    auto name = Utf16String::from_utf8(track_entry.name());
-    auto language = [&] {
-        // LanguageBCP47 - The language of the track, in the BCP47 form; see basics on language codes. If this Element is used,
-        // then any Language Elements used in the same TrackEntry MUST be ignored.
-        if (track_entry.language_bcp_47().has_value())
-            return Utf16String::from_utf8(track_entry.language_bcp_47().value());
-        return Utf16String::from_utf8(track_entry.language());
-    }();
-    Track track(track_type_from_matroska_track_type(track_entry.track_type()), track_entry.track_number(), name, language);
-
-    if (track.type() == TrackType::Video) {
-        auto video_track = track_entry.video_track();
-        if (video_track.has_value()) {
-            track.set_video_data({
-                .pixel_width = video_track->pixel_width,
-                .pixel_height = video_track->pixel_height,
-                .cicp = video_track->color_format.to_cicp(),
-            });
-        }
-    }
-
-    return track;
-}
-
 DecoderErrorOr<void> MatroskaDemuxer::create_context_for_track(Track const& track)
 {
     auto iterator = TRY(m_reader.create_sample_iterator(m_stream->create_cursor(), track.identifier()));
-    Threading::MutexLocker locker(m_track_statuses_mutex);
+    Sync::MutexLocker locker(m_track_statuses_mutex);
     VERIFY(m_track_statuses.set(track, TrackStatus(move(iterator))) == HashSetResult::InsertedNewEntry);
     return {};
 }
@@ -104,9 +60,11 @@ DecoderErrorOr<Vector<Track>> MatroskaDemuxer::get_tracks_for_type(TrackType typ
 {
     auto matroska_track_type = matroska_track_type_from_track_type(type);
     Vector<Track> tracks;
+    bool is_first = true;
     TRY(m_reader.for_each_track_of_type(matroska_track_type, [&](TrackEntry const& track_entry) -> DecoderErrorOr<IterationDecision> {
         VERIFY(track_entry.track_type() == matroska_track_type);
-        DECODER_TRY_ALLOC(tracks.try_append(track_from_track_entry(track_entry)));
+        DECODER_TRY_ALLOC(tracks.try_append(track_from_track_entry(track_entry, is_first)));
+        is_first = false;
         return IterationDecision::Continue;
     }));
     return tracks;
@@ -118,7 +76,7 @@ DecoderErrorOr<Optional<Track>> MatroskaDemuxer::get_preferred_track_for_type(Tr
     Optional<Track> result;
     TRY(m_reader.for_each_track_of_type(matroska_track_type, [&](TrackEntry const& track_entry) -> DecoderErrorOr<IterationDecision> {
         VERIFY(track_entry.track_type() == matroska_track_type);
-        result = track_from_track_entry(track_entry);
+        result = track_from_track_entry(track_entry, true);
         return IterationDecision::Break;
     }));
     return result;
@@ -126,7 +84,7 @@ DecoderErrorOr<Optional<Track>> MatroskaDemuxer::get_preferred_track_for_type(Tr
 
 MatroskaDemuxer::TrackStatus& MatroskaDemuxer::get_track_status(Track const& track)
 {
-    Threading::MutexLocker locker(m_track_statuses_mutex);
+    Sync::MutexLocker locker(m_track_statuses_mutex);
     auto track_status = m_track_statuses.get(track);
     VERIFY(track_status.has_value());
     return track_status.release_value();
@@ -141,6 +99,25 @@ DecoderErrorOr<CodecID> MatroskaDemuxer::get_codec_id_for_track(Track const& tra
 DecoderErrorOr<ReadonlyBytes> MatroskaDemuxer::get_codec_initialization_data_for_track(Track const& track)
 {
     return TRY(m_reader.track_for_track_number(track.identifier()))->codec_private_data();
+}
+
+AK::Duration MatroskaDemuxer::select_fast_seek_target_for_track(Track const& track, AK::Duration target, SeekMode mode)
+{
+    auto cue_points = m_reader.cue_points_for_track(track.identifier());
+    if (!cue_points.has_value() || cue_points->is_empty())
+        return target;
+    auto const& points = cue_points.value();
+    auto at_or_before = Reader::find_cue_point_index_at_or_before(points, m_reader.duration(), target);
+
+    auto const& cue_at_or_before = points[at_or_before];
+    if (mode == SeekMode::FastBefore)
+        return cue_at_or_before.timestamp;
+
+    VERIFY(mode == SeekMode::FastAfter);
+    auto after_index = at_or_before + 1;
+    if (after_index >= points.size())
+        return target;
+    return points[after_index].timestamp;
 }
 
 DecoderErrorOr<DemuxerSeekResult> MatroskaDemuxer::seek_to_most_recent_keyframe(Track const& track, AK::Duration timestamp, DemuxerSeekOptions options)
@@ -179,7 +156,7 @@ DecoderErrorOr<CodedFrame> MatroskaDemuxer::get_next_sample_for_track(Track cons
 
     VERIFY(status.block.has_value());
 
-    auto timestamp = status.block->timestamp();
+    auto timestamp = status.block->timestamp().value();
     auto duration = status.block->duration().value_or(AK::Duration::zero());
     auto flags = status.block->only_keyframes() ? FrameFlags::Keyframe : FrameFlags::None;
     auto aux_data = [&] -> CodedFrame::AuxiliaryData {
@@ -198,6 +175,14 @@ DecoderErrorOr<AK::Duration> MatroskaDemuxer::total_duration()
 {
     auto duration = m_reader.duration();
     return duration.value_or(AK::Duration::zero());
+}
+
+TimeRanges MatroskaDemuxer::buffered_time_ranges() const
+{
+    auto byte_ranges = m_stream->available_byte_ranges();
+    if (byte_ranges.is_empty())
+        return {};
+    return m_reader.buffered_time_ranges(m_buffered_scan_cursor, byte_ranges);
 }
 
 DecoderErrorOr<AK::Duration> MatroskaDemuxer::duration_of_track(Track const&)

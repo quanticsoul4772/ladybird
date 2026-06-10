@@ -15,7 +15,6 @@
 #include <LibJS/Runtime/FunctionPrototype.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/NativeFunction.h>
-#include <LibJS/Runtime/ShadowRealm.h>
 
 namespace JS {
 
@@ -77,13 +76,11 @@ JS_DEFINE_NATIVE_FUNCTION(FunctionPrototype::apply)
     // OPTIMIZATION: If argArray has a simple indexed storage without holes and doesn't interfere with indexed property access,
     //               we can skip CreateListFromArrayLike and directly use the storage elements.
     auto& arg_array_object = arg_array.as_object();
-    auto* storage = arg_array_object.indexed_properties().storage();
-    if (!arg_array_object.may_interfere_with_indexed_property_access() && storage && storage->is_simple_storage()) {
+    if (!arg_array_object.may_interfere_with_indexed_property_access() && arg_array_object.indexed_storage_kind() == IndexedStorageKind::Packed) {
         auto length = TRY(length_of_array_like(vm, arg_array_object));
-        auto const* simple_storage = static_cast<SimpleIndexedPropertyStorage*>(storage);
-        auto storage_elements = simple_storage->elements().span();
-        if (!simple_storage->has_empty_elements() && storage_elements.size() >= length)
-            return TRY(JS::call(vm, function, this_arg, storage_elements.slice(0, length)));
+        auto span = arg_array_object.indexed_packed_elements_span();
+        if (span.size() >= length)
+            return TRY(JS::call(vm, function, this_arg, span.slice(0, length)));
     }
 
     // 4. Let argList be ? CreateListFromArrayLike(argArray).
@@ -96,7 +93,6 @@ JS_DEFINE_NATIVE_FUNCTION(FunctionPrototype::apply)
 }
 
 // 20.2.3.2 Function.prototype.bind ( thisArg, ...args ), https://tc39.es/ecma262/#sec-function.prototype.bind
-// 3.1.2.1 Function.prototype.bind ( thisArg, ...args ), https://tc39.es/proposal-shadowrealm/#sec-function.prototype.bind
 JS_DEFINE_NATIVE_FUNCTION(FunctionPrototype::bind)
 {
     auto& realm = *vm.current_realm();
@@ -114,19 +110,63 @@ JS_DEFINE_NATIVE_FUNCTION(FunctionPrototype::bind)
 
     Vector<Value> arguments;
     if (vm.argument_count() > 1) {
-        arguments.append(vm.running_execution_context().arguments.slice(1).data(), vm.argument_count() - 1);
+        arguments.append(vm.running_execution_context().arguments_span().slice(1).data(), vm.argument_count() - 1);
     }
 
-    // 3. Let F be ? BoundFunctionCreate(Target, thisArg, args).
+    // 3. Let F be ? BoundFunctionCreate(Target, thisArg, args).
     auto function = TRY(BoundFunction::create(realm, target, this_argument, move(arguments)));
 
-    // 4. Let argCount be the number of elements in args.
-    auto arg_count = vm.argument_count() > 0 ? vm.argument_count() - 1 : 0;
+    // 4. Let L be 0.
+    double length = 0;
 
-    // 5. Perform ? CopyNameAndLength(F, Target, "bound", argCount).
-    TRY(copy_name_and_length(vm, *function, target, "bound"sv, arg_count));
+    // 5. Let targetHasLength be ? HasOwnProperty(Target, "length").
+    auto target_has_length = TRY(target.has_own_property(vm.names.length));
 
-    // 6. Return F.
+    // 6. If targetHasLength is true, then
+    if (target_has_length) {
+        // a. Let targetLen be ? Get(Target, "length").
+        auto target_length = TRY(target.get(vm.names.length));
+
+        // b. If targetLen is a Number, then
+        if (target_length.is_number()) {
+            // i. If targetLen is +∞𝔽, then
+            if (target_length.is_positive_infinity()) {
+                // 1. Set L to +∞.
+                length = target_length.as_double();
+            }
+            // ii. Else if targetLen is -∞𝔽, then
+            else if (target_length.is_negative_infinity()) {
+                // 1. Set L to 0.
+                length = 0;
+            }
+            // iii. Else,
+            else {
+                // 1. Let targetLenAsInt be ! ToIntegerOrInfinity(targetLen).
+                auto target_length_as_int = MUST(target_length.to_integer_or_infinity(vm));
+
+                // 2. Assert: targetLenAsInt is finite.
+                VERIFY(!isinf(target_length_as_int));
+
+                // 3. Let argCount be the number of elements in args.
+                auto arg_count = vm.argument_count() > 1 ? vm.argument_count() - 1 : 0;
+
+                // 4. Set L to max(targetLenAsInt - argCount, 0).
+                length = max(target_length_as_int - arg_count, 0.0);
+            }
+        }
+    }
+
+    // 7. Perform SetFunctionLength(F, L).
+    function->set_function_length(length);
+
+    // 8. Let targetName be ? Get(Target, "name").
+    auto target_name = TRY(target.get(vm.names.name));
+
+    // 9. If targetName is not a String, set targetName to the empty String.
+    // 10. Perform SetFunctionName(F, targetName, "bound").
+    function->set_function_name({ target_name.is_string() ? target_name.as_string().utf16_string() : Utf16String {} }, "bound"sv);
+
+    // 11. Return F.
     return function;
 }
 
@@ -145,7 +185,7 @@ JS_DEFINE_NATIVE_FUNCTION(FunctionPrototype::call)
     // FIXME: 3. Perform PrepareForTailCall().
 
     auto this_arg = vm.argument(0);
-    auto args = vm.argument_count() > 1 ? vm.running_execution_context().arguments.slice(1) : ReadonlySpan<Value> {};
+    auto args = vm.argument_count() > 1 ? vm.running_execution_context().arguments_span().slice(1) : ReadonlySpan<Value> {};
 
     // 4. Return ? Call(func, thisArg, args).
     return TRY(JS::call(vm, function, this_arg, args));

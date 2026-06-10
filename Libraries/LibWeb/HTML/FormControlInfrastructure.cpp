@@ -36,20 +36,20 @@ WebIDL::ExceptionOr<XHR::FormDataEntry> create_entry(JS::Realm& realm, String co
             // 1. If value is not a File object, then set value to a new File object, representing the same bytes, whose
             //    name attribute value is "blob".
             if (!is<FileAPI::File>(*blob)) {
-                FileAPI::FilePropertyBag options {};
+                Bindings::FilePropertyBag options {};
                 options.type = blob->type();
 
-                blob = TRY(FileAPI::File::create(realm, { GC::make_root(*blob) }, "blob"_string, move(options)));
+                blob = TRY(FileAPI::File::create(realm, { { blob } }, "blob"_string, move(options)));
             }
 
             // 2. If filename is given, then set value to a new File object, representing the same bytes, whose name
             //    attribute is filename.
             if (filename.has_value()) {
-                FileAPI::FilePropertyBag options {};
+                Bindings::FilePropertyBag options {};
                 options.type = blob->type();
                 options.last_modified = as<FileAPI::File>(*blob).last_modified();
 
-                blob = TRY(FileAPI::File::create(realm, { GC::make_root(*blob) }, *filename, move(options)));
+                blob = TRY(FileAPI::File::create(realm, { { blob } }, *filename, move(options)));
             }
 
             return GC::Ref { as<FileAPI::File>(*blob) };
@@ -60,6 +60,47 @@ WebIDL::ExceptionOr<XHR::FormDataEntry> create_entry(JS::Realm& realm, String co
         .name = move(entry_name),
         .value = move(entry_value),
     };
+}
+
+// https://html.spec.whatwg.org/multipage/custom-elements.html#face-entry-construction
+static WebIDL::ExceptionOr<void> construct_face_entry(JS::Realm& realm, GC::Ref<HTMLElement const> form_associated_custom_element, GC::ConservativeVector<XHR::FormDataEntry>& entry_list)
+{
+    // 1. If element's submission value is a list of entries, then append each item of element's submission value to
+    //    entry list, and return.
+    // NOTE: In this case, user agent does not refer to the name content attribute value. An implementation of
+    //       form-associated custom element is responsible to decide names of entries. They can be the name
+    //       content attribute value, they can be strings based on the name content attribute value, or they
+    //       can be unrelated to the name content attribute.
+    auto const& submission_value = form_associated_custom_element->face_submission_value();
+    if (auto const* form_data_entries = submission_value.get_pointer<GC::ConservativeVector<XHR::FormDataEntry>>()) {
+        entry_list.extend(*form_data_entries);
+        return {};
+    }
+
+    // 2. If the element does not have a name attribute specified, or its name attribute's value is the empty string, then return.
+    if (!form_associated_custom_element->name().has_value() || form_associated_custom_element->name()->is_empty())
+        return {};
+
+    // 3. If the element's submission value is not null, create an entry with the name attribute value and the submission value, and append it to entry list.
+    if (submission_value.has<Empty>())
+        return {};
+
+    auto name = form_associated_custom_element->name().value();
+    auto entry_submission_value = submission_value.visit(
+        [](GC::Ref<FileAPI::File> file) -> Variant<GC::Ref<FileAPI::Blob>, String> {
+            return GC::Ref<FileAPI::Blob> { file };
+        },
+        [](String const& string) -> Variant<GC::Ref<FileAPI::Blob>, String> {
+            return string;
+        },
+        [](auto&) -> Variant<GC::Ref<FileAPI::Blob>, String> {
+            // The other types were handled above.
+            VERIFY_NOT_REACHED();
+        });
+
+    auto entry = TRY(create_entry(realm, name.to_string(), entry_submission_value));
+    entry_list.append(entry);
+    return {};
 }
 
 // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#constructing-the-form-data-set
@@ -76,7 +117,7 @@ WebIDL::ExceptionOr<Optional<GC::ConservativeVector<XHR::FormDataEntry>>> constr
     auto controls = form.get_submittable_elements();
 
     // 4. Let entry list be a new empty entry list.
-    GC::ConservativeVector<XHR::FormDataEntry> entry_list { realm.heap() };
+    GC::ConservativeVector<XHR::FormDataEntry> entry_list;
 
     // 5. For each element field in controls, in tree order:
     for (auto const& control : controls) {
@@ -130,7 +171,11 @@ WebIDL::ExceptionOr<Optional<GC::ConservativeVector<XHR::FormDataEntry>>> constr
             continue;
         }
 
-        // FIXME: 3. If the field is a form-associated custom element, then perform the entry construction algorithm given field and entry list, then continue.
+        // 3. If the field is a form-associated custom element, then perform the entry construction algorithm given field and entry list, then continue.
+        if (control_as_form_associated_element.form_associated_element_to_html_element().is_form_associated_custom_element()) {
+            TRY(construct_face_entry(realm, control_as_form_associated_element.form_associated_element_to_html_element(), entry_list));
+            continue;
+        }
 
         // 4. If either the field element does not have a name attribute specified, or its name attribute's value is the empty string, then continue.
         if (!control->name().has_value() || control->name()->is_empty())
@@ -162,7 +207,7 @@ WebIDL::ExceptionOr<Optional<GC::ConservativeVector<XHR::FormDataEntry>>> constr
         else if (auto* file_element = as_if<HTMLInputElement>(*control); file_element && file_element->type_state() == HTMLInputElement::TypeAttributeState::FileUpload) {
             // 1. If there are no selected files, then create an entry with name and a new File object with an empty name, application/octet-stream as type, and an empty body, and append it to entry list.
             if (file_element->files()->length() == 0) {
-                FileAPI::FilePropertyBag options {};
+                Bindings::FilePropertyBag options {};
                 options.type = "application/octet-stream"_string;
                 auto file = TRY(FileAPI::File::create(realm, {}, String {}, options));
                 entry_list.append(TRY(create_entry(realm, name.to_string(), GC::Ref<FileAPI::Blob> { file })));
@@ -185,7 +230,7 @@ WebIDL::ExceptionOr<Optional<GC::ConservativeVector<XHR::FormDataEntry>>> constr
         }
         // 10. Otherwise, create an entry with name and the value of the field element, and append it to entry list.
         else {
-            entry_list.append(TRY(create_entry(realm, name.to_string(), control_as_form_associated_element.value().to_utf8_but_should_be_ported_to_utf16())));
+            entry_list.append(TRY(create_entry(realm, name.to_string(), control_as_form_associated_element.form_value().to_utf8_but_should_be_ported_to_utf16())));
         }
 
         // 11. If the element has a dirname attribute, that attribute's value is not the empty string, and the element is an auto-directionality form-associated element:
@@ -204,8 +249,7 @@ WebIDL::ExceptionOr<Optional<GC::ConservativeVector<XHR::FormDataEntry>>> constr
     auto form_data = TRY(XHR::FormData::construct_impl(realm, move(entry_list)));
 
     // 7. Fire an event named formdata at form using FormDataEvent, with the formData attribute initialized to form data and the bubbles attribute initialized to true.
-    FormDataEventInit init {};
-    init.form_data = form_data;
+    Bindings::FormDataEventInit init { Bindings::EventInit {}, form_data };
     auto form_data_event = TRY(FormDataEvent::construct_impl(realm, HTML::EventNames::formdata, init));
     form_data_event->set_bubbles(true);
     form.dispatch_event(form_data_event);
@@ -272,7 +316,7 @@ ErrorOr<SerializedFormData> serialize_to_multipart_form_data(GC::ConservativeVec
         auto escaped_name = TRY(escape_line_feed_carriage_return_double_quote(normalized_name));
 
         TRY(entry.value.visit(
-            [&](GC::Root<FileAPI::File> const& file) -> ErrorOr<void> {
+            [&](GC::Ref<FileAPI::File> file) -> ErrorOr<void> {
                 // For filenames replace any 0x0A (LF) bytes with the byte sequence `%0A`, 0x0D (CR) with `%0D` and 0x22 (") with `%22`
                 auto escaped_filename = TRY(escape_line_feed_carriage_return_double_quote(file->name()));
                 // Add a `Content-Disposition` header with a `name` set to entry's name and `filename` set to entry's filename.

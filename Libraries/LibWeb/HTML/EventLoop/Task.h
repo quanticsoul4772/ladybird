@@ -84,6 +84,9 @@ public:
         // https://w3c.github.io/gamepad/#dfn-gamepad-task-source
         Gamepad,
 
+        // https://registry.khronos.org/webgl/specs/latest/1.0/#5.15
+        WebGL,
+
         // https://www.w3.org/TR/webcrypto-2/#dfn-crypto-task-source
         Crypto,
 
@@ -104,6 +107,7 @@ public:
     DOM::Document const* document() const;
 
     bool is_runnable() const;
+    bool is_permanently_unrunnable() const;
 
 private:
     Task(Source, GC::Ptr<DOM::Document const>, GC::Ref<GC::Function<void()>> steps);

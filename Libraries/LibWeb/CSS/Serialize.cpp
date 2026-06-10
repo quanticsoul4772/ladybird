@@ -246,10 +246,10 @@ static bool needs_comment_between(Parser::ComponentValue const& first, Parser::C
             return true;
         if (!second.is_token())
             return false;
-        if (second.token().type() == Parser::Token::Type::Delim)
-            return second.is_delim('-') || second.is_delim('(');
+        if (second.is_delim('-'))
+            return true;
         return first_is_one_of(second.token().type(),
-            Parser::Token::Type::Ident, Parser::Token::Type::Url, Parser::Token::Type::BadUrl, Parser::Token::Type::Number, Parser::Token::Type::Percentage, Parser::Token::Type::Dimension, Parser::Token::Type::CDC);
+            Parser::Token::Type::Ident, Parser::Token::Type::Url, Parser::Token::Type::BadUrl, Parser::Token::Type::Number, Parser::Token::Type::Percentage, Parser::Token::Type::Dimension, Parser::Token::Type::CDC, Parser::Token::Type::OpenParen);
     }
 
     if (first.is(Parser::Token::Type::AtKeyword)
@@ -310,6 +310,36 @@ String serialize_a_series_of_component_values(ReadonlySpan<Parser::ComponentValu
         auto const& current_token = tokens.consume_a_token();
         auto const& next_token = tokens.next_token();
         builder.append(current_token.to_string());
+        if (needs_comment_between(current_token, next_token))
+            builder.append("/**/"sv);
+    }
+
+    return builder.to_string_without_validation();
+}
+
+static bool should_preserve_original_source_text_for_custom_property(Parser::ComponentValue const& component_value)
+{
+    return component_value.is(Parser::Token::Type::Number)
+        || component_value.is(Parser::Token::Type::Percentage)
+        || component_value.is(Parser::Token::Type::Dimension);
+}
+
+String serialize_a_series_of_component_values_preserving_original_source_text(ReadonlySpan<Parser::ComponentValue> component_values)
+{
+    Parser::TokenStream tokens { component_values };
+    StringBuilder builder;
+
+    while (tokens.has_next_token()) {
+        auto const& current_token = tokens.consume_a_token();
+        auto const& next_token = tokens.next_token();
+        if (should_preserve_original_source_text_for_custom_property(current_token)) {
+            auto original_source_text = current_token.original_source_text();
+            if (original_source_text.is_empty())
+                return serialize_a_series_of_component_values(component_values);
+            builder.append(original_source_text);
+        } else {
+            builder.append(current_token.to_string());
+        }
         if (needs_comment_between(current_token, next_token))
             builder.append("/**/"sv);
     }

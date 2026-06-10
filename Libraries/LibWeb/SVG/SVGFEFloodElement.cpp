@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/SVGFEFloodElementPrototype.h>
+#include <LibWeb/Bindings/SVGFEFloodElement.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/Layout/Node.h>
@@ -32,16 +32,16 @@ void SVGFEFloodElement::visit_edges(Cell::Visitor& visitor)
     SVGFilterPrimitiveStandardAttributes::visit_edges(visitor);
 }
 
-GC::Ptr<Layout::Node> SVGFEFloodElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+RefPtr<Layout::Node> SVGFEFloodElement::create_layout_node(CSS::ComputedProperties const& style)
 {
-    return heap().allocate<Layout::SVGBox>(document(), *this, move(style));
+    return make_ref_counted<Layout::SVGBox>(document(), *this, style);
 }
 
 // https://www.w3.org/TR/filter-effects-1/#FloodColorProperty
 Gfx::Color SVGFEFloodElement::flood_color()
 {
     VERIFY(computed_properties());
-    return computed_properties()->color_or_fallback(CSS::PropertyID::FloodColor, CSS::ColorResolutionContext::for_element({ *this }), CSS::InitialValues::flood_color());
+    return computed_properties()->color(CSS::PropertyID::FloodColor, CSS::ColorResolutionContext::for_element({ *this }));
 }
 
 // https://www.w3.org/TR/filter-effects-1/#FloodOpacityProperty

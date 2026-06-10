@@ -5,7 +5,7 @@
  */
 
 #include "CSSMathMax.h"
-#include <LibWeb/Bindings/CSSMathMaxPrototype.h>
+#include <LibWeb/Bindings/CSSMathMax.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSMathNegate.h>
 #include <LibWeb/CSS/CSSNumericArray.h>
@@ -50,7 +50,7 @@ WebIDL::ExceptionOr<GC::Ref<CSSMathMax>> CSSMathMax::construct_impl(JS::Realm& r
     // NB: So, the steps below are a modification of the CSSMathSum steps.
 
     // 1. Replace each item of args with the result of rectifying a numberish value for the item.
-    GC::RootVector<GC::Ref<CSSNumericValue>> converted_values { realm.heap() };
+    GC::RootVector<GC::Ref<CSSNumericValue>> converted_values;
     converted_values.ensure_capacity(values.size());
     for (auto const& value : values) {
         converted_values.append(rectify_a_numberish_value(realm, value));

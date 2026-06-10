@@ -43,7 +43,6 @@
 #include <LibJS/Runtime/ProxyObject.h>
 #include <LibJS/Runtime/RegExpObject.h>
 #include <LibJS/Runtime/Set.h>
-#include <LibJS/Runtime/ShadowRealm.h>
 #include <LibJS/Runtime/Shape.h>
 #include <LibJS/Runtime/StringObject.h>
 #include <LibJS/Runtime/StringPrototype.h>
@@ -95,10 +94,10 @@ static ErrorOr<String> escape_for_string_literal(StringView string)
     return builder.to_string();
 }
 
-ErrorOr<void> print_value(JS::PrintContext&, JS::Value value, HashTable<JS::Object*>& seen_objects);
+ErrorOr<void> print_value(JS::PrintContext&, JS::Value value, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects);
 
 template<typename T>
-ErrorOr<void> print_value(JS::PrintContext& print_context, JS::ThrowCompletionOr<T> value_or_error, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_value(JS::PrintContext& print_context, JS::ThrowCompletionOr<T> value_or_error, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     if (value_or_error.is_error()) {
         auto error = value_or_error.release_error();
@@ -159,14 +158,16 @@ ErrorOr<void> print_separator(JS::PrintContext& print_context, bool& first)
     return {};
 }
 
-ErrorOr<void> print_array(JS::PrintContext& print_context, JS::Array const& array, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_array(JS::PrintContext& print_context, JS::Array const& array, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(js_out(print_context, "["));
     bool first = true;
     size_t printed_count = 0;
-    for (auto it = array.indexed_properties().begin(false); it != array.indexed_properties().end(); ++it) {
+    for (u32 i = 0; i < array.indexed_array_like_size(); ++i) {
+        if (!array.indexed_has(i))
+            continue;
         TRY(print_separator(print_context, first));
-        auto value_or_error = array.get(it.index());
+        auto value_or_error = array.get(i);
         // The V8 repl doesn't throw an exception here, and instead just
         // prints 'undefined'. We may choose to replicate that behavior in
         // the future, but for now lets just catch the error
@@ -174,7 +175,7 @@ ErrorOr<void> print_array(JS::PrintContext& print_context, JS::Array const& arra
             return {};
         auto value = value_or_error.release_value();
         TRY(print_value(print_context, value, seen_objects));
-        if (++printed_count > 100 && it != array.indexed_properties().end()) {
+        if (++printed_count > 100 && i + 1 < array.indexed_array_like_size()) {
             TRY(js_out(print_context, ", ..."));
             break;
         }
@@ -185,7 +186,7 @@ ErrorOr<void> print_array(JS::PrintContext& print_context, JS::Array const& arra
     return {};
 }
 
-ErrorOr<void> print_object(JS::PrintContext& print_context, JS::Object const& object, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_object(JS::PrintContext& print_context, JS::Object const& object, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(js_out(print_context, "{}{{", object.class_name()));
     bool first = true;
@@ -233,7 +234,7 @@ ErrorOr<void> print_object(JS::PrintContext& print_context, JS::Object const& ob
     return {};
 }
 
-ErrorOr<void> print_function(JS::PrintContext& print_context, JS::FunctionObject const& function_object, HashTable<JS::Object*>&)
+ErrorOr<void> print_function(JS::PrintContext& print_context, JS::FunctionObject const& function_object, GC::RootHashTable<GC::Ref<JS::Object>>&)
 {
     if (is<JS::ECMAScriptFunctionObject>(function_object)) {
         auto const& ecmascript_function_object = static_cast<JS::ECMAScriptFunctionObject const&>(function_object);
@@ -263,14 +264,14 @@ ErrorOr<void> print_function(JS::PrintContext& print_context, JS::FunctionObject
     return {};
 }
 
-ErrorOr<void> print_date(JS::PrintContext& print_context, JS::Date const& date, HashTable<JS::Object*>&)
+ErrorOr<void> print_date(JS::PrintContext& print_context, JS::Date const& date, GC::RootHashTable<GC::Ref<JS::Object>>&)
 {
     TRY(print_type(print_context, "Date"sv));
     TRY(js_out(print_context, " \033[34;1m{}\033[0m", JS::to_date_string(date.date_value())));
     return {};
 }
 
-ErrorOr<void> print_error(JS::PrintContext& print_context, JS::Object const& object, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_error(JS::PrintContext& print_context, JS::Object const& object, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     auto name = object.get_without_side_effects(print_context.vm.names.name);
     auto message = object.get_without_side_effects(print_context.vm.names.message);
@@ -286,14 +287,14 @@ ErrorOr<void> print_error(JS::PrintContext& print_context, JS::Object const& obj
     return {};
 }
 
-ErrorOr<void> print_regexp_object(JS::PrintContext& print_context, JS::RegExpObject const& regexp_object, HashTable<JS::Object*>&)
+ErrorOr<void> print_regexp_object(JS::PrintContext& print_context, JS::RegExpObject const& regexp_object, GC::RootHashTable<GC::Ref<JS::Object>>&)
 {
     TRY(print_type(print_context, "RegExp"sv));
     TRY(js_out(print_context, " \033[34;1m/{}/{}\033[0m", regexp_object.escape_regexp_pattern(), regexp_object.flags()));
     return {};
 }
 
-ErrorOr<void> print_proxy_object(JS::PrintContext& print_context, JS::ProxyObject const& proxy_object, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_proxy_object(JS::PrintContext& print_context, JS::ProxyObject const& proxy_object, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Proxy"sv));
     TRY(js_out(print_context, "\n  target: "));
@@ -303,7 +304,7 @@ ErrorOr<void> print_proxy_object(JS::PrintContext& print_context, JS::ProxyObjec
     return {};
 }
 
-ErrorOr<void> print_map(JS::PrintContext& print_context, JS::Map const& map, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_map(JS::PrintContext& print_context, JS::Map const& map, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Map"sv));
     TRY(js_out(print_context, " {{"));
@@ -320,7 +321,7 @@ ErrorOr<void> print_map(JS::PrintContext& print_context, JS::Map const& map, Has
     return {};
 }
 
-ErrorOr<void> print_set(JS::PrintContext& print_context, JS::Set const& set, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_set(JS::PrintContext& print_context, JS::Set const& set, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Set"sv));
     TRY(js_out(print_context, " {{"));
@@ -335,23 +336,23 @@ ErrorOr<void> print_set(JS::PrintContext& print_context, JS::Set const& set, Has
     return {};
 }
 
-ErrorOr<void> print_weak_map(JS::PrintContext& print_context, JS::WeakMap const& weak_map, HashTable<JS::Object*>&)
+ErrorOr<void> print_weak_map(JS::PrintContext& print_context, JS::WeakMap const& weak_map, GC::RootHashTable<GC::Ref<JS::Object>>&)
 {
     TRY(print_type(print_context, "WeakMap"sv));
-    TRY(js_out(print_context, " ({})", weak_map.values().size()));
+    TRY(js_out(print_context, " ({})", weak_map.weak_map_size()));
     // Note: We could tell you what's actually inside, but not in insertion order.
     return {};
 }
 
-ErrorOr<void> print_weak_set(JS::PrintContext& print_context, JS::WeakSet const& weak_set, HashTable<JS::Object*>&)
+ErrorOr<void> print_weak_set(JS::PrintContext& print_context, JS::WeakSet const& weak_set, GC::RootHashTable<GC::Ref<JS::Object>>&)
 {
     TRY(print_type(print_context, "WeakSet"sv));
-    TRY(js_out(print_context, " ({})", weak_set.values().size()));
+    TRY(js_out(print_context, " ({})", weak_set.weak_set_size()));
     // Note: We could tell you what's actually inside, but not in insertion order.
     return {};
 }
 
-ErrorOr<void> print_weak_ref(JS::PrintContext& print_context, JS::WeakRef const& weak_ref, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_weak_ref(JS::PrintContext& print_context, JS::WeakRef const& weak_ref, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "WeakRef"sv));
     TRY(js_out(print_context, " "));
@@ -359,7 +360,7 @@ ErrorOr<void> print_weak_ref(JS::PrintContext& print_context, JS::WeakRef const&
     return {};
 }
 
-ErrorOr<void> print_promise(JS::PrintContext& print_context, JS::Promise const& promise, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_promise(JS::PrintContext& print_context, JS::Promise const& promise, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Promise"sv));
     switch (promise.state()) {
@@ -385,7 +386,7 @@ ErrorOr<void> print_promise(JS::PrintContext& print_context, JS::Promise const& 
     return {};
 }
 
-ErrorOr<void> print_array_buffer(JS::PrintContext& print_context, JS::ArrayBuffer const& array_buffer, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_array_buffer(JS::PrintContext& print_context, JS::ArrayBuffer const& array_buffer, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "ArrayBuffer"sv));
 
@@ -400,10 +401,10 @@ ErrorOr<void> print_array_buffer(JS::PrintContext& print_context, JS::ArrayBuffe
     if (byte_length == 0)
         return {};
 
-    auto& buffer = array_buffer.buffer();
+    auto const* buffer_data = array_buffer.data();
     TRY(js_out(print_context, "\n"));
     for (size_t i = 0; i < byte_length; ++i) {
-        TRY(js_out(print_context, "{:02x}", buffer[i]));
+        TRY(js_out(print_context, "{:02x}", buffer_data[i]));
         if (i + 1 < byte_length) {
             if ((i + 1) % 32 == 0)
                 TRY(js_out(print_context, "\n"));
@@ -417,20 +418,13 @@ ErrorOr<void> print_array_buffer(JS::PrintContext& print_context, JS::ArrayBuffe
     return {};
 }
 
-ErrorOr<void> print_shadow_realm(JS::PrintContext& print_context, JS::ShadowRealm const&, HashTable<JS::Object*>&)
-{
-    // Not much we can show here that would be useful. Realm pointer address?!
-    TRY(print_type(print_context, "ShadowRealm"sv));
-    return {};
-}
-
-ErrorOr<void> print_generator(JS::PrintContext& print_context, JS::GeneratorObject const& generator, HashTable<JS::Object*>&)
+ErrorOr<void> print_generator(JS::PrintContext& print_context, JS::GeneratorObject const& generator, GC::RootHashTable<GC::Ref<JS::Object>>&)
 {
     TRY(print_type(print_context, generator.class_name()));
     return {};
 }
 
-ErrorOr<void> print_async_generator(JS::PrintContext& print_context, JS::AsyncGenerator const& generator, HashTable<JS::Object*>&)
+ErrorOr<void> print_async_generator(JS::PrintContext& print_context, JS::AsyncGenerator const& generator, GC::RootHashTable<GC::Ref<JS::Object>>&)
 {
     TRY(print_type(print_context, generator.class_name()));
     return {};
@@ -445,7 +439,7 @@ ErrorOr<void> print_number(JS::PrintContext& print_context, T number)
     return {};
 }
 
-ErrorOr<void> print_typed_array(JS::PrintContext& print_context, JS::TypedArrayBase const& typed_array_base, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_typed_array(JS::PrintContext& print_context, JS::TypedArrayBase const& typed_array_base, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     auto& array_buffer = *typed_array_base.viewed_array_buffer();
 
@@ -494,7 +488,7 @@ ErrorOr<void> print_typed_array(JS::PrintContext& print_context, JS::TypedArrayB
     VERIFY_NOT_REACHED();
 }
 
-ErrorOr<void> print_data_view(JS::PrintContext& print_context, JS::DataView const& data_view, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_data_view(JS::PrintContext& print_context, JS::DataView const& data_view, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     auto view_record = JS::make_data_view_with_buffer_witness_record(data_view, JS::ArrayBuffer::Order::SeqCst);
     TRY(print_type(print_context, "DataView"sv));
@@ -515,7 +509,7 @@ ErrorOr<void> print_data_view(JS::PrintContext& print_context, JS::DataView cons
     return {};
 }
 
-ErrorOr<void> print_intl_display_names(JS::PrintContext& print_context, JS::Intl::DisplayNames const& display_names, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_display_names(JS::PrintContext& print_context, JS::Intl::DisplayNames const& display_names, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Intl.DisplayNames"sv));
     TRY(js_out(print_context, "\n  locale: "));
@@ -533,7 +527,7 @@ ErrorOr<void> print_intl_display_names(JS::PrintContext& print_context, JS::Intl
     return {};
 }
 
-ErrorOr<void> print_intl_locale(JS::PrintContext& print_context, JS::Intl::Locale const& locale, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_locale(JS::PrintContext& print_context, JS::Intl::Locale const& locale, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Intl.Locale"sv));
     TRY(js_out(print_context, "\n  locale: "));
@@ -563,7 +557,7 @@ ErrorOr<void> print_intl_locale(JS::PrintContext& print_context, JS::Intl::Local
     return {};
 }
 
-ErrorOr<void> print_intl_list_format(JS::PrintContext& print_context, JS::Intl::ListFormat const& list_format, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_list_format(JS::PrintContext& print_context, JS::Intl::ListFormat const& list_format, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Intl.ListFormat"sv));
     TRY(js_out(print_context, "\n  locale: "));
@@ -575,7 +569,7 @@ ErrorOr<void> print_intl_list_format(JS::PrintContext& print_context, JS::Intl::
     return {};
 }
 
-ErrorOr<void> print_intl_number_format(JS::PrintContext& print_context, JS::Intl::NumberFormat const& number_format, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_number_format(JS::PrintContext& print_context, JS::Intl::NumberFormat const& number_format, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Intl.NumberFormat"sv));
     TRY(js_out(print_context, "\n  locale: "));
@@ -643,7 +637,7 @@ ErrorOr<void> print_intl_number_format(JS::PrintContext& print_context, JS::Intl
     return {};
 }
 
-ErrorOr<void> print_intl_date_time_format(JS::PrintContext& print_context, JS::Intl::DateTimeFormat& date_time_format, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_date_time_format(JS::PrintContext& print_context, JS::Intl::DateTimeFormat& date_time_format, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Intl.DateTimeFormat"sv));
     TRY(js_out(print_context, "\n  locale: "));
@@ -696,7 +690,7 @@ ErrorOr<void> print_intl_date_time_format(JS::PrintContext& print_context, JS::I
     return {};
 }
 
-ErrorOr<void> print_intl_relative_time_format(JS::PrintContext& print_context, JS::Intl::RelativeTimeFormat const& date_time_format, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_relative_time_format(JS::PrintContext& print_context, JS::Intl::RelativeTimeFormat const& date_time_format, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Intl.RelativeTimeFormat"sv));
     TRY(js_out(print_context, "\n  locale: "));
@@ -710,7 +704,7 @@ ErrorOr<void> print_intl_relative_time_format(JS::PrintContext& print_context, J
     return {};
 }
 
-ErrorOr<void> print_intl_plural_rules(JS::PrintContext& print_context, JS::Intl::PluralRules const& plural_rules, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_plural_rules(JS::PrintContext& print_context, JS::Intl::PluralRules const& plural_rules, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Intl.PluralRules"sv));
     TRY(js_out(print_context, "\n  locale: "));
@@ -742,7 +736,7 @@ ErrorOr<void> print_intl_plural_rules(JS::PrintContext& print_context, JS::Intl:
     return {};
 }
 
-ErrorOr<void> print_intl_collator(JS::PrintContext& print_context, JS::Intl::Collator const& collator, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_collator(JS::PrintContext& print_context, JS::Intl::Collator const& collator, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Intl.Collator"sv));
     TRY(js_out(print_context, "\n  locale: "));
@@ -762,7 +756,7 @@ ErrorOr<void> print_intl_collator(JS::PrintContext& print_context, JS::Intl::Col
     return {};
 }
 
-ErrorOr<void> print_intl_segmenter(JS::PrintContext& print_context, JS::Intl::Segmenter const& segmenter, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_segmenter(JS::PrintContext& print_context, JS::Intl::Segmenter const& segmenter, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Intl.Segmenter"sv));
     TRY(js_out(print_context, "\n  locale: "));
@@ -772,7 +766,7 @@ ErrorOr<void> print_intl_segmenter(JS::PrintContext& print_context, JS::Intl::Se
     return {};
 }
 
-ErrorOr<void> print_intl_segments(JS::PrintContext& print_context, JS::Intl::Segments const& segments, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_segments(JS::PrintContext& print_context, JS::Intl::Segments const& segments, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Segments"sv));
     TRY(js_out(print_context, "\n  string: "));
@@ -780,7 +774,7 @@ ErrorOr<void> print_intl_segments(JS::PrintContext& print_context, JS::Intl::Seg
     return {};
 }
 
-ErrorOr<void> print_intl_duration_format(JS::PrintContext& print_context, JS::Intl::DurationFormat const& duration_format, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_intl_duration_format(JS::PrintContext& print_context, JS::Intl::DurationFormat const& duration_format, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     auto print_style_and_display = [&](StringView style_name, StringView display_name, JS::Intl::DurationFormat::DurationUnitOptions options) -> ErrorOr<void> {
         auto style = JS::Intl::DurationFormat::value_style_to_string(options.style);
@@ -821,14 +815,14 @@ ErrorOr<void> print_intl_duration_format(JS::PrintContext& print_context, JS::In
     return {};
 }
 
-ErrorOr<void> print_temporal_duration(JS::PrintContext& print_context, JS::Temporal::Duration const& duration, HashTable<JS::Object*>&)
+ErrorOr<void> print_temporal_duration(JS::PrintContext& print_context, JS::Temporal::Duration const& duration, GC::RootHashTable<GC::Ref<JS::Object>>&)
 {
     TRY(print_type(print_context, "Temporal.Duration"sv));
     TRY(js_out(print_context, " \033[34;1m{} y, {} M, {} w, {} d, {} h, {} m, {} s, {} ms, {} us, {} ns\033[0m", duration.years(), duration.months(), duration.weeks(), duration.days(), duration.hours(), duration.minutes(), duration.seconds(), duration.milliseconds(), duration.microseconds(), duration.nanoseconds()));
     return {};
 }
 
-ErrorOr<void> print_temporal_instant(JS::PrintContext& print_context, JS::Temporal::Instant const& instant, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_temporal_instant(JS::PrintContext& print_context, JS::Temporal::Instant const& instant, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Temporal.Instant"sv));
     TRY(js_out(print_context, " "));
@@ -836,7 +830,7 @@ ErrorOr<void> print_temporal_instant(JS::PrintContext& print_context, JS::Tempor
     return {};
 }
 
-ErrorOr<void> print_temporal_plain_date(JS::PrintContext& print_context, JS::Temporal::PlainDate const& plain_date, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_temporal_plain_date(JS::PrintContext& print_context, JS::Temporal::PlainDate const& plain_date, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Temporal.PlainDate"sv));
     TRY(js_out(print_context, " \033[34;1m{:04}-{:02}-{:02}\033[0m", plain_date.iso_date().year, plain_date.iso_date().month, plain_date.iso_date().day));
@@ -845,7 +839,7 @@ ErrorOr<void> print_temporal_plain_date(JS::PrintContext& print_context, JS::Tem
     return {};
 }
 
-ErrorOr<void> print_temporal_plain_date_time(JS::PrintContext& print_context, JS::Temporal::PlainDateTime const& plain_date_time, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_temporal_plain_date_time(JS::PrintContext& print_context, JS::Temporal::PlainDateTime const& plain_date_time, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Temporal.PlainDateTime"sv));
     TRY(js_out(print_context, " \033[34;1m{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}{:03}{:03}\033[0m", plain_date_time.iso_date_time().iso_date.year, plain_date_time.iso_date_time().iso_date.month, plain_date_time.iso_date_time().iso_date.day, plain_date_time.iso_date_time().time.hour, plain_date_time.iso_date_time().time.minute, plain_date_time.iso_date_time().time.second, plain_date_time.iso_date_time().time.millisecond, plain_date_time.iso_date_time().time.microsecond, plain_date_time.iso_date_time().time.nanosecond));
@@ -854,7 +848,7 @@ ErrorOr<void> print_temporal_plain_date_time(JS::PrintContext& print_context, JS
     return {};
 }
 
-ErrorOr<void> print_temporal_plain_month_day(JS::PrintContext& print_context, JS::Temporal::PlainMonthDay const& plain_month_day, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_temporal_plain_month_day(JS::PrintContext& print_context, JS::Temporal::PlainMonthDay const& plain_month_day, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Temporal.PlainMonthDay"sv));
     TRY(js_out(print_context, " \033[34;1m{:02}-{:02}\033[0m", plain_month_day.iso_date().month, plain_month_day.iso_date().day));
@@ -863,14 +857,14 @@ ErrorOr<void> print_temporal_plain_month_day(JS::PrintContext& print_context, JS
     return {};
 }
 
-ErrorOr<void> print_temporal_plain_time(JS::PrintContext& print_context, JS::Temporal::PlainTime const& plain_time, HashTable<JS::Object*>&)
+ErrorOr<void> print_temporal_plain_time(JS::PrintContext& print_context, JS::Temporal::PlainTime const& plain_time, GC::RootHashTable<GC::Ref<JS::Object>>&)
 {
     TRY(print_type(print_context, "Temporal.PlainTime"sv));
     TRY(js_out(print_context, " \033[34;1m{:02}:{:02}:{:02}.{:03}{:03}{:03}\033[0m", plain_time.time().hour, plain_time.time().minute, plain_time.time().second, plain_time.time().millisecond, plain_time.time().microsecond, plain_time.time().nanosecond));
     return {};
 }
 
-ErrorOr<void> print_temporal_plain_year_month(JS::PrintContext& print_context, JS::Temporal::PlainYearMonth const& plain_year_month, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_temporal_plain_year_month(JS::PrintContext& print_context, JS::Temporal::PlainYearMonth const& plain_year_month, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Temporal.PlainYearMonth"sv));
     TRY(js_out(print_context, " \033[34;1m{:04}-{:02}\033[0m", plain_year_month.iso_date().year, plain_year_month.iso_date().month));
@@ -879,7 +873,7 @@ ErrorOr<void> print_temporal_plain_year_month(JS::PrintContext& print_context, J
     return {};
 }
 
-ErrorOr<void> print_temporal_zoned_date_time(JS::PrintContext& print_context, JS::Temporal::ZonedDateTime const& zoned_date_time, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_temporal_zoned_date_time(JS::PrintContext& print_context, JS::Temporal::ZonedDateTime const& zoned_date_time, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Temporal.ZonedDateTime"sv));
     TRY(js_out(print_context, "\n  epochNanoseconds: "));
@@ -891,7 +885,7 @@ ErrorOr<void> print_temporal_zoned_date_time(JS::PrintContext& print_context, JS
     return {};
 }
 
-ErrorOr<void> print_boolean_object(JS::PrintContext& print_context, JS::BooleanObject const& boolean_object, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_boolean_object(JS::PrintContext& print_context, JS::BooleanObject const& boolean_object, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Boolean"sv));
     TRY(js_out(print_context, " "));
@@ -899,7 +893,7 @@ ErrorOr<void> print_boolean_object(JS::PrintContext& print_context, JS::BooleanO
     return {};
 }
 
-ErrorOr<void> print_number_object(JS::PrintContext& print_context, JS::NumberObject const& number_object, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_number_object(JS::PrintContext& print_context, JS::NumberObject const& number_object, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "Number"sv));
     TRY(js_out(print_context, " "));
@@ -907,7 +901,7 @@ ErrorOr<void> print_number_object(JS::PrintContext& print_context, JS::NumberObj
     return {};
 }
 
-ErrorOr<void> print_string_object(JS::PrintContext& print_context, JS::StringObject const& string_object, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_string_object(JS::PrintContext& print_context, JS::StringObject const& string_object, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     TRY(print_type(print_context, "String"sv));
     TRY(js_out(print_context, " "));
@@ -915,7 +909,7 @@ ErrorOr<void> print_string_object(JS::PrintContext& print_context, JS::StringObj
     return {};
 }
 
-ErrorOr<void> print_value(JS::PrintContext& print_context, JS::Value value, HashTable<JS::Object*>& seen_objects)
+ErrorOr<void> print_value(JS::PrintContext& print_context, JS::Value value, GC::RootHashTable<GC::Ref<JS::Object>>& seen_objects)
 {
     if (value.is_special_empty_value()) {
         TRY(js_out(print_context, "\033[34;1m<empty>\033[0m"));
@@ -923,13 +917,13 @@ ErrorOr<void> print_value(JS::PrintContext& print_context, JS::Value value, Hash
     }
 
     if (value.is_object()) {
-        if (seen_objects.contains(&value.as_object())) {
+        if (seen_objects.contains(value.as_object())) {
             // FIXME: Maybe we should only do this for circular references,
             //        not for all reoccurring objects.
             TRY(js_out(print_context, "<already printed Object {}>", &value.as_object()));
             return {};
         }
-        seen_objects.set(&value.as_object());
+        seen_objects.set(value.as_object());
     }
 
     if (value.is_object()) {
@@ -970,8 +964,6 @@ ErrorOr<void> print_value(JS::PrintContext& print_context, JS::Value value, Hash
             return print_promise(print_context, static_cast<JS::Promise&>(object), seen_objects);
         if (is<JS::ArrayBuffer>(object))
             return print_array_buffer(print_context, static_cast<JS::ArrayBuffer&>(object), seen_objects);
-        if (is<JS::ShadowRealm>(object))
-            return print_shadow_realm(print_context, static_cast<JS::ShadowRealm&>(object), seen_objects);
         if (is<JS::GeneratorObject>(object))
             return print_generator(print_context, static_cast<JS::GeneratorObject&>(object), seen_objects);
         if (is<JS::AsyncGenerator>(object))
@@ -1059,7 +1051,7 @@ namespace JS {
 
 ErrorOr<void> print(JS::Value value, PrintContext& print_context)
 {
-    HashTable<JS::Object*> seen_objects;
+    GC::RootHashTable<GC::Ref<JS::Object>> seen_objects;
     return print_value(print_context, value, seen_objects);
 }
 

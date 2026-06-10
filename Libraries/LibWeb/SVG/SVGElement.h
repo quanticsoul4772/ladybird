@@ -9,7 +9,7 @@
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/HTML/GlobalEventHandlers.h>
-#include <LibWeb/HTML/HTMLOrSVGElement.h>
+#include <LibWeb/HTML/HTMLOrSVGOrMathMLElement.h>
 #include <LibWeb/SVG/SVGAnimatedString.h>
 
 namespace Web::SVG {
@@ -17,7 +17,7 @@ namespace Web::SVG {
 class WEB_API SVGElement
     : public DOM::Element
     , public HTML::GlobalEventHandlers
-    , public HTML::HTMLOrSVGElement<SVGElement> {
+    , public HTML::HTMLOrSVGOrMathMLElement<SVGElement> {
     WEB_PLATFORM_OBJECT(SVGElement, DOM::Element);
     GC_DECLARE_ALLOCATOR(SVGElement);
 
@@ -35,7 +35,7 @@ public:
     GC::Ref<SVGAnimatedLength> svg_animated_length_for_property(CSS::PropertyID) const;
 
     virtual bool is_presentational_hint(FlyString const&) const override;
-    virtual void apply_presentational_hints(GC::Ref<CSS::CascadedProperties>) const override;
+    virtual void apply_presentational_hints(Vector<CSS::StyleProperty>&) const override;
 
 protected:
     SVGElement(DOM::Document&, DOM::QualifiedName);
@@ -45,9 +45,9 @@ protected:
 
     virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
     virtual WebIDL::ExceptionOr<void> cloned(DOM::Node&, bool) const override;
-    virtual void children_changed(ChildrenChangedMetadata const*) override;
+    virtual void children_changed(ChildrenChangedMetadata const&) override;
     virtual void inserted() override;
-    virtual void removed_from(Node* old_parent, Node& old_root) override;
+    virtual void removed_from(IsSubtreeRoot, Node* old_ancestor, Node& old_root) override;
     MUST_UPCALL virtual void adjust_computed_style(CSS::ComputedProperties&) override;
 
     void update_use_elements_that_reference_this();

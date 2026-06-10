@@ -6,7 +6,7 @@
 
 #include <AK/Optional.h>
 #include <LibGfx/Path.h>
-#include <LibWeb/Bindings/SVGPathElementPrototype.h>
+#include <LibWeb/Bindings/SVGPathElement.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/Layout/SVGGeometryBox.h>
@@ -32,7 +32,7 @@ void SVGPathElement::attribute_changed(FlyString const& name, Optional<String> c
     Base::attribute_changed(name, old_value, value, namespace_);
 
     if (name == "d") {
-        m_path = AttributeParser::parse_path_data(value.value_or(String {}));
+        m_path = AttributeParser::parse_path_data(value.map([](String const& path_string) { return path_string.bytes_as_string_view(); }).value_or(StringView {}));
         set_needs_layout_update(DOM::SetNeedsLayoutReason::StyleChange);
     }
 }

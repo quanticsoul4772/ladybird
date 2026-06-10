@@ -160,7 +160,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectPrototype::to_string)
     else if (object->is_function())
         builtin_tag = "Function"sv;
     // 8. Else if O has an [[ErrorData]] internal slot, let builtinTag be "Error".
-    else if (is<Error>(*object))
+    else if (object->has_error_data())
         builtin_tag = "Error"sv;
     // 9. Else if O has a [[BooleanData]] internal slot, let builtinTag be "Boolean".
     else if (is<BooleanObject>(*object))
@@ -182,7 +182,7 @@ JS_DEFINE_NATIVE_FUNCTION(ObjectPrototype::to_string)
         builtin_tag = "Object"sv;
 
     // 15. Let tag be ? Get(O, @@toStringTag).
-    static Bytecode::PropertyLookupCache cache;
+    static auto& cache = *new Bytecode::StaticPropertyLookupCache;
     auto to_string_tag = TRY(object->get(vm.well_known_symbol_to_string_tag(), cache));
 
     // Optimization: Instead of creating another PrimitiveString from builtin_tag, we separate tag and to_string_tag and add an additional branch to step 16.

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/SVGFEDropShadowElementPrototype.h>
+#include <LibWeb/Bindings/SVGFEDropShadowElement.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/SVG/SVGFEDropShadowElement.h>
 
@@ -38,7 +38,7 @@ void SVGFEDropShadowElement::visit_edges(Cell::Visitor& visitor)
 Gfx::Color SVGFEDropShadowElement::flood_color()
 {
     VERIFY(computed_properties());
-    return computed_properties()->color_or_fallback(CSS::PropertyID::FloodColor, CSS::ColorResolutionContext::for_element({ *this }), CSS::InitialValues::flood_color());
+    return computed_properties()->color(CSS::PropertyID::FloodColor, CSS::ColorResolutionContext::for_element({ *this }));
 }
 
 // https://www.w3.org/TR/filter-effects-1/#FloodOpacityProperty

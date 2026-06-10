@@ -6,8 +6,9 @@
  */
 
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/Bindings/MouseEventPrototype.h>
+#include <LibWeb/Bindings/MouseEvent.h>
 #include <LibWeb/HTML/EventNames.h>
+#include <LibWeb/HTML/WindowProxy.h>
 #include <LibWeb/UIEvents/EventNames.h>
 #include <LibWeb/UIEvents/KeyCode.h>
 #include <LibWeb/UIEvents/MouseButton.h>
@@ -17,7 +18,7 @@ namespace Web::UIEvents {
 
 GC_DEFINE_ALLOCATOR(MouseEvent);
 
-MouseEvent::MouseEvent(JS::Realm& realm, FlyString const& event_name, MouseEventInit const& event_init, double page_x, double page_y, double offset_x, double offset_y)
+MouseEvent::MouseEvent(JS::Realm& realm, FlyString const& event_name, Bindings::MouseEventInit const& event_init, double page_x, double page_y, double offset_x, double offset_y)
     : UIEvent(realm, event_name, event_init)
     , m_screen_x(event_init.screen_x)
     , m_screen_y(event_init.screen_y)
@@ -123,19 +124,23 @@ void MouseEvent::init_mouse_event(String const& type, bool bubbles, bool cancela
     m_related_target = related_target;
 }
 
-GC::Ref<MouseEvent> MouseEvent::create(JS::Realm& realm, FlyString const& event_name, MouseEventInit const& event_init, double page_x, double page_y, double offset_x, double offset_y)
+GC::Ref<MouseEvent> MouseEvent::create(JS::Realm& realm, FlyString const& event_name, Bindings::MouseEventInit const& event_init, double page_x, double page_y, double offset_x, double offset_y)
 {
     return realm.create<MouseEvent>(realm, event_name, event_init, page_x, page_y, offset_x, offset_y);
 }
 
-WebIDL::ExceptionOr<GC::Ref<MouseEvent>> MouseEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, MouseEventInit const& event_init)
+WebIDL::ExceptionOr<GC::Ref<MouseEvent>> MouseEvent::construct_impl(JS::Realm& realm, FlyString const& event_name, Bindings::MouseEventInit const& event_init)
 {
-    return create(realm, event_name, event_init);
+    // https://drafts.csswg.org/cssom-view/#dom-mouseevent-pagex
+    // For a newly constructed event, pageX/pageY default to clientX/clientY (scrollX/scrollY are 0).
+    // https://drafts.csswg.org/cssom-view/#dom-mouseevent-offsetx
+    // For a newly constructed event with no target, offsetX/offsetY default to clientX/clientY.
+    return create(realm, event_name, event_init, event_init.client_x, event_init.client_y, event_init.client_x, event_init.client_y);
 }
 
 GC::Ref<MouseEvent> MouseEvent::clone() const
 {
-    MouseEventInit init {};
+    Bindings::MouseEventInit init {};
     init.screen_x = m_screen_x;
     init.screen_y = m_screen_y;
     init.client_x = m_client_x;
@@ -164,9 +169,10 @@ GC::Ref<MouseEvent> MouseEvent::clone() const
     return create(realm(), type(), init, m_page_x, m_page_y, m_offset_x, m_offset_y);
 }
 
-WebIDL::ExceptionOr<GC::Ref<MouseEvent>> MouseEvent::create_from_platform_event(JS::Realm& realm, GC::Ptr<HTML::WindowProxy> window_proxy, FlyString const& event_name, CSSPixelPoint screen, CSSPixelPoint page, CSSPixelPoint client, CSSPixelPoint offset, Optional<CSSPixelPoint> movement, unsigned button, unsigned buttons, unsigned modifiers)
+WebIDL::ExceptionOr<GC::Ref<MouseEvent>> MouseEvent::create_from_platform_event(JS::Realm& realm, GC::Ptr<HTML::WindowProxy> window_proxy, FlyString const& event_name, CSSPixelPoint screen, CSSPixelPoint page, CSSPixelPoint client, CSSPixelPoint offset, Optional<CSSPixelPoint> movement, unsigned button, unsigned buttons, unsigned modifiers, int detail)
 {
-    MouseEventInit event_init {};
+    Bindings::MouseEventInit event_init {};
+    event_init.detail = detail;
     event_init.ctrl_key = modifiers & Mod_Ctrl;
     event_init.shift_key = modifiers & Mod_Shift;
     event_init.alt_key = modifiers & Mod_Alt;

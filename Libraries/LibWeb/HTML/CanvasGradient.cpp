@@ -6,7 +6,7 @@
  */
 
 #include <AK/QuickSort.h>
-#include <LibWeb/Bindings/CanvasGradientPrototype.h>
+#include <LibWeb/Bindings/CanvasGradient.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
@@ -67,7 +67,7 @@ WebIDL::ExceptionOr<void> CanvasGradient::add_color_stop(double offset, StringVi
 
     // 2. Let parsed color be the result of parsing color.
     // https://drafts.csswg.org/css-color/#parse-a-css-color-value
-    auto const maybe_color = parse_css_value(CSS::Parser::ParsingParams(), color, CSS::PropertyID::Color);
+    auto const maybe_color = parse_css_value(CSS::Parser::ParsingParams { CSS::Parser::SpecialContext::CanvasContextGenericValue }, color, CSS::PropertyID::Color);
 
     // 3. If parsed color is failure, throw a "SyntaxError" DOMException.
     if (maybe_color.is_null() || !maybe_color->has_color())

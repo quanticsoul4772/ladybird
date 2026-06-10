@@ -69,7 +69,12 @@ using DNSSettings = Variant<SystemDNS, DNSOverTLS, DNSOverUDP>;
 
 constexpr inline u16 default_devtools_port = 6000;
 
-enum class EnableContentFilter {
+enum class EnableContentBlocker {
+    No,
+    Yes,
+};
+
+enum class EnableSandbox {
     No,
     Yes,
 };
@@ -78,6 +83,8 @@ struct BrowserOptions {
     Vector<URL::URL> urls;
     Vector<ByteString> raw_urls;
     Optional<HeadlessMode> headless_mode;
+    Optional<ByteString> screenshot_path {};
+    u32 screenshot_delay { 1 };
     int window_width { 800 };
     int window_height { 600 };
     NewWindow new_window { NewWindow::No };
@@ -85,12 +92,14 @@ struct BrowserOptions {
     AllowPopups allow_popups { AllowPopups::No };
     DisableScripting disable_scripting { DisableScripting::No };
     DisableSQLDatabase disable_sql_database { DisableSQLDatabase::No };
-    Optional<ProcessType> debug_helper_process {};
+    Vector<ProcessType> debug_helper_processes {};
     Optional<ProcessType> profile_helper_process {};
-    Optional<ByteString> webdriver_content_ipc_path {};
+    Optional<ByteString> webdriver_endpoint {};
     Optional<DNSSettings> dns_settings {};
     Optional<u16> devtools_port;
-    EnableContentFilter enable_content_filter { EnableContentFilter::Yes };
+    EnableContentBlocker enable_content_blocker { EnableContentBlocker::Yes };
+    EnableSandbox enable_sandbox { EnableSandbox::No };
+    Vector<ByteString> content_blocker_list_paths {};
 };
 
 enum class HTTPDiskCacheMode {
@@ -161,9 +170,17 @@ enum class PaintViewportScrollbars {
     No,
 };
 
+enum class EnableAsyncScrolling {
+    No,
+    Yes,
+};
+
+enum class FileSchemeUrlsHaveTupleOrigins {
+    No,
+    Yes,
+};
+
 struct WebContentOptions {
-    String command_line;
-    String executable_path;
     Optional<ByteString> config_path {};
     Optional<StringView> user_agent_preset {};
     IsTestMode is_test_mode { IsTestMode::No };
@@ -179,7 +196,10 @@ struct WebContentOptions {
     CollectGarbageOnEveryAllocation collect_garbage_on_every_allocation { CollectGarbageOnEveryAllocation::No };
     Optional<u16> echo_server_port {};
     PaintViewportScrollbars paint_viewport_scrollbars { PaintViewportScrollbars::Yes };
+    EnableAsyncScrolling enable_async_scrolling { EnableAsyncScrolling::Yes };
+    FileSchemeUrlsHaveTupleOrigins file_scheme_urls_have_tuple_origins { FileSchemeUrlsHaveTupleOrigins::No };
     Optional<StringView> default_time_zone {};
+    Optional<u64> style_invalidation_counter_dump_interval {};
 };
 
 }

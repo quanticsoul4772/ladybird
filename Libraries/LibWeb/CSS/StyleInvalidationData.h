@@ -7,6 +7,9 @@
 #pragma once
 
 #include <AK/HashMap.h>
+#include <AK/NonnullRefPtr.h>
+#include <AK/RefCounted.h>
+#include <AK/Vector.h>
 #include <LibWeb/CSS/InvalidationSet.h>
 #include <LibWeb/CSS/Selector.h>
 #include <LibWeb/Forward.h>
@@ -23,19 +26,89 @@ enum class InsideNthChildPseudoClass {
     Yes,
 };
 
+enum class HasArgumentScope : u8 {
+    ChildrenOnly,
+    AllDescendants,
+    NextSiblingOnly,
+    AllFollowingSiblings,
+    Complex,
+};
+
+struct InvalidationPlan;
+
+struct InvalidationGuard {
+    bool is_empty() const { return property_sets.is_empty(); }
+    bool operator==(InvalidationGuard const&) const;
+
+    // Every set is an OR group; the guard matches when every group matches.
+    Vector<InvalidationSet> property_sets;
+};
+
+struct GuardedInvalidationRule {
+    InvalidationGuard guard;
+    NonnullRefPtr<InvalidationPlan> payload;
+
+    bool operator==(GuardedInvalidationRule const&) const;
+};
+
+struct DescendantInvalidationRule {
+    InvalidationSet match_set;
+    bool match_any { false };
+    NonnullRefPtr<InvalidationPlan> payload;
+
+    bool operator==(DescendantInvalidationRule const&) const;
+};
+
+enum class SiblingInvalidationReach {
+    Adjacent,
+    Subsequent,
+};
+
+struct SiblingInvalidationRule {
+    SiblingInvalidationReach reach;
+    InvalidationSet match_set;
+    bool match_any { false };
+    NonnullRefPtr<InvalidationPlan> payload;
+
+    bool operator==(SiblingInvalidationRule const&) const;
+};
+
+struct InvalidationPlan final : RefCounted<InvalidationPlan> {
+    static NonnullRefPtr<InvalidationPlan> create() { return adopt_ref(*new InvalidationPlan); }
+
+    bool is_empty() const;
+    void include_all_from(InvalidationPlan const&);
+    bool operator==(InvalidationPlan const&) const;
+
+    bool invalidate_self { false };
+    bool invalidate_whole_subtree { false };
+    Vector<DescendantInvalidationRule> descendant_rules;
+    Vector<SiblingInvalidationRule> sibling_rules;
+    Vector<GuardedInvalidationRule> guarded_rules;
+};
+
+struct HasInvalidationMetadata {
+    Selector const* relative_selector { nullptr };
+    HasArgumentScope scope { HasArgumentScope::Complex };
+
+    bool operator==(HasInvalidationMetadata const&) const = default;
+};
+
 struct StyleInvalidationData;
 
 void build_invalidation_sets_for_simple_selector(Selector::SimpleSelector const&, InvalidationSet&, ExcludePropertiesNestedInNotPseudoClass, StyleInvalidationData&, InsideNthChildPseudoClass);
 
 struct StyleInvalidationData {
-    HashMap<InvalidationSet::Property, InvalidationSet> descendant_invalidation_sets;
-    HashTable<FlyString> ids_used_in_has_selectors;
-    HashTable<FlyString> class_names_used_in_has_selectors;
-    HashTable<FlyString> attribute_names_used_in_has_selectors;
-    HashTable<FlyString> tag_names_used_in_has_selectors;
-    HashTable<PseudoClass> pseudo_classes_used_in_has_selectors;
+    HashMap<InvalidationSet::Property, NonnullRefPtr<InvalidationPlan>> invalidation_plans;
+    HashMap<FlyString, Vector<HasInvalidationMetadata>> ids_used_in_has_selectors;
+    HashMap<FlyString, Vector<HasInvalidationMetadata>> class_names_used_in_has_selectors;
+    HashMap<FlyString, Vector<HasInvalidationMetadata>> attribute_names_used_in_has_selectors;
+    HashMap<FlyString, Vector<HasInvalidationMetadata>> tag_names_used_in_has_selectors;
+    HashMap<PseudoClass, Vector<HasInvalidationMetadata>> pseudo_classes_used_in_has_selectors;
+    bool has_selectors_sensitive_to_featureless_subtree_changes { false };
 
     void build_invalidation_sets_for_selector(Selector const& selector);
+    void build_invalidation_sets_for_scope_boundary_selector(Selector const& selector);
 };
 
 }

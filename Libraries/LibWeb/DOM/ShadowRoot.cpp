@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/ShadowRootPrototype.h>
+#include <LibWeb/Bindings/ShadowRoot.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/StyleSheetList.h>
 #include <LibWeb/DOM/AdoptedStyleSheets.h>
@@ -14,6 +14,8 @@
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/SlotRegistry.h>
 #include <LibWeb/DOM/Utils.h>
+#include <LibWeb/HTML/AttributeNames.h>
+#include <LibWeb/HTML/CustomElements/CustomElementRegistry.h>
 #include <LibWeb/HTML/HTMLSlotElement.h>
 #include <LibWeb/HTML/HTMLTemplateElement.h>
 #include <LibWeb/HTML/Parser/HTMLParser.h>
@@ -126,8 +128,8 @@ WebIDL::ExceptionOr<void> ShadowRoot::set_inner_html(TrustedTypes::TrustedHTMLOr
         this->set_needs_style_update(true);
 
         if (this->is_connected()) {
-            // NOTE: Since the DOM has changed, we have to rebuild the layout tree.
-            this->document().invalidate_layout_tree(InvalidateLayoutTreeReason::ShadowRootSetInnerHTML);
+            // NOTE: Since the DOM has changed, we have to rebuild this shadow root's layout subtree.
+            this->set_needs_layout_tree_update(true, SetNeedsLayoutTreeUpdateReason::ShadowRootSetInnerHTML);
         }
     }
 
@@ -136,7 +138,7 @@ WebIDL::ExceptionOr<void> ShadowRoot::set_inner_html(TrustedTypes::TrustedHTMLOr
 }
 
 // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#dom-element-gethtml
-WebIDL::ExceptionOr<String> ShadowRoot::get_html(GetHTMLOptions const& options) const
+WebIDL::ExceptionOr<String> ShadowRoot::get_html(Bindings::GetHTMLOptions const& options) const
 {
     // ShadowRoot's getHTML(options) method steps are to return the result
     // of HTML fragment serialization algorithm with this,
@@ -188,10 +190,12 @@ void ShadowRoot::visit_edges(Visitor& visitor)
     m_style_scope.visit_edges(visitor);
     visitor.visit(m_style_sheets);
     visitor.visit(m_adopted_style_sheets);
+    m_anchor_name_map.visit_edges(visitor);
     for (auto const& [key, elements] : m_part_element_map) {
         for (auto const& element : elements)
             element.visit(visitor);
     }
+    visitor.visit(m_custom_element_registry);
 }
 
 GC::Ref<WebIDL::ObservableArray> ShadowRoot::adopted_style_sheets() const
@@ -290,6 +294,38 @@ ShadowRoot::PartElementMap const& ShadowRoot::part_element_map() const
     return m_part_element_map;
 }
 
+// https://drafts.csswg.org/css-shadow-1/#exportparts
+// Parse the exportparts attribute into a list of (inner_name, outer_name) pairs.
+struct ExportedPart {
+    FlyString inner_name;
+    FlyString outer_name;
+};
+
+static Vector<ExportedPart> parse_exportparts_attribute(Element const& element)
+{
+    Vector<ExportedPart> result;
+    auto exportparts = element.get_attribute(HTML::AttributeNames::exportparts);
+    if (!exportparts.has_value())
+        return result;
+
+    exportparts->code_points().for_each_split_view([](u32 c) { return c == ','; }, SplitBehavior::Nothing, [&](Utf8View mapping) {
+        auto trimmed = mapping.as_string().trim_whitespace();
+        if (trimmed.is_empty())
+            return;
+
+        auto parts = trimmed.split_view(':', SplitBehavior::KeepEmpty);
+        if (parts.size() == 1) {
+            auto name = MUST(FlyString::from_utf8(parts[0].trim_whitespace()));
+            result.append({ name, name });
+        } else if (parts.size() == 2) {
+            auto inner_name = MUST(FlyString::from_utf8(parts[0].trim_whitespace()));
+            auto outer_name = MUST(FlyString::from_utf8(parts[1].trim_whitespace()));
+            result.append({ inner_name, outer_name });
+        } });
+
+    return result;
+}
+
 // https://drafts.csswg.org/css-shadow-1/#calculate-the-part-element-map
 void ShadowRoot::calculate_part_element_map()
 {
@@ -303,24 +339,40 @@ void ShadowRoot::calculate_part_element_map()
         for (auto const& name : element.part_names())
             m_part_element_map.ensure(name).set({ const_cast<Element&>(element), {} });
 
-        // FIXME: The rest of this concerns forwarded part names, which we don't implement yet.
-
         // 2. If el is a shadow host itself then let innerRoot be its shadow root.
-        // 3. Calculate innerRoot’s part element map.
-        // 4. For each innerName/outerName in el’s forwarded part name list:
-        {
-            // 1. If innerName is an ident:
-            {
-                // 1. Let innerParts be innerRoot’s part element map[innerName]
-                // 2. Append the elements in innerParts to outerRoot’s part element map[outerName]
-            }
-            // 2. If innerName is a pseudo-element name:
-            {
-                // 1. Append innerRoot’s pseudo-element(s) with that name to outerRoot’s part element map[outerName].
+        if (element.is_shadow_host()) {
+            auto inner_root = element.shadow_root();
+
+            // 3. Calculate innerRoot’s part element map.
+            auto const& inner_map = inner_root->part_element_map();
+
+            // 4. For each innerName/outerName in el’s forwarded part name list:
+            for (auto const& [inner_name, outer_name] : parse_exportparts_attribute(element)) {
+                // 1. If innerName is an ident:
+                if (auto it = inner_map.find(inner_name); it != inner_map.end()) {
+                    // 1. Let innerParts be innerRoot’s part element map[innerName]
+                    // 2. Append the elements in innerParts to outerRoot’s part element map[outerName]
+                    for (auto const& abstract_el : it->value)
+                        m_part_element_map.ensure(outer_name).set(abstract_el);
+                }
+                // FIXME: 2. If innerName is a pseudo-element name, append innerRoot’s
+                //        pseudo-element(s) with that name to outerRoot’s part element map[outerName].
             }
         }
+
         return TraversalDecision::Continue;
     });
+}
+
+// https://dom.spec.whatwg.org/#dom-documentorshadowroot-customelementregistry
+GC::Ptr<HTML::CustomElementRegistry> ShadowRoot::custom_element_registry() const
+{
+    // 1. If this is a document, then return this’s custom element registry.
+    // NB: Impossible.
+
+    // 2. Assert: this is a ShadowRoot node.
+    // 3. Return this’s custom element registry.
+    return m_custom_element_registry;
 }
 
 }

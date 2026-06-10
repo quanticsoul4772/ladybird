@@ -8,10 +8,12 @@
  */
 
 #include <AK/Utf16View.h>
-#include <LibWeb/Bindings/HTMLTextAreaElementPrototype.h>
+#include <LibWeb/Bindings/HTMLTextAreaElement.h>
+#include <LibWeb/Bindings/InputEvent.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/CSS/CSSStyleProperties.h>
 #include <LibWeb/CSS/ComputedProperties.h>
+#include <LibWeb/CSS/Invalidation/FormControlInvalidator.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/CSS/StyleValues/LengthStyleValue.h>
 #include <LibWeb/DOM/Document.h>
@@ -33,9 +35,6 @@ GC_DEFINE_ALLOCATOR(HTMLTextAreaElement);
 
 HTMLTextAreaElement::HTMLTextAreaElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
-    , m_input_event_timer(Core::Timer::create_single_shot(0, GC::weak_callback(*this, [](auto& self) {
-        self.queue_firing_input_event();
-    })))
 {
 }
 
@@ -72,10 +71,10 @@ void HTMLTextAreaElement::did_receive_focus()
 {
     if (!m_text_node)
         return;
-    m_text_node->invalidate_style(DOM::StyleInvalidationReason::DidReceiveFocus);
+    m_text_node->set_needs_repaint();
 
     if (m_placeholder_text_node)
-        m_placeholder_text_node->invalidate_style(DOM::StyleInvalidationReason::DidReceiveFocus);
+        m_placeholder_text_node->set_needs_repaint();
 
     document().get_selection()->remove_all_ranges();
 }
@@ -83,10 +82,10 @@ void HTMLTextAreaElement::did_receive_focus()
 void HTMLTextAreaElement::did_lose_focus()
 {
     if (m_text_node)
-        m_text_node->invalidate_style(DOM::StyleInvalidationReason::DidLoseFocus);
+        m_text_node->set_needs_repaint();
 
     if (m_placeholder_text_node)
-        m_placeholder_text_node->invalidate_style(DOM::StyleInvalidationReason::DidLoseFocus);
+        m_placeholder_text_node->set_needs_repaint();
 
     // The change event fires when the value is committed, if that makes sense for the control,
     // or else when the control loses focus
@@ -113,6 +112,9 @@ void HTMLTextAreaElement::reset_algorithm()
     // and the raw value to its child text content.
     set_raw_value(child_text_content());
 
+    // AD-HOC: Resetting may change the value and the user validity, affecting which validity pseudo-classes match.
+    CSS::Invalidation::invalidate_style_after_validity_change(*this);
+
     if (m_text_node) {
         MUST(m_text_node->replace_data(0, m_text_node->length_in_utf16_code_units(), m_raw_value));
         update_placeholder_visibility();
@@ -130,7 +132,13 @@ void HTMLTextAreaElement::clear_algorithm()
 
     // Unlike their associated reset algorithms, changes made to form controls as part of these algorithms do count as
     // changes caused by the user (and thus, e.g. do cause input events to fire).
-    queue_firing_input_event();
+    queue_an_element_task(HTML::Task::Source::UserInteraction, [this]() {
+        Bindings::InputEventInit input_event_init;
+        input_event_init.bubbles = true;
+        input_event_init.composed = true;
+        auto input_event = UIEvents::InputEvent::create_from_platform_event(realm(), HTML::EventNames::input, input_event_init);
+        dispatch_event(input_event);
+    });
 }
 
 // https://html.spec.whatwg.org/multipage/forms.html#the-textarea-element:concept-node-clone-ext
@@ -187,6 +195,9 @@ void HTMLTextAreaElement::set_value(Utf16String const& value)
     // 4. If the new API value is different from oldAPIValue, then move the text entry cursor position to the end of
     //    the text control, unselecting any selected text and resetting the selection direction to "none".
     if (api_value() != old_api_value) {
+        // AD-HOC: Changing the value may change which validity pseudo-classes match.
+        CSS::Invalidation::invalidate_style_after_validity_change(*this);
+
         if (m_text_node) {
             MUST(m_text_node->replace_data(0, m_text_node->length_in_utf16_code_units(), m_raw_value));
             update_placeholder_visibility();
@@ -354,8 +365,8 @@ void HTMLTextAreaElement::create_shadow_tree_if_needed()
     MUST(m_inner_text_element->append_child(*m_text_node));
 
     m_placeholder_element = MUST(DOM::create_element(document(), HTML::TagNames::div, Namespace::HTML));
-    m_placeholder_element->set_use_pseudo_element(CSS::PseudoElement::Placeholder);
     MUST(element->append_child(*m_placeholder_element));
+    m_placeholder_element->set_associated_shadow_host_pseudo_element(CSS::PseudoElement::Placeholder);
 
     m_placeholder_text_node = realm().create<DOM::Text>(document(), Utf16String::from_utf8(get_attribute_value(HTML::AttributeNames::placeholder)));
     MUST(m_placeholder_element->append_child(*m_placeholder_text_node));
@@ -393,7 +404,7 @@ void HTMLTextAreaElement::update_placeholder_visibility()
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#the-textarea-element:children-changed-steps
-void HTMLTextAreaElement::children_changed(ChildrenChangedMetadata const* metadata)
+void HTMLTextAreaElement::children_changed(ChildrenChangedMetadata const& metadata)
 {
     Base::children_changed(metadata);
 
@@ -416,6 +427,11 @@ void HTMLTextAreaElement::form_associated_element_attribute_changed(FlyString co
     } else if (name == HTML::AttributeNames::maxlength) {
         handle_maxlength_attribute();
     }
+
+    // AD-HOC: A change to any of these attributes can change whether the element satisfies its constraints, and
+    //         therefore which validity pseudo-classes match.
+    if (first_is_one_of(name, HTML::AttributeNames::required, HTML::AttributeNames::maxlength, HTML::AttributeNames::minlength))
+        CSS::Invalidation::invalidate_style_after_validity_change(*this);
 }
 
 void HTMLTextAreaElement::did_edit_text_node(FlyString const& input_type, Optional<Utf16String> const& data)
@@ -423,14 +439,21 @@ void HTMLTextAreaElement::did_edit_text_node(FlyString const& input_type, Option
     VERIFY(m_text_node);
     set_raw_value(m_text_node->data());
 
+    // AD-HOC: Editing the value may change which validity pseudo-classes match.
+    CSS::Invalidation::invalidate_style_after_validity_change(*this);
+
     // Any time the user causes the element's raw value to change, the user agent must queue an element task on the user
     // interaction task source given the textarea element to fire an event named input at the textarea element, with the
-    // bubbles and composed attributes initialized to true. User agents may wait for a suitable break in the user's
-    // interaction before queuing the task; for example, a user agent could wait for the user to have not hit a key for
-    // 100ms, so as to only fire the event when the user pauses, instead of continuously for each keystroke.
-    m_pending_input_event_type = input_type;
-    m_pending_input_event_data = data;
-    m_input_event_timer->restart(100);
+    // bubbles and composed attributes initialized to true.
+    queue_an_element_task(HTML::Task::Source::UserInteraction, [this, input_type, data]() {
+        Bindings::InputEventInit input_event_init;
+        input_event_init.bubbles = true;
+        input_event_init.composed = true;
+        input_event_init.input_type = input_type.to_string();
+        input_event_init.data = data;
+        auto input_event = UIEvents::InputEvent::create_from_platform_event(realm(), HTML::EventNames::input, input_event_init);
+        dispatch_event(input_event);
+    });
 
     // A textarea element's dirty value flag must be set to true whenever the user interacts with the control in a way that changes the raw value.
     m_dirty_value = true;
@@ -444,23 +467,9 @@ EventResult HTMLTextAreaElement::handle_return_key(FlyString const& input_type)
     return EventResult::Handled;
 }
 
-void HTMLTextAreaElement::queue_firing_input_event()
-{
-    queue_an_element_task(HTML::Task::Source::UserInteraction, [this]() {
-        // https://w3c.github.io/uievents/#event-type-input
-        UIEvents::InputEventInit input_event_init;
-        input_event_init.bubbles = true;
-        input_event_init.composed = true;
-        input_event_init.input_type = m_pending_input_event_type;
-        input_event_init.data = m_pending_input_event_data;
-        auto input_event = UIEvents::InputEvent::create_from_platform_event(realm(), HTML::EventNames::input, input_event_init);
-        dispatch_event(input_event);
-    });
-}
-
 bool HTMLTextAreaElement::is_focusable() const
 {
-    return enabled();
+    return enabled() && meets_focusable_area_rendering_requirements();
 }
 
 // https://html.spec.whatwg.org/multipage/form-elements.html#the-textarea-element%3Asuffering-from-being-missing
@@ -488,9 +497,9 @@ Optional<String> HTMLTextAreaElement::placeholder_value() const
     return get_attribute_value(HTML::AttributeNames::placeholder);
 }
 
-GC::Ptr<Layout::Node> HTMLTextAreaElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+RefPtr<Layout::Node> HTMLTextAreaElement::create_layout_node(CSS::ComputedProperties const& style)
 {
-    return heap().allocate<Layout::TextAreaBox>(document(), *this, style);
+    return make_ref_counted<Layout::TextAreaBox>(document(), *this, style);
 }
 
 }

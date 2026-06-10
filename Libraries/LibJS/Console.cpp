@@ -54,7 +54,7 @@ ThrowCompletionOr<Value> Console::assert_()
     auto message = PrimitiveString::create(vm, "Assertion failed"_string);
 
     // NOTE: Assemble `data` from the function arguments.
-    GC::RootVector<Value> data { vm.heap() };
+    GC::RootVector<Value> data;
     if (vm.argument_count() > 1) {
         data.ensure_capacity(vm.argument_count() - 1);
         for (size_t i = 1; i < vm.argument_count(); ++i) {
@@ -146,7 +146,7 @@ ThrowCompletionOr<Value> Console::log()
 }
 
 // To [create table row] given tabularDataItem, rowIndex, list finalColumns, and optional list properties, perform the following steps:
-static ThrowCompletionOr<GC::Ref<Object>> create_table_row(Realm& realm, Value row_index, Value tabular_data_item, GC::RootVector<Value>& final_columns, HashMap<PropertyKey, bool>& visited_columns, HashMap<PropertyKey, bool>& properties)
+static ThrowCompletionOr<GC::Ref<Object>> create_table_row(Realm& realm, Value row_index, Value tabular_data_item, GC::RootVector<Value>& final_columns, GC::ConservativeHashTable<PropertyKey>& visited_columns, GC::ConservativeHashTable<PropertyKey>& properties)
 {
     auto& vm = realm.vm();
 
@@ -156,7 +156,7 @@ static ThrowCompletionOr<GC::Ref<Object>> create_table_row(Realm& realm, Value r
         // if a column is already visited without needing to loop through the whole
         // array.
         if (!visited_columns.contains(column_name)) {
-            visited_columns.set(column_name, true);
+            visited_columns.set(column_name);
 
             if (column_name.is_string()) {
                 final_columns.append(PrimitiveString::create(vm, column_name.as_string()));
@@ -183,17 +183,17 @@ static ThrowCompletionOr<GC::Ref<Object>> create_table_row(Realm& realm, Value r
 
     // 3. If `tabularDataItem` is a list, then:
     if (TRY(tabular_data_item.is_array(vm))) {
-        auto& array = tabular_data_item.as_array();
+        auto& array_like = tabular_data_item.as_object();
 
         // 3.1. Let `indices` be get the indices of `tabularDataItem`
-        auto& indices = array.indexed_properties();
+        auto length = TRY(length_of_array_like(vm, array_like));
 
         // 3.2. For each `index` of `indices`
-        for (auto const& prop : indices) {
-            PropertyKey key(prop.index());
+        for (size_t i = 0; i < length; ++i) {
+            PropertyKey key(i);
 
             // 3.2.1. Let `value` be `tabularDataItem[index]`
-            Value value = TRY(array.get(key));
+            Value value = TRY(array_like.get(key));
 
             // 3.2.2. If `properties` is not empty and `properties` does not contain `index`, continue
             if (properties.size() > 0 && !properties.contains(key)) {
@@ -253,38 +253,39 @@ ThrowCompletionOr<Value> Console::table()
         auto tabular_data = vm.argument(0);
         auto properties_arg = vm.argument(1);
 
-        HashMap<PropertyKey, bool> properties;
+        GC::ConservativeHashTable<PropertyKey> properties;
 
         if (TRY(properties_arg.is_array(vm))) {
-            auto& properties_array = properties_arg.as_array().indexed_properties();
-            auto* properties_storage = properties_array.storage();
-            for (auto const& col : properties_array) {
-                auto col_name = properties_storage->get(col.index()).value().value;
-                properties.set(TRY(PropertyKey::from_value(vm, col_name)), true);
+            auto& properties_arr = properties_arg.as_object();
+            auto properties_length = TRY(length_of_array_like(vm, properties_arr));
+            for (size_t index = 0; index < properties_length; ++index) {
+                auto value = TRY(properties_arr.get(index));
+                if (!value.is_undefined())
+                    properties.set(TRY(PropertyKey::from_value(vm, value)));
             }
         }
 
         // 1. Let `finalRows` be the new list, initially empty
-        GC::RootVector<Value> final_rows(vm.heap());
+        GC::RootVector<Value> final_rows;
 
         // 2. Let `finalColumns` be the new list, initially empty
-        GC::RootVector<Value> final_columns(vm.heap());
+        GC::RootVector<Value> final_columns;
 
-        HashMap<PropertyKey, bool> visited_columns;
+        GC::ConservativeHashTable<PropertyKey> visited_columns;
 
         // 3. If `tabularData` is a list, then:
         if (TRY(tabular_data.is_array(vm))) {
-            auto& array = tabular_data.as_array();
+            auto& array_like = tabular_data.as_object();
 
             // 3.1. Let `indices` be get the indices of `tabularData`
-            auto& indices = array.indexed_properties();
+            auto length = TRY(length_of_array_like(vm, array_like));
 
             // 3.2. For each `index` of `indices`
-            for (auto const& prop : indices) {
-                PropertyKey index(prop.index());
+            for (size_t idx = 0; idx < length; ++idx) {
+                PropertyKey index(idx);
 
                 // 3.2.1. Let `value` be `tabularData[index]`
-                Value value = TRY(array.get(index));
+                Value value = TRY(array_like.get(index));
 
                 // 3.2.2. Perform create table row with `value`, `key`, `finalColumns`, and `properties` that returns `row`
                 auto row = TRY(create_table_row(realm(), Value(index.as_number()), value, final_columns, visited_columns, properties));
@@ -326,7 +327,7 @@ ThrowCompletionOr<Value> Console::table()
             TRY(final_data->set(vm.names.columns, table_cols, Object::ShouldThrowExceptions::No));
 
             // 5.4. Perform `Printer("table", finalData)`
-            GC::RootVector<Value> args(vm.heap());
+            GC::RootVector<Value> args;
             args.append(Value(final_data));
             return m_client->printer(LogLevel::Table, args);
         }
@@ -358,8 +359,8 @@ ThrowCompletionOr<Value> Console::trace()
         auto function_name = (context && context->function) ? context->function->name_for_call_stack() : ""_utf16;
         frame.function_name = function_name.is_empty() ? "<anonymous>"_string : function_name.to_utf8();
 
-        if (element.source_range) {
-            auto const& source_range = element.source_range->realize_source_range();
+        if (element.source_range.has_value()) {
+            auto const& source_range = *element.source_range;
             if (!source_range.filename().is_empty()) {
                 frame.source_file = MUST(String::from_byte_string(source_range.filename()));
                 frame.line = source_range.start.line;
@@ -403,7 +404,7 @@ ThrowCompletionOr<Value> Console::dir()
 
     // 2. Perform Printer("dir", « object », options).
     if (m_client) {
-        GC::RootVector<Value> printer_arguments { vm.heap() };
+        GC::RootVector<Value> printer_arguments;
         TRY_OR_THROW_OOM(vm, printer_arguments.try_append(object));
 
         return m_client->printer(LogLevel::Dir, move(printer_arguments));
@@ -418,7 +419,7 @@ ThrowCompletionOr<Value> Console::dirxml()
     auto& vm = realm().vm();
 
     // 1. Let finalList be a new list, initially empty.
-    GC::RootVector<Value> final_list(vm.heap());
+    GC::RootVector<Value> final_list;
 
     // 2. For each item of data:
     for (size_t i = 0; i < vm.argument_count(); ++i) {
@@ -471,7 +472,7 @@ ThrowCompletionOr<Value> Console::count()
     auto concat = TRY_OR_THROW_OOM(vm, String::formatted("{}: {}", label, map.get(label).value()));
 
     // 5. Perform Logger("count", « concat »).
-    GC::RootVector<Value> concat_as_vector { vm.heap() };
+    GC::RootVector<Value> concat_as_vector;
     concat_as_vector.append(PrimitiveString::create(vm, move(concat)));
     if (m_client)
         TRY(m_client->logger(LogLevel::Count, concat_as_vector));
@@ -499,7 +500,7 @@ ThrowCompletionOr<Value> Console::count_reset()
         //    that the given label does not have an associated count.
         auto message = TRY_OR_THROW_OOM(vm, String::formatted("\"{}\" doesn't have a count", label));
         // 2. Perform Logger("countReset", « message »);
-        GC::RootVector<Value> message_as_vector { vm.heap() };
+        GC::RootVector<Value> message_as_vector;
         message_as_vector.append(PrimitiveString::create(vm, move(message)));
         if (m_client)
             TRY(m_client->logger(LogLevel::CountReset, message_as_vector));
@@ -518,8 +519,12 @@ ThrowCompletionOr<Value> Console::group()
     String group_label {};
     auto data = vm_arguments();
     if (!data.is_empty()) {
-        auto formatted_data = TRY(m_client->formatter(data));
-        group_label = TRY(value_vector_to_string(formatted_data));
+        if (m_client) {
+            auto formatted_data = TRY(m_client->formatter(data));
+            group_label = TRY(value_vector_to_string(formatted_data));
+        } else {
+            group_label = TRY(value_vector_to_string(data));
+        }
     }
     // ... Otherwise, let groupLabel be an implementation-chosen label representing a group.
     else {
@@ -552,8 +557,12 @@ ThrowCompletionOr<Value> Console::group_collapsed()
     String group_label {};
     auto data = vm_arguments();
     if (!data.is_empty()) {
-        auto formatted_data = TRY(m_client->formatter(data));
-        group_label = TRY(value_vector_to_string(formatted_data));
+        if (m_client) {
+            auto formatted_data = TRY(m_client->formatter(data));
+            group_label = TRY(value_vector_to_string(formatted_data));
+        } else {
+            group_label = TRY(value_vector_to_string(data));
+        }
     }
     // ... Otherwise, let groupLabel be an implementation-chosen label representing a group.
     else {
@@ -602,7 +611,7 @@ ThrowCompletionOr<Value> Console::time()
     //    a warning to the console indicating that a timer with label `label` has already been started.
     if (m_timer_table.contains(label)) {
         if (m_client) {
-            GC::RootVector<Value> timer_already_exists_warning_message_as_vector { vm.heap() };
+            GC::RootVector<Value> timer_already_exists_warning_message_as_vector;
 
             auto message = TRY_OR_THROW_OOM(vm, String::formatted("Timer '{}' already exists.", label));
             timer_already_exists_warning_message_as_vector.append(PrimitiveString::create(vm, move(message)));
@@ -633,7 +642,7 @@ ThrowCompletionOr<Value> Console::time_log()
     // NOTE: Warn if the timer doesn't exist. Not part of the spec yet, but discussed here: https://github.com/whatwg/console/issues/134
     if (maybe_start_time == m_timer_table.end()) {
         if (m_client) {
-            GC::RootVector<Value> timer_does_not_exist_warning_message_as_vector { vm.heap() };
+            GC::RootVector<Value> timer_does_not_exist_warning_message_as_vector;
 
             auto message = TRY_OR_THROW_OOM(vm, String::formatted("Timer '{}' does not exist.", label));
             timer_does_not_exist_warning_message_as_vector.append(PrimitiveString::create(vm, move(message)));
@@ -651,7 +660,7 @@ ThrowCompletionOr<Value> Console::time_log()
     auto concat = TRY_OR_THROW_OOM(vm, String::formatted("{}: {}", label, duration));
 
     // 5. Prepend concat to data.
-    GC::RootVector<Value> data { vm.heap() };
+    GC::RootVector<Value> data;
     data.ensure_capacity(vm.argument_count());
     data.append(PrimitiveString::create(vm, move(concat)));
     for (size_t i = 1; i < vm.argument_count(); ++i)
@@ -679,7 +688,7 @@ ThrowCompletionOr<Value> Console::time_end()
     // NOTE: Warn if the timer doesn't exist. Not part of the spec yet, but discussed here: https://github.com/whatwg/console/issues/134
     if (maybe_start_time == m_timer_table.end()) {
         if (m_client) {
-            GC::RootVector<Value> timer_does_not_exist_warning_message_as_vector { vm.heap() };
+            GC::RootVector<Value> timer_does_not_exist_warning_message_as_vector;
 
             auto message = TRY_OR_THROW_OOM(vm, String::formatted("Timer '{}' does not exist.", label));
             timer_does_not_exist_warning_message_as_vector.append(PrimitiveString::create(vm, move(message)));
@@ -701,7 +710,7 @@ ThrowCompletionOr<Value> Console::time_end()
 
     // 6. Perform Printer("timeEnd", « concat »).
     if (m_client) {
-        GC::RootVector<Value> concat_as_vector { vm.heap() };
+        GC::RootVector<Value> concat_as_vector;
         concat_as_vector.append(PrimitiveString::create(vm, move(concat)));
         TRY(m_client->printer(LogLevel::TimeEnd, move(concat_as_vector)));
     }
@@ -712,7 +721,7 @@ GC::RootVector<Value> Console::vm_arguments()
 {
     auto& vm = realm().vm();
 
-    GC::RootVector<Value> arguments { vm.heap() };
+    GC::RootVector<Value> arguments;
     arguments.ensure_capacity(vm.argument_count());
     for (size_t i = 0; i < vm.argument_count(); ++i) {
         arguments.append(vm.argument(i));
@@ -744,10 +753,10 @@ void Console::output_debug_message(LogLevel log_level, StringView output) const
     }
 }
 
-void Console::report_exception(JS::Error const& exception, bool in_promise) const
+void Console::report_exception(String const& name, String const& message, JS::ErrorData const& error_data, bool in_promise) const
 {
     if (m_client)
-        m_client->report_exception(exception, in_promise);
+        m_client->report_exception(name, message, error_data, in_promise);
 }
 
 ThrowCompletionOr<String> Console::value_vector_to_string(GC::RootVector<Value> const& values)
@@ -781,8 +790,6 @@ void ConsoleClient::visit_edges(Visitor& visitor)
 // 2.1. Logger(logLevel, args), https://console.spec.whatwg.org/#logger
 ThrowCompletionOr<Value> ConsoleClient::logger(Console::LogLevel log_level, GC::RootVector<Value> const& args)
 {
-    auto& vm = m_console->realm().vm();
-
     // 1. If args is empty, return.
     if (args.is_empty())
         return js_undefined();
@@ -795,11 +802,10 @@ ThrowCompletionOr<Value> ConsoleClient::logger(Console::LogLevel log_level, GC::
 
     // 4. If rest is empty, perform Printer(logLevel, « first ») and return.
     if (rest_size == 0) {
-        GC::RootVector<Value> first_as_vector { vm.heap() };
+        GC::RootVector<Value> first_as_vector;
         first_as_vector.append(first);
         return printer(log_level, move(first_as_vector));
     }
-
     // 5. Otherwise, perform Printer(logLevel, Formatter(args)).
     else {
         auto formatted = TRY(formatter(args));
@@ -913,7 +919,7 @@ ThrowCompletionOr<GC::RootVector<Value>> ConsoleClient::formatter(GC::RootVector
     }
 
     // 7. Let result be a list containing target together with the elements of args starting from the third onward.
-    GC::RootVector<Value> result { vm.heap() };
+    GC::RootVector<Value> result;
     result.ensure_capacity(args.size() - 1);
     result.empend(PrimitiveString::create(vm, move(target)));
     for (size_t i = 2; i < args.size(); ++i)

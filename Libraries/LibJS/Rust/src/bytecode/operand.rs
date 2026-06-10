@@ -78,10 +78,7 @@ impl Operand {
     }
 
     pub fn operand_type(self) -> OperandType {
-        assert!(
-            !self.is_invalid(),
-            "operand_type() called on INVALID operand"
-        );
+        assert!(!self.is_invalid(), "operand_type() called on INVALID operand");
         match (self.0 >> Self::TYPE_SHIFT) & 0x7 {
             0 => OperandType::Register,
             1 => OperandType::Local,
@@ -155,7 +152,7 @@ pub struct PropertyKeyTableIndex(pub u32);
 #[derive(Debug, Clone, Copy)]
 pub struct RegexTableIndex(pub u32);
 
-/// Environment coordinate used as a mutable cache in some instructions.
+/// Environment coordinate used by environment lookup instructions.
 /// Layout: two `u32` fields (hops + index).
 #[derive(Debug, Clone, Copy)]
 pub struct EnvironmentCoordinate {

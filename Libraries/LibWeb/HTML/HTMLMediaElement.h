@@ -9,6 +9,7 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
+#include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/Time.h>
 #include <AK/Variant.h>
@@ -16,11 +17,12 @@
 #include <LibGfx/Rect.h>
 #include <LibMedia/Forward.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
+#include <LibWeb/FileAPI/Blob.h>
 #include <LibWeb/HTML/CORSSettingAttribute.h>
 #include <LibWeb/HTML/EventLoop/Task.h>
 #include <LibWeb/HTML/HTMLElement.h>
 #include <LibWeb/HTML/MediaControls.h>
-#include <LibWeb/Painting/ExternalContentSource.h>
+#include <LibWeb/Painting/DisplayListResourceIds.h>
 #include <LibWeb/PixelUnits.h>
 #include <LibWeb/WebIDL/DOMException.h>
 
@@ -33,6 +35,8 @@ enum class MediaSeekMode : u8 {
 
 class SourceElementSelector;
 
+using OptionalMediaProvider = Variant<Empty, GC::Ref<MediaSourceExtensions::MediaSource>, GC::Ref<FileAPI::Blob>>;
+
 class HTMLMediaElement : public HTMLElement {
     WEB_PLATFORM_OBJECT(HTMLMediaElement, HTMLElement);
 
@@ -41,7 +45,10 @@ public:
 
     virtual ~HTMLMediaElement() override;
 
-    virtual bool is_focusable() const override { return true; }
+    virtual bool is_focusable() const override
+    {
+        return meets_focusable_area_rendering_requirements();
+    }
 
     virtual void adjust_computed_style(CSS::ComputedProperties& style) override;
 
@@ -55,6 +62,9 @@ public:
 
     String const& current_src() const { return m_current_src; }
     void select_resource();
+
+    OptionalMediaProvider src_object() const;
+    WebIDL::ExceptionOr<void> set_src_object(OptionalMediaProvider);
 
     enum class NetworkState : u8 {
         Empty,
@@ -108,13 +118,13 @@ public:
     void set_current_playback_position(double);
 
     double duration() const;
+    JS::Object* get_start_date();
     bool show_poster() const { return m_show_poster; }
     bool paused() const { return m_paused; }
     bool ended() const;
     bool potentially_playing() const;
     GC::Ref<WebIDL::Promise> play();
     void pause();
-    void toggle_playback();
 
     double volume() const { return m_volume; }
     WebIDL::ExceptionOr<void> set_volume(double);
@@ -146,6 +156,16 @@ public:
 
     GC::Ref<TextTrack> add_text_track(Bindings::TextTrackKind kind, String const& label, String const& language);
 
+    void update_ready_state();
+
+    void set_duration(Badge<MediaSourceExtensions::MediaSource>, double duration) { set_duration(duration); }
+
+    Media::PlaybackManager& playback_manager()
+    {
+        VERIFY(m_playback_manager);
+        return *m_playback_manager;
+    }
+
     void create_controls();
     void destroy_controls();
 
@@ -153,7 +173,11 @@ public:
 
     RefPtr<Media::DisplayingVideoSink> const& selected_video_track_sink() const { return m_selected_video_track_sink; }
 
-    Painting::ExternalContentSource& ensure_external_content_source();
+    Painting::VideoFrameResourceId ensure_video_frame_resource_id();
+    Optional<Painting::VideoFrameResourceId> video_frame_resource_id() const { return m_video_frame_resource_id; }
+
+    virtual bool update_intrinsic_video_dimensions() { return false; }
+    virtual void update_natural_dimensions() { }
 
 protected:
     HTMLMediaElement(DOM::Document&, DOM::QualifiedName);
@@ -163,13 +187,13 @@ protected:
     virtual void visit_edges(Cell::Visitor&) override;
 
     virtual void attribute_changed(FlyString const& name, Optional<String> const& old_value, Optional<String> const& value, Optional<FlyString> const& namespace_) override;
-    virtual void removed_from(DOM::Node* old_parent, DOM::Node& old_root) override;
-    virtual void children_changed(ChildrenChangedMetadata const* metadata) override;
+    virtual void removed_from(IsSubtreeRoot, DOM::Node* old_ancestor, DOM::Node& old_root) override;
+    virtual void children_changed(ChildrenChangedMetadata const& metadata) override;
 
 private:
     friend SourceElementSelector;
 
-    struct FetchData;
+    struct RemoteFetchData;
 
     virtual bool is_html_media_element() const final { return true; }
 
@@ -181,16 +205,23 @@ private:
 
     Task::Source media_element_event_task_source() const { return m_media_element_event_task_source.source; }
 
+    using MediaProviderObject = Variant<Empty, GC::Ref<MediaSourceExtensions::MediaSource>, GC::Ref<FileAPI::Blob>>;
+    MediaProviderObject const& assigned_media_provider_object() const;
+    MediaProviderObject& assigned_media_provider_object();
+    void set_assigned_media_provider_object(MediaProviderObject const&);
+
     WebIDL::ExceptionOr<void> load_element();
 
-    void fetch_resource(URL::URL const&, ESCAPING Function<void(String)> failure_callback);
-    void fetch_resource(ByteRange const&);
+    void load_url_resource(URL::URL const&, ESCAPING Function<void(String)> failure_callback);
+    void load_remote_resource(ByteRange const&);
+    void load_local_resource(MediaProviderObject const&, ESCAPING Function<void(String)> failure_callback);
 
     Optional<String> verify_response_or_get_failure_reason(GC::Ref<Fetch::Infrastructure::Response>, ByteRange const&);
 
     void restart_fetch_at_offset(u64 offset);
 
-    void set_up_playback_manager();
+    void set_up_playback_manager_for_remote();
+    void set_up_playback_manager_for_local();
     enum class FetchingStatus : u8 {
         Ongoing,
         Complete,
@@ -218,6 +249,9 @@ private:
 
     void volume_or_muted_attribute_changed();
     void update_volume();
+    void update_compositor_video_frame(NonnullRefPtr<Media::VideoFrame const>);
+    void clear_compositor_video_frame();
+    void update_current_video_frame();
 
     bool is_eligible_for_autoplay() const;
 
@@ -262,6 +296,9 @@ private:
     // https://html.spec.whatwg.org/multipage/media.html#dom-media-crossorigin
     CORSSettingAttribute m_crossorigin { CORSSettingAttribute::NoCORS };
 
+    // https://html.spec.whatwg.org/multipage/media.html#assigned-media-provider-object
+    MediaProviderObject m_assigned_media_provider_object;
+
     // https://html.spec.whatwg.org/multipage/media.html#dom-media-currentsrc
     String m_current_src;
 
@@ -289,6 +326,9 @@ private:
 
     // https://html.spec.whatwg.org/multipage/media.html#dom-media-duration
     double m_duration { NAN };
+
+    // https://html.spec.whatwg.org/multipage/media.html#timeline-offset
+    Optional<AK::UnixDateTime> m_timeline_offset;
 
     // https://html.spec.whatwg.org/multipage/media.html#list-of-pending-play-promises
     Vector<GC::Ref<WebIDL::Promise>> m_pending_play_promises;
@@ -329,11 +369,13 @@ private:
     bool m_running_time_update_event_handler { false };
     Optional<MonotonicTime> m_last_time_update_event_time;
 
+    Optional<MonotonicTime> m_last_progress_event_time;
+
     GC::Ptr<DOM::DocumentObserver> m_document_observer;
 
     GC::Ptr<SourceElementSelector> m_source_element_selector;
 
-    OwnPtr<FetchData> m_fetch_data;
+    OwnPtr<RemoteFetchData> m_remote_fetch_data;
     u32 m_current_fetch_generation { 0 };
 
     OwnPtr<Media::PlaybackManager> m_playback_manager;
@@ -347,7 +389,7 @@ private:
     bool m_has_enabled_preferred_audio_track { false };
     bool m_has_selected_preferred_video_track { false };
 
-    RefPtr<Painting::ExternalContentSource> m_external_content_source;
+    Optional<Painting::VideoFrameResourceId> m_video_frame_resource_id;
 };
 
 }

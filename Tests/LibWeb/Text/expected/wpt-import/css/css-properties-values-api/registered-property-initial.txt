@@ -2,8 +2,8 @@ Harness status: OK
 
 Found 29 tests
 
-12 Pass
-17 Fail
+18 Pass
+11 Fail
 Pass	Initial value for <length> correctly computed [calc(10px + 15px)]
 Pass	Initial value for <length> correctly computed [1in]
 Pass	Initial value for <length> correctly computed [2.54cm]
@@ -11,7 +11,7 @@ Pass	Initial value for <length> correctly computed [25.4mm]
 Pass	Initial value for <length> correctly computed [6pc]
 Pass	Initial value for <length> correctly computed [72pt]
 Pass	Initial value for <percentage> correctly computed [calc(10% + 20%)]
-Fail	Initial value for <length-percentage> correctly computed [calc(1in + 10% + 4px)]
+Pass	Initial value for <length-percentage> correctly computed [calc(1in + 10% + 4px)]
 Pass	Initial value for <color> correctly computed [pink, inherits]
 Pass	Initial value for <color> correctly computed [purple]
 Pass	Initial value for <transform-function> correctly computed [rotate(42deg)]
@@ -19,14 +19,14 @@ Pass	Initial value for <transform-list> correctly computed [scale(calc(2 + 2))]
 Pass	Initial value for <transform-list> correctly computed [scale(calc(2 + 1)) translateX(calc(3px + 1px))]
 Fail	Initial value for <url> correctly computed [url(a)]
 Fail	Initial value for <url>+ correctly computed [url(a) url(a)]
-Fail	Initial inherited value can be substituted [purple, color]
-Fail	Initial non-inherited value can be substituted [pink, background-color]
-Fail	Initial non-inherited value can be substituted [	foo	, --x]
+Pass	Initial inherited value can be substituted [purple, color]
+Pass	Initial non-inherited value can be substituted [pink, background-color]
+Pass	Initial non-inherited value can be substituted [	foo	, --x]
 Fail	Initial non-inherited value can be substituted [	1turn, --x]
 Fail	Initial non-inherited value can be substituted [ pink , --x]
-Fail	Initial non-inherited value can be substituted [	test, --x]
+Pass	Initial non-inherited value can be substituted [	test, --x]
 Fail	Initial non-inherited value can be substituted [calc(20 + 20 + 10), --x]
-Fail	Initial non-inherited value can be substituted [	calc(13% + 37px), --x]
+Pass	Initial non-inherited value can be substituted [	calc(13% + 37px), --x]
 Fail	Initial non-inherited value can be substituted [calc(10px + 15px), --x]
 Fail	Initial non-inherited value can be substituted [calc(13 + 37), --x]
 Fail	Initial non-inherited value can be substituted [calc(13% + 37%), --x]

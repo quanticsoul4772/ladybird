@@ -25,9 +25,11 @@ public:
 
     virtual void serialize(StringBuilder& builder, SerializationMode) const override { builder.append(serialize_an_identifier(m_custom_ident.to_string())); }
     virtual Vector<Parser::ComponentValue> tokenize() const override;
-    virtual GC::Ref<CSSStyleValue> reify(JS::Realm& realm, FlyString const&) const override;
+    virtual GC::Ref<CSSStyleValue> reify(JS::Realm& realm, Utf16FlyString const&) const override;
 
     bool properties_equal(CustomIdentStyleValue const& other) const { return m_custom_ident == other.m_custom_ident; }
+
+    virtual bool is_computationally_independent() const override { return true; }
 
 private:
     explicit CustomIdentStyleValue(FlyString custom_ident)

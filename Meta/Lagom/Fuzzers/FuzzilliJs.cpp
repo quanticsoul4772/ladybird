@@ -7,11 +7,9 @@
 #include <AK/Format.h>
 #include <AK/Function.h>
 #include <AK/StringView.h>
-#include <LibJS/Bytecode/Interpreter.h>
 #include <LibJS/Forward.h>
-#include <LibJS/Lexer.h>
-#include <LibJS/Parser.h>
 #include <LibJS/Runtime/GlobalObject.h>
+#include <LibJS/Runtime/VM.h>
 #include <errno.h>
 
 #include <stddef.h>
@@ -226,7 +224,7 @@ int main(int, char**)
             if (parse_result.is_error()) {
                 result = 1;
             } else {
-                auto completion = vm->bytecode_interpreter().run(parse_result.value());
+                auto completion = vm->run(parse_result.value());
                 if (completion.is_error()) {
                     result = 1;
                 }

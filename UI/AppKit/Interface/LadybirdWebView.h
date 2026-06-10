@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Forward.h>
+#include <AK/Function.h>
 #include <AK/StringUtils.h>
 #include <LibGfx/Forward.h>
 #include <LibURL/Forward.h>
@@ -59,6 +60,8 @@
 - (void)handleResize;
 - (void)handleDevicePixelRatioChange;
 - (void)handleDisplayRefreshRateChange;
+- (void)handleEnteredFullScreen;
+- (void)handleExitedFullScreen;
 - (void)handleExitFullScreen;
 - (void)handleVisibility:(BOOL)is_visible;
 
@@ -68,5 +71,7 @@
 - (void)findInPagePreviousMatch;
 
 - (void)requestClose;
+- (Function<void()>)prepareForImmediateClose;
+- (BOOL)needsBeforeUnloadCheck;
 
 @end

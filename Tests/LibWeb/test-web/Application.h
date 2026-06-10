@@ -8,6 +8,7 @@
 
 #include <AK/ByteString.h>
 #include <AK/Error.h>
+#include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibWebView/Application.h>
 
@@ -37,9 +38,9 @@ public:
     Vector<ByteString> test_globs;
 
     ByteString python_executable_path;
+    String invocation_command_line;
 
     bool dump_gc_graph { false };
-    bool debug_timeouts { false };
     bool fail_fast { false };
     size_t repeat_count { 1 };
     bool test_dry_run { false };
@@ -49,6 +50,7 @@ public:
     int per_test_timeout_in_seconds { 30 };
 
     u8 verbosity { 0 };
+    bool quiet { false };
 };
 
 }

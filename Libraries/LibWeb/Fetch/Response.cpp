@@ -7,7 +7,7 @@
 #include <LibJS/Runtime/Completion.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
-#include <LibWeb/Bindings/ResponsePrototype.h>
+#include <LibWeb/Bindings/Response.h>
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/Fetch/Enums.h>
 #include <LibWeb/Fetch/Infrastructure/HTTP/Bodies.h>
@@ -98,7 +98,7 @@ static bool is_valid_status_text(String const& status_text)
 }
 
 // https://fetch.spec.whatwg.org/#initialize-a-response
-WebIDL::ExceptionOr<void> Response::initialize_response(ResponseInit const& init, Optional<Infrastructure::BodyWithType> const& body)
+WebIDL::ExceptionOr<void> Response::initialize_response(Bindings::ResponseInit const& init, Optional<Infrastructure::BodyWithType> const& body)
 {
     // 1. If init["status"] is not in the range 200 to 599, inclusive, then throw a RangeError.
     if (init.status < 200 || init.status > 599)
@@ -136,7 +136,7 @@ WebIDL::ExceptionOr<void> Response::initialize_response(ResponseInit const& init
 }
 
 // https://fetch.spec.whatwg.org/#dom-response
-WebIDL::ExceptionOr<GC::Ref<Response>> Response::construct_impl(JS::Realm& realm, Optional<BodyInit> const& body, ResponseInit const& init)
+WebIDL::ExceptionOr<GC::Ref<Response>> Response::construct_impl(JS::Realm& realm, NullableBodyInit const& body, Bindings::ResponseInit const& init)
 {
     auto& vm = realm.vm();
 
@@ -155,8 +155,8 @@ WebIDL::ExceptionOr<GC::Ref<Response>> Response::construct_impl(JS::Realm& realm
     Optional<Infrastructure::BodyWithType> body_with_type;
 
     // 4. If body is non-null, then set bodyWithType to the result of extracting body.
-    if (body.has_value())
-        body_with_type = TRY(extract_body(realm, *body));
+    if (!body.has<Empty>())
+        body_with_type = TRY(extract_body(realm, body.downcast<BodyInit>()));
 
     // 5. Perform initialize a response given this, init, and bodyWithType.
     TRY(response_object->initialize_response(init, body_with_type));
@@ -178,7 +178,7 @@ WebIDL::ExceptionOr<GC::Ref<Response>> Response::redirect(JS::VM& vm, String con
     auto& realm = *vm.current_realm();
 
     // 1. Let parsedURL be the result of parsing url with current settings object’s API base URL.
-    auto api_base_url = HTML::current_principal_settings_object().api_base_url();
+    auto api_base_url = HTML::current_settings_object().api_base_url();
     auto parsed_url = DOMURL::parse(url, api_base_url);
 
     // 2. If parsedURL is failure, then throw a TypeError.
@@ -208,7 +208,7 @@ WebIDL::ExceptionOr<GC::Ref<Response>> Response::redirect(JS::VM& vm, String con
 }
 
 // https://fetch.spec.whatwg.org/#dom-response-json
-WebIDL::ExceptionOr<GC::Ref<Response>> Response::json(JS::VM& vm, JS::Value data, ResponseInit const& init)
+WebIDL::ExceptionOr<GC::Ref<Response>> Response::json(JS::VM& vm, JS::Value data, Bindings::ResponseInit const& init)
 {
     auto& realm = *vm.current_realm();
 

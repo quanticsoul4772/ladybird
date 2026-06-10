@@ -9,20 +9,13 @@
 
 #include <AK/Optional.h>
 #include <LibJS/Forward.h>
-#include <LibWeb/Bindings/AudioNodePrototype.h>
+#include <LibWeb/Bindings/AudioNode.h>
 #include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/DOM/EventTarget.h>
 #include <LibWeb/WebAudio/Types.h>
 #include <LibWeb/WebIDL/Types.h>
 
 namespace Web::WebAudio {
-
-// https://webaudio.github.io/web-audio-api/#AudioNodeOptions
-struct AudioNodeOptions {
-    Optional<WebIDL::UnsignedLong> channel_count;
-    Optional<Bindings::ChannelCountMode> channel_count_mode;
-    Optional<Bindings::ChannelInterpretation> channel_interpretation;
-};
 
 struct AudioNodeDefaultOptions {
     WebIDL::UnsignedLong channel_count;
@@ -85,7 +78,7 @@ public:
     virtual WebIDL::ExceptionOr<void> set_channel_interpretation(Bindings::ChannelInterpretation);
     Bindings::ChannelInterpretation channel_interpretation();
 
-    WebIDL::ExceptionOr<void> initialize_audio_node_options(AudioNodeOptions const& given_options, AudioNodeDefaultOptions const& default_options);
+    WebIDL::ExceptionOr<void> initialize_audio_node_options(Bindings::AudioNodeOptions const& given_options, AudioNodeDefaultOptions const& default_options);
 
     NodeID node_id() const { return m_node_id; }
 

@@ -7,26 +7,27 @@
 #include <AK/Base64.h>
 #include <AK/Checked.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/ImmutableBitmap.h>
+#include <LibGfx/SharedImage.h>
 #include <LibWeb/Bindings/ExceptionOrUtils.h>
-#include <LibWeb/Bindings/HTMLCanvasElementPrototype.h>
-#include <LibWeb/CSS/CascadedProperties.h>
+#include <LibWeb/Bindings/HTMLCanvasElement.h>
 #include <LibWeb/CSS/ComputedProperties.h>
 #include <LibWeb/CSS/StyleComputer.h>
 #include <LibWeb/CSS/StyleValues/DisplayStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
+#include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
 #include <LibWeb/CSS/StyleValues/RatioStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/Canvas/SerializeBitmap.h>
 #include <LibWeb/HTML/CanvasRenderingContext2D.h>
 #include <LibWeb/HTML/HTMLCanvasElement.h>
+#include <LibWeb/HTML/Navigable.h>
 #include <LibWeb/HTML/Numbers.h>
 #include <LibWeb/HTML/Scripting/ExceptionReporter.h>
-#include <LibWeb/HTML/TraversableNavigable.h>
 #include <LibWeb/Layout/CanvasBox.h>
 #include <LibWeb/Page/Page.h>
 #include <LibWeb/Platform/EventLoopPlugin.h>
+#include <LibWeb/Platform/FontPlugin.h>
 #include <LibWeb/WebGL/WebGL2RenderingContext.h>
 #include <LibWeb/WebGL/WebGLRenderingContext.h>
 #include <LibWeb/WebIDL/AbstractOperations.h>
@@ -53,6 +54,7 @@ void HTMLCanvasElement::initialize(JS::Realm& realm)
 
 void HTMLCanvasElement::finalize()
 {
+    clear_compositor_surface();
     Base::finalize();
     document().page().unregister_canvas_element({}, unique_id());
 }
@@ -60,18 +62,7 @@ void HTMLCanvasElement::finalize()
 void HTMLCanvasElement::visit_edges(Cell::Visitor& visitor)
 {
     Base::visit_edges(visitor);
-    m_context.visit(
-        [&](GC::Ref<CanvasRenderingContext2D>& context) {
-            visitor.visit(context);
-        },
-        [&](GC::Ref<WebGL::WebGLRenderingContext>& context) {
-            visitor.visit(context);
-        },
-        [&](GC::Ref<WebGL::WebGL2RenderingContext>& context) {
-            visitor.visit(context);
-        },
-        [](Empty) {
-        });
+    visitor.visit(m_context);
 }
 
 bool HTMLCanvasElement::is_presentational_hint(FlyString const& name) const
@@ -84,9 +75,9 @@ bool HTMLCanvasElement::is_presentational_hint(FlyString const& name) const
         HTML::AttributeNames::height);
 }
 
-void HTMLCanvasElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
+void HTMLCanvasElement::apply_presentational_hints(Vector<CSS::StyleProperty>& properties) const
 {
-    Base::apply_presentational_hints(cascaded_properties);
+    Base::apply_presentational_hints(properties);
     // https://html.spec.whatwg.org/multipage/rendering.html#attributes-for-embedded-content-and-images
     // The width and height attributes map to the aspect-ratio property on canvas elements.
 
@@ -97,14 +88,16 @@ void HTMLCanvasElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperti
     auto w = parse_non_negative_integer(get_attribute_value(HTML::AttributeNames::width));
     auto h = parse_non_negative_integer(get_attribute_value(HTML::AttributeNames::height));
 
-    if (w.has_value() && h.has_value())
-        // then the user agent is expected to use the parsed integers as a presentational hint for the 'aspect-ratio' property of the form auto w / h.
-        cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::AspectRatio,
-            CSS::StyleValueList::create(CSS::StyleValueVector {
-                                            CSS::KeywordStyleValue::create(CSS::Keyword::Auto),
-                                            CSS::RatioStyleValue::create(CSS::Ratio { static_cast<double>(w.value()), static_cast<double>(h.value()) }) },
-
-                CSS::StyleValueList::Separator::Space));
+    // then the user agent is expected to use the parsed integers as a presentational hint for the 'aspect-ratio' property of the form auto w / h.
+    if (w.has_value() && h.has_value()) {
+        auto aspect_ratio = CSS::StyleValueList::create(
+            CSS::StyleValueVector {
+                CSS::KeywordStyleValue::create(CSS::Keyword::Auto),
+                CSS::RatioStyleValue::create(CSS::NumberStyleValue::create(w.value()), CSS::NumberStyleValue::create(h.value())),
+            },
+            CSS::StyleValueList::Separator::Space);
+        properties.append({ .property_id = CSS::PropertyID::AspectRatio, .value = aspect_ratio });
+    }
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-width
@@ -139,17 +132,16 @@ WebIDL::UnsignedLong HTMLCanvasElement::height() const
     return 150;
 }
 
-Painting::ExternalContentSource& HTMLCanvasElement::ensure_external_content_source()
+Painting::CompositorSurfaceId HTMLCanvasElement::ensure_compositor_surface_id()
 {
-    if (!m_external_content_source)
-        m_external_content_source = Painting::ExternalContentSource::create();
-    return *m_external_content_source;
+    if (!m_compositor_surface_id.has_value())
+        m_compositor_surface_id = Painting::allocate_compositor_surface_id();
+    return *m_compositor_surface_id;
 }
 
 void HTMLCanvasElement::reset_context_to_default_state()
 {
-    if (m_external_content_source)
-        m_external_content_source->clear();
+    clear_compositor_surface();
     m_context.visit(
         [](GC::Ref<CanvasRenderingContext2D>& context) {
             context->reset_to_default_state();
@@ -163,6 +155,40 @@ void HTMLCanvasElement::reset_context_to_default_state()
         [](Empty) {
             // Do nothing.
         });
+}
+
+CSS::ComputationContext HTMLCanvasElement::canvas_font_computation_context()
+{
+    DOM::AbstractElement abstract_element { *this };
+    Optional<CSS::Length::ResolutionContext> length_resolution_context;
+
+    if (is_connected() && this->navigable()) {
+        length_resolution_context = CSS::Length::ResolutionContext::for_element(abstract_element);
+    } else {
+        // NB: This is similar to the document's LRC but using the default canvas context font size of 10px
+        CSS::Length::FontMetrics font_metrics { 10, Platform::FontPlugin::the().default_font(8)->pixel_metrics(), CSS::InitialValues::line_height() };
+
+        CSSPixelRect viewport_rect;
+        if (auto navigable = this->navigable())
+            viewport_rect = navigable->viewport_rect();
+
+        length_resolution_context = {
+            .viewport_rect = viewport_rect,
+            .font_metrics = font_metrics,
+            .root_font_metrics = font_metrics
+        };
+    }
+
+    return CSS::ComputationContext {
+        .length_resolution_context = length_resolution_context.value(),
+
+        // NB: We require a abstract element here since tree counting functions are allowed in font values unlike for
+        //     OffscreenCanvas
+        .abstract_element = abstract_element,
+
+        // NB: We don't require a color scheme since this is only used for resolving font values, not colors
+        .color_scheme = {}
+    };
 }
 
 void HTMLCanvasElement::notify_context_about_canvas_size_change()
@@ -213,9 +239,9 @@ void HTMLCanvasElement::attribute_changed(FlyString const& local_name, Optional<
     }
 }
 
-GC::Ptr<Layout::Node> HTMLCanvasElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+RefPtr<Layout::Node> HTMLCanvasElement::create_layout_node(CSS::ComputedProperties const& style)
 {
-    return heap().allocate<Layout::CanvasBox>(document(), *this, move(style));
+    return make_ref_counted<Layout::CanvasBox>(document(), *this, style);
 }
 
 void HTMLCanvasElement::adjust_computed_style(CSS::ComputedProperties& style)
@@ -262,7 +288,7 @@ JS::ThrowCompletionOr<HTMLCanvasElement::RenderingContext> HTMLCanvasElement::ge
     // NOTE: See the spec for the full table.
     if (type == "2d"sv) {
         if (TRY(create_2d_context(options)) == HasOrCreatedContext::Yes)
-            return GC::make_root(*m_context.get<GC::Ref<HTML::CanvasRenderingContext2D>>());
+            return m_context.get<GC::Ref<HTML::CanvasRenderingContext2D>>();
 
         return Empty {};
     }
@@ -270,14 +296,14 @@ JS::ThrowCompletionOr<HTMLCanvasElement::RenderingContext> HTMLCanvasElement::ge
     // NOTE: The WebGL spec says "experimental-webgl" is also acceptable and must be equivalent to "webgl". Other engines accept this, so we do too.
     if (type.is_one_of("webgl"sv, "experimental-webgl"sv)) {
         if (TRY(create_webgl_context<WebGL::WebGLRenderingContext>(options)) == HasOrCreatedContext::Yes)
-            return GC::make_root(*m_context.get<GC::Ref<WebGL::WebGLRenderingContext>>());
+            return m_context.get<GC::Ref<WebGL::WebGLRenderingContext>>();
 
         return Empty {};
     }
 
     if (type == "webgl2"sv) {
         if (TRY(create_webgl_context<WebGL::WebGL2RenderingContext>(options)) == HasOrCreatedContext::Yes)
-            return GC::make_root(*m_context.get<GC::Ref<WebGL::WebGL2RenderingContext>>());
+            return m_context.get<GC::Ref<WebGL::WebGL2RenderingContext>>();
 
         return Empty {};
     }
@@ -305,19 +331,18 @@ Gfx::IntSize HTMLCanvasElement::bitmap_size_for_canvas(size_t minimum_width, siz
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-todataurl
-String HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
+String HTMLCanvasElement::to_data_url(StringView type, Optional<JS::Value> js_quality)
 {
     // Track potential fingerprinting (Milestone 0.4 Phase 4)
     document().page().client().page_did_call_fingerprinting_api("canvas"sv, "toDataURL"sv);
 
-    // It is possible the canvas doesn't have a associated bitmap so create one
+    // It is possible the canvas doesn't have an associated bitmap so create one
     allocate_painting_surface_if_needed();
     auto surface = this->surface();
     auto size = bitmap_size_for_canvas();
     if (!surface && !size.is_empty()) {
         // If the context is not initialized yet, we need to allocate transparent surface for serialization
-        auto skia_backend_context = navigable()->traversable_navigable()->skia_backend_context();
-        surface = Gfx::PaintingSurface::create_with_size(skia_backend_context, size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
+        surface = Gfx::PaintingSurface::create_with_size(size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
     }
 
     // FIXME: 1. If this canvas element's bitmap's origin-clean flag is set to false, then throw a "SecurityError" DOMException.
@@ -328,9 +353,8 @@ String HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
         return "data:,"_string;
 
     // 3. Let file be a serialization of this canvas element's bitmap as a file, passing type and quality if given.
-    auto bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, surface->size()));
-    surface->read_into_bitmap(*bitmap);
-    Optional<double> quality = js_quality.is_number() ? js_quality.as_double() : Optional<double>();
+    auto bitmap = surface->snapshot_bitmap();
+    Optional<double> quality = js_quality.has_value() && js_quality->is_number() ? js_quality->as_double() : Optional<double>();
     auto file = serialize_bitmap(bitmap, type, quality);
 
     // 4. If file is null, then return "data:,".
@@ -348,7 +372,7 @@ String HTMLCanvasElement::to_data_url(StringView type, JS::Value js_quality)
 }
 
 // https://html.spec.whatwg.org/multipage/canvas.html#dom-canvas-toblob
-WebIDL::ExceptionOr<void> HTMLCanvasElement::to_blob(GC::Ref<WebIDL::CallbackType> callback, StringView type, JS::Value js_quality)
+WebIDL::ExceptionOr<void> HTMLCanvasElement::to_blob(GC::Ref<WebIDL::CallbackType> callback, StringView type, Optional<JS::Value> js_quality)
 {
     // Track potential fingerprinting (Milestone 0.4 Phase 4)
     document().page().client().page_did_call_fingerprinting_api("canvas"sv, "toBlob"sv);
@@ -360,7 +384,7 @@ WebIDL::ExceptionOr<void> HTMLCanvasElement::to_blob(GC::Ref<WebIDL::CallbackTyp
     //    then set result to a copy of this canvas element's bitmap.
     auto bitmap_result = get_bitmap_from_surface();
 
-    Optional<double> quality = js_quality.is_number() ? js_quality.as_double() : Optional<double>();
+    Optional<double> quality = js_quality.has_value() && js_quality->is_number() ? js_quality->as_double() : Optional<double>();
 
     // 4. Run these steps in parallel:
     Platform::EventLoopPlugin::the().deferred_invoke(GC::create_function(heap(), [this, callback, bitmap_result, type, quality] {
@@ -397,14 +421,12 @@ RefPtr<Gfx::Bitmap> HTMLCanvasElement::get_bitmap_from_surface()
     auto surface = this->surface();
     if (auto const size = bitmap_size_for_canvas(); !surface && !size.is_empty()) {
         // If the context is not initialized yet, we need to allocate transparent surface for serialization
-        auto const skia_backend_context = navigable()->traversable_navigable()->skia_backend_context();
-        surface = Gfx::PaintingSurface::create_with_size(skia_backend_context, size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
+        surface = Gfx::PaintingSurface::create_with_size(size, Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied);
     }
 
     RefPtr<Gfx::Bitmap> bitmap;
     if (surface) {
-        bitmap = MUST(Gfx::Bitmap::create(Gfx::BitmapFormat::BGRA8888, Gfx::AlphaType::Premultiplied, surface->size()));
-        surface->read_into_bitmap(*bitmap);
+        bitmap = surface->snapshot_bitmap();
     }
 
     return bitmap;
@@ -422,8 +444,8 @@ void HTMLCanvasElement::present()
     m_canvas_content_dirty = false;
 
     m_context.visit(
-        [](GC::Ref<CanvasRenderingContext2D>&) {
-            // Do nothing, CRC2D writes directly to the canvas bitmap.
+        [](GC::Ref<CanvasRenderingContext2D>& context) {
+            context->present();
         },
         [](GC::Ref<WebGL::WebGLRenderingContext>& context) {
             context->present();
@@ -435,11 +457,34 @@ void HTMLCanvasElement::present()
             // Do nothing.
         });
 
+    update_compositor_surface();
+}
+
+void HTMLCanvasElement::republish_compositor_surface()
+{
+    if (m_canvas_content_dirty) {
+        present();
+        return;
+    }
+
+    update_compositor_surface();
+}
+
+void HTMLCanvasElement::update_compositor_surface()
+{
     if (auto surface = this->surface()) {
         surface->flush();
-        auto snapshot = Gfx::ImmutableBitmap::create_snapshot_from_painting_surface(*surface);
-        ensure_external_content_source().update(snapshot);
+        if (auto navigable = document().navigable(); navigable && navigable->has_compositor_context())
+            navigable->compositor_context().update_compositor_surface(ensure_compositor_surface_id(), surface->snapshot_into_shared_image());
     }
+}
+
+void HTMLCanvasElement::clear_compositor_surface()
+{
+    if (!m_compositor_surface_id.has_value())
+        return;
+    if (auto navigable = document().navigable(); navigable && navigable->has_compositor_context())
+        navigable->compositor_context().clear_compositor_surface(*m_compositor_surface_id);
 }
 
 RefPtr<Gfx::PaintingSurface> HTMLCanvasElement::surface() const

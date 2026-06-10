@@ -9,10 +9,22 @@
 
 #include <AK/FlyString.h>
 #include <LibWeb/CSS/Number.h>
+#include <LibWeb/CSS/Parser/SourcePosition.h>
 #include <LibWeb/Export.h>
 #include <LibWeb/Forward.h>
 
 namespace Web::CSS::Parser {
+
+inline static double clamp_to_single_precision(double value)
+{
+    if (value > static_cast<double>(NumericLimits<float>::max()))
+        return static_cast<double>(NumericLimits<float>::max());
+
+    if (value < static_cast<double>(NumericLimits<float>::lowest()))
+        return static_cast<double>(NumericLimits<float>::lowest());
+
+    return value;
+}
 
 class WEB_API Token {
 public:
@@ -48,11 +60,6 @@ public:
     enum class HashType : u8 {
         Id,
         Unrestricted,
-    };
-
-    struct Position {
-        size_t line { 0 };
-        size_t column { 0 };
     };
 
     // Use this only to create types that don't have their own create_foo() methods below.
@@ -124,17 +131,24 @@ public:
         return m_value;
     }
 
-    Number const& number() const
+    bool is_integer() const
     {
         VERIFY(m_type == Type::Number || m_type == Type::Dimension || m_type == Type::Percentage);
-        return m_number_value;
+        return m_number_value.is_integer();
     }
+
+    bool is_integer_with_explicit_sign() const
+    {
+        VERIFY(m_type == Type::Number || m_type == Type::Dimension || m_type == Type::Percentage);
+        return m_number_value.is_integer_with_explicit_sign();
+    }
+
     double number_value() const
     {
         VERIFY(m_type == Type::Number);
-        return m_number_value.value();
+        return clamp_to_single_precision(m_number_value.value());
     }
-    i64 to_integer() const
+    i32 to_integer() const
     {
         VERIFY(m_type == Type::Number && m_number_value.is_integer());
         return m_number_value.integer_value();
@@ -148,14 +162,14 @@ public:
     double dimension_value() const
     {
         VERIFY(m_type == Type::Dimension);
-        return m_number_value.value();
+        return clamp_to_single_precision(m_number_value.value());
     }
-    i64 dimension_value_int() const { return m_number_value.integer_value(); }
+    i32 dimension_value_int() const { return m_number_value.integer_value(); }
 
     double percentage() const
     {
         VERIFY(m_type == Type::Percentage);
-        return m_number_value.value();
+        return clamp_to_single_precision(m_number_value.value());
     }
 
     Type mirror_variant() const;
@@ -166,9 +180,10 @@ public:
     String to_debug_string() const;
 
     String const& original_source_text() const { return m_original_source_text; }
-    Position const& start_position() const { return m_start_position; }
-    Position const& end_position() const { return m_end_position; }
-    void set_position_range(Badge<Tokenizer>, Position start, Position end);
+    SourcePosition const& start_position() const { return m_start_position; }
+    SourcePosition const& end_position() const { return m_end_position; }
+    void set_position_range(Badge<Tokenizer>, SourcePosition start, SourcePosition end);
+    void set_position_range(Badge<RustTokenizer>, SourcePosition start, SourcePosition end);
 
     bool operator==(Token const& other) const
     {
@@ -183,8 +198,8 @@ private:
     HashType m_hash_type { HashType::Unrestricted };
 
     String m_original_source_text;
-    Position m_start_position;
-    Position m_end_position;
+    SourcePosition m_start_position;
+    SourcePosition m_end_position;
 };
 
 }

@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2020-2021, the SerenityOS developers.
- * Copyright (c) 2021-2025, Sam Atkins <sam@ladybird.org>
+ * Copyright (c) 2021-2026, Sam Atkins <sam@ladybird.org>
  * Copyright (c) 2023, Andreas Kling <andreas@ladybird.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -37,22 +37,27 @@ public:
 
     bool is_token() const { return m_value.has<Token>(); }
     bool is(Token::Type type) const { return is_token() && token().is(type); }
-    bool is_delim(u32 delim) const { return is(Token::Type::Delim) && token().delim() == delim; }
+    bool is_delim(u32 delim) const;
     bool is_ident(StringView ident) const;
     Token const& token() const { return m_value.get<Token>(); }
     operator Token() const { return m_value.get<Token>(); }
 
     bool is_guaranteed_invalid() const { return m_value.has<GuaranteedInvalidValue>(); }
     bool contains_guaranteed_invalid_value() const;
+    bool contains_attr_tainted_value() const;
+    void set_attr_tainted() { m_attr_tainted = true; }
 
     String to_string() const;
     String to_debug_string() const;
     String original_source_text() const;
 
+    Optional<SourcePosition> start_position() const;
+
     bool operator==(ComponentValue const&) const = default;
 
 private:
     Variant<Token, Function, SimpleBlock, GuaranteedInvalidValue> m_value;
+    bool m_attr_tainted { false };
 };
 
 }

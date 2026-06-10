@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/HTMLTitleElementPrototype.h>
+#include <LibWeb/Bindings/HTMLTitleElement.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/HTMLTitleElement.h>
 #include <LibWeb/HTML/TraversableNavigable.h>
@@ -27,7 +27,7 @@ void HTMLTitleElement::initialize(JS::Realm& realm)
     Base::initialize(realm);
 }
 
-void HTMLTitleElement::children_changed(ChildrenChangedMetadata const* metadata)
+void HTMLTitleElement::children_changed(ChildrenChangedMetadata const& metadata)
 {
     HTMLElement::children_changed(metadata);
     auto navigable = this->navigable();

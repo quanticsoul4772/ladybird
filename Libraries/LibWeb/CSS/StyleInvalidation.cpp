@@ -10,18 +10,19 @@
 #include <LibWeb/CSS/StyleValues/FilterValueListStyleValue.h>
 #include <LibWeb/CSS/StyleValues/KeywordStyleValue.h>
 #include <LibWeb/CSS/StyleValues/NumberStyleValue.h>
+#include <LibWeb/CSS/StyleValues/OpacityValueStyleValue.h>
 #include <LibWeb/CSS/StyleValues/StyleValueList.h>
 
 namespace Web::CSS {
 
-static bool is_stacking_context_creating_value(CSS::PropertyID property_id, RefPtr<StyleValue const> const& value)
+static bool is_stacking_context_creating_value(CSS::PropertyID property_id, StyleValue const* value)
 {
     if (!value)
         return false;
 
     switch (property_id) {
     case CSS::PropertyID::Opacity:
-        return !value->is_number() || value->as_number().number() != 1;
+        return value->as_opacity_value().resolved() < 1;
     case CSS::PropertyID::Transform:
         if (value->to_keyword() == CSS::Keyword::None)
             return false;
@@ -58,12 +59,13 @@ static bool is_stacking_context_creating_value(CSS::PropertyID property_id, RefP
     }
 }
 
-RequiredInvalidationAfterStyleChange compute_property_invalidation(CSS::PropertyID property_id, RefPtr<StyleValue const> const& old_value, RefPtr<StyleValue const> const& new_value)
+RequiredInvalidationAfterStyleChange compute_property_invalidation(CSS::PropertyID property_id, StyleValue const* old_value, StyleValue const* new_value)
 {
     RequiredInvalidationAfterStyleChange invalidation;
 
-    bool const property_value_changed = (old_value || new_value) && ((!old_value || !new_value) || *old_value != *new_value);
-    if (!property_value_changed)
+    if (old_value == new_value)
+        return invalidation;
+    if (old_value && new_value && old_value->equals(*new_value))
         return invalidation;
 
     // NOTE: If the computed CSS display, position, content, or content-visibility property changes, we have to rebuild the entire layout tree.
@@ -89,9 +91,12 @@ RequiredInvalidationAfterStyleChange compute_property_invalidation(CSS::Property
     }
 
     if (AK::first_is_one_of(property_id, CSS::PropertyID::CounterReset, CSS::PropertyID::CounterSet, CSS::PropertyID::CounterIncrement)) {
-        invalidation.rebuild_layout_tree = property_value_changed;
+        invalidation.rebuild_layout_tree = true;
         return invalidation;
     }
+
+    if (AK::first_is_one_of(property_id, CSS::PropertyID::ContainerName, CSS::PropertyID::ContainerType))
+        invalidation.recompute_descendant_styles = true;
 
     // OPTIMIZATION: Special handling for CSS `visibility`:
     if (property_id == CSS::PropertyID::Visibility) {
@@ -130,22 +135,8 @@ RequiredInvalidationAfterStyleChange compute_property_invalidation(CSS::Property
     }
     invalidation.repaint = true;
 
-    // Transform, perspective, clip, clip-path, and effects properties require rebuilding AccumulatedVisualContext tree.
-    if (AK::first_is_one_of(property_id,
-            CSS::PropertyID::Transform,
-            CSS::PropertyID::Rotate,
-            CSS::PropertyID::Scale,
-            CSS::PropertyID::Translate,
-            CSS::PropertyID::Perspective,
-            CSS::PropertyID::TransformOrigin,
-            CSS::PropertyID::PerspectiveOrigin,
-            CSS::PropertyID::Clip,
-            CSS::PropertyID::ClipPath,
-            CSS::PropertyID::Opacity,
-            CSS::PropertyID::MixBlendMode,
-            CSS::PropertyID::Filter)) {
+    if (CSS::property_affects_accumulated_visual_contexts(property_id))
         invalidation.rebuild_accumulated_visual_contexts = true;
-    }
 
     return invalidation;
 }

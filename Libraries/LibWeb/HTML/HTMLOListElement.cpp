@@ -4,9 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/HTMLOListElementPrototype.h>
+#include <LibWeb/Bindings/HTMLOListElement.h>
 #include <LibWeb/Bindings/Intrinsics.h>
-#include <LibWeb/CSS/CascadedProperties.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/CSS/StyleValues/CounterStyleStyleValue.h>
 #include <LibWeb/DOM/Document.h>
@@ -38,8 +37,8 @@ void HTMLOListElement::attribute_changed(FlyString const& local_name, Optional<S
 
     if (local_name.is_one_of(HTML::AttributeNames::reversed, HTML::AttributeNames::start, HTML::AttributeNames::type)) {
         set_needs_layout_tree_update(true, DOM::SetNeedsLayoutTreeUpdateReason::HTMLOListElementOrdinalValues);
-        if (has_children())
-            first_child_of_type<Element>()->maybe_invalidate_ordinals_for_list_owner();
+        if (auto* first_child_element = first_child_of_type<Element>())
+            first_child_element->maybe_invalidate_ordinals_for_list_owner();
     }
 }
 
@@ -90,23 +89,23 @@ bool HTMLOListElement::is_presentational_hint(FlyString const& name) const
     return name == HTML::AttributeNames::type;
 }
 
-void HTMLOListElement::apply_presentational_hints(GC::Ref<CSS::CascadedProperties> cascaded_properties) const
+void HTMLOListElement::apply_presentational_hints(Vector<CSS::StyleProperty>& properties) const
 {
-    Base::apply_presentational_hints(cascaded_properties);
+    Base::apply_presentational_hints(properties);
 
     // https://html.spec.whatwg.org/multipage/rendering.html#lists
     for_each_attribute([&](auto& name, auto& value) {
         if (name == HTML::AttributeNames::type) {
             if (value == "1"sv) {
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::ListStyleType, CSS::CounterStyleStyleValue::create("decimal"_fly_string));
+                properties.append({ .property_id = CSS::PropertyID::ListStyleType, .value = CSS::CounterStyleStyleValue::create("decimal"_fly_string) });
             } else if (value == "a"sv) {
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::ListStyleType, CSS::CounterStyleStyleValue::create("lower-alpha"_fly_string));
+                properties.append({ .property_id = CSS::PropertyID::ListStyleType, .value = CSS::CounterStyleStyleValue::create("lower-alpha"_fly_string) });
             } else if (value == "A"sv) {
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::ListStyleType, CSS::CounterStyleStyleValue::create("upper-alpha"_fly_string));
+                properties.append({ .property_id = CSS::PropertyID::ListStyleType, .value = CSS::CounterStyleStyleValue::create("upper-alpha"_fly_string) });
             } else if (value == "i"sv) {
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::ListStyleType, CSS::CounterStyleStyleValue::create("lower-roman"_fly_string));
+                properties.append({ .property_id = CSS::PropertyID::ListStyleType, .value = CSS::CounterStyleStyleValue::create("lower-roman"_fly_string) });
             } else if (value == "I"sv) {
-                cascaded_properties->set_property_from_presentational_hint(CSS::PropertyID::ListStyleType, CSS::CounterStyleStyleValue::create("upper-roman"_fly_string));
+                properties.append({ .property_id = CSS::PropertyID::ListStyleType, .value = CSS::CounterStyleStyleValue::create("upper-roman"_fly_string) });
             }
         }
     });

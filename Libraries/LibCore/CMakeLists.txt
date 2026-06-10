@@ -12,6 +12,7 @@ set(SOURCES
     EventLoopImplementation.cpp
     EventReceiver.cpp
     File.cpp
+    ImmutableBytes.cpp
     MappedFile.cpp
     MimeData.cpp
     Notifier.cpp
@@ -27,6 +28,7 @@ set(SOURCES
     SystemServerTakeover.cpp
     ThreadEventQueue.cpp
     Timer.cpp
+    TimeZone.cpp
     Version.cpp
 )
 
@@ -90,10 +92,11 @@ endif()
 
 if (APPLE)
     list(APPEND SOURCES IOSurface.cpp)
+    list(APPEND SOURCES Platform/ScopedAutoreleasePoolMacOS.mm)
 endif()
 
 ladybird_lib(LibCore core EXPLICIT_SYMBOL_EXPORT)
-target_link_libraries(LibCore PRIVATE LibUnicode LibURL Threads::Threads LibTextCodec)
+target_link_libraries(LibCore PRIVATE LibSync Threads::Threads LibUnicode LibURL LibTextCodec)
 
 if (${CMAKE_SYSTEM_NAME} MATCHES "NetBSD")
     # NetBSD has its shm_open and shm_unlink functions in librt so we need to link that

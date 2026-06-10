@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/PerformancePrototype.h>
+#include <LibWeb/Bindings/Performance.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/EventDispatcher.h>
@@ -68,7 +68,7 @@ GC::Ptr<NavigationTiming::PerformanceNavigation> Performance::navigation()
 double Performance::time_origin() const
 {
     // The timeOrigin attribute MUST return the number of milliseconds in the duration returned by get time origin timestamp for the relevant global object of this.
-    return get_time_origin_timestamp(HTML::relevant_principal_global_object(*this));
+    return get_time_origin_timestamp(HTML::relevant_global_object(*this));
 }
 
 // https://w3c.github.io/hr-time/#now-method
@@ -79,7 +79,7 @@ double Performance::now() const
 }
 
 // https://w3c.github.io/user-timing/#mark-method
-WebIDL::ExceptionOr<GC::Ref<UserTiming::PerformanceMark>> Performance::mark(String const& mark_name, UserTiming::PerformanceMarkOptions const& mark_options)
+WebIDL::ExceptionOr<GC::Ref<UserTiming::PerformanceMark>> Performance::mark(String const& mark_name, Bindings::PerformanceMarkOptions const& mark_options)
 {
     auto& realm = this->realm();
 
@@ -187,19 +187,19 @@ WebIDL::ExceptionOr<HighResolutionTime::DOMHighResTimeStamp> Performance::conver
 }
 
 // https://w3c.github.io/user-timing/#dom-performance-measure
-WebIDL::ExceptionOr<GC::Ref<UserTiming::PerformanceMeasure>> Performance::measure(String const& measure_name, Variant<String, UserTiming::PerformanceMeasureOptions> const& start_or_measure_options, Optional<String> end_mark)
+WebIDL::ExceptionOr<GC::Ref<UserTiming::PerformanceMeasure>> Performance::measure(String const& measure_name, Variant<String, Bindings::PerformanceMeasureOptions> const& start_or_measure_options, Optional<String> end_mark)
 {
     auto& realm = this->realm();
     auto& vm = this->vm();
 
     // 1. If startOrMeasureOptions is a PerformanceMeasureOptions object and at least one of start, end, duration, and detail
     //    are present, run the following checks:
-    auto const* start_or_measure_options_dictionary_object = start_or_measure_options.get_pointer<UserTiming::PerformanceMeasureOptions>();
+    auto const* start_or_measure_options_dictionary_object = start_or_measure_options.get_pointer<Bindings::PerformanceMeasureOptions>();
     if (start_or_measure_options_dictionary_object
         && (start_or_measure_options_dictionary_object->start.has_value()
             || start_or_measure_options_dictionary_object->end.has_value()
             || start_or_measure_options_dictionary_object->duration.has_value()
-            || !start_or_measure_options_dictionary_object->detail.is_undefined())) {
+            || start_or_measure_options_dictionary_object->detail.has_value())) {
         // 1. If endMark is given, throw a TypeError.
         if (end_mark.has_value())
             return WebIDL::SimpleException { WebIDL::SimpleExceptionType::TypeError, "Cannot provide PerformanceMeasureOptions and endMark at the same time"sv };
@@ -292,9 +292,9 @@ WebIDL::ExceptionOr<GC::Ref<UserTiming::PerformanceMeasure>> Performance::measur
     JS::Value detail { JS::js_null() };
 
     // 1. If startOrMeasureOptions is a PerformanceMeasureOptions object and startOrMeasureOptions's detail member is present:
-    if (start_or_measure_options_dictionary_object && !start_or_measure_options_dictionary_object->detail.is_undefined()) {
+    if (start_or_measure_options_dictionary_object && start_or_measure_options_dictionary_object->detail.has_value()) {
         // 1. Let record be the result of calling the StructuredSerialize algorithm on startOrMeasureOptions's detail.
-        auto record = TRY(HTML::structured_serialize(vm, start_or_measure_options_dictionary_object->detail));
+        auto record = TRY(HTML::structured_serialize(vm, *start_or_measure_options_dictionary_object->detail));
 
         // 2. Set entry's detail to the result of calling the StructuredDeserialize algorithm on record and the current realm.
         detail = TRY(HTML::structured_deserialize(vm, record, realm));

@@ -151,13 +151,17 @@ class Utf16View {
 public:
     using Iterator = Utf16CodePointIterator;
 
-    Utf16View() = default;
+    constexpr Utf16View()
+        : m_string { .ascii = "" }
+    {
+    }
     ~Utf16View() = default;
 
     constexpr Utf16View(char16_t const* string, size_t length_in_code_units)
         : m_string { .utf16 = string }
         , m_length_in_code_units(length_in_code_units)
     {
+        VERIFY(string != nullptr);
         m_length_in_code_units |= 1uz << Detail::UTF16_FLAG;
     }
 
@@ -257,8 +261,6 @@ public:
 
         if (has_ascii_storage() && other.has_ascii_storage()) {
             result = __builtin_memcmp(m_string.ascii, other.m_string.ascii, length);
-        } else if (!has_ascii_storage() && !other.has_ascii_storage()) {
-            result = __builtin_memcmp(m_string.utf16, other.m_string.utf16, length * sizeof(char16_t));
         } else {
             for (size_t i = 0; i < length; ++i) {
                 auto this_code_unit = code_unit_at(i);
@@ -324,13 +326,6 @@ public:
         if (has_ascii_storage())
             return string_hash(m_string.ascii, length_in_code_units());
         return string_hash(m_string.utf16, length_in_code_units());
-    }
-
-    [[nodiscard]] constexpr bool is_null() const
-    {
-        if (has_ascii_storage())
-            return m_string.ascii == nullptr;
-        return m_string.utf16 == nullptr;
     }
 
     [[nodiscard]] constexpr bool is_empty() const { return length_in_code_units() == 0; }

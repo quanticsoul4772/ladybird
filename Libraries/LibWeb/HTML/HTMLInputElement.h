@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include <LibRegex/Regex.h>
+#include <LibRegex/ECMAScriptRegex.h>
 #include <LibWeb/DOM/DocumentLoadEventDelayer.h>
 #include <LibWeb/DOM/Text.h>
 #include <LibWeb/Export.h>
@@ -59,14 +59,14 @@ class WEB_API HTMLInputElement final
     , public AutocompleteElement {
     WEB_PLATFORM_OBJECT(HTMLInputElement, HTMLElement);
     GC_DECLARE_ALLOCATOR(HTMLInputElement);
-    FORM_ASSOCIATED_ELEMENT(HTMLElement, HTMLInputElement);
     AUTOCOMPLETE_ELEMENT(HTMLElement, HTMLInputElement);
 
 public:
     virtual ~HTMLInputElement() override;
 
-    virtual GC::Ptr<Layout::Node> create_layout_node(GC::Ref<CSS::ComputedProperties>) override;
+    virtual RefPtr<Layout::Node> create_layout_node(CSS::ComputedProperties const&) override;
     virtual void adjust_computed_style(CSS::ComputedProperties&) override;
+    virtual void set_being_activated(bool) override;
 
     enum class TypeAttributeState {
 #define __ENUMERATE_HTML_INPUT_TYPE_ATTRIBUTE(_, state) state,
@@ -80,13 +80,14 @@ public:
 
     String default_value() const { return get_attribute_value(HTML::AttributeNames::value); }
 
-    virtual Utf16String value() const override;
+    Utf16String value() const;
+    virtual Utf16String form_value() const override { return value(); }
     virtual Optional<String> optional_value() const override;
     WebIDL::ExceptionOr<void> set_value(Utf16String const&);
 
     // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-textarea/input-relevant-value
-    virtual Utf16String relevant_value() const override { return value(); }
-    WebIDL::ExceptionOr<void> set_relevant_value(Utf16String const& value) override { return set_value(value); }
+    virtual Utf16String relevant_value() const override;
+    WebIDL::ExceptionOr<void> set_relevant_value(Utf16String const& value) override;
     virtual Optional<Utf16String> selected_text_for_stringifier() const override;
 
     virtual void set_dirty_value_flag(bool flag) override { m_dirty_value = flag; }
@@ -152,7 +153,7 @@ public:
     SelectedCoordinate selected_coordinate() const { return m_selected_coordinate; }
 
     JS::Object* value_as_date() const;
-    WebIDL::ExceptionOr<void> set_value_as_date(Optional<GC::Root<JS::Object>> const&);
+    WebIDL::ExceptionOr<void> set_value_as_date(GC::Ptr<JS::Object>);
 
     double value_as_number() const;
     WebIDL::ExceptionOr<void> set_value_as_number(double value);
@@ -169,6 +170,8 @@ public:
     virtual bool is_focusable() const override;
 
     // ^FormAssociatedElement
+    virtual bool is_form_associated_element() const override { return true; }
+
     // https://html.spec.whatwg.org/multipage/forms.html#category-listed
     virtual bool is_listed() const override { return true; }
 
@@ -236,6 +239,7 @@ public:
     Optional<String> selection_direction_binding() { return selection_direction(); }
 
     // ^FormAssociatedTextControlElement
+    virtual HTMLElement& text_control_to_html_element() override { return *this; }
     virtual void did_edit_text_node(FlyString const& input_type, Optional<Utf16String> const& data) override;
     virtual GC::Ptr<DOM::Text> form_associated_element_to_text_node() override { return m_text_node; }
     virtual GC::Ptr<DOM::Element> text_control_scroll_container() override { return m_inner_text_element; }
@@ -265,7 +269,7 @@ private:
     virtual void computed_properties_changed() override;
 
     virtual bool is_presentational_hint(FlyString const&) const override;
-    virtual void apply_presentational_hints(GC::Ref<CSS::CascadedProperties>) const override;
+    virtual void apply_presentational_hints(Vector<CSS::StyleProperty>&) const override;
     virtual EventResult handle_return_key(FlyString const& ui_input_type) override;
 
     // ^DOM::Node
@@ -289,7 +293,7 @@ private:
     virtual Optional<CSSPixels> intrinsic_width() const override;
     virtual Optional<CSSPixels> intrinsic_height() const override;
     virtual Optional<CSSPixelFraction> intrinsic_aspect_ratio() const override;
-    virtual RefPtr<Gfx::ImmutableBitmap> current_image_bitmap_sized(Gfx::IntSize) const override;
+    virtual Optional<Gfx::DecodedImageFrame> current_image_frame_sized(Gfx::IntSize) const override;
     virtual void set_visible_in_viewport(bool) override;
     virtual GC::Ptr<DOM::Element const> to_html_element() const override { return *this; }
     virtual size_t current_frame_index() const override { return 0; }
@@ -375,7 +379,7 @@ private:
     GC::Ptr<SharedResourceRequest> m_resource_request;
     SelectedCoordinate m_selected_coordinate;
 
-    Optional<Regex<ECMA262>> compiled_pattern_regular_expression() const;
+    Optional<regex::ECMAScriptRegex> compiled_pattern_regular_expression() const;
 
     Optional<GC::Ref<HTMLDataListElement const>> suggestions_source_element() const;
 

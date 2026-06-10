@@ -120,9 +120,6 @@ ErrorOr<ByteString> getcwd()
 
 ErrorOr<void> chdir(StringView path)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString path_string = path;
     if (::_chdir(path_string.characters()) < 0)
         return Error::from_syscall("chdir"sv, errno);
@@ -131,9 +128,6 @@ ErrorOr<void> chdir(StringView path)
 
 ErrorOr<struct stat> stat(StringView path)
 {
-    if (path.is_null())
-        return Error::from_syscall("stat"sv, EFAULT);
-
     struct stat st = {};
     ByteString path_string = path;
     if (::stat(path_string.characters(), &st) < 0)
@@ -143,9 +137,6 @@ ErrorOr<struct stat> stat(StringView path)
 
 ErrorOr<void> rmdir(StringView path)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString path_string = path;
     if (_rmdir(path_string.characters()) < 0)
         return Error::from_syscall("rmdir"sv, errno);
@@ -154,9 +145,6 @@ ErrorOr<void> rmdir(StringView path)
 
 ErrorOr<void> unlink(StringView path)
 {
-    if (path.is_null())
-        return Error::from_errno(EFAULT);
-
     ByteString path_string = path;
     if (_unlink(path_string.characters()) < 0)
         return Error::from_syscall("unlink"sv, errno);
@@ -168,6 +156,15 @@ ErrorOr<void> mkdir(StringView path, mode_t)
     ByteString str = path;
     if (_mkdir(str.characters()) < 0)
         return Error::from_syscall("mkdir"sv, errno);
+    return {};
+}
+
+ErrorOr<void> rename(StringView old_path, StringView new_path)
+{
+    ByteString old_path_string = old_path;
+    ByteString new_path_string = new_path;
+    if (!MoveFileExA(old_path_string.characters(), new_path_string.characters(), MOVEFILE_REPLACE_EXISTING))
+        return Error::from_windows_error();
     return {};
 }
 
@@ -199,6 +196,30 @@ ErrorOr<void> munmap(void* address, size_t size)
 {
     if (::munmap(address, size) < 0)
         return Error::from_syscall("munmap"sv, errno);
+    return {};
+}
+
+ErrorOr<void*> reserve_address_space(size_t size)
+{
+    void* ptr = VirtualAlloc(nullptr, size, MEM_RESERVE, PAGE_NOACCESS);
+    if (!ptr)
+        return Error::from_windows_error();
+    return ptr;
+}
+
+ErrorOr<void> commit_memory(void* address, size_t size)
+{
+    if (!VirtualAlloc(address, size, MEM_COMMIT, PAGE_READWRITE))
+        return Error::from_windows_error();
+    return {};
+}
+
+ErrorOr<void> release_address_space(void* address, size_t size)
+{
+    // VirtualFree with MEM_RELEASE requires size == 0 and frees the entire reservation.
+    (void)size;
+    if (!VirtualFree(address, 0, MEM_RELEASE))
+        return Error::from_windows_error();
     return {};
 }
 

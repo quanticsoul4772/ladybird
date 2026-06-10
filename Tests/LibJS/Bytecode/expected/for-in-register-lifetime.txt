@@ -1,30 +1,48 @@
-JS bytecode executable ""
-[   0]    0: GetLexicalEnvironment dst:reg4
-[   8]       SetGlobal identifier:result, src:String("")
-[  18]       NewObject dst:reg5
-[  28]       InitObjectLiteralProperty object:reg5, property:a, src:Int32(1), shape_cache_index:0, property_slot:0
-[  40]       InitObjectLiteralProperty object:reg5, property:b, src:Int32(2), shape_cache_index:0, property_slot:1
-[  58]       InitObjectLiteralProperty object:reg5, property:c, src:Int32(3), shape_cache_index:0, property_slot:2
-[  70]       CacheObjectShape object:reg5
-[  80]       SetGlobal identifier:obj, src:reg5
-[  90]       GetGlobal dst:reg5, identifier:obj
-[  a0]       JumpNullish condition:reg5, true_target:@e0, false_target:@e8
-[  b0]    1: End value:reg5
-[  b8]    2: IteratorNextUnpack dst_value:reg9, dst_done:reg10, iterator_object:reg6, iterator_next:reg7, iterator_done:reg8
-[  d0]       JumpIf condition:reg10, true_target:@b0, false_target:@118
-[  e0]    3: End value:reg5
-[  e8]    4: GetObjectPropertyIterator dst_iterator_object:reg6, dst_iterator_next:reg7, dst_iterator_done:reg8, object:reg5
-[ 100]       Mov dst:reg5, src:Undefined
-[ 110]       Jump target:@b8
-[ 118]    5: SetGlobal identifier:k, src:reg9
-[ 128]       GetGlobal dst:reg11, identifier:result
-[ 138]       GetGlobal dst:reg12, identifier:k
-[ 148]       GetGlobal dst:reg13, identifier:obj
-[ 158]       GetGlobal dst:reg14, identifier:k
-[ 168]       GetByValue dst:reg15, base:reg13, property:reg14, base_identifier:obj
-[ 180]       Add dst:reg13, lhs:reg12, rhs:reg15
-[ 190]       Add dst:reg12, lhs:reg11, rhs:reg13
-[ 1a0]       SetGlobal identifier:result, src:reg12
-[ 1b0]       Mov dst:reg5, src:reg12
-[ 1c0]       Mov dst:reg5, src:reg12
-[ 1d0]       Jump target:@b8
+$460e17ea for-in-register-lifetime.js:1:1
+  Registers: 14
+  Blocks:    6
+  Constants:
+    [0] = String("")
+    [1] = Int32(1)
+    [2] = Int32(2)
+    [3] = Int32(3)
+    [4] = Undefined
+
+block0:
+  [   0] SetGlobal `result`, src:String("")
+  [  10] NewObject dst:reg5
+  [  20] InitObjectLiteralProperty object:reg5, `a`, src:Int32(1), shape_cache_index:0, property_slot:0
+  [  38] InitObjectLiteralProperty object:reg5, `b`, src:Int32(2), shape_cache_index:0, property_slot:1
+  [  50] InitObjectLiteralProperty object:reg5, `c`, src:Int32(3), shape_cache_index:0, property_slot:2
+  [  68] CacheObjectShape object:reg5
+  [  78] SetGlobal `obj`, src:reg5
+  [  88] GetGlobal dst:reg5, `obj`
+  [  98] JumpNullish condition:reg5, true_target:block3, false_target:block4
+
+block1:
+  [  a8] End value:reg5
+
+block2:
+  [  b0] ObjectPropertyIteratorNext dst_value:reg7, dst_done:reg8, iterator_object:reg6
+  [  c0] JumpIf condition:reg8, true_target:block1, false_target:block5
+
+block3:
+  [  d0] End value:reg5
+
+block4:
+  [  d8] GetObjectPropertyIterator dst_iterator:reg6, object:reg5
+  [  e8] Mov dst:reg5, src:Undefined
+  [  f8] Jump target:block2
+
+block5:
+  [ 100] SetGlobal `k`, src:reg7
+  [ 110] GetGlobal dst:reg9, `result`
+  [ 120] GetGlobal dst:reg10, `k`
+  [ 130] GetGlobal dst:reg11, `obj`
+  [ 140] GetGlobal dst:reg12, `k`
+  [ 150] GetByValue dst:reg13, base:reg11, property:reg12 (obj[reg12])
+  [ 168] Add dst:reg11, lhs:reg10, rhs:reg13
+  [ 178] Add dst:reg10, lhs:reg9, rhs:reg11
+  [ 188] SetGlobal `result`, src:reg10
+  [ 198] Mov dst:reg5, src:reg10
+  [ 1a8] Jump target:block2

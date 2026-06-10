@@ -39,6 +39,7 @@ ErrorOr<void, ValidationError> Validator::validate(Module& module)
                     m_context.types[index.value()].description().visit(
                         [&](FunctionType const& func) {
                             m_context.functions.append(func);
+                            m_context.function_type_indices.append(index);
                             m_context.imported_function_count++;
                         },
                         [&](StructType const& struct_) {
@@ -54,6 +55,7 @@ ErrorOr<void, ValidationError> Validator::validate(Module& module)
             },
             [&](FunctionType const& type) -> ErrorOr<void, ValidationError> {
                 m_context.functions.append(type);
+                m_context.function_type_indices.append({});
                 m_context.imported_function_count++;
                 return {};
             },
@@ -80,11 +82,13 @@ ErrorOr<void, ValidationError> Validator::validate(Module& module)
         return Errors::invalid("FunctionSection"sv);
 
     m_context.functions.ensure_capacity(module.function_section().types().size() + m_context.functions.size());
-    for (auto& index : module.function_section().types())
-        if (m_context.types.size() > index.value() && m_context.types[index.value()].is_function())
-            m_context.functions.append(m_context.types[index.value()].function());
-        else
+    m_context.function_type_indices.ensure_capacity(module.function_section().types().size() + m_context.function_type_indices.size());
+    for (auto& index : module.function_section().types()) {
+        if (m_context.types.size() <= index.value() || !m_context.types[index.value()].is_function())
             return Errors::invalid("TypeIndex"sv);
+        m_context.functions.append(m_context.types[index.value()].function());
+        m_context.function_type_indices.append(index);
+    }
 
     m_context.tables.ensure_capacity(m_context.tables.size() + module.table_section().tables().size());
     for (auto& table : module.table_section().tables())
@@ -107,8 +111,6 @@ ErrorOr<void, ValidationError> Validator::validate(Module& module)
     m_context.tags.ensure_capacity(m_context.tags.size() + module.tag_section().tags().size());
     for (auto& tag : module.tag_section().tags())
         m_context.tags.append(TagType(tag.type(), tag.flags()));
-
-    m_context.current_module = &module;
 
     // We need to build the set of declared functions to check that `ref.func` uses a specific set of predetermined functions, found in:
     // - Element initializer expressions
@@ -152,6 +154,114 @@ ErrorOr<void, ValidationError> Validator::validate(Module& module)
 
     module.set_validation_status(Module::ValidationStatus::Valid, {});
     return {};
+}
+
+void compile_module_to_native(Module& module)
+{
+    auto cache_config = module.take_cranelift_cache_config();
+    auto stats = module.take_compile_stats();
+
+    bool installing = false;
+    bool capturing = false;
+
+    if (cache_config.has_value()) {
+        auto hash = ReadonlyBytes { cache_config->wasm_hash.data(), 32 };
+        if (!cache_config->existing_blob.is_empty())
+            installing = try_install_cranelift_cache_blob(hash, cache_config->existing_blob.bytes());
+        if (!installing && cache_config->on_compiled) {
+            begin_cranelift_cache_capture();
+            capturing = true;
+        }
+    }
+
+    ScopeGuard cleanup = [&] {
+        auto cranelift_start = MonotonicTime::now();
+        flush_cranelift_batch();
+        auto cranelift_duration = MonotonicTime::now() - cranelift_start;
+
+        if (installing)
+            abort_cranelift_cache_install();
+
+        size_t produced_blob_size = 0;
+        if (capturing) {
+            auto hash = ReadonlyBytes { cache_config->wasm_hash.data(), 32 };
+            if (auto blob = serialize_cranelift_cache_blob(hash); blob.has_value() && cache_config->on_compiled) {
+                produced_blob_size = blob->size();
+                cache_config->on_compiled(blob.release_value());
+            } else {
+                abort_cranelift_cache_capture();
+            }
+        }
+
+        if (stats.has_value()) {
+            stats->cranelift_time = cranelift_duration;
+            stats->cranelift_blob_size_bytes = produced_blob_size;
+            stats->cache_hit = installing;
+            size_t count = 0;
+            size_t tier_up_functions = 0;
+            size_t tier_up_checkpoints = 0;
+            for (auto& entry : module.code_section().functions()) {
+                auto const& ci = entry.func().body().compiled_instructions;
+                if (ci.cranelift_compiled)
+                    ++count;
+                if (ci.has_tier_up_checkpoints) {
+                    ++tier_up_functions;
+                    for (auto const& dispatch : ci.dispatches) {
+                        if (dispatch.instruction->opcode() == Instructions::synthetic_tier_up)
+                            ++tier_up_checkpoints;
+                    }
+                }
+            }
+            stats->function_count = count;
+            stats->tier_up_function_count = tier_up_functions;
+            stats->tier_up_checkpoint_count = tier_up_checkpoints;
+            record_module_stats(stats.release_value());
+        }
+
+        set_cranelift_active_function_index(NumericLimits<u32>::max());
+    };
+
+    size_t imported_function_count = 0;
+    for (auto& import_ : module.import_section().imports()) {
+        import_.description().visit(
+            [&](TypeIndex const& type_index) {
+                auto& types = module.type_section().types();
+                if (type_index.value() < types.size() && types[type_index.value()].is_function())
+                    ++imported_function_count;
+            },
+            [&](FunctionType const&) { ++imported_function_count; },
+            [&](auto const&) {});
+    }
+
+    size_t function_index = imported_function_count;
+    for (auto& entry : module.code_section().functions()) {
+        auto& compiled = entry.func().body().compiled_instructions;
+        set_cranelift_active_function_index(static_cast<u32>(function_index++));
+        if (compiled.cranelift_eligible)
+            try_cranelift_compile(compiled, compiled.cranelift_result_arity);
+    }
+}
+
+ErrorOr<void, ValidationError> ensure_cranelift_compiled(Module& module)
+{
+    if (!module.try_begin_cranelift_compilation()) {
+        module.wait_for_cranelift_compilation();
+        return {};
+    }
+
+    if (module.validation_status() == Module::ValidationStatus::Invalid) {
+        module.finish_cranelift_compilation();
+        return ValidationError { module.validation_error() };
+    }
+
+    compile_module_to_native(module);
+    module.finish_cranelift_compilation();
+    return {};
+}
+
+void start_cranelift_compilation(Module& module)
+{
+    (void)ensure_cranelift_compiled(module);
 }
 
 ErrorOr<void, ValidationError> Validator::validate(ImportSection const& section)
@@ -1415,7 +1525,14 @@ VALIDATE_INSTRUCTION(ref_func)
         return Errors::invalid("function reference"sv);
 
     is_constant = true;
-    stack.append(ValueType(ValueType::FunctionReference));
+
+    // https://webassembly.github.io/gc/core/valid/instructions.html#xref-syntax-instructions-syntax-instr-ref-mathsf-ref-func-x
+    // ref.func x : [] → [(ref dt)]
+    auto type_index = m_context.function_type_indices[index.value()];
+    auto ref_type = type_index.has_value() ? ValueType(ValueType::TypeUseReference, *type_index) : ValueType(ValueType::FunctionReference);
+    ref_type.set_nullable(false);
+    stack.append(ref_type);
+
     return {};
 }
 
@@ -2189,6 +2306,7 @@ VALIDATE_INSTRUCTION(block)
     args.meta = Instruction::StructuredInstructionArgs::Meta {
         .arity = static_cast<u32>(block_type.results().size()),
         .parameter_count = static_cast<u32>(parameters.size()),
+        .tier_up_eligible = false,
     };
 
     return {};
@@ -2203,6 +2321,8 @@ VALIDATE_INSTRUCTION(loop)
     for (size_t i = 1; i <= parameters.size(); ++i)
         TRY(stack.take(parameters[parameters.size() - i]));
 
+    auto const tier_up_eligible = parameters.is_empty() && stack.size() == 0;
+
     m_frames.empend(block_type, FrameKind::Loop, stack.size());
     m_max_frame_size = max(m_max_frame_size, m_frames.size());
     for (auto& parameter : parameters)
@@ -2211,6 +2331,7 @@ VALIDATE_INSTRUCTION(loop)
     args.meta = Instruction::StructuredInstructionArgs::Meta {
         .arity = static_cast<u32>(block_type.results().size()),
         .parameter_count = static_cast<u32>(parameters.size()),
+        .tier_up_eligible = tier_up_eligible,
     };
 
     return {};
@@ -2237,6 +2358,7 @@ VALIDATE_INSTRUCTION(if_)
     args.meta = Instruction::StructuredInstructionArgs::Meta {
         .arity = static_cast<u32>(block_type.results().size()),
         .parameter_count = static_cast<u32>(parameters.size()),
+        .tier_up_eligible = false,
     };
 
     return {};
@@ -2249,6 +2371,7 @@ VALIDATE_INSTRUCTION(throw_)
     TRY(validate(tag_index));
 
     auto tag_type = m_context.tags[tag_index.value()];
+    TRY(validate(tag_type.type()));
     auto& type = m_context.types[tag_type.type().value()];
 
     if (!type.is_function())
@@ -2285,15 +2408,16 @@ VALIDATE_INSTRUCTION(throw_ref)
 VALIDATE_INSTRUCTION(try_table)
 {
     auto& args = instruction.arguments().get<Instruction::TryTableArgs>();
-    auto block_type = TRY(validate(args.try_.block_type));
+    auto block_type = TRY(validate(args.block_type));
 
     auto& parameters = block_type.parameters();
     for (size_t i = 1; i <= parameters.size(); ++i)
         TRY(stack.take(parameters[parameters.size() - i]));
 
-    args.try_.meta = Instruction::StructuredInstructionArgs::Meta {
+    args.meta = Instruction::TryTableArgs::Meta {
         .arity = static_cast<u32>(block_type.results().size()),
         .parameter_count = static_cast<u32>(parameters.size()),
+        .tier_up_eligible = false,
     };
 
     m_frames.empend(block_type, FrameKind::TryTable, stack.size());
@@ -2301,7 +2425,7 @@ VALIDATE_INSTRUCTION(try_table)
     for (auto& parameter : parameters)
         stack.append(parameter);
 
-    for (auto& catch_ : args.catches) {
+    for (auto& catch_ : args.catches()) {
         auto label = catch_.target_label();
         TRY(validate(label));
         auto& target_label_type = m_frames[(m_frames.size() - 1) - label.value()].labels();
@@ -2309,6 +2433,7 @@ VALIDATE_INSTRUCTION(try_table)
         if (auto tag = catch_.matching_tag_index(); tag.has_value()) {
             TRY(validate(tag.value()));
             auto tag_type = m_context.tags[tag->value()];
+            TRY(validate(tag_type.type()));
             auto& type = m_context.types[tag_type.type().value()];
 
             if (!type.is_function())
@@ -2526,6 +2651,60 @@ VALIDATE_INSTRUCTION(return_call_indirect)
     auto& return_types = m_frames.first().type.results();
     if (return_types != func.results())
         return Errors::invalid("return_call_indirect target"sv, func.results(), return_types);
+
+    m_frames.last().unreachable = true;
+    stack.resize(m_frames.last().initial_size);
+
+    return {};
+}
+
+VALIDATE_INSTRUCTION(call_ref)
+{
+    auto type_index = instruction.arguments().get<TypeIndex>();
+    TRY(validate(type_index));
+
+    auto const& type = m_context.types[type_index.value()];
+    if (!type.is_function())
+        return Errors::invalid("type for call_ref"sv, "a function type"sv, type);
+
+    auto const& func = type.function();
+
+    TRY(stack.take(ValueType(ValueType::TypeUseReference, type_index)));
+
+    for (size_t i = 0; i < func.parameters().size(); ++i)
+        TRY(stack.take(func.parameters()[func.parameters().size() - i - 1]));
+
+    for (auto const& type : func.results())
+        stack.append(type);
+
+    return {};
+}
+
+VALIDATE_INSTRUCTION(return_call_ref)
+{
+    auto type_index = instruction.arguments().get<TypeIndex>();
+    TRY(validate(type_index));
+
+    auto const& type = m_context.types[type_index.value()];
+    if (!type.is_function())
+        return Errors::invalid("type for return_call_ref"sv, "a function type"sv, type);
+
+    auto const& func = type.function();
+
+    TRY(stack.take(ValueType(ValueType::TypeUseReference, type_index)));
+
+    for (size_t i = 0; i < func.parameters().size(); ++i)
+        TRY(stack.take(func.parameters()[func.parameters().size() - i - 1]));
+
+    auto const& return_types = m_frames.first().type.results();
+    auto const& callee_results = func.results();
+    if (return_types.size() != callee_results.size())
+        return Errors::invalid("return_call_ref target"sv, callee_results, return_types);
+    for (size_t i = 0; i < return_types.size(); ++i) {
+        StackEntry entry { callee_results[i] };
+        if (entry != return_types[i])
+            return Errors::invalid("return_call_ref target"sv, callee_results, return_types);
+    }
 
     m_frames.last().unreachable = true;
     stack.resize(m_frames.last().initial_size);
@@ -4335,6 +4514,50 @@ ErrorOr<Validator::ExpressionTypeResult, ValidationError> Validator::validate(Ex
 
     // Now that we're in happy land, try to compile the expression down to a list of labels to help dispatch.
     expression.compiled_instructions = try_compile_instructions(expression, m_context.functions.span());
+
+    if (expression.compiled_instructions.direct && !is_constant_expression) {
+        bool has_unsupported_types = false;
+        for (auto& type : m_context.locals) {
+            if (type.is_reference() || type.kind() == ValueType::V128) {
+                has_unsupported_types = true;
+                break;
+            }
+        }
+        if (!has_unsupported_types) {
+            for (auto& type : result_types) {
+                if (type.is_reference() || type.kind() == ValueType::V128) {
+                    has_unsupported_types = true;
+                    break;
+                }
+            }
+        }
+        // Also skip 64-bit addressing (cranelift truncates base to u32).
+        if (!has_unsupported_types) {
+            for (auto& mem : m_context.memories) {
+                if (mem.limits().address_type() == AddressType::I64) {
+                    has_unsupported_types = true;
+                    break;
+                }
+            }
+        }
+        // Also skip if any call targets a function with multi-value returns.
+        if (!has_unsupported_types) {
+            for (auto& insn : expression.instructions()) {
+                if (insn.opcode() == Instructions::call) {
+                    auto func_idx = insn.arguments().get<FunctionIndex>().value();
+                    if (func_idx < m_context.functions.size() && m_context.functions[func_idx].results().size() > 1) {
+                        has_unsupported_types = true;
+                        break;
+                    }
+                }
+            }
+        }
+        // Also skip multi-value return functions.
+        if (!has_unsupported_types && result_types.size() <= 1) {
+            expression.compiled_instructions.cranelift_eligible = true;
+            expression.compiled_instructions.cranelift_result_arity = static_cast<u32>(result_types.size());
+        }
+    }
 
     return ExpressionTypeResult { stack.release_vector(), is_constant_expression };
 }

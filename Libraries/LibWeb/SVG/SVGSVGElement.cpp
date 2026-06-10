@@ -5,7 +5,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibWeb/Bindings/SVGSVGElementPrototype.h>
+#include <LibWeb/Bindings/DOMPointReadOnly.h>
+#include <LibWeb/Bindings/SVGSVGElement.h>
 #include <LibWeb/CSS/Parser/Parser.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/CSS/StyleComputer.h>
@@ -45,9 +46,9 @@ void SVGSVGElement::visit_edges(Visitor& visitor)
     visitor.visit(m_active_view_element);
 }
 
-GC::Ptr<Layout::Node> SVGSVGElement::create_layout_node(GC::Ref<CSS::ComputedProperties> style)
+RefPtr<Layout::Node> SVGSVGElement::create_layout_node(CSS::ComputedProperties const& style)
 {
-    return heap().allocate<Layout::SVGSVGBox>(document(), *this, move(style));
+    return make_ref_counted<Layout::SVGSVGBox>(document(), *this, style);
 }
 
 RefPtr<CSS::StyleValue const> SVGSVGElement::width_style_value_from_attribute() const
@@ -109,7 +110,7 @@ void SVGSVGElement::attribute_changed(FlyString const& name, Optional<String> co
     }
 }
 
-void SVGSVGElement::children_changed(ChildrenChangedMetadata const*)
+void SVGSVGElement::children_changed(ChildrenChangedMetadata const&)
 {
     // FIXME: Add support for all types of SVG fragment identifier.
     //        See: https://svgwg.org/svg2-draft/linking.html#LinksIntoSVG
@@ -250,7 +251,7 @@ GC::Ref<SVGLength> SVGSVGElement::create_svg_length() const
 GC::Ref<Geometry::DOMPoint> SVGSVGElement::create_svg_point() const
 {
     // A new, detached DOMPoint object whose coordinates are all 0.
-    return Geometry::DOMPoint::from_point(vm(), Geometry::DOMPointInit {});
+    return Geometry::DOMPoint::from_point(vm(), Bindings::DOMPointInit {});
 }
 
 GC::Ref<Geometry::DOMMatrix> SVGSVGElement::create_svg_matrix() const

@@ -10,7 +10,7 @@
 #include <AK/IPv4Address.h>
 #include <AK/IPv6Address.h>
 #include <LibURL/Parser.h>
-#include <LibWeb/Bindings/DOMURLPrototype.h>
+#include <LibWeb/Bindings/DOMURL.h>
 #include <LibWeb/Bindings/Intrinsics.h>
 #include <LibWeb/DOMURL/DOMURL.h>
 #include <LibWeb/FileAPI/Blob.h>
@@ -148,7 +148,7 @@ void DOMURL::revoke_object_url(JS::VM&, StringView url)
         return;
 
     // 5. Let isAuthorized be the result of checking for same-partition blob URL usage with entry and the current settings object.
-    bool is_authorized = FileAPI::check_for_same_partition_blob_url_usage(entry.value(), HTML::current_principal_settings_object());
+    bool is_authorized = FileAPI::check_for_same_partition_blob_url_usage(entry.value(), HTML::current_settings_object());
 
     // 6. If isAuthorized is false, then return.
     if (!is_authorized)
@@ -467,13 +467,13 @@ Optional<URL::URL> parse(StringView input, Optional<URL::URL const&> base_url, O
     if (blob_url_entry.has_value()) {
         url->set_blob_url_entry(URL::BlobURLEntry {
             .object = blob_url_entry->object.visit(
-                [](GC::Root<FileAPI::Blob> const& blob) -> URL::BlobURLEntry::Object {
+                [](GC::Ref<FileAPI::Blob> const& blob) -> URL::BlobURLEntry::Object {
                     return URL::BlobURLEntry::Blob {
                         .type = blob->type(),
                         .data = MUST(ByteBuffer::copy(blob->raw_bytes())),
                     };
                 },
-                [](GC::Root<MediaSourceExtensions::MediaSource> const&) -> URL::BlobURLEntry::Object { return URL::BlobURLEntry::MediaSource {}; }),
+                [](GC::Ref<MediaSourceExtensions::MediaSource> const&) -> URL::BlobURLEntry::Object { return URL::BlobURLEntry::MediaSource {}; }),
             .environment { .origin = blob_url_entry->environment->origin() },
         });
     }
