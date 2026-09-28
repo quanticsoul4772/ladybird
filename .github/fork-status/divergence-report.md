@@ -1,11 +1,11 @@
 # Fork Divergence Report
 
-**Date**: 2026-09-21
-**Fork**: quanticsoul4772/ladybird @ c34b96958c
-**Upstream**: LadybirdBrowser/ladybird @ 9a2d19bd51
-**Behind**: 6054 commits | **Ahead**: 242 commits
+**Date**: 2026-09-28
+**Fork**: quanticsoul4772/ladybird @ b522e8ce6b
+**Upstream**: LadybirdBrowser/ladybird @ 3a659224b9
+**Behind**: 6337 commits | **Ahead**: 243 commits
 
-## Files diverged from upstream by subsystem (26782 total)
+## Files diverged from upstream by subsystem (27226 total)
 
 ### .clang-format (1 files)
 ```
@@ -232,9 +232,10 @@
 .devcontainer/features/vcpkg-cache/install.sh
 ```
 
-### .github (28 files)
+### .github (29 files)
 ```
 .github/CODEOWNERS
+.github/ISSUE_TEMPLATE/bug_report.yml
 .github/actionlint.yaml
 .github/actions/cache-restore/action.yml
 .github/actions/cache-save/action.yml
@@ -279,7 +280,7 @@
 .prettierignore
 ```
 
-### AK (92 files)
+### AK (93 files)
 ```
 AK/Array.h
 AK/AssertionFailure.h
@@ -312,6 +313,7 @@ AK/Forward.h
 AK/Function.h
 AK/HashMap.h
 AK/HashTable.h
+AK/IntegralMath.h
 AK/IntrusiveList.h
 AK/JsonArray.h
 AK/JsonObject.h
@@ -467,9 +469,94 @@ Documentation/WrapperArchitecture.md
 ISSUES.md
 ```
 
-### Libraries (4749 files)
+### Libraries (4878 files)
 ```
 Libraries/CMakeLists.txt
+Libraries/LibCompositing/CMakeLists.txt
+Libraries/LibCompositing/DisplayList/AccumulatedVisualContext.cpp
+Libraries/LibCompositing/DisplayList/AccumulatedVisualContext.h
+Libraries/LibCompositing/DisplayList/Canvas2DCommandStream.cpp
+Libraries/LibCompositing/DisplayList/Canvas2DCommandStream.h
+Libraries/LibCompositing/DisplayList/CanvasSurfaceRegistry.h
+Libraries/LibCompositing/DisplayList/CompositedContext.h
+Libraries/LibCompositing/DisplayList/ContextRef.h
+Libraries/LibCompositing/DisplayList/DisplayList.cpp
+Libraries/LibCompositing/DisplayList/DisplayList.h
+Libraries/LibCompositing/DisplayList/DisplayListCommand.h
+Libraries/LibCompositing/DisplayList/DisplayListDamage.cpp
+Libraries/LibCompositing/DisplayList/DisplayListDamage.h
+Libraries/LibCompositing/DisplayList/DisplayListPlayerSkia.cpp
+Libraries/LibCompositing/DisplayList/DisplayListPlayerSkia.h
+Libraries/LibCompositing/DisplayList/DisplayListResourceIds.h
+Libraries/LibCompositing/DisplayList/DisplayListResourceStorage.cpp
+Libraries/LibCompositing/DisplayList/DisplayListResourceStorage.h
+Libraries/LibCompositing/DisplayList/DisplayListResourceTransaction.cpp
+Libraries/LibCompositing/DisplayList/RustFFIAssertions.cpp
+Libraries/LibCompositing/DisplayList/VisualContextTreeTestBuilder.cpp
+Libraries/LibCompositing/DisplayList/VisualContextTreeTestBuilder.h
+Libraries/LibCompositing/Forward.h
+Libraries/LibCompositing/InputEvent.cpp
+Libraries/LibCompositing/InputEvent.h
+Libraries/LibCompositing/KeyCode.h
+Libraries/LibCompositing/MouseButton.h
+Libraries/LibCompositing/PageId.h
+Libraries/LibCompositing/PausedDebuggerOverlay.h
+Libraries/LibCompositing/PixelUnits.cpp
+Libraries/LibCompositing/PixelUnits.h
+Libraries/LibCompositing/Rust/Cargo.toml
+Libraries/LibCompositing/Rust/build.rs
+Libraries/LibCompositing/Rust/cbindgen.toml
+Libraries/LibCompositing/Rust/src/css_pixels.rs
+Libraries/LibCompositing/Rust/src/display_list/builder.rs
+Libraries/LibCompositing/Rust/src/display_list/commands.rs
+Libraries/LibCompositing/Rust/src/display_list/damage.rs
+Libraries/LibCompositing/Rust/src/display_list/depth_sorted_plan.rs
+Libraries/LibCompositing/Rust/src/display_list/device_pixels.rs
+Libraries/LibCompositing/Rust/src/display_list/effect_clip_plan.rs
+Libraries/LibCompositing/Rust/src/display_list/ffi_bytes.rs
+Libraries/LibCompositing/Rust/src/display_list/mod.rs
+Libraries/LibCompositing/Rust/src/display_list/nested_records.rs
+Libraries/LibCompositing/Rust/src/display_list/replay.rs
+Libraries/LibCompositing/Rust/src/display_list/storage.rs
+Libraries/LibCompositing/Rust/src/easing.rs
+Libraries/LibCompositing/Rust/src/fast_hash.rs
+Libraries/LibCompositing/Rust/src/ffi.rs
+Libraries/LibCompositing/Rust/src/filter_bytes.rs
+Libraries/LibCompositing/Rust/src/force_dark.rs
+Libraries/LibCompositing/Rust/src/host/mod.rs
+Libraries/LibCompositing/Rust/src/host/replay.rs
+Libraries/LibCompositing/Rust/src/lib.rs
+Libraries/LibCompositing/Rust/src/node_slot_id.rs
+Libraries/LibCompositing/Rust/src/test_stubs.rs
+Libraries/LibCompositing/Rust/src/visual_animation.rs
+Libraries/LibCompositing/Rust/src/visual_context/ffi_types.rs
+Libraries/LibCompositing/Rust/src/visual_context/mod.rs
+Libraries/LibCompositing/Rust/src/visual_context/queries.rs
+Libraries/LibCompositing/Rust/src/visual_context/scroll_state.rs
+Libraries/LibCompositing/Rust/src/visual_context/serialize.rs
+Libraries/LibCompositing/Rust/src/visual_context/visual_animations.rs
+Libraries/LibCompositing/Scrolling/AsyncScrollNodeStableID.h
+Libraries/LibCompositing/Scrolling/AsyncScrollTree.cpp
+Libraries/LibCompositing/Scrolling/AsyncScrollTree.h
+Libraries/LibCompositing/Scrolling/AsyncScrollingState.cpp
+Libraries/LibCompositing/Scrolling/AsyncScrollingState.h
+Libraries/LibCompositing/Scrolling/ScrollSnapSelection.cpp
+Libraries/LibCompositing/Scrolling/ScrollSnapSelection.h
+Libraries/LibCompositing/Scrolling/ScrollState.cpp
+Libraries/LibCompositing/Scrolling/ScrollState.h
+Libraries/LibCompositing/Scrolling/SmoothScrollAnimation.cpp
+Libraries/LibCompositing/Scrolling/SmoothScrollAnimation.h
+Libraries/LibCompositing/Scrolling/WheelGestureIdentity.cpp
+Libraries/LibCompositing/Scrolling/WheelGestureIdentity.h
+Libraries/LibCompositing/Types.cpp
+Libraries/LibCompositing/Types.h
+Libraries/LibCompositing/WebGL/GLFunctions.json
+Libraries/LibCompositing/WebGL/TextureUpload.cpp
+Libraries/LibCompositing/WebGL/TextureUpload.h
+Libraries/LibCompositing/WebGL/Types.h
+Libraries/LibCompositing/WebGL/WebGLCommandList.cpp
+Libraries/LibCompositing/WebGL/WebGLCommandList.h
+Libraries/LibCompositing/WebGL/WebGLSharedCommandBuffer.h
 Libraries/LibCompress/Brotli.cpp
 Libraries/LibCompress/Brotli.h
 Libraries/LibCompress/CMakeLists.txt
@@ -558,6 +645,7 @@ Libraries/LibCore/TimeZone.h
 Libraries/LibCore/TimeZoneWatcher.h
 Libraries/LibCore/TimeoutSet.h
 Libraries/LibCore/UDPServerWindows.cpp
+Libraries/LibCrypto/ASN1/Constants.h
 Libraries/LibCrypto/ASN1/DER.cpp
 Libraries/LibCrypto/ASN1/DER.h
 Libraries/LibCrypto/BigFraction/BigFraction.cpp
@@ -567,14 +655,19 @@ Libraries/LibCrypto/BigInt/SignedBigInteger.h
 Libraries/LibCrypto/BigInt/UnsignedBigInteger.cpp
 Libraries/LibCrypto/BigInt/UnsignedBigInteger.h
 Libraries/LibCrypto/CMakeLists.txt
+Libraries/LibCrypto/Certificate/Certificate.cpp
+Libraries/LibCrypto/Certificate/Certificate.h
 Libraries/LibCrypto/ConstantTimeComparison.cpp
 Libraries/LibCrypto/ConstantTimeComparison.h
 Libraries/LibCrypto/Curves/SECPxxxr1.cpp
+Libraries/LibCrypto/Curves/SECPxxxr1.h
 Libraries/LibCrypto/Hash/HashFunction.h
 Libraries/LibCrypto/Hash/OpenSSLHashFunction.h
 Libraries/LibCrypto/OpenSSL.h
 Libraries/LibCrypto/OpenSSLForward.h
+Libraries/LibCrypto/PK/EC.cpp
 Libraries/LibCrypto/PK/EC.h
+Libraries/LibCrypto/PK/PK.h
 Libraries/LibCrypto/PK/RSA.cpp
 Libraries/LibDNS/CMakeLists.txt
 Libraries/LibDNS/Message.cpp
@@ -652,9 +745,11 @@ Libraries/LibGC/ActivityRoot.h
 Libraries/LibGC/BlockAllocator.cpp
 Libraries/LibGC/BlockAllocator.h
 Libraries/LibGC/CMakeLists.txt
+Libraries/LibGC/Cell.cpp
 Libraries/LibGC/Cell.h
 Libraries/LibGC/CellAllocator.cpp
 Libraries/LibGC/CellAllocator.h
+Libraries/LibGC/CellTypeInfo.h
 Libraries/LibGC/ConservativeRangeProvider.cpp
 Libraries/LibGC/ConservativeRangeProvider.h
 Libraries/LibGC/CrossHeapMember.cpp
@@ -662,6 +757,7 @@ Libraries/LibGC/CrossHeapMember.h
 Libraries/LibGC/ExternalEntityTable.cpp
 Libraries/LibGC/ExternalEntityTable.h
 Libraries/LibGC/Forward.h
+Libraries/LibGC/Function.h
 Libraries/LibGC/Heap.cpp
 Libraries/LibGC/Heap.h
 Libraries/LibGC/HeapBlock.cpp
@@ -670,12 +766,14 @@ Libraries/LibGC/HeapGroup.cpp
 Libraries/LibGC/HeapGroup.h
 Libraries/LibGC/HeapRegion.h
 Libraries/LibGC/HeapRoot.h
+Libraries/LibGC/Internals.h
 Libraries/LibGC/NanBoxedValue.h
 Libraries/LibGC/PrimitiveStorage.cpp
 Libraries/LibGC/PrimitiveStorage.h
 Libraries/LibGC/Ptr.h
 Libraries/LibGC/Root.h
 Libraries/LibGC/Rootable.h
+Libraries/LibGC/Timer.h
 Libraries/LibGC/Weak.h
 Libraries/LibGC/WeakBlock.cpp
 Libraries/LibGC/WeakHashMap.h
@@ -1131,6 +1229,7 @@ Libraries/LibJS/Runtime/Iterator.cpp
 Libraries/LibJS/Runtime/Iterator.h
 Libraries/LibJS/Runtime/IteratorConstructor.cpp
 Libraries/LibJS/Runtime/IteratorHelperPrototype.cpp
+Libraries/LibJS/Runtime/IteratorPrototype.cpp
 Libraries/LibJS/Runtime/JSONObject.cpp
 Libraries/LibJS/Runtime/JSONObject.h
 Libraries/LibJS/Runtime/JavaScriptImplementations/ArrayConstructor.js
@@ -1176,11 +1275,13 @@ Libraries/LibJS/Runtime/Realm.cpp
 Libraries/LibJS/Runtime/Realm.h
 Libraries/LibJS/Runtime/Reference.cpp
 Libraries/LibJS/Runtime/RegExpConstructor.cpp
+Libraries/LibJS/Runtime/RegExpConstructor.h
 Libraries/LibJS/Runtime/RegExpLegacyStaticProperties.cpp
 Libraries/LibJS/Runtime/RegExpLegacyStaticProperties.h
 Libraries/LibJS/Runtime/RegExpObject.cpp
 Libraries/LibJS/Runtime/RegExpObject.h
 Libraries/LibJS/Runtime/RegExpPrototype.cpp
+Libraries/LibJS/Runtime/RegExpPrototype.h
 Libraries/LibJS/Runtime/RegExpStringIteratorPrototype.cpp
 Libraries/LibJS/Runtime/Set.cpp
 Libraries/LibJS/Runtime/Set.h
@@ -1297,6 +1398,7 @@ Libraries/LibJS/SourceTextModule.h
 Libraries/LibJS/SyntaxHighlighter.cpp
 Libraries/LibJS/SyntheticModule.cpp
 Libraries/LibJS/SyntheticModule.h
+Libraries/LibMain/Main.cpp
 Libraries/LibMedia/Audio/AudioBuffer.cpp
 Libraries/LibMedia/Audio/AudioBuffer.h
 Libraries/LibMedia/Audio/AudioConverter.h
@@ -1308,6 +1410,8 @@ Libraries/LibMedia/Audio/AudioRingBuffer.cpp
 Libraries/LibMedia/Audio/AudioRingBuffer.h
 Libraries/LibMedia/Audio/AudioServerPath.cpp
 Libraries/LibMedia/Audio/AudioServerPath.h
+Libraries/LibMedia/Audio/CoreAudioChannelLayout.cpp
+Libraries/LibMedia/Audio/CoreAudioChannelLayout.h
 Libraries/LibMedia/Audio/NullPlaybackStream.cpp
 Libraries/LibMedia/Audio/NullPlaybackStream.h
 Libraries/LibMedia/Audio/PlaybackStream.cpp
@@ -1337,6 +1441,8 @@ Libraries/LibMedia/AudioBlock.h
 Libraries/LibMedia/AudioBlockTiming.h
 Libraries/LibMedia/AudioBlockTimingRing.h
 Libraries/LibMedia/AudioDecoder.h
+Libraries/LibMedia/AudioToolbox/AudioToolboxAudioDecoder.cpp
+Libraries/LibMedia/AudioToolbox/AudioToolboxAudioDecoder.h
 Libraries/LibMedia/BitReader.h
 Libraries/LibMedia/CMakeLists.txt
 Libraries/LibMedia/CodecID.h
@@ -1364,12 +1470,23 @@ Libraries/LibMedia/Codecs/VP9.h
 Libraries/LibMedia/CodedAudioFrameData.h
 Libraries/LibMedia/CodedFrame.h
 Libraries/LibMedia/CodedVideoFrameData.h
+Libraries/LibMedia/Color/CodingIndependentCodePoints.cpp
 Libraries/LibMedia/Color/CodingIndependentCodePoints.h
 Libraries/LibMedia/ContainerID.cpp
 Libraries/LibMedia/ContainerID.h
+Libraries/LibMedia/Containers/ADTS/ADTSDemuxer.cpp
+Libraries/LibMedia/Containers/ADTS/ADTSDemuxer.h
+Libraries/LibMedia/Containers/ADTS/FrameHeader.cpp
+Libraries/LibMedia/Containers/ADTS/FrameHeader.h
+Libraries/LibMedia/Containers/ADTS/Reader.cpp
+Libraries/LibMedia/Containers/ADTS/Reader.h
 Libraries/LibMedia/Containers/ConstantBitrateContainerNavigator.cpp
 Libraries/LibMedia/Containers/ConstantBitrateContainerNavigator.h
 Libraries/LibMedia/Containers/ContainerNavigator.h
+Libraries/LibMedia/Containers/FrameScanTimeline.cpp
+Libraries/LibMedia/Containers/FrameScanTimeline.h
+Libraries/LibMedia/Containers/ID3.cpp
+Libraries/LibMedia/Containers/ID3.h
 Libraries/LibMedia/Containers/ISOBMFF/BoxTypes.h
 Libraries/LibMedia/Containers/ISOBMFF/Boxes.h
 Libraries/LibMedia/Containers/ISOBMFF/FragmentSampleIterator.cpp
@@ -1380,6 +1497,14 @@ Libraries/LibMedia/Containers/ISOBMFF/Streamer.cpp
 Libraries/LibMedia/Containers/ISOBMFF/Streamer.h
 Libraries/LibMedia/Containers/IndexedContainerNavigator.cpp
 Libraries/LibMedia/Containers/IndexedContainerNavigator.h
+Libraries/LibMedia/Containers/MP3/FrameHeader.cpp
+Libraries/LibMedia/Containers/MP3/FrameHeader.h
+Libraries/LibMedia/Containers/MP3/MP3Demuxer.cpp
+Libraries/LibMedia/Containers/MP3/MP3Demuxer.h
+Libraries/LibMedia/Containers/MP3/Reader.cpp
+Libraries/LibMedia/Containers/MP3/Reader.h
+Libraries/LibMedia/Containers/MP3/StreamInfo.cpp
+Libraries/LibMedia/Containers/MP3/StreamInfo.h
 Libraries/LibMedia/Containers/MP3Navigator.cpp
 Libraries/LibMedia/Containers/MP3Navigator.h
 Libraries/LibMedia/Containers/Matroska/Document.h
@@ -1399,6 +1524,7 @@ Libraries/LibMedia/Containers/ScanningContainerNavigator.h
 Libraries/LibMedia/DecodeAudioStream.cpp
 Libraries/LibMedia/DecodeAudioStream.h
 Libraries/LibMedia/DecoderCapabilities.h
+Libraries/LibMedia/DecoderError.cpp
 Libraries/LibMedia/DecoderError.h
 Libraries/LibMedia/DecoderRegistry.cpp
 Libraries/LibMedia/DecoderRegistry.h
@@ -1412,11 +1538,19 @@ Libraries/LibMedia/FFmpeg/FFmpegAudioDecoder.cpp
 Libraries/LibMedia/FFmpeg/FFmpegAudioDecoder.h
 Libraries/LibMedia/FFmpeg/FFmpegDemuxer.cpp
 Libraries/LibMedia/FFmpeg/FFmpegDemuxer.h
+Libraries/LibMedia/FFmpeg/FFmpegForward.h
+Libraries/LibMedia/FFmpeg/FFmpegFunctions.cpp
+Libraries/LibMedia/FFmpeg/FFmpegFunctions.h
 Libraries/LibMedia/FFmpeg/FFmpegHelpers.cpp
 Libraries/LibMedia/FFmpeg/FFmpegHelpers.h
+Libraries/LibMedia/FFmpeg/FFmpegIOContext.cpp
 Libraries/LibMedia/FFmpeg/FFmpegIOContext.h
 Libraries/LibMedia/FFmpeg/FFmpegVideoDecoder.cpp
 Libraries/LibMedia/FFmpeg/FFmpegVideoDecoder.h
+Libraries/LibMedia/FFmpeg/SystemFFmpeg.cpp
+Libraries/LibMedia/FFmpeg/SystemFFmpeg.h
+Libraries/LibMedia/FFmpeg/SystemFFmpegDecoders.cpp
+Libraries/LibMedia/FFmpeg/SystemFFmpegDecoders.h
 Libraries/LibMedia/Forward.h
 Libraries/LibMedia/GenericTimeProvider.cpp
 Libraries/LibMedia/GenericTimeProvider.h
@@ -1424,6 +1558,13 @@ Libraries/LibMedia/IncrementallyPopulatedStream.cpp
 Libraries/LibMedia/IncrementallyPopulatedStream.h
 Libraries/LibMedia/MediaClock.h
 Libraries/LibMedia/MediaPipelineNode.h
+Libraries/LibMedia/MediaSourceExtensions/Forward.h
+Libraries/LibMedia/MediaSourceExtensions/ISOBMFFByteStreamParser.cpp
+Libraries/LibMedia/MediaSourceExtensions/ISOBMFFByteStreamParser.h
+Libraries/LibMedia/MediaSourceExtensions/SourceBufferProcessor.cpp
+Libraries/LibMedia/MediaSourceExtensions/SourceBufferProcessor.h
+Libraries/LibMedia/MediaSourceExtensions/TrackBufferDemuxer.cpp
+Libraries/LibMedia/MediaSourceExtensions/TrackBufferDemuxer.h
 Libraries/LibMedia/MediaStream.h
 Libraries/LibMedia/MediaSupport.cpp
 Libraries/LibMedia/MediaSupport.h
@@ -1437,6 +1578,7 @@ Libraries/LibMedia/PlaybackManager.cpp
 Libraries/LibMedia/PlaybackManager.h
 Libraries/LibMedia/PlaybackStates/BufferingStateHandler.cpp
 Libraries/LibMedia/PlaybackStates/BufferingStateHandler.h
+Libraries/LibMedia/PlaybackStates/EndedStateHandler.cpp
 Libraries/LibMedia/PlaybackStates/EndedStateHandler.h
 Libraries/LibMedia/PlaybackStates/Forward.h
 Libraries/LibMedia/PlaybackStates/PausedStateHandler.h
@@ -1469,7 +1611,10 @@ Libraries/LibMedia/Sinks/RemoteVideoSink.cpp
 Libraries/LibMedia/Sinks/RemoteVideoSink.h
 Libraries/LibMedia/Sinks/VideoSink.h
 Libraries/LibMedia/Subsampling.h
+Libraries/LibMedia/SynchronizedWakeHandler.h
+Libraries/LibMedia/TimeRanges.cpp
 Libraries/LibMedia/TimeRanges.h
+Libraries/LibMedia/Track.cpp
 Libraries/LibMedia/Track.h
 Libraries/LibMedia/VideoDecoder.h
 Libraries/LibMedia/VideoEdgeQueue.cpp
@@ -1493,6 +1638,16 @@ Libraries/LibMedia/VideoSurface.cpp
 Libraries/LibMedia/VideoSurface.h
 Libraries/LibMedia/VideoToolbox/VideoToolboxVideoDecoder.h
 Libraries/LibMedia/VideoToolbox/VideoToolboxVideoDecoder.mm
+Libraries/LibMediaClient/CMakeLists.txt
+Libraries/LibMediaClient/Client.cpp
+Libraries/LibMediaClient/Client.h
+Libraries/LibMediaClient/Forward.h
+Libraries/LibMediaClient/RemoteMediaStream.cpp
+Libraries/LibMediaClient/RemoteMediaStream.h
+Libraries/LibMediaClient/RemotePlaybackManager.cpp
+Libraries/LibMediaClient/RemotePlaybackManager.h
+Libraries/LibMediaClient/RemoteSourceBuffer.cpp
+Libraries/LibMediaClient/RemoteSourceBuffer.h
 Libraries/LibRegex/ECMAScriptRegex.cpp
 Libraries/LibRegex/ECMAScriptRegex.h
 Libraries/LibRegex/Rust/build.rs
@@ -2147,6 +2302,7 @@ Libraries/LibWeb/CSS/SelectorMatching.h
 Libraries/LibWeb/CSS/SerializationMode.h
 Libraries/LibWeb/CSS/Serialize.cpp
 Libraries/LibWeb/CSS/Serialize.h
+Libraries/LibWeb/CSS/SharedCompiledStyleSheet.h
 Libraries/LibWeb/CSS/Size.cpp
 Libraries/LibWeb/CSS/Size.h
 Libraries/LibWeb/CSS/StyleComputeFFI.h
@@ -2371,14 +2527,8 @@ Libraries/LibWeb/Compositor/AsyncScrollingState.cpp
 Libraries/LibWeb/Compositor/AsyncScrollingState.h
 Libraries/LibWeb/Compositor/CompositorHost.cpp
 Libraries/LibWeb/Compositor/CompositorHost.h
-Libraries/LibWeb/Compositor/ScrollSnapSelection.cpp
-Libraries/LibWeb/Compositor/ScrollSnapSelection.h
-Libraries/LibWeb/Compositor/SmoothScrollAnimation.cpp
-Libraries/LibWeb/Compositor/SmoothScrollAnimation.h
 Libraries/LibWeb/Compositor/Types.cpp
 Libraries/LibWeb/Compositor/Types.h
-Libraries/LibWeb/Compositor/VisualAnimation.cpp
-Libraries/LibWeb/Compositor/VisualAnimation.h
 Libraries/LibWeb/Compression/CompressionStream.cpp
 Libraries/LibWeb/Compression/CompressionStream.h
 Libraries/LibWeb/Compression/CompressionStream.idl
@@ -3761,8 +3911,6 @@ Libraries/LibWeb/MediaSourceExtensions/BufferedChangeEvent.h
 Libraries/LibWeb/MediaSourceExtensions/ByteStreamParser.h
 Libraries/LibWeb/MediaSourceExtensions/EventNames.cpp
 Libraries/LibWeb/MediaSourceExtensions/EventNames.h
-Libraries/LibWeb/MediaSourceExtensions/ISOBMFFByteStreamParser.cpp
-Libraries/LibWeb/MediaSourceExtensions/ISOBMFFByteStreamParser.h
 Libraries/LibWeb/MediaSourceExtensions/ManagedMediaSource.cpp
 Libraries/LibWeb/MediaSourceExtensions/ManagedMediaSource.h
 Libraries/LibWeb/MediaSourceExtensions/ManagedSourceBuffer.cpp
@@ -3779,6 +3927,7 @@ Libraries/LibWeb/MediaSourceExtensions/SourceBufferList.cpp
 Libraries/LibWeb/MediaSourceExtensions/SourceBufferList.h
 Libraries/LibWeb/MediaSourceExtensions/SourceBufferProcessor.cpp
 Libraries/LibWeb/MediaSourceExtensions/SourceBufferProcessor.h
+Libraries/LibWeb/MediaSourceExtensions/TrackBuffer.cpp
 Libraries/LibWeb/MediaSourceExtensions/TrackBuffer.h
 Libraries/LibWeb/MediaSourceExtensions/TrackBufferDemuxer.cpp
 Libraries/LibWeb/MediaSourceExtensions/TrackBufferDemuxer.h
@@ -3805,6 +3954,8 @@ Libraries/LibWeb/Page/AutoScrollHandler.cpp
 Libraries/LibWeb/Page/AutoScrollHandler.h
 Libraries/LibWeb/Page/DragAndDropEventHandler.cpp
 Libraries/LibWeb/Page/DragAndDropEventHandler.h
+Libraries/LibWeb/Page/DragEvent.cpp
+Libraries/LibWeb/Page/DragEvent.h
 Libraries/LibWeb/Page/ElementResizeAction.cpp
 Libraries/LibWeb/Page/ElementResizeAction.h
 Libraries/LibWeb/Page/EventHandler.cpp
@@ -3816,6 +3967,7 @@ Libraries/LibWeb/Page/MiddleButtonScrollHandler.h
 Libraries/LibWeb/Page/Page.cpp
 Libraries/LibWeb/Page/Page.h
 Libraries/LibWeb/Page/PageId.h
+Libraries/LibWeb/Page/QueuedInputEvent.h
 Libraries/LibWeb/Page/ScreenWakeLockHandle.cpp
 Libraries/LibWeb/Page/ScreenWakeLockHandle.h
 Libraries/LibWeb/Painting/AccumulatedVisualContext.cpp
@@ -3835,25 +3987,20 @@ Libraries/LibWeb/Painting/BoxModelMetrics.cpp
 Libraries/LibWeb/Painting/BoxModelMetrics.h
 Libraries/LibWeb/Painting/BoxViews.cpp
 Libraries/LibWeb/Painting/BoxViews.h
-Libraries/LibWeb/Painting/Canvas2DCommandStream.cpp
-Libraries/LibWeb/Painting/Canvas2DCommandStream.h
 Libraries/LibWeb/Painting/CanvasPaintable.cpp
 Libraries/LibWeb/Painting/CanvasPaintable.h
-Libraries/LibWeb/Painting/CanvasSurfaceRegistry.h
 Libraries/LibWeb/Painting/CheckBoxPaintable.cpp
 Libraries/LibWeb/Painting/CheckBoxPaintable.h
 Libraries/LibWeb/Painting/ChromeMetrics.h
 Libraries/LibWeb/Painting/ChromeWidget.cpp
 Libraries/LibWeb/Painting/ChromeWidget.h
-Libraries/LibWeb/Painting/CompositedContext.h
-Libraries/LibWeb/Painting/ContextRef.h
+Libraries/LibWeb/Painting/CompositorAnimationEffectState.cpp
+Libraries/LibWeb/Painting/CompositorAnimationEffectState.h
 Libraries/LibWeb/Painting/DevicePixelConverter.h
 Libraries/LibWeb/Painting/DisplayList.cpp
 Libraries/LibWeb/Painting/DisplayList.h
 Libraries/LibWeb/Painting/DisplayListCommand.cpp
 Libraries/LibWeb/Painting/DisplayListCommand.h
-Libraries/LibWeb/Painting/DisplayListDamage.cpp
-Libraries/LibWeb/Painting/DisplayListDamage.h
 Libraries/LibWeb/Painting/DisplayListPlayerSkia.cpp
 Libraries/LibWeb/Painting/DisplayListPlayerSkia.h
 Libraries/LibWeb/Painting/DisplayListRecorder.cpp
@@ -3951,8 +4098,6 @@ Libraries/LibWeb/Painting/VideoPaintable.cpp
 Libraries/LibWeb/Painting/VideoPaintable.h
 Libraries/LibWeb/Painting/ViewportPaintable.cpp
 Libraries/LibWeb/Painting/ViewportPaintable.h
-Libraries/LibWeb/Painting/VisualContextTreeTestBuilder.cpp
-Libraries/LibWeb/Painting/VisualContextTreeTestBuilder.h
 Libraries/LibWeb/PerformanceTimeline/EntryTypes.cpp
 Libraries/LibWeb/PerformanceTimeline/EntryTypes.h
 Libraries/LibWeb/PerformanceTimeline/EventNames.cpp
@@ -4020,7 +4165,6 @@ Libraries/LibWeb/Rust/src/css/container_conditions.rs
 Libraries/LibWeb/Rust/src/css/counter_style.rs
 Libraries/LibWeb/Rust/src/css/css_enums.rs
 Libraries/LibWeb/Rust/src/css/css_path.rs
-Libraries/LibWeb/Rust/src/css/css_pixels.rs
 Libraries/LibWeb/Rust/src/css/css_string.rs
 Libraries/LibWeb/Rust/src/css/css_tokenizer.rs
 Libraries/LibWeb/Rust/src/css/custom_properties.rs
@@ -4091,7 +4235,6 @@ Libraries/LibWeb/Rust/src/css/style/custom_property_cascade.rs
 Libraries/LibWeb/Rust/src/css/style/custom_property_environments.rs
 Libraries/LibWeb/Rust/src/css/style/differential_tests.rs
 Libraries/LibWeb/Rust/src/css/style/exact_matcher.rs
-Libraries/LibWeb/Rust/src/css/style/fast_hash.rs
 Libraries/LibWeb/Rust/src/css/style/flush.rs
 Libraries/LibWeb/Rust/src/css/style/fnv.rs
 Libraries/LibWeb/Rust/src/css/style/font_resolution.rs
@@ -4129,6 +4272,7 @@ Libraries/LibWeb/Rust/src/css/style/selector.rs
 Libraries/LibWeb/Rust/src/css/style/selector/replay.rs
 Libraries/LibWeb/Rust/src/css/style/shareable.rs
 Libraries/LibWeb/Rust/src/css/style/shared_vector.rs
+Libraries/LibWeb/Rust/src/css/style/sheet_occurrences.rs
 Libraries/LibWeb/Rust/src/css/style/sorted_merge.rs
 Libraries/LibWeb/Rust/src/css/style/specified_value.rs
 Libraries/LibWeb/Rust/src/css/style/style_invalidation.rs
@@ -4167,6 +4311,7 @@ Libraries/LibWeb/Rust/src/layout/mod.rs
 Libraries/LibWeb/Rust/src/layout/node_data.rs
 Libraries/LibWeb/Rust/src/layout/node_facts.rs
 Libraries/LibWeb/Rust/src/layout/partial_relayout.rs
+Libraries/LibWeb/Rust/src/layout/read_scope.rs
 Libraries/LibWeb/Rust/src/layout/rendered_text.rs
 Libraries/LibWeb/Rust/src/layout/replaced_with_children_formatting_context.rs
 Libraries/LibWeb/Rust/src/layout/run_records.rs
@@ -4189,24 +4334,13 @@ Libraries/LibWeb/Rust/src/painting/caret.rs
 Libraries/LibWeb/Rust/src/painting/chrome_geometry.rs
 Libraries/LibWeb/Rust/src/painting/client_rects.rs
 Libraries/LibWeb/Rust/src/painting/content_visibility.rs
+Libraries/LibWeb/Rust/src/painting/css_filter.rs
 Libraries/LibWeb/Rust/src/painting/devtools_layout.rs
-Libraries/LibWeb/Rust/src/painting/display_list/builder.rs
-Libraries/LibWeb/Rust/src/painting/display_list/commands.rs
-Libraries/LibWeb/Rust/src/painting/display_list/damage.rs
-Libraries/LibWeb/Rust/src/painting/display_list/depth_sorted_plan.rs
-Libraries/LibWeb/Rust/src/painting/display_list/device_pixels.rs
 Libraries/LibWeb/Rust/src/painting/display_list/dump.rs
-Libraries/LibWeb/Rust/src/painting/display_list/effect_clip_plan.rs
-Libraries/LibWeb/Rust/src/painting/display_list/ffi_bytes.rs
 Libraries/LibWeb/Rust/src/painting/display_list/mod.rs
-Libraries/LibWeb/Rust/src/painting/display_list/nested_records.rs
 Libraries/LibWeb/Rust/src/painting/display_list/recorder.rs
-Libraries/LibWeb/Rust/src/painting/display_list/replay.rs
-Libraries/LibWeb/Rust/src/painting/display_list/storage.rs
 Libraries/LibWeb/Rust/src/painting/dump.rs
 Libraries/LibWeb/Rust/src/painting/ffi.rs
-Libraries/LibWeb/Rust/src/painting/filter_bytes.rs
-Libraries/LibWeb/Rust/src/painting/force_dark.rs
 Libraries/LibWeb/Rust/src/painting/fragment_ownership.rs
 Libraries/LibWeb/Rust/src/painting/hit_test/caret.rs
 Libraries/LibWeb/Rust/src/painting/hit_test/geometry.rs
@@ -4216,7 +4350,6 @@ Libraries/LibWeb/Rust/src/painting/hit_test/resolve.rs
 Libraries/LibWeb/Rust/src/painting/host/hit_test.rs
 Libraries/LibWeb/Rust/src/painting/host/mod.rs
 Libraries/LibWeb/Rust/src/painting/host/paint.rs
-Libraries/LibWeb/Rust/src/painting/host/replay.rs
 Libraries/LibWeb/Rust/src/painting/host/visual_context.rs
 Libraries/LibWeb/Rust/src/painting/image_content.rs
 Libraries/LibWeb/Rust/src/painting/intersection_observer.rs
@@ -4283,6 +4416,7 @@ Libraries/LibWeb/Rust/src/painting/svg_masking.rs
 Libraries/LibWeb/Rust/src/painting/svg_paint_resources.rs
 Libraries/LibWeb/Rust/src/painting/svg_viewport.rs
 Libraries/LibWeb/Rust/src/painting/text_fragment.rs
+Libraries/LibWeb/Rust/src/painting/visual_animation_builder.rs
 Libraries/LibWeb/Rust/src/painting/visual_context/basic_shapes.rs
 Libraries/LibWeb/Rust/src/painting/visual_context/box_build.rs
 Libraries/LibWeb/Rust/src/painting/visual_context/build.rs
@@ -4292,11 +4426,9 @@ Libraries/LibWeb/Rust/src/painting/visual_context/dump.rs
 Libraries/LibWeb/Rust/src/painting/visual_context/incremental.rs
 Libraries/LibWeb/Rust/src/painting/visual_context/mod.rs
 Libraries/LibWeb/Rust/src/painting/visual_context/node_values.rs
-Libraries/LibWeb/Rust/src/painting/visual_context/queries.rs
 Libraries/LibWeb/Rust/src/painting/visual_context/reconcile.rs
+Libraries/LibWeb/Rust/src/painting/visual_context/records.rs
 Libraries/LibWeb/Rust/src/painting/visual_context/refresh.rs
-Libraries/LibWeb/Rust/src/painting/visual_context/scroll_state.rs
-Libraries/LibWeb/Rust/src/painting/visual_context/serialize.rs
 Libraries/LibWeb/Rust/src/painting/visual_context/shape.rs
 Libraries/LibWeb/Rust/src/painting/visual_lines.rs
 Libraries/LibWeb/Rust/src/svg/attribute_parser.rs
@@ -4655,6 +4787,7 @@ Libraries/LibWeb/UIEvents/KeyCode.h
 Libraries/LibWeb/UIEvents/KeyboardEvent.cpp
 Libraries/LibWeb/UIEvents/KeyboardEvent.h
 Libraries/LibWeb/UIEvents/KeyboardEvent.idl
+Libraries/LibWeb/UIEvents/MouseButton.h
 Libraries/LibWeb/UIEvents/MouseEvent.cpp
 Libraries/LibWeb/UIEvents/MouseEvent.h
 Libraries/LibWeb/UIEvents/MouseEvent.idl
@@ -4882,12 +5015,9 @@ Libraries/LibWeb/WebGL/Extensions/WebGLDrawBuffers.cpp
 Libraries/LibWeb/WebGL/Extensions/WebGLDrawBuffers.h
 Libraries/LibWeb/WebGL/Extensions/WebGLVertexArrayObjectOES.cpp
 Libraries/LibWeb/WebGL/Extensions/WebGLVertexArrayObjectOES.h
-Libraries/LibWeb/WebGL/GLFunctions.json
 Libraries/LibWeb/WebGL/OpenGLContext.cpp
 Libraries/LibWeb/WebGL/OpenGLContext.h
 Libraries/LibWeb/WebGL/RemoteWebGLTransport.h
-Libraries/LibWeb/WebGL/TextureUpload.cpp
-Libraries/LibWeb/WebGL/TextureUpload.h
 Libraries/LibWeb/WebGL/Types.h
 Libraries/LibWeb/WebGL/WebGL2RenderingContext.cpp
 Libraries/LibWeb/WebGL/WebGL2RenderingContext.h
@@ -4901,8 +5031,6 @@ Libraries/LibWeb/WebGL/WebGLActiveInfo.cpp
 Libraries/LibWeb/WebGL/WebGLActiveInfo.h
 Libraries/LibWeb/WebGL/WebGLBuffer.cpp
 Libraries/LibWeb/WebGL/WebGLBuffer.h
-Libraries/LibWeb/WebGL/WebGLCommandList.cpp
-Libraries/LibWeb/WebGL/WebGLCommandList.h
 Libraries/LibWeb/WebGL/WebGLContextAttributes.cpp
 Libraries/LibWeb/WebGL/WebGLContextEvent.cpp
 Libraries/LibWeb/WebGL/WebGLContextEvent.h
@@ -4934,7 +5062,6 @@ Libraries/LibWeb/WebGL/WebGLShader.cpp
 Libraries/LibWeb/WebGL/WebGLShader.h
 Libraries/LibWeb/WebGL/WebGLShaderPrecisionFormat.cpp
 Libraries/LibWeb/WebGL/WebGLShaderPrecisionFormat.h
-Libraries/LibWeb/WebGL/WebGLSharedCommandBuffer.h
 Libraries/LibWeb/WebGL/WebGLSync.cpp
 Libraries/LibWeb/WebGL/WebGLSync.h
 Libraries/LibWeb/WebGL/WebGLTexture.cpp
@@ -5076,10 +5203,17 @@ Libraries/LibWebView/CanonicalBrowsingContext.cpp
 Libraries/LibWebView/CanonicalBrowsingContext.h
 Libraries/LibWebView/CanonicalBrowsingContextGroup.cpp
 Libraries/LibWebView/CanonicalBrowsingContextGroup.h
+Libraries/LibWebView/CanonicalDocument.cpp
+Libraries/LibWebView/CanonicalDocument.h
 Libraries/LibWebView/CanonicalNavigable.cpp
 Libraries/LibWebView/CanonicalNavigable.h
+Libraries/LibWebView/CanonicalNavigation.h
+Libraries/LibWebView/CanonicalSessionHistoryEntry.cpp
+Libraries/LibWebView/CanonicalSessionHistoryEntry.h
 Libraries/LibWebView/CanonicalTraversable.cpp
 Libraries/LibWebView/CanonicalTraversable.h
+Libraries/LibWebView/CanonicalWindow.cpp
+Libraries/LibWebView/CanonicalWindow.h
 Libraries/LibWebView/CompositorClient.cpp
 Libraries/LibWebView/CompositorClient.h
 Libraries/LibWebView/CompositorConnection.cpp
@@ -5139,7 +5273,6 @@ Libraries/LibWebView/OmniboxEngagement.cpp
 Libraries/LibWebView/OmniboxEngagement.h
 Libraries/LibWebView/Options.h
 Libraries/LibWebView/PageInfo.h
-Libraries/LibWebView/PausedDebuggerOverlay.h
 Libraries/LibWebView/PlatformColors.h
 Libraries/LibWebView/PlatformColorsMacOS.cpp
 Libraries/LibWebView/Plugins/ImageCodecPlugin.h
@@ -5170,8 +5303,6 @@ Libraries/LibWebView/SiteCompatibility.cpp
 Libraries/LibWebView/SiteCompatibility.h
 Libraries/LibWebView/SiteIsolation.cpp
 Libraries/LibWebView/SiteIsolation.h
-Libraries/LibWebView/SiteIsolationManager.cpp
-Libraries/LibWebView/SiteIsolationManager.h
 Libraries/LibWebView/SourceHighlighter.cpp
 Libraries/LibWebView/StorageJar.cpp
 Libraries/LibWebView/StorageJar.h
@@ -5220,7 +5351,7 @@ Libraries/RustAllocator.rs
 Libraries/RustPanic.rs
 ```
 
-### Meta (192 files)
+### Meta (214 files)
 ```
 Meta/CMake/Findlibjxl.cmake
 Meta/CMake/RustPanicInit.cpp.in
@@ -5238,6 +5369,7 @@ Meta/CMake/flatpak/woff2/output-h-add-missing-stdint-include.patch
 Meta/CMake/freedesktop/org.ladybird.Ladybird.metainfo.xml.in
 Meta/CMake/gui_framework.cmake
 Meta/CMake/ladybird_helper_processes.cmake
+Meta/CMake/libcompositing_generators.cmake
 Meta/CMake/libjs_generators.cmake
 Meta/CMake/libtextcodec_generators.cmake
 Meta/CMake/libweb_generators.cmake
@@ -5249,6 +5381,27 @@ Meta/CMake/sync_rust_ffi_header.cmake
 Meta/CMake/targets.cmake
 Meta/CMake/utils.cmake
 Meta/CMake/vcpkg/generate_vcpkg_toolchain_variables.cmake
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0001-create-lib-libraries.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0002-fix-msvc-link.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0003-fix-windowsinclude.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0004-dependencies.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0005-fix-nasm.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0007-fix-lib-naming.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0013-define-WINVER.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0020-fix-aarch64-libswscale.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0024-fix-osx-host-c11.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0040-ffmpeg-add-av_stream_get_first_dts-for-chromium.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0041-add-const-for-opengl-definition.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0042-fix-arm64-linux.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0043-fix-miss-head.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0044-fix-vulkan-debug-callback-abi.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/0100-ladybird-symbol-version-nodes.patch
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/FindFFMPEG.cmake.in
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/build.sh.in
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/portfile.cmake
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/usage
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/vcpkg-cmake-wrapper.cmake
+Meta/CMake/vcpkg/overlay-ports/ffmpeg/vcpkg.json
 Meta/CMake/vcpkg/overlay-ports/gtk/0001-build.patch
 Meta/CMake/vcpkg/overlay-ports/gtk/portfile.cmake
 Meta/CMake/vcpkg/overlay-ports/gtk/vcpkg.json
@@ -5421,7 +5574,7 @@ Meta/verify-sab-exposure.py
 README.md
 ```
 
-### Services (347 files)
+### Services (362 files)
 ```
 Services/CMakeLists.txt
 Services/Compositor/BackingStoreManager.cpp
@@ -5458,6 +5611,8 @@ Services/Compositor/SandboxMacOS.cpp
 Services/Compositor/SandboxUnimplemented.cpp
 Services/Compositor/ScrollSnapController.cpp
 Services/Compositor/ScrollSnapController.h
+Services/Compositor/ScrollbarController.cpp
+Services/Compositor/ScrollbarController.h
 Services/Compositor/VSyncScheduler.cpp
 Services/Compositor/VSyncScheduler.h
 Services/Compositor/ViewportScrollbarController.cpp
@@ -5473,6 +5628,19 @@ Services/ImageDecoder/SandboxLinux.cpp
 Services/ImageDecoder/SandboxMacOS.cpp
 Services/ImageDecoder/SandboxUnimplemented.cpp
 Services/ImageDecoder/main.cpp
+Services/MediaServer/CMakeLists.txt
+Services/MediaServer/ConnectionFromClient.cpp
+Services/MediaServer/ConnectionFromClient.h
+Services/MediaServer/Forward.h
+Services/MediaServer/MediaClient.ipc
+Services/MediaServer/MediaServer.ipc
+Services/MediaServer/PlaybackSession.cpp
+Services/MediaServer/PlaybackSession.h
+Services/MediaServer/Sandbox.h
+Services/MediaServer/SandboxLinux.cpp
+Services/MediaServer/SandboxMacOS.cpp
+Services/MediaServer/SandboxUnimplemented.cpp
+Services/MediaServer/main.cpp
 Services/ProcessReaper/CMakeLists.txt
 Services/ProcessReaper/main.cpp
 Services/RendererSandbox.h
@@ -5792,7 +5960,7 @@ THREAT_SCORING_ENHANCEMENT_REPORT.md
 THREAT_SCORING_QUICK_REFERENCE.md
 ```
 
-### Tests (20833 files)
+### Tests (21106 files)
 ```
 Tests/AK/CMakeLists.txt
 Tests/AK/TestArray.cpp
@@ -5808,6 +5976,7 @@ Tests/AK/TestGenericShorthands.cpp
 Tests/AK/TestHashMap.cpp
 Tests/AK/TestHashTable.cpp
 Tests/AK/TestHeapPartition.cpp
+Tests/AK/TestIntegerMath.cpp
 Tests/AK/TestIntrusiveList.cpp
 Tests/AK/TestJSON.cpp
 Tests/AK/TestLEB128.cpp
@@ -5824,6 +5993,7 @@ Tests/AK/TestString.cpp
 Tests/AK/TestStringView.cpp
 Tests/AK/TestTearableAtomic.cpp
 Tests/AK/TestThreadSafeWeakable.cpp
+Tests/AK/TestTime.cpp
 Tests/AK/TestUtf16FlyString.cpp
 Tests/AK/TestUtf16String.cpp
 Tests/AK/TestUtf16StringBuilder.cpp
@@ -5846,12 +6016,25 @@ Tests/ClangPlugins/LibJSGCTests/override_flags.cpp
 Tests/Compositor/CMakeLists.txt
 Tests/Compositor/TestAsyncScrollTree.cpp
 Tests/Compositor/TestContextState.cpp
+Tests/Compositor/TestScrollbarController.cpp
 Tests/Compositor/TestTransportPlatform.cpp
-Tests/Compositor/TestViewportScrollbarController.cpp
+Tests/Compositor/TestVSyncScheduler.cpp
 Tests/Integration/html/test_beaconing_detection.html
 Tests/Integration/html/test_dga_detection.html
 Tests/Integration/html/test_exfiltration_detection.html
 Tests/Integration/test_network_monitoring.sh
+Tests/LibCompositing/BenchmarkForceDarkImageFilter.cpp
+Tests/LibCompositing/CMakeLists.txt
+Tests/LibCompositing/DisplayListTestHelpers.h
+Tests/LibCompositing/TestAsyncScrollingStateScrollbarMetadata.cpp
+Tests/LibCompositing/TestAsyncScrollingStateSnapMetadata.cpp
+Tests/LibCompositing/TestDisplayListCommandRuns.cpp
+Tests/LibCompositing/TestForceDarkImageFilter.cpp
+Tests/LibCompositing/TestPausedDebuggerOverlay.cpp
+Tests/LibCompositing/TestScrollSnapSelection.cpp
+Tests/LibCompositing/TestScrollState.cpp
+Tests/LibCompositing/TestSmoothScrollAnimation.cpp
+Tests/LibCompositing/TestTextureUpload.cpp
 Tests/LibCompress/CMakeLists.txt
 Tests/LibCompress/TestBrotli.cpp
 Tests/LibCompress/TestPackBits.cpp
@@ -5868,6 +6051,7 @@ Tests/LibCore/TestLibCoreSharedSingleProducerCircularQueue.cpp
 Tests/LibCore/TestLibCoreStream.cpp
 Tests/LibCore/TestRetryPolicy.cpp
 Tests/LibCrypto/CMakeLists.txt
+Tests/LibCrypto/TestASN1.cpp
 Tests/LibCrypto/TestBigFraction.cpp
 Tests/LibCrypto/TestBigInteger.cpp
 Tests/LibCrypto/TestConstantTimeComparison.cpp
@@ -6117,6 +6301,8 @@ Tests/LibJS/Runtime/builtins/Atomics/Atomics-resizable-buffer-out-of-bounds.js
 Tests/LibJS/Runtime/builtins/Atomics/Atomics-shared-memory.js
 Tests/LibJS/Runtime/builtins/Atomics/Atomics.pause.js
 Tests/LibJS/Runtime/builtins/Intl/Intl.getCanonicalLocales.js
+Tests/LibJS/Runtime/builtins/Iterator/Iterator.zip.js
+Tests/LibJS/Runtime/builtins/Iterator/Iterator.zipKeyed.js
 Tests/LibJS/Runtime/builtins/JSON/JSON.parse-reviver.js
 Tests/LibJS/Runtime/builtins/JSON/JSON.parse.js
 Tests/LibJS/Runtime/builtins/JSON/JSON.stringify.js
@@ -6181,6 +6367,7 @@ Tests/LibJS/Runtime/regress/let-initializer-must-not-clear-tdz-sentinel.js
 Tests/LibJS/Runtime/regress/long-prototype-chain-to-primitive.js
 Tests/LibJS/Runtime/regress/number-format-reads-the-coerced-primitive.js
 Tests/LibJS/Runtime/regress/object-destructuring-rebinds-source-variable.js
+Tests/LibJS/Runtime/set-new-property-through-prototype-chain.js
 Tests/LibJS/Runtime/slow-path-values.js
 Tests/LibJS/Runtime/string-concatenation.js
 Tests/LibJS/test-bytecode-cache.cpp
@@ -6196,8 +6383,13 @@ Tests/LibJS/test-slow-path-result.cpp
 Tests/LibJS/test-type-error-realm.cpp
 Tests/LibJS/test-value-js.cpp
 Tests/LibMedia/CMakeLists.txt
+Tests/LibMedia/FILE_LICENSES.md
+Tests/LibMedia/TestADTSDemuxer.cpp
+Tests/LibMedia/TestADTSFrameHeader.cpp
+Tests/LibMedia/TestADTSReader.cpp
 Tests/LibMedia/TestAudioBlockTimingRing.cpp
 Tests/LibMedia/TestAudioServerPath.cpp
+Tests/LibMedia/TestAudioToolboxDecode.cpp
 Tests/LibMedia/TestBitReader.cpp
 Tests/LibMedia/TestBufferedRanges.cpp
 Tests/LibMedia/TestCodecConfigurations.cpp
@@ -6211,9 +6403,15 @@ Tests/LibMedia/TestDemuxerRegistry.cpp
 Tests/LibMedia/TestDisplayingVideoSink.cpp
 Tests/LibMedia/TestFFmpegAudioNormalization.cpp
 Tests/LibMedia/TestFFmpegDemuxer.cpp
+Tests/LibMedia/TestFrameScanTimeline.cpp
 Tests/LibMedia/TestH264Decode.cpp
+Tests/LibMedia/TestID3.cpp
 Tests/LibMedia/TestISOBMFF.cpp
 Tests/LibMedia/TestIncrementallyPopulatedStream.cpp
+Tests/LibMedia/TestMP3Demuxer.cpp
+Tests/LibMedia/TestMP3FrameHeader.cpp
+Tests/LibMedia/TestMP3Reader.cpp
+Tests/LibMedia/TestMP3StreamInfo.cpp
 Tests/LibMedia/TestMatroskaDemuxer.cpp
 Tests/LibMedia/TestMediaCommon.h
 Tests/LibMedia/TestMediaSupport.cpp
@@ -6223,11 +6421,23 @@ Tests/LibMedia/TestPipelineNodes.cpp
 Tests/LibMedia/TestPlaybackStream.cpp
 Tests/LibMedia/TestRemoteVideoNode.cpp
 Tests/LibMedia/TestSpscAudioFrameRing.cpp
+Tests/LibMedia/TestSystemFFmpeg.cpp
+Tests/LibMedia/TestTrackBufferDemuxer.cpp
+Tests/LibMedia/TestVP9Decode.cpp
 Tests/LibMedia/TestVideoEdgeQueue.cpp
 Tests/LibMedia/TestVideoFramePool.cpp
 Tests/LibMedia/TestVideoToolboxDecode.cpp
+Tests/LibMedia/TestVorbisDecode.cpp
+Tests/LibMedia/aac_5_1_in_matroska.mka
+Tests/LibMedia/aac_lc_in_matroska.mka
+Tests/LibMedia/aac_lc_legacy_codec_id_in_matroska.mka
 Tests/LibMedia/av1_in_webm.webm
+Tests/LibMedia/bbb.adts
+Tests/LibMedia/bbb_without_stream_info.mp3
+Tests/LibMedia/he_aac_in_matroska.mka
+Tests/LibMedia/he_aac_legacy_codec_id_in_matroska.mka
 Tests/LibMedia/hevc_10bit.mp4
+Tests/LibMedia/hevc_open_gop.mp4
 Tests/LibMedia/vp9_profile_change.webm
 Tests/LibMedia/vp9_resize.webm
 Tests/LibRegex/TestRegex.cpp
@@ -6264,8 +6474,9 @@ Tests/LibWeb/Assets/solid-blue-10bit-160x120.webm
 Tests/LibWeb/Assets/solid-blue-160x120.webm
 Tests/LibWeb/Assets/tone.mp3
 Tests/LibWeb/Assets/vp9-frame-rate-change.webm
+Tests/LibWeb/Assets/xml-declaration-encoding/after-declaration.htm
+Tests/LibWeb/Assets/xml-declaration-encoding/in-declaration.htm
 Tests/LibWeb/BenchmarkDisplayListRecording.cpp
-Tests/LibWeb/BenchmarkForceDarkImageFilter.cpp
 Tests/LibWeb/CMakeLists.txt
 Tests/LibWeb/Crash/Animations/pseudo-element-animation-republished-during-update.html
 Tests/LibWeb/Crash/Animations/replace-animation-effect-outside-style-update.html
@@ -6313,6 +6524,7 @@ Tests/LibWeb/Crash/HTML/intersection-observer-implicit-root-target-in-render-blo
 Tests/LibWeb/Crash/HTML/many-image-resources.html
 Tests/LibWeb/Crash/HTML/media-element-load-with-pending-source-buffer-append.html
 Tests/LibWeb/Crash/HTML/meta-content-language-without-document-element.html
+Tests/LibWeb/Crash/HTML/mousemove-while-child-document-with-iframe-has-stale-layout.html
 Tests/LibWeb/Crash/HTML/navigate-then-remove-iframe-during-unload-check.html
 Tests/LibWeb/Crash/HTML/offset-top-with-boxless-offset-parent.html
 Tests/LibWeb/Crash/HTML/select-placeholder-option-with-empty-option-list.html
@@ -6364,7 +6576,6 @@ Tests/LibWeb/Crash/wpt-import/html/syntax/parsing/crashtests/adoption-agency-bai
 Tests/LibWeb/Crash/wpt-import/html/syntax/parsing/crashtests/adoption-agency-shift-001.html
 Tests/LibWeb/Crash/wpt-import/html/syntax/parsing/crashtests/adoption-agency-swap-empty-list-001.html
 Tests/LibWeb/Crash/wpt-import/html/syntax/parsing/crashtests/reconstruct-active-formatting-elements-001.html
-Tests/LibWeb/DisplayListTestHelpers.h
 Tests/LibWeb/Fixtures/http-test-server.py
 Tests/LibWeb/Fixtures/sceditor-caret.html
 Tests/LibWeb/Layout/expected/Element-insertAdjacentHTML.txt
@@ -6684,6 +6895,8 @@ Tests/LibWeb/Layout/expected/css/content-for-marker-in-list.txt
 Tests/LibWeb/Layout/expected/css/content-for-marker.txt
 Tests/LibWeb/Layout/expected/css/counters-on-pseudo-elements.txt
 Tests/LibWeb/Layout/expected/details-closed.txt
+Tests/LibWeb/Layout/expected/details-default-summary.txt
+Tests/LibWeb/Layout/expected/details-inline-style-context-index.txt
 Tests/LibWeb/Layout/expected/details-open.txt
 Tests/LibWeb/Layout/expected/details-summary-default-ua-style.txt
 Tests/LibWeb/Layout/expected/dialog-open-modal.txt
@@ -7225,6 +7438,7 @@ Tests/LibWeb/Layout/expected/quirks/flex-container-percentage-height-quirks-mode
 Tests/LibWeb/Layout/expected/quirks/flex-item-percentage-height-quirks-mode.txt
 Tests/LibWeb/Layout/expected/quirks/input-in-pre-quirks-mode.txt
 Tests/LibWeb/Layout/expected/ratio-only-replaced-image-fit-content.txt
+Tests/LibWeb/Layout/expected/rebuild-parent-style-scope-counter-style-cache.txt
 Tests/LibWeb/Layout/expected/replaced-box-with-vertical-margins.txt
 Tests/LibWeb/Layout/expected/replaced-within-max-content.txt
 Tests/LibWeb/Layout/expected/resolve-cyclic-percentage-against-zero-when-available-size-is-min-content.txt
@@ -7488,6 +7702,8 @@ Tests/LibWeb/Layout/input/block-in-inline-in-floated-fieldset.html
 Tests/LibWeb/Layout/input/block-replaced-element-with-max-width-and-max-height.html
 Tests/LibWeb/Layout/input/content-image-set.html
 Tests/LibWeb/Layout/input/css/anchor-positioning-fixed-span-all.html
+Tests/LibWeb/Layout/input/details-default-summary.html
+Tests/LibWeb/Layout/input/details-inline-style-context-index.html
 Tests/LibWeb/Layout/input/dialog-open-modal.html
 Tests/LibWeb/Layout/input/empty-pseudo-element-content.html
 Tests/LibWeb/Layout/input/first-available-font-can-lack-space-glyph.html
@@ -7546,6 +7762,7 @@ Tests/LibWeb/Layout/input/pseudo-element-content-replacement-display-types.html
 Tests/LibWeb/Layout/input/pseudo-element-content-replacement-list-item.html
 Tests/LibWeb/Layout/input/pseudo-element-content-replacement.html
 Tests/LibWeb/Layout/input/ratio-only-replaced-image-fit-content.html
+Tests/LibWeb/Layout/input/rebuild-parent-style-scope-counter-style-cache.html
 Tests/LibWeb/Layout/input/select-baseline-from-label-text.html
 Tests/LibWeb/Layout/input/svg/foreignObject-flex-with-abspos-child.html
 Tests/LibWeb/Layout/input/svg/foreignObject-percentage-geometry-viewbox.html
@@ -7679,6 +7896,7 @@ Tests/LibWeb/Ref/expected/input-descender-visible-ref.html
 Tests/LibWeb/Ref/expected/input-disabled-toggle-repaint-ref.html
 Tests/LibWeb/Ref/expected/input-indeterminate-toggle-repaint-ref.html
 Tests/LibWeb/Ref/expected/inspector-highlighted-node-overlay-inside-empty-clip-ref.html
+Tests/LibWeb/Ref/expected/isolated-iframe-is-composited-into-its-parent-ref.html
 Tests/LibWeb/Ref/expected/line-clamp-properties-ref.html
 Tests/LibWeb/Ref/expected/list-marker-baseline-alignment-ref.html
 Tests/LibWeb/Ref/expected/list-renumbers-when-counter-content-appears-after-mutation-ref.html
@@ -8180,6 +8398,8 @@ Tests/LibWeb/Ref/input/input-descender-visible.html
 Tests/LibWeb/Ref/input/input-disabled-toggle-repaint.html
 Tests/LibWeb/Ref/input/input-indeterminate-toggle-repaint.html
 Tests/LibWeb/Ref/input/inspector-highlighted-node-overlay-inside-empty-clip.html
+Tests/LibWeb/Ref/input/isolated-iframe-is-composited-into-its-parent.html
+Tests/LibWeb/Ref/input/isolated-iframe-is-composited-into-its-parent.html.headers
 Tests/LibWeb/Ref/input/line-clamp-properties.html
 Tests/LibWeb/Ref/input/list-marker-baseline-alignment.html
 Tests/LibWeb/Ref/input/list-renumbers-when-counter-content-appears-after-mutation.html
@@ -8864,6 +9084,7 @@ Tests/LibWeb/Screenshot/expected/animated-background-image-repaints-on-advance.p
 Tests/LibWeb/Screenshot/expected/animated-mask-image-repaints-on-advance.png
 Tests/LibWeb/Screenshot/expected/background-size-single-value-aspect-ratio.png
 Tests/LibWeb/Screenshot/expected/border-radius.png
+Tests/LibWeb/Screenshot/expected/box-shadow-inset-large-spread.png
 Tests/LibWeb/Screenshot/expected/canvas-draw-canvas-ordering.png
 Tests/LibWeb/Screenshot/expected/canvas-text.png
 Tests/LibWeb/Screenshot/expected/checkbox-accent-color-and-color-scheme.png
@@ -8926,6 +9147,7 @@ Tests/LibWeb/Screenshot/expected/video-on-canvas.png
 Tests/LibWeb/Screenshot/input/animated-background-image-late-consumer-uses-first-consumer-timing.html
 Tests/LibWeb/Screenshot/input/animated-background-image-repaints-on-advance.html
 Tests/LibWeb/Screenshot/input/animated-mask-image-repaints-on-advance.html
+Tests/LibWeb/Screenshot/input/box-shadow-inset-large-spread.html
 Tests/LibWeb/Screenshot/input/canvas-draw-canvas-ordering.html
 Tests/LibWeb/Screenshot/input/canvas-fillstyle-gradients.html
 Tests/LibWeb/Screenshot/input/canvas-text.html
@@ -8955,7 +9177,6 @@ Tests/LibWeb/Screenshot/input/video-object-fit.html
 Tests/LibWeb/Screenshot/input/video-on-canvas-10bit.html
 Tests/LibWeb/Screenshot/input/video-on-canvas.html
 Tests/LibWeb/StructuredSerializeTestHelpers.h
-Tests/LibWeb/TestAsyncScrollingStateSnapMetadata.cpp
 Tests/LibWeb/TestAudioWorkletPipe.cpp
 Tests/LibWeb/TestCSSDecodeBytes.cpp
 Tests/LibWeb/TestCSSIDSpeed.cpp
@@ -8967,12 +9188,10 @@ Tests/LibWeb/TestCSSTokenizer.cpp
 Tests/LibWeb/TestConfig.ini
 Tests/LibWeb/TestContentBlocker.cpp
 Tests/LibWeb/TestControlMessageQueue.cpp
-Tests/LibWeb/TestDisplayListCommandRuns.cpp
 Tests/LibWeb/TestDownloadReader.cpp
 Tests/LibWeb/TestDump.cpp
 Tests/LibWeb/TestEventLoop.cpp
 Tests/LibWeb/TestFetchResponse.cpp
-Tests/LibWeb/TestForceDarkImageFilter.cpp
 Tests/LibWeb/TestHTMLTokenizer.cpp
 Tests/LibWeb/TestHighResolutionTime.cpp
 Tests/LibWeb/TestImageData.cpp
@@ -8980,12 +9199,10 @@ Tests/LibWeb/TestLengthAbsolutizeParity.cpp
 Tests/LibWeb/TestMimeSniff.cpp
 Tests/LibWeb/TestNumbers.cpp
 Tests/LibWeb/TestRefCountedTreeNode.cpp
-Tests/LibWeb/TestScrollSnapSelection.cpp
-Tests/LibWeb/TestScrollState.cpp
 Tests/LibWeb/TestSessionHistoryEntry.cpp
+Tests/LibWeb/TestSharedCompiledStyleSheet.cpp
 Tests/LibWeb/TestSimpleRealm.cpp
 Tests/LibWeb/TestSiteCompatibility.cpp
-Tests/LibWeb/TestSmoothScrollAnimation.cpp
 Tests/LibWeb/TestStrings.cpp
 Tests/LibWeb/TestStructuredSerializeCorpus.cpp
 Tests/LibWeb/TestStructuredSerializeDurability.cpp
@@ -8996,9 +9213,6 @@ Tests/LibWeb/TestStyleEngineBridge.cpp
 Tests/LibWeb/TestStylePropertyMetadataParity.cpp
 Tests/LibWeb/TestStyleStructRef.cpp
 Tests/LibWeb/TestStyleValueEquality.cpp
-Tests/LibWeb/TestTextureUpload.cpp
-Tests/LibWeb/TestTrackBufferDemuxer.cpp
-Tests/LibWeb/TestVisualAnimation.cpp
 Tests/LibWeb/TestWebGLSpanWithStorage.cpp
 Tests/LibWeb/TestWebIDLBuffers.cpp
 Tests/LibWeb/TestWindowProxyWorld.cpp
@@ -9171,6 +9385,8 @@ Tests/LibWeb/Text/expected/Fetch/sandboxed-iframe-can-load-file-script.txt
 Tests/LibWeb/Text/expected/Fetch/site-compatibility-user-agent-redirects.txt
 Tests/LibWeb/Text/expected/Fetch/unsupported-content-encoding-retry-stores-cookies.txt
 Tests/LibWeb/Text/expected/Fetch/unsupported-content-encoding.txt
+Tests/LibWeb/Text/expected/Fetch/url-credentials-authorization-header.txt
+Tests/LibWeb/Text/expected/Fetch/url-credentials-preserve-arbitrary-bytes.txt
 Tests/LibWeb/Text/expected/FileAPI/blob-methods-receiver-realm.txt
 Tests/LibWeb/Text/expected/FileAPI/blob-url-created-in-document-fetches-in-worker.txt
 Tests/LibWeb/Text/expected/FileAPI/blob-url-created-in-worker-fetches-in-document.txt
@@ -9193,6 +9409,8 @@ Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-addTextTrack.txt
 Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-adopted-from-inactive-document.txt
 Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-adoption-round-trip-during-fetch.txt
 Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-audio-play-state.txt
+Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-audio-track-enable-after-ended-stays-ended.txt
+Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-audio-track-toggle-does-not-end.txt
 Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-duration.txt
 Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-load-after-decode-error.txt
 Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-load-during-error.txt
@@ -9202,6 +9420,8 @@ Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-readyState-progression-audio.tx
 Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-readyState-progression.txt
 Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-screen-wake-lock.txt
 Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-timeline-in-hidden-document.txt
+Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-video-track-select-after-ended-stays-ended.txt
+Tests/LibWeb/Text/expected/HTML/HTMLMediaElement-video-track-toggle-does-not-end.txt
 Tests/LibWeb/Text/expected/HTML/HTMLObjectElement-adoption-does-not-leak-load-delayer.txt
 Tests/LibWeb/Text/expected/HTML/HTMLObjectElement-invalid-data-url.txt
 Tests/LibWeb/Text/expected/HTML/HTMLVideoElement-offscreen-capture-keeps-updating.txt
@@ -9298,7 +9518,10 @@ Tests/LibWeb/Text/expected/HTML/media-source-abort.txt
 Tests/LibWeb/Text/expected/HTML/media-source-adjacent-appends.txt
 Tests/LibWeb/Text/expected/HTML/media-source-cross-realm.txt
 Tests/LibWeb/Text/expected/HTML/media-source-detach.txt
+Tests/LibWeb/Text/expected/HTML/media-source-duration-truncation.txt
+Tests/LibWeb/Text/expected/HTML/media-source-duration.txt
 Tests/LibWeb/Text/expected/HTML/media-source-frame-rate-change.txt
+Tests/LibWeb/Text/expected/HTML/media-source-is-type-supported-in-worker.txt
 Tests/LibWeb/Text/expected/HTML/media-source-mismatched-codec-configuration.txt
 Tests/LibWeb/Text/expected/HTML/media-source-mp4-byte-stream-parser.txt
 Tests/LibWeb/Text/expected/HTML/media-source-mp4-encoder-delay.txt
@@ -9320,6 +9543,7 @@ Tests/LibWeb/Text/expected/HTML/namespaced-iframe-referrerpolicy.txt
 Tests/LibWeb/Text/expected/HTML/namespaced-iframe-srcdoc.txt
 Tests/LibWeb/Text/expected/HTML/namespaced-image-crossorigin.txt
 Tests/LibWeb/Text/expected/HTML/namespaced-media-crossorigin.txt
+Tests/LibWeb/Text/expected/HTML/namespaced-meta-http-equiv.txt
 Tests/LibWeb/Text/expected/HTML/namespaced-script-crossorigin.txt
 Tests/LibWeb/Text/expected/HTML/namespaced-script-integrity.txt
 Tests/LibWeb/Text/expected/HTML/namespaced-script-referrerpolicy.txt
@@ -9336,6 +9560,8 @@ Tests/LibWeb/Text/expected/HTML/picture-source-sizes-attribute.txt
 Tests/LibWeb/Text/expected/HTML/plugin-and-mimetype-strings.txt
 Tests/LibWeb/Text/expected/HTML/recreated-srcset-image-is-available.txt
 Tests/LibWeb/Text/expected/HTML/regexp-exec-foreign-realm.txt
+Tests/LibWeb/Text/expected/HTML/regexp-replace-foreign-exec-realm.txt
+Tests/LibWeb/Text/expected/HTML/regexp-replace-foreign-prototype-exec.txt
 Tests/LibWeb/Text/expected/HTML/regexp-test-foreign-exec-realm.txt
 Tests/LibWeb/Text/expected/HTML/rendering-opportunity-allows-posted-messages.txt
 Tests/LibWeb/Text/expected/HTML/rendering-opportunity-coalesces-requests.txt
@@ -9371,6 +9597,7 @@ Tests/LibWeb/Text/expected/HTML/window-open-initial-visibility-state.txt
 Tests/LibWeb/Text/expected/HTML/window-open-tokenized-features.txt
 Tests/LibWeb/Text/expected/HTML/window-or-worker-global-origin.txt
 Tests/LibWeb/Text/expected/HTML/windowproxy-cross-window-singleton-pinning.txt
+Tests/LibWeb/Text/expected/HTML/xml-declaration-encoding-sniffing.txt
 Tests/LibWeb/Text/expected/IPC/bad-message-unknown-page-id.txt
 Tests/LibWeb/Text/expected/Internals/dump-layout-tree.txt
 Tests/LibWeb/Text/expected/Internals/dump-paintable-tree.txt
@@ -9437,20 +9664,28 @@ Tests/LibWeb/Text/expected/SiteIsolation/iframe/beforeunload-consulted-in-remote
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/blob-url-from-remote-iframe-is-partitioned.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/blob-url-from-remote-iframe-navigates-a-frame-out-of-process.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/blob-url-from-remote-iframe-opens-without-opener.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/blurring-an-isolated-iframe-right-after-focusing-it.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/click-over-isolated-iframe-goes-to-the-overlay.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/click-reaches-isolated-iframe-after-scroll.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/click-reaches-isolated-iframe-at-browser-zoom.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/click-reaches-isolated-iframe-in-a-scaled-iframe.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/cross-site-iframe-is-hosted-out-of-process.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/cross-site-iframe-process-crash-collapses-frame.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/cross-site-iframe-process-crash-navigates-through-window.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/embedded-page-cookie-request.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/focus-moves-between-top-and-isolated-iframe.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/focusing-isolated-iframe-focuses-its-document.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/going-back-keeps-an-isolated-iframe.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/grandchild-navigates-remote-parent-via-link.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/grandchild-navigates-remote-parent-via-location.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/iframe-content-window-identity-survives-host-changes.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/iframe-stays-scriptable-after-its-document-unloads-for-another-process.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/intersection-observer-in-isolated-iframe-follows-embedder-scroll.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/isolated-iframe-enters-fullscreen.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/isolated-iframe-gets-emulated-geolocation.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/isolated-iframe-has-focus-follows-system-focus.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/isolated-iframe-in-an-isolated-iframe-enters-fullscreen.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/isolated-iframe-opens-a-popup.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/isolated-iframe-posts-message-to-parent.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/isolated-iframe-scrolls-to-its-fragment.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/isolated-iframe-sees-its-ancestors.txt
@@ -9460,6 +9695,7 @@ Tests/LibWeb/Text/expected/SiteIsolation/iframe/local-iframe-unloads-before-anot
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/message-to-isolated-iframe-from-inactive-window-has-null-source.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/messages-reach-a-same-site-grandchild-through-an-isolated-iframe.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/opaque-origin-iframe-is-hosted-with-its-initiator.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/opener-replies-to-a-popups-isolated-iframe.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/parent-renavigates-remote-iframe-to-local.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/parent-renavigates-remote-iframe-within-site.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/popup-isolated-iframe-keeps-its-closed-top-opener.txt
@@ -9469,18 +9705,22 @@ Tests/LibWeb/Text/expected/SiteIsolation/iframe/remote-iframe-runs-its-container
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/remote-iframe-runs-its-container-load-event.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/remote-iframe-unloads-before-another-process-hosts-it.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/remote-iframe-unloads-before-its-parent-hosts-it.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/remote-iframe-with-a-loading-image-delays-its-container-load-event.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/removing-remote-iframe-aborts-its-navigation-api.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/rendering-continues-with-a-hosted-grandchild.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/same-site-grandchild-scripts-its-top.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/same-site-siblings-share-process.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/sandboxed-remote-iframe-stays-sandboxed-when-it-navigates-itself.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/srcdoc-in-an-isolated-iframe-inherits-this-documents-csp.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/typing-follows-focused-isolated-iframe-across-navigation.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/typing-reaches-focused-isolated-iframe.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/unload-runs-across-processes-on-iframe-removal.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/unload-runs-in-remote-iframe-when-parent-navigates.txt
+Tests/LibWeb/Text/expected/SiteIsolation/iframe/wheel-scrolls-an-isolated-iframe.txt
 Tests/LibWeb/Text/expected/SiteIsolation/iframe/window-open-sets-opener-across-processes.txt
 Tests/LibWeb/Text/expected/Streams/WritableStream-global.txt
 Tests/LibWeb/Text/expected/Streams/enqueue-shared-array-buffer-chunk.txt
+Tests/LibWeb/Text/expected/String/foreign-regexp-builtins-use-their-realm.txt
 Tests/LibWeb/Text/expected/UIEvents/InputEvent-construction-target-ranges.txt
 Tests/LibWeb/Text/expected/UIEvents/KeyEvent-keypress.txt
 Tests/LibWeb/Text/expected/UIEvents/WheelEvent-construction.txt
@@ -9500,6 +9740,7 @@ Tests/LibWeb/Text/expected/UIEvents/pointer-events-none-inline-island.txt
 Tests/LibWeb/Text/expected/UIEvents/pointer-events-none-outside-viewport.txt
 Tests/LibWeb/Text/expected/UIEvents/pointer-events-none-pseudo-island.txt
 Tests/LibWeb/Text/expected/UIEvents/right-click-selection.txt
+Tests/LibWeb/Text/expected/UIEvents/scrollbar-drag-driven-by-compositor.txt
 Tests/LibWeb/Text/expected/UIEvents/text-control-input-event-ordering.txt
 Tests/LibWeb/Text/expected/UIEvents/textinput-event.txt
 Tests/LibWeb/Text/expected/UIEvents/wheel-event-legacy-deltas.txt
@@ -9545,11 +9786,13 @@ Tests/LibWeb/Text/expected/WebSocket/activity-root-released-on-document-destroy.
 Tests/LibWeb/Text/expected/WebSocket/binary-type.txt
 Tests/LibWeb/Text/expected/WebSocket/blob.txt
 Tests/LibWeb/Text/expected/WebSocket/handshake-cookie.txt
+Tests/LibWeb/Text/expected/WebSocket/message-larger-than-an-ipc-message.txt
 Tests/LibWeb/Text/expected/WebSocket/send-out-of-bounds-buffer-source.txt
 Tests/LibWeb/Text/expected/WebVTT/VTTCue-settings.txt
 Tests/LibWeb/Text/expected/WebVTT/VTTRegion-setters.txt
 Tests/LibWeb/Text/expected/Worker/SharedWorker-survives-gc.txt
 Tests/LibWeb/Text/expected/Worker/Worker-name.txt
+Tests/LibWeb/Text/expected/Worker/Worker-postMessage-port-whose-peer-closed.txt
 Tests/LibWeb/Text/expected/Worker/Worker-request-server-reconnect.txt
 Tests/LibWeb/Text/expected/Worker/Worker-requestAnimationFrame-supported.txt
 Tests/LibWeb/Text/expected/Worker/Worker-requestAnimationFrame.txt
@@ -9578,6 +9821,7 @@ Tests/LibWeb/Text/expected/abortsignal-timeout-survives-gc.txt
 Tests/LibWeb/Text/expected/abspos-auto-insets-resolve-against-actual-containing-block.txt
 Tests/LibWeb/Text/expected/abspos-escaping-baseline-shifted-inline-block.txt
 Tests/LibWeb/Text/expected/abspos-relayout-after-escaping-descendant-removal.txt
+Tests/LibWeb/Text/expected/abspos-relayout-anchor-dependencies.txt
 Tests/LibWeb/Text/expected/abspos-relayout-anchor-elsewhere.txt
 Tests/LibWeb/Text/expected/abspos-relayout-anchor-inset-style-change.txt
 Tests/LibWeb/Text/expected/abspos-relayout-anchor-name-inside.txt
@@ -9640,6 +9884,7 @@ Tests/LibWeb/Text/expected/abspos-relayout-svg-inside.txt
 Tests/LibWeb/Text/expected/abspos-relayout-svg-position-flip.txt
 Tests/LibWeb/Text/expected/abspos-relayout-text-into-boundary.txt
 Tests/LibWeb/Text/expected/abspos-relayout-toplayer-fallback.txt
+Tests/LibWeb/Text/expected/abspos-relayout-unrelated-anchor.txt
 Tests/LibWeb/Text/expected/abspos-relayout-unused-anchor-names.txt
 Tests/LibWeb/Text/expected/abspos-replaced-auto-insets-static-position.txt
 Tests/LibWeb/Text/expected/aia-cert-fetching.txt
@@ -9669,6 +9914,10 @@ Tests/LibWeb/Text/expected/async-scrolling/snap-container-wheel-target.txt
 Tests/LibWeb/Text/expected/async-scrolling/sticky-areas.txt
 Tests/LibWeb/Text/expected/async-scrolling/viewport-wheel-target-fast-path.txt
 Tests/LibWeb/Text/expected/async-scrolling/viewport-wheel-with-nested-scroller.txt
+Tests/LibWeb/Text/expected/async-scrolling/wheel-latch-absorbs-gesture-at-scroller-edge.txt
+Tests/LibWeb/Text/expected/async-scrolling/wheel-latch-dom-target-during-compositor-scroll.txt
+Tests/LibWeb/Text/expected/async-scrolling/wheel-latch-nested-navigable-during-compositor-scroll.txt
+Tests/LibWeb/Text/expected/async-scrolling/wheel-latch-new-gesture-after-cursor-moves.txt
 Tests/LibWeb/Text/expected/async-scrolling/wheel-scroll-admission.txt
 Tests/LibWeb/Text/expected/async-scrolling/wheel-target-over-opaque-sibling-of-new-scroller.txt
 Tests/LibWeb/Text/expected/avc-value-only-update-with-duplicated-effects-nodes.txt
@@ -10119,9 +10368,13 @@ Tests/LibWeb/Text/expected/css/shared-parsed-descriptors.txt
 Tests/LibWeb/Text/expected/css/shared-parsed-keyframe-declarations.txt
 Tests/LibWeb/Text/expected/css/shared-parsed-nested-declarations.txt
 Tests/LibWeb/Text/expected/css/shared-parsed-stylesheet-mutation.txt
+Tests/LibWeb/Text/expected/css/shared-style-element-inactive-implicit-scope.txt
+Tests/LibWeb/Text/expected/css/shared-style-sheet-copy-on-write.txt
+Tests/LibWeb/Text/expected/css/shared-style-sheet-occurrences.txt
 Tests/LibWeb/Text/expected/css/sheet-insertion-cascade-order.txt
 Tests/LibWeb/Text/expected/css/style-attribute-no-op-invalidation-counters.txt
 Tests/LibWeb/Text/expected/css/style-element-text-content-skips-layout-tree-rebuild.txt
+Tests/LibWeb/Text/expected/css/style-elements-with-identical-text-in-shadow-roots.txt
 Tests/LibWeb/Text/expected/css/style-engine/abspos-table-style-update.txt
 Tests/LibWeb/Text/expected/css/style-engine/adopt-node-preserves-shared-sheet-old-document.txt
 Tests/LibWeb/Text/expected/css/style-engine/adopt-node-reattaches-scoped-shadow-sheet.txt
@@ -10577,6 +10830,7 @@ Tests/LibWeb/Text/expected/css/style-invalidation/targeted-read-non-inherited-ch
 Tests/LibWeb/Text/expected/css/style-invalidation/url-change-skips-full-document-invalidation.txt
 Tests/LibWeb/Text/expected/css/style-invalidation/user-action-pseudo-class-targeted-invalidation.txt
 Tests/LibWeb/Text/expected/css/style-invalidation/user-style-clear-restores-scope-cache-sharing.txt
+Tests/LibWeb/Text/expected/css/style-invalidation/viewport-resize-adopted-style-dependencies.txt
 Tests/LibWeb/Text/expected/css/style-invalidation/viewport-resize-animation-root-font-media.txt
 Tests/LibWeb/Text/expected/css/style-invalidation/viewport-resize-animation-targeted-restyle.txt
 Tests/LibWeb/Text/expected/css/style-invalidation/viewport-resize-device-pixel-ratio-invalidation.txt
@@ -10788,6 +11042,7 @@ Tests/LibWeb/Text/expected/display_list/z-index-change-no-double-paint.txt
 Tests/LibWeb/Text/expected/display_list/zero-area-clip-commands.txt
 Tests/LibWeb/Text/expected/element-get-bounding-client-rect-of-sticky.txt
 Tests/LibWeb/Text/expected/element-get-client-rects.txt
+Tests/LibWeb/Text/expected/empty-atomic-sizing-reuse.txt
 Tests/LibWeb/Text/expected/empty-inline-block-sizing.txt
 Tests/LibWeb/Text/expected/encrypted-media-requestMediaKeySystemAccess-receiver-realm.txt
 Tests/LibWeb/Text/expected/fieldset-client-dimensions.txt
@@ -10853,6 +11108,7 @@ Tests/LibWeb/Text/expected/hit_testing/image-map-live-association.txt
 Tests/LibWeb/Text/expected/hit_testing/inert-svg-toggle.txt
 Tests/LibWeb/Text/expected/hit_testing/inert-toggle-after-paint.txt
 Tests/LibWeb/Text/expected/hit_testing/link-inside-inline-stacking-context.txt
+Tests/LibWeb/Text/expected/hit_testing/open-default-details-by-clicking-on-triangle.txt
 Tests/LibWeb/Text/expected/hit_testing/paint-only-style-change-keeps-hit-test-display-list.txt
 Tests/LibWeb/Text/expected/hit_testing/pointer-events.txt
 Tests/LibWeb/Text/expected/hit_testing/preserve-3d-depth-order.txt
@@ -10881,6 +11137,7 @@ Tests/LibWeb/Text/expected/inspector-overlay-visual-context-tree-growth.txt
 Tests/LibWeb/Text/expected/interpolation-longhand-properties.txt
 Tests/LibWeb/Text/expected/intersection-observer-visual-viewport-geometry.txt
 Tests/LibWeb/Text/expected/intersection-observer-visual-viewport-root.txt
+Tests/LibWeb/Text/expected/intrinsic-atomic-contributions.txt
 Tests/LibWeb/Text/expected/intrinsic-inline-content-sizing.txt
 Tests/LibWeb/Text/expected/intrinsic-measurement-cache-percentage-block-size-independent.txt
 Tests/LibWeb/Text/expected/intrinsic-measurement-cache-percentage-inline-basis-independent.txt
@@ -10890,6 +11147,7 @@ Tests/LibWeb/Text/expected/intrinsic-size-cache-anonymous-cell-font-size.txt
 Tests/LibWeb/Text/expected/intrinsic-width-of-inline-block-with-border-box-min-width.txt
 Tests/LibWeb/Text/expected/kerning-across-bidi-neutral.txt
 Tests/LibWeb/Text/expected/keyboard-scroll-after-click-in-scroll-container.txt
+Tests/LibWeb/Text/expected/keyboard-scroll-steps-animate.txt
 Tests/LibWeb/Text/expected/keyboard-scroll-with-keypad-modifier.txt
 Tests/LibWeb/Text/expected/layout-run-cache-animated-font-size.txt
 Tests/LibWeb/Text/expected/layout-run-cache-anonymous-cell-font-size.txt
@@ -10986,6 +11244,7 @@ Tests/LibWeb/Text/expected/layout-tree-update/remove-deep-subtree.txt
 Tests/LibWeb/Text/expected/layout-tree-update/remove-top-layer-element-with-backdrop.txt
 Tests/LibWeb/Text/expected/layout-tree-update/removed-subtree-layout-nodes-survive-gc.txt
 Tests/LibWeb/Text/expected/layout-tree-update/semantic-table-mutations.txt
+Tests/LibWeb/Text/expected/layout-tree-update/shadow-root-child-display-transitions.txt
 Tests/LibWeb/Text/expected/layout-tree-update/shadow-slot-mutations.txt
 Tests/LibWeb/Text/expected/layout-tree-update/structural-dom-mutations-1.txt
 Tests/LibWeb/Text/expected/layout-tree-update/structural-dom-mutations-2.txt
@@ -11093,7 +11352,10 @@ Tests/LibWeb/Text/expected/navigation/iframe-renavigate-during-history-commit.tx
 Tests/LibWeb/Text/expected/navigation/intercept-handler-rejection-aborts-navigate-event.txt
 Tests/LibWeb/Text/expected/navigation/intercepted-push-async-handler-not-aborted.txt
 Tests/LibWeb/Text/expected/navigation/intercepted-push-then-intercepted-traverse.txt
+Tests/LibWeb/Text/expected/navigation/javascript-url-document-encoding.txt
+Tests/LibWeb/Text/expected/navigation/javascript-url-invalid-utf8.txt
 Tests/LibWeb/Text/expected/navigation/location-navigate-then-push-state.txt
+Tests/LibWeb/Text/expected/navigation/location-replace-after-nested-iframe-navigated.txt
 Tests/LibWeb/Text/expected/navigation/navigation-activation-in-sandboxed-frame.txt
 Tests/LibWeb/Text/expected/navigation/navigation-activation-push-replace-traverse.txt
 Tests/LibWeb/Text/expected/navigation/navigation-after-same-document-push-not-dropped.txt
@@ -11105,6 +11367,7 @@ Tests/LibWeb/Text/expected/navigation/pushstate-in-abort-handler-of-superseded-n
 Tests/LibWeb/Text/expected/navigation/pushstate-while-unloading-does-not-resurrect-document.txt
 Tests/LibWeb/Text/expected/navigation/reload-aborts-nested-navigate-events.txt
 Tests/LibWeb/Text/expected/navigation/reload-document-written-iframe.txt
+Tests/LibWeb/Text/expected/navigation/removed-iframe-collected-before-its-destruction-completes.txt
 Tests/LibWeb/Text/expected/navigation/replace-state-during-reload.txt
 Tests/LibWeb/Text/expected/navigation/replace-state-flood-during-navigation.txt
 Tests/LibWeb/Text/expected/navigation/replaced-document-is-collectable-while-next-load-is-stalled.txt
@@ -11152,7 +11415,7 @@ Tests/LibWeb/Text/expected/scroll-snap-align-writing-mode.txt
 Tests/LibWeb/Text/expected/scroll-snap-at-reported-gesture-end.txt
 Tests/LibWeb/Text/expected/scroll-snap-consecutive-wheel-steps.txt
 Tests/LibWeb/Text/expected/scroll-snap-directional-wheel-scroll.txt
-Tests/LibWeb/Text/expected/scroll-snap-flick-chained-to-snap-container.txt
+Tests/LibWeb/Text/expected/scroll-snap-flick-stays-with-latched-scroller-at-its-extent.txt
 Tests/LibWeb/Text/expected/scroll-snap-in-pseudo-element-scroll-container.txt
 Tests/LibWeb/Text/expected/scroll-snap-new-gesture-during-compositor-snap-scroll.txt
 Tests/LibWeb/Text/expected/scroll-snap-new-gesture-during-snap-scroll.txt
@@ -11163,10 +11426,10 @@ Tests/LibWeb/Text/expected/scroll-snap-stop-always-during-pan.txt
 Tests/LibWeb/Text/expected/scroll-snap-stop-wheel-step.txt
 Tests/LibWeb/Text/expected/scroll-snap-transformed-snap-areas.txt
 Tests/LibWeb/Text/expected/scroll-snap-wheel-step-after-instant-programmatic-scroll.txt
-Tests/LibWeb/Text/expected/scroll-snap-wheel-step-chained-to-snap-container.txt
 Tests/LibWeb/Text/expected/scroll-snap-wheel-step-during-programmatic-scroll.txt
 Tests/LibWeb/Text/expected/scroll-snap-wheel-step-in-one-axis.txt
 Tests/LibWeb/Text/expected/scroll-snap-wheel-step-past-nested-navigable-extent.txt
+Tests/LibWeb/Text/expected/scroll-snap-wheel-step-stays-with-latched-scroller-at-its-extent.txt
 Tests/LibWeb/Text/expected/scroll-to-fragment.txt
 Tests/LibWeb/Text/expected/scrollable-overflow-containing-block-mutations.txt
 Tests/LibWeb/Text/expected/scrollable-overflow-flex-grid-item-margins.txt
@@ -11212,6 +11475,7 @@ Tests/LibWeb/Text/expected/stacking-context/svg-foreign-object.txt
 Tests/LibWeb/Text/expected/stacking-context/table-z-index-change-moves-the-wrapper.txt
 Tests/LibWeb/Text/expected/stacking-context/z-index-change-on-positioned-box.txt
 Tests/LibWeb/Text/expected/storage-estimate-does-not-break-session-storage.txt
+Tests/LibWeb/Text/expected/svg-measurement-skips-descendants.txt
 Tests/LibWeb/Text/expected/svg-relayout-inline-boundary-structural.txt
 Tests/LibWeb/Text/expected/svg-relayout-inside-relative-fragmented-inline.txt
 Tests/LibWeb/Text/expected/svg-relayout-nested-svg-viewbox.txt
@@ -11263,6 +11527,15 @@ Tests/LibWeb/Text/expected/visual-context/transform-style-change-rebuilds-the-bo
 Tests/LibWeb/Text/expected/visual-context/value-only-update-keeps-tree.txt
 Tests/LibWeb/Text/expected/visual-viewport-reset-after-viewport-layout-node-rebuild.txt
 Tests/LibWeb/Text/expected/visual-viewport-scrollend-after-pan.txt
+Tests/LibWeb/Text/expected/wheel-latch-drops-on-prevent-default.txt
+Tests/LibWeb/Text/expected/wheel-latch-drops-when-latched-scroller-is-removed-by-listener.txt
+Tests/LibWeb/Text/expected/wheel-latch-keeps-wheel-event-target.txt
+Tests/LibWeb/Text/expected/wheel-latch-nested-scroller-at-extent-does-not-chain-mid-gesture.txt
+Tests/LibWeb/Text/expected/wheel-latch-outer-scroller-keeps-gesture-when-nested-scroller-slides-under-cursor.txt
+Tests/LibWeb/Text/expected/wheel-latch-over-iframe-keeps-iframe-at-its-extent-mid-gesture.txt
+Tests/LibWeb/Text/expected/wheel-latch-parent-scroller-does-not-hand-gesture-to-iframe-mid-gesture.txt
+Tests/LibWeb/Text/expected/wheel-latch-phase-less-gesture-expires-after-idle.txt
+Tests/LibWeb/Text/expected/wheel-latch-phase-less-ticks-stay-latched-until-cursor-moves.txt
 Tests/LibWeb/Text/expected/wheel-over-iframe-removed-by-its-wheel-listener.txt
 Tests/LibWeb/Text/expected/word-selection-rendered-text-mapping.txt
 Tests/LibWeb/Text/expected/wpt-import/compat/webkit-box-item-shrink-001.txt
@@ -11335,6 +11608,7 @@ Tests/LibWeb/Text/expected/wpt-import/css/css-break/parsing/break-inside-invalid
 Tests/LibWeb/Text/expected/wpt-import/css/css-break/parsing/break-inside-valid.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-cascade/all-prop-revert-layer.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-cascade/at-scope-relative-syntax.txt
+Tests/LibWeb/Text/expected/wpt-import/css/css-cascade/layer-counter-style-override.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-cascade/scope-evaluation.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-cascade/scope-implicit-external.txt
 Tests/LibWeb/Text/expected/wpt-import/css/css-cascade/scope-implicit.txt
@@ -11740,6 +12014,7 @@ Tests/LibWeb/Text/expected/wpt-import/dom/events/scrolling/scrollend-event-handl
 Tests/LibWeb/Text/expected/wpt-import/dom/nodes/Document-adoptNode-DocumentFragment-with-host.window.txt
 Tests/LibWeb/Text/expected/wpt-import/dom/nodes/ParentNode-replaceChildren.txt
 Tests/LibWeb/Text/expected/wpt-import/dom/nodes/adoption.window.txt
+Tests/LibWeb/Text/expected/wpt-import/dom/nodes/insertion-removing-steps/frame-post-connection-steps.txt
 Tests/LibWeb/Text/expected/wpt-import/dom/traversal/NodeIterator-removal-during-filtering.txt
 Tests/LibWeb/Text/expected/wpt-import/dom/traversal/NodeIterator-removal.txt
 Tests/LibWeb/Text/expected/wpt-import/dom/traversal/TreeWalker-nextNode-detached-currentNode.window.txt
@@ -11774,6 +12049,7 @@ Tests/LibWeb/Text/expected/wpt-import/html/browsers/history/the-location-interfa
 Tests/LibWeb/Text/expected/wpt-import/html/browsers/history/the-location-interface/location-valueof.txt
 Tests/LibWeb/Text/expected/wpt-import/html/browsers/history/the-location-interface/reload_document_write.txt
 Tests/LibWeb/Text/expected/wpt-import/html/browsers/origin/cross-origin-objects/window-location-and-location-href-cross-realm-set.txt
+Tests/LibWeb/Text/expected/wpt-import/html/browsers/the-window-object/length-attribute.window.txt
 Tests/LibWeb/Text/expected/wpt-import/html/browsers/the-window-object/window-open-noopener-existing-iframe.txt
 Tests/LibWeb/Text/expected/wpt-import/html/dom/elements/the-innertext-and-outertext-properties/getter.txt
 Tests/LibWeb/Text/expected/wpt-import/html/infrastructure/common-dom-interfaces/collections/radionodelist.txt
@@ -12163,6 +12439,8 @@ Tests/LibWeb/Text/expected/wpt-import/html/syntax/parsing/template/clearing-the-
 Tests/LibWeb/Text/expected/wpt-import/html/syntax/parsing/template/clearing-the-stack-back-to-a-given-context/clearing-stack-back-to-a-table-row-context.txt
 Tests/LibWeb/Text/expected/wpt-import/html/syntax/parsing/template/creating-an-element-for-the-token/template-owner-document.txt
 Tests/LibWeb/Text/expected/wpt-import/html/syntax/parsing/unclosed-svg-script.txt
+Tests/LibWeb/Text/expected/wpt-import/html/syntax/xmldecl/xmldecl-1.txt
+Tests/LibWeb/Text/expected/wpt-import/html/syntax/xmldecl/xmldecl-2.txt
 Tests/LibWeb/Text/expected/wpt-import/html/webappapis/dynamic-markup-insertion/opening-the-input-stream/015.txt
 Tests/LibWeb/Text/expected/wpt-import/html/webappapis/dynamic-markup-insertion/opening-the-input-stream/016.txt
 Tests/LibWeb/Text/expected/wpt-import/html/webappapis/dynamic-markup-insertion/opening-the-input-stream/document.open-03.txt
@@ -12478,6 +12756,8 @@ Tests/LibWeb/Text/input/Fetch/site-compatibility-user-agent-redirects.html
 Tests/LibWeb/Text/input/Fetch/site-compatibility-user-agent-redirects.html.headers
 Tests/LibWeb/Text/input/Fetch/unsupported-content-encoding-retry-stores-cookies.html
 Tests/LibWeb/Text/input/Fetch/unsupported-content-encoding.html
+Tests/LibWeb/Text/input/Fetch/url-credentials-authorization-header.html
+Tests/LibWeb/Text/input/Fetch/url-credentials-preserve-arbitrary-bytes.html
 Tests/LibWeb/Text/input/FileAPI/Blob-initialized-with-strings-read-from-arrayBuffer.html
 Tests/LibWeb/Text/input/FileAPI/Blob-initialized-with-strings-read-from-bytes.html
 Tests/LibWeb/Text/input/FileAPI/Blob-initialized-with-strings-read-from-text.html
@@ -12513,6 +12793,8 @@ Tests/LibWeb/Text/input/HTML/HTMLMediaElement-addTextTrack.html
 Tests/LibWeb/Text/input/HTML/HTMLMediaElement-adopted-from-inactive-document.html
 Tests/LibWeb/Text/input/HTML/HTMLMediaElement-adoption-round-trip-during-fetch.html
 Tests/LibWeb/Text/input/HTML/HTMLMediaElement-audio-play-state.html
+Tests/LibWeb/Text/input/HTML/HTMLMediaElement-audio-track-enable-after-ended-stays-ended.html
+Tests/LibWeb/Text/input/HTML/HTMLMediaElement-audio-track-toggle-does-not-end.html
 Tests/LibWeb/Text/input/HTML/HTMLMediaElement-duration.html
 Tests/LibWeb/Text/input/HTML/HTMLMediaElement-load-after-decode-error.html
 Tests/LibWeb/Text/input/HTML/HTMLMediaElement-load-during-error.html
@@ -12522,6 +12804,8 @@ Tests/LibWeb/Text/input/HTML/HTMLMediaElement-readyState-progression-audio.html
 Tests/LibWeb/Text/input/HTML/HTMLMediaElement-readyState-progression.html
 Tests/LibWeb/Text/input/HTML/HTMLMediaElement-screen-wake-lock.html
 Tests/LibWeb/Text/input/HTML/HTMLMediaElement-timeline-in-hidden-document.html
+Tests/LibWeb/Text/input/HTML/HTMLMediaElement-video-track-select-after-ended-stays-ended.html
+Tests/LibWeb/Text/input/HTML/HTMLMediaElement-video-track-toggle-does-not-end.html
 Tests/LibWeb/Text/input/HTML/HTMLObjectElement-adoption-does-not-leak-load-delayer.html
 Tests/LibWeb/Text/input/HTML/HTMLObjectElement-contentWindow.html
 Tests/LibWeb/Text/input/HTML/HTMLObjectElement-invalid-data-url.html
@@ -12639,7 +12923,10 @@ Tests/LibWeb/Text/input/HTML/media-source-abort.html
 Tests/LibWeb/Text/input/HTML/media-source-adjacent-appends.html
 Tests/LibWeb/Text/input/HTML/media-source-cross-realm.html
 Tests/LibWeb/Text/input/HTML/media-source-detach.html
+Tests/LibWeb/Text/input/HTML/media-source-duration-truncation.html
+Tests/LibWeb/Text/input/HTML/media-source-duration.html
 Tests/LibWeb/Text/input/HTML/media-source-frame-rate-change.html
+Tests/LibWeb/Text/input/HTML/media-source-is-type-supported-in-worker.html
 Tests/LibWeb/Text/input/HTML/media-source-mismatched-codec-configuration.html
 Tests/LibWeb/Text/input/HTML/media-source-mp4-byte-stream-parser.html
 Tests/LibWeb/Text/input/HTML/media-source-mp4-encoder-delay.html
@@ -12662,6 +12949,7 @@ Tests/LibWeb/Text/input/HTML/namespaced-iframe-referrerpolicy.html
 Tests/LibWeb/Text/input/HTML/namespaced-iframe-srcdoc.html
 Tests/LibWeb/Text/input/HTML/namespaced-image-crossorigin.html
 Tests/LibWeb/Text/input/HTML/namespaced-media-crossorigin.html
+Tests/LibWeb/Text/input/HTML/namespaced-meta-http-equiv.html
 Tests/LibWeb/Text/input/HTML/namespaced-script-crossorigin.html
 Tests/LibWeb/Text/input/HTML/namespaced-script-integrity.html
 Tests/LibWeb/Text/input/HTML/namespaced-script-referrerpolicy.html
@@ -12681,6 +12969,8 @@ Tests/LibWeb/Text/input/HTML/picture-source-sizes-attribute.html
 Tests/LibWeb/Text/input/HTML/plugin-and-mimetype-strings.html
 Tests/LibWeb/Text/input/HTML/recreated-srcset-image-is-available.html
 Tests/LibWeb/Text/input/HTML/regexp-exec-foreign-realm.html
+Tests/LibWeb/Text/input/HTML/regexp-replace-foreign-exec-realm.html
+Tests/LibWeb/Text/input/HTML/regexp-replace-foreign-prototype-exec.html
 Tests/LibWeb/Text/input/HTML/regexp-test-foreign-exec-realm.html
 Tests/LibWeb/Text/input/HTML/rendering-opportunity-allows-posted-messages.html
 Tests/LibWeb/Text/input/HTML/rendering-opportunity-coalesces-requests.html
@@ -12719,6 +13009,8 @@ Tests/LibWeb/Text/input/HTML/window-open-initial-visibility-state.html
 Tests/LibWeb/Text/input/HTML/window-open-tokenized-features.html
 Tests/LibWeb/Text/input/HTML/window-or-worker-global-origin.html
 Tests/LibWeb/Text/input/HTML/windowproxy-cross-window-singleton-pinning.html
+Tests/LibWeb/Text/input/HTML/xml-declaration-encoding-sniffing.html
+Tests/LibWeb/Text/input/HTML/xml-declaration-encoding-sniffing.html.headers
 Tests/LibWeb/Text/input/IPC/bad-message-unknown-page-id.html
 Tests/LibWeb/Text/input/Internals/dump-paintable-tree.html
 Tests/LibWeb/Text/input/Internals/dump-site-isolation-process-tree.html
@@ -12793,20 +13085,28 @@ Tests/LibWeb/Text/input/SiteIsolation/iframe/beforeunload-consulted-in-remote-if
 Tests/LibWeb/Text/input/SiteIsolation/iframe/blob-url-from-remote-iframe-is-partitioned.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/blob-url-from-remote-iframe-navigates-a-frame-out-of-process.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/blob-url-from-remote-iframe-opens-without-opener.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/blurring-an-isolated-iframe-right-after-focusing-it.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/click-over-isolated-iframe-goes-to-the-overlay.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/click-reaches-isolated-iframe-after-scroll.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/click-reaches-isolated-iframe-at-browser-zoom.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/click-reaches-isolated-iframe-in-a-scaled-iframe.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/cross-site-iframe-is-hosted-out-of-process.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/cross-site-iframe-process-crash-collapses-frame.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/cross-site-iframe-process-crash-navigates-through-window.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/embedded-page-cookie-request.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/focus-moves-between-top-and-isolated-iframe.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/focusing-isolated-iframe-focuses-its-document.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/going-back-keeps-an-isolated-iframe.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/grandchild-navigates-remote-parent-via-link.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/grandchild-navigates-remote-parent-via-location.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/iframe-content-window-identity-survives-host-changes.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/iframe-stays-scriptable-after-its-document-unloads-for-another-process.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/intersection-observer-in-isolated-iframe-follows-embedder-scroll.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/isolated-iframe-enters-fullscreen.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/isolated-iframe-gets-emulated-geolocation.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/isolated-iframe-has-focus-follows-system-focus.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/isolated-iframe-in-an-isolated-iframe-enters-fullscreen.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/isolated-iframe-opens-a-popup.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/isolated-iframe-posts-message-to-parent.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/isolated-iframe-scrolls-to-its-fragment.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/isolated-iframe-sees-its-ancestors.html
@@ -12819,6 +13119,7 @@ Tests/LibWeb/Text/input/SiteIsolation/iframe/message-to-isolated-iframe-from-ina
 Tests/LibWeb/Text/input/SiteIsolation/iframe/messages-reach-a-same-site-grandchild-through-an-isolated-iframe.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/messages-reach-a-same-site-grandchild-through-an-isolated-iframe.html.headers
 Tests/LibWeb/Text/input/SiteIsolation/iframe/opaque-origin-iframe-is-hosted-with-its-initiator.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/opener-replies-to-a-popups-isolated-iframe.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/parent-renavigates-remote-iframe-to-local.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/parent-renavigates-remote-iframe-within-site.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/popup-isolated-iframe-keeps-its-closed-top-opener.html
@@ -12828,6 +13129,8 @@ Tests/LibWeb/Text/input/SiteIsolation/iframe/remote-iframe-runs-its-container-lo
 Tests/LibWeb/Text/input/SiteIsolation/iframe/remote-iframe-runs-its-container-load-event.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/remote-iframe-unloads-before-another-process-hosts-it.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/remote-iframe-unloads-before-its-parent-hosts-it.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/remote-iframe-with-a-loading-image-delays-its-container-load-event.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/remote-iframe-with-a-loading-image-delays-its-container-load-event.html.headers
 Tests/LibWeb/Text/input/SiteIsolation/iframe/removing-remote-iframe-aborts-its-navigation-api.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/rendering-continues-with-a-hosted-grandchild.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/rendering-continues-with-a-hosted-grandchild.html.headers
@@ -12835,10 +13138,13 @@ Tests/LibWeb/Text/input/SiteIsolation/iframe/same-site-grandchild-scripts-its-to
 Tests/LibWeb/Text/input/SiteIsolation/iframe/same-site-grandchild-scripts-its-top.html.headers
 Tests/LibWeb/Text/input/SiteIsolation/iframe/same-site-siblings-share-process.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/sandboxed-remote-iframe-stays-sandboxed-when-it-navigates-itself.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/srcdoc-in-an-isolated-iframe-inherits-this-documents-csp.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/srcdoc-in-an-isolated-iframe-inherits-this-documents-csp.html.headers
 Tests/LibWeb/Text/input/SiteIsolation/iframe/typing-follows-focused-isolated-iframe-across-navigation.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/typing-reaches-focused-isolated-iframe.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/unload-runs-across-processes-on-iframe-removal.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/unload-runs-in-remote-iframe-when-parent-navigates.html
+Tests/LibWeb/Text/input/SiteIsolation/iframe/wheel-scrolls-an-isolated-iframe.html
 Tests/LibWeb/Text/input/SiteIsolation/iframe/window-open-sets-opener-across-processes.html
 Tests/LibWeb/Text/input/Streams/ReadableStream-pipeThrough-cannot-pipe-locked-stream.html
 Tests/LibWeb/Text/input/Streams/ReadableStream-pipeThrough-cannot-pipe-to-locked-stream.html
@@ -12850,6 +13156,7 @@ Tests/LibWeb/Text/input/Streams/ReadableStreamBYOBReader-read-non-transferable-b
 Tests/LibWeb/Text/input/Streams/ReadableStreamBYOBReader-read.html
 Tests/LibWeb/Text/input/Streams/WritableStream-global.html
 Tests/LibWeb/Text/input/Streams/enqueue-shared-array-buffer-chunk.html
+Tests/LibWeb/Text/input/String/foreign-regexp-builtins-use-their-realm.html
 Tests/LibWeb/Text/input/UIEvents/InputEvent-construction-target-ranges.html
 Tests/LibWeb/Text/input/UIEvents/KeyEvent-keypress.html
 Tests/LibWeb/Text/input/UIEvents/UIEventInit-view.html
@@ -12872,6 +13179,7 @@ Tests/LibWeb/Text/input/UIEvents/pointer-events-none-outside-viewport.html
 Tests/LibWeb/Text/input/UIEvents/pointer-events-none-pseudo-island.html
 Tests/LibWeb/Text/input/UIEvents/right-click-selection.html
 Tests/LibWeb/Text/input/UIEvents/scrollbar-capture-removed-during-drag.html
+Tests/LibWeb/Text/input/UIEvents/scrollbar-drag-driven-by-compositor.html
 Tests/LibWeb/Text/input/UIEvents/text-control-input-event-ordering.html
 Tests/LibWeb/Text/input/UIEvents/textinput-event.html
 Tests/LibWeb/Text/input/UIEvents/wheel-event-legacy-deltas.html
@@ -12927,6 +13235,7 @@ Tests/LibWeb/Text/input/WebSocket/activity-root-released-on-document-destroy.htm
 Tests/LibWeb/Text/input/WebSocket/binary-type.html
 Tests/LibWeb/Text/input/WebSocket/blob.html
 Tests/LibWeb/Text/input/WebSocket/handshake-cookie.html
+Tests/LibWeb/Text/input/WebSocket/message-larger-than-an-ipc-message.html
 Tests/LibWeb/Text/input/WebSocket/send-out-of-bounds-buffer-source.html
 Tests/LibWeb/Text/input/WebVTT/VTTCue-settings.html
 Tests/LibWeb/Text/input/WebVTT/VTTRegion-setters.html
@@ -12934,6 +13243,7 @@ Tests/LibWeb/Text/input/Worker/SharedWorker-reuse.html
 Tests/LibWeb/Text/input/Worker/SharedWorker-survives-gc.html
 Tests/LibWeb/Text/input/Worker/Worker-echo.html
 Tests/LibWeb/Text/input/Worker/Worker-name.html
+Tests/LibWeb/Text/input/Worker/Worker-postMessage-port-whose-peer-closed.html
 Tests/LibWeb/Text/input/Worker/Worker-request-server-reconnect.html
 Tests/LibWeb/Text/input/Worker/Worker-requestAnimationFrame-supported.html
 Tests/LibWeb/Text/input/Worker/Worker-requestAnimationFrame.html
@@ -12966,6 +13276,7 @@ Tests/LibWeb/Text/input/abortsignal-timeout-survives-gc.html
 Tests/LibWeb/Text/input/abspos-auto-insets-resolve-against-actual-containing-block.html
 Tests/LibWeb/Text/input/abspos-escaping-baseline-shifted-inline-block.html
 Tests/LibWeb/Text/input/abspos-relayout-after-escaping-descendant-removal.html
+Tests/LibWeb/Text/input/abspos-relayout-anchor-dependencies.html
 Tests/LibWeb/Text/input/abspos-relayout-anchor-elsewhere.html
 Tests/LibWeb/Text/input/abspos-relayout-anchor-inset-style-change.html
 Tests/LibWeb/Text/input/abspos-relayout-anchor-name-inside.html
@@ -13028,6 +13339,7 @@ Tests/LibWeb/Text/input/abspos-relayout-svg-inside.html
 Tests/LibWeb/Text/input/abspos-relayout-svg-position-flip.html
 Tests/LibWeb/Text/input/abspos-relayout-text-into-boundary.html
 Tests/LibWeb/Text/input/abspos-relayout-toplayer-fallback.html
+Tests/LibWeb/Text/input/abspos-relayout-unrelated-anchor.html
 Tests/LibWeb/Text/input/abspos-relayout-unused-anchor-names.html
 Tests/LibWeb/Text/input/abspos-replaced-auto-insets-static-position.html
 Tests/LibWeb/Text/input/aia-cert-fetching.html
@@ -13051,6 +13363,10 @@ Tests/LibWeb/Text/input/async-scrolling/snap-container-wheel-step.html
 Tests/LibWeb/Text/input/async-scrolling/snap-container-wheel-target.html
 Tests/LibWeb/Text/input/async-scrolling/sticky-areas.html
 Tests/LibWeb/Text/input/async-scrolling/viewport-wheel-target-fast-path.html
+Tests/LibWeb/Text/input/async-scrolling/wheel-latch-absorbs-gesture-at-scroller-edge.html
+Tests/LibWeb/Text/input/async-scrolling/wheel-latch-dom-target-during-compositor-scroll.html
+Tests/LibWeb/Text/input/async-scrolling/wheel-latch-nested-navigable-during-compositor-scroll.html
+Tests/LibWeb/Text/input/async-scrolling/wheel-latch-new-gesture-after-cursor-moves.html
 Tests/LibWeb/Text/input/async-scrolling/wheel-target-over-opaque-sibling-of-new-scroller.html
 Tests/LibWeb/Text/input/avc-value-only-update-with-duplicated-effects-nodes.html
 Tests/LibWeb/Text/input/button-inside-anchor.html
@@ -13522,9 +13838,13 @@ Tests/LibWeb/Text/input/css/shared-parsed-descriptors.html
 Tests/LibWeb/Text/input/css/shared-parsed-keyframe-declarations.html
 Tests/LibWeb/Text/input/css/shared-parsed-nested-declarations.html
 Tests/LibWeb/Text/input/css/shared-parsed-stylesheet-mutation.html
+Tests/LibWeb/Text/input/css/shared-style-element-inactive-implicit-scope.html
+Tests/LibWeb/Text/input/css/shared-style-sheet-copy-on-write.html
+Tests/LibWeb/Text/input/css/shared-style-sheet-occurrences.html
 Tests/LibWeb/Text/input/css/sheet-insertion-cascade-order.html
 Tests/LibWeb/Text/input/css/style-attribute-no-op-invalidation-counters.html
 Tests/LibWeb/Text/input/css/style-element-text-content-skips-layout-tree-rebuild.html
+Tests/LibWeb/Text/input/css/style-elements-with-identical-text-in-shadow-roots.html
 Tests/LibWeb/Text/input/css/style-engine/abspos-table-style-update.html
 Tests/LibWeb/Text/input/css/style-engine/adopt-node-preserves-shared-sheet-old-document.html
 Tests/LibWeb/Text/input/css/style-engine/adopt-node-reattaches-scoped-shadow-sheet.html
@@ -13948,6 +14268,7 @@ Tests/LibWeb/Text/input/css/style-invalidation/targeted-read-non-inherited-chang
 Tests/LibWeb/Text/input/css/style-invalidation/url-change-skips-full-document-invalidation.html
 Tests/LibWeb/Text/input/css/style-invalidation/user-action-pseudo-class-targeted-invalidation.html
 Tests/LibWeb/Text/input/css/style-invalidation/user-style-clear-restores-scope-cache-sharing.html
+Tests/LibWeb/Text/input/css/style-invalidation/viewport-resize-adopted-style-dependencies.html
 Tests/LibWeb/Text/input/css/style-invalidation/viewport-resize-animation-root-font-media.html
 Tests/LibWeb/Text/input/css/style-invalidation/viewport-resize-animation-targeted-restyle.html
 Tests/LibWeb/Text/input/css/style-invalidation/viewport-resize-compound-font-relative-values.html
@@ -14116,6 +14437,7 @@ Tests/LibWeb/Text/input/display_list/visibility-visible-inside-hidden-inline-con
 Tests/LibWeb/Text/input/display_list/will-change-opacity-value-update.html
 Tests/LibWeb/Text/input/display_list/will-change-transform-value-update.html
 Tests/LibWeb/Text/input/display_list/will-change-visual-context-nodes.html
+Tests/LibWeb/Text/input/empty-atomic-sizing-reuse.html
 Tests/LibWeb/Text/input/empty-inline-block-sizing.html
 Tests/LibWeb/Text/input/encrypted-media-requestMediaKeySystemAccess-receiver-realm.html
 Tests/LibWeb/Text/input/error-stack-must-contain-full-url.html
@@ -14177,6 +14499,7 @@ Tests/LibWeb/Text/input/hit_testing/image-map-live-association.html
 Tests/LibWeb/Text/input/hit_testing/inert-svg-toggle.html
 Tests/LibWeb/Text/input/hit_testing/inert-toggle-after-paint.html
 Tests/LibWeb/Text/input/hit_testing/link-inside-inline-stacking-context.html
+Tests/LibWeb/Text/input/hit_testing/open-default-details-by-clicking-on-triangle.html
 Tests/LibWeb/Text/input/hit_testing/overflow-scroll.html
 Tests/LibWeb/Text/input/hit_testing/paint-only-style-change-keeps-hit-test-display-list.html
 Tests/LibWeb/Text/input/hit_testing/preserve-3d-depth-order.html
@@ -14210,6 +14533,7 @@ Tests/LibWeb/Text/input/input-size-attribute-relayout.html
 Tests/LibWeb/Text/input/inspector-overlay-visual-context-tree-growth.html
 Tests/LibWeb/Text/input/intersection-observer-visual-viewport-geometry.html
 Tests/LibWeb/Text/input/intersection-observer-visual-viewport-root.html
+Tests/LibWeb/Text/input/intrinsic-atomic-contributions.html
 Tests/LibWeb/Text/input/intrinsic-inline-content-sizing.html
 Tests/LibWeb/Text/input/intrinsic-measurement-cache-percentage-block-size-independent.html
 Tests/LibWeb/Text/input/intrinsic-measurement-cache-percentage-inline-basis-independent.html
@@ -14219,6 +14543,7 @@ Tests/LibWeb/Text/input/intrinsic-size-cache-anonymous-cell-font-size.html
 Tests/LibWeb/Text/input/intrinsic-width-of-inline-block-with-border-box-min-width.html
 Tests/LibWeb/Text/input/kerning-across-bidi-neutral.html
 Tests/LibWeb/Text/input/keyboard-scroll-after-click-in-scroll-container.html
+Tests/LibWeb/Text/input/keyboard-scroll-steps-animate.html
 Tests/LibWeb/Text/input/keyboard-scroll-with-keypad-modifier.html
 Tests/LibWeb/Text/input/layout-optimization-test-matrix.js
 Tests/LibWeb/Text/input/layout-run-cache-animated-font-size.html
@@ -14318,6 +14643,7 @@ Tests/LibWeb/Text/input/layout-tree-update/remove-top-layer-element-with-backdro
 Tests/LibWeb/Text/input/layout-tree-update/removed-subtree-layout-nodes-survive-gc.html
 Tests/LibWeb/Text/input/layout-tree-update/resources/full-rebuild-comparison.js
 Tests/LibWeb/Text/input/layout-tree-update/semantic-table-mutations.html
+Tests/LibWeb/Text/input/layout-tree-update/shadow-root-child-display-transitions.html
 Tests/LibWeb/Text/input/layout-tree-update/shadow-slot-mutations.html
 Tests/LibWeb/Text/input/layout-tree-update/structural-dom-mutations-1.html
 Tests/LibWeb/Text/input/layout-tree-update/structural-dom-mutations-2.html
@@ -14433,7 +14759,10 @@ Tests/LibWeb/Text/input/navigation/intercepted-push-async-handler-not-aborted.ht
 Tests/LibWeb/Text/input/navigation/intercepted-push-async-handler-not-aborted.html.headers
 Tests/LibWeb/Text/input/navigation/intercepted-push-then-intercepted-traverse.html
 Tests/LibWeb/Text/input/navigation/intercepted-push-then-intercepted-traverse.html.headers
+Tests/LibWeb/Text/input/navigation/javascript-url-document-encoding.html
+Tests/LibWeb/Text/input/navigation/javascript-url-invalid-utf8.html
 Tests/LibWeb/Text/input/navigation/location-navigate-then-push-state.html
+Tests/LibWeb/Text/input/navigation/location-replace-after-nested-iframe-navigated.html
 Tests/LibWeb/Text/input/navigation/navigation-activation-in-sandboxed-frame.html
 Tests/LibWeb/Text/input/navigation/navigation-activation-push-replace-traverse.html
 Tests/LibWeb/Text/input/navigation/navigation-after-same-document-push-not-dropped.html
@@ -14445,6 +14774,7 @@ Tests/LibWeb/Text/input/navigation/pushstate-in-abort-handler-of-superseded-navi
 Tests/LibWeb/Text/input/navigation/pushstate-while-unloading-does-not-resurrect-document.html
 Tests/LibWeb/Text/input/navigation/reload-aborts-nested-navigate-events.html
 Tests/LibWeb/Text/input/navigation/reload-document-written-iframe.html
+Tests/LibWeb/Text/input/navigation/removed-iframe-collected-before-its-destruction-completes.html
 Tests/LibWeb/Text/input/navigation/replace-state-during-reload.html
 Tests/LibWeb/Text/input/navigation/replace-state-flood-during-navigation.html
 Tests/LibWeb/Text/input/navigation/replaced-document-is-collectable-while-next-load-is-stalled.html
@@ -14504,7 +14834,7 @@ Tests/LibWeb/Text/input/scroll-snap-align-writing-mode.html
 Tests/LibWeb/Text/input/scroll-snap-at-reported-gesture-end.html
 Tests/LibWeb/Text/input/scroll-snap-consecutive-wheel-steps.html
 Tests/LibWeb/Text/input/scroll-snap-directional-wheel-scroll.html
-Tests/LibWeb/Text/input/scroll-snap-flick-chained-to-snap-container.html
+Tests/LibWeb/Text/input/scroll-snap-flick-stays-with-latched-scroller-at-its-extent.html
 Tests/LibWeb/Text/input/scroll-snap-in-pseudo-element-scroll-container.html
 Tests/LibWeb/Text/input/scroll-snap-new-gesture-during-compositor-snap-scroll.html
 Tests/LibWeb/Text/input/scroll-snap-new-gesture-during-snap-scroll.html
@@ -14515,10 +14845,10 @@ Tests/LibWeb/Text/input/scroll-snap-stop-always-during-pan.html
 Tests/LibWeb/Text/input/scroll-snap-stop-wheel-step.html
 Tests/LibWeb/Text/input/scroll-snap-transformed-snap-areas.html
 Tests/LibWeb/Text/input/scroll-snap-wheel-step-after-instant-programmatic-scroll.html
-Tests/LibWeb/Text/input/scroll-snap-wheel-step-chained-to-snap-container.html
 Tests/LibWeb/Text/input/scroll-snap-wheel-step-during-programmatic-scroll.html
 Tests/LibWeb/Text/input/scroll-snap-wheel-step-in-one-axis.html
 Tests/LibWeb/Text/input/scroll-snap-wheel-step-past-nested-navigable-extent.html
+Tests/LibWeb/Text/input/scroll-snap-wheel-step-stays-with-latched-scroller-at-its-extent.html
 Tests/LibWeb/Text/input/scrollable-overflow-containing-block-mutations.html
 Tests/LibWeb/Text/input/scrollable-overflow-flex-grid-item-margins.html
 Tests/LibWeb/Text/input/scrollable-overflow-negative-end-margins.html
@@ -14569,6 +14899,7 @@ Tests/LibWeb/Text/input/stacking-context/svg-foreign-object.html
 Tests/LibWeb/Text/input/stacking-context/table-z-index-change-moves-the-wrapper.html
 Tests/LibWeb/Text/input/stacking-context/z-index-change-on-positioned-box.html
 Tests/LibWeb/Text/input/storage-estimate-does-not-break-session-storage.html
+Tests/LibWeb/Text/input/svg-measurement-skips-descendants.html
 Tests/LibWeb/Text/input/svg-relayout-foreignobject-fixed-pos.html
 Tests/LibWeb/Text/input/svg-relayout-inline-boundary-structural.html
 Tests/LibWeb/Text/input/svg-relayout-inside-relative-fragmented-inline.html
@@ -14624,6 +14955,15 @@ Tests/LibWeb/Text/input/visual-context/transform-style-change-rebuilds-the-box.h
 Tests/LibWeb/Text/input/visual-context/value-only-update-keeps-tree.html
 Tests/LibWeb/Text/input/visual-viewport-reset-after-viewport-layout-node-rebuild.html
 Tests/LibWeb/Text/input/visual-viewport-scrollend-after-pan.html
+Tests/LibWeb/Text/input/wheel-latch-drops-on-prevent-default.html
+Tests/LibWeb/Text/input/wheel-latch-drops-when-latched-scroller-is-removed-by-listener.html
+Tests/LibWeb/Text/input/wheel-latch-keeps-wheel-event-target.html
+Tests/LibWeb/Text/input/wheel-latch-nested-scroller-at-extent-does-not-chain-mid-gesture.html
+Tests/LibWeb/Text/input/wheel-latch-outer-scroller-keeps-gesture-when-nested-scroller-slides-under-cursor.html
+Tests/LibWeb/Text/input/wheel-latch-over-iframe-keeps-iframe-at-its-extent-mid-gesture.html
+Tests/LibWeb/Text/input/wheel-latch-parent-scroller-does-not-hand-gesture-to-iframe-mid-gesture.html
+Tests/LibWeb/Text/input/wheel-latch-phase-less-gesture-expires-after-idle.html
+Tests/LibWeb/Text/input/wheel-latch-phase-less-ticks-stay-latched-until-cursor-moves.html
 Tests/LibWeb/Text/input/wheel-over-iframe-removed-by-its-wheel-listener.html
 Tests/LibWeb/Text/input/word-selection-rendered-text-mapping.html
 Tests/LibWeb/Text/input/wpt-import/common/stringifiers.js
@@ -14713,6 +15053,7 @@ Tests/LibWeb/Text/input/wpt-import/css/css-break/parsing/break-before-valid.html
 Tests/LibWeb/Text/input/wpt-import/css/css-break/parsing/break-inside-computed.html
 Tests/LibWeb/Text/input/wpt-import/css/css-break/parsing/break-inside-invalid.html
 Tests/LibWeb/Text/input/wpt-import/css/css-break/parsing/break-inside-valid.html
+Tests/LibWeb/Text/input/wpt-import/css/css-cascade/layer-counter-style-override.html
 Tests/LibWeb/Text/input/wpt-import/css/css-cascade/resources/scope.css
 Tests/LibWeb/Text/input/wpt-import/css/css-cascade/scope-implicit-external.html
 Tests/LibWeb/Text/input/wpt-import/css/css-cascade/scope-implicit.html
@@ -15016,6 +15357,7 @@ Tests/LibWeb/Text/input/wpt-import/dom/nodes/Document-adoptNode-DocumentFragment
 Tests/LibWeb/Text/input/wpt-import/dom/nodes/ParentNode-replaceChildren.html
 Tests/LibWeb/Text/input/wpt-import/dom/nodes/adoption.window.html
 Tests/LibWeb/Text/input/wpt-import/dom/nodes/adoption.window.js
+Tests/LibWeb/Text/input/wpt-import/dom/nodes/insertion-removing-steps/frame-post-connection-steps.html
 Tests/LibWeb/Text/input/wpt-import/dom/nodes/pre-insertion-validation-hierarchy.js
 Tests/LibWeb/Text/input/wpt-import/dom/traversal/NodeIterator-removal-during-filtering.html
 Tests/LibWeb/Text/input/wpt-import/dom/traversal/NodeIterator-removal.html
@@ -15057,6 +15399,8 @@ Tests/LibWeb/Text/input/wpt-import/html/browsers/history/the-location-interface/
 Tests/LibWeb/Text/input/wpt-import/html/browsers/history/the-location-interface/reload_document_write-1.html
 Tests/LibWeb/Text/input/wpt-import/html/browsers/history/the-location-interface/reload_document_write.html
 Tests/LibWeb/Text/input/wpt-import/html/browsers/origin/cross-origin-objects/window-location-and-location-href-cross-realm-set.html
+Tests/LibWeb/Text/input/wpt-import/html/browsers/the-window-object/length-attribute.window.html
+Tests/LibWeb/Text/input/wpt-import/html/browsers/the-window-object/length-attribute.window.js
 Tests/LibWeb/Text/input/wpt-import/html/browsers/the-window-object/window-open-noopener-existing-iframe.html
 Tests/LibWeb/Text/input/wpt-import/html/infrastructure/common-dom-interfaces/collections/radionodelist.html
 Tests/LibWeb/Text/input/wpt-import/html/infrastructure/safe-passing-of-structured-data/shared-array-buffers/no-transferring.https.html
@@ -15344,6 +15688,102 @@ Tests/LibWeb/Text/input/wpt-import/html/syntax/parsing/template/clearing-the-sta
 Tests/LibWeb/Text/input/wpt-import/html/syntax/parsing/template/clearing-the-stack-back-to-a-given-context/clearing-stack-back-to-a-table-row-context.html
 Tests/LibWeb/Text/input/wpt-import/html/syntax/parsing/template/creating-an-element-for-the-token/template-owner-document.html
 Tests/LibWeb/Text/input/wpt-import/html/syntax/parsing/test.js
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/ENCODING-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/ENCODING.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/VERSION-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/VERSION.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/WINDOWS-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/WINDOWS.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/XML-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/XML.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/ascii-decl-for-utf-16.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/baseline-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/baseline.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/cp1251-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/cp1251.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/encoding-equals-encoding-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/encoding-equals-encoding.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/encodingencoding-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/encodingencoding.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/gt-between-xml-and-encoding-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/gt-between-xml-and-encoding.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/incomplete-utf-16be-and-meta-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/incomplete-utf-16be-and-meta.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/incomplete-utf-16le-and-meta-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/incomplete-utf-16le-and-meta.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/kilobyte-after-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/kilobyte-after.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/kilobyte-before-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/kilobyte-before.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/kilobyte-plus-one-after-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/kilobyte-plus-one-after.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/kilobyte-plus-one-before-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/kilobyte-plus-one-before.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/letter-between-xml-and-encoding-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/letter-between-xml-and-encoding.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/lt-between-xml-and-encoding-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/lt-between-xml-and-encoding.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/meta-inside-xml-charset-before-encoding-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/meta-inside-xml-charset-before-encoding.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/meta-inside-xml-encoding-before-charset-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/meta-inside-xml-encoding-before-charset.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-quotes-space-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-quotes-space.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-quotes-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-quotes.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-body-single-quotes-spaces-and-line-breaks-around-equals-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-body-single-quotes-spaces-and-line-breaks-around-equals.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-body-single-quotes-spaces-around-equals-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-body-single-quotes-spaces-around-equals.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-body-single-quotes-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-body-single-quotes.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-body-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-body.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-lt-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question-trailing-lt.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-or-trailing-question.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-or-space.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/no-version.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/one-around-equals-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/one-around-equals.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/one-around-label-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/one-around-label.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/replacement-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/replacement.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/space-around-label-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/space-around-label.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/space-before-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/space-before.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/test_support.js
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/unmatched-quotes-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/unmatched-quotes.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16be-and-meta-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16be-and-meta.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16be-vs-http-trail.html
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16be-vs-http-trail.html.headers
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16be-vs-http.html
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16be-vs-http.html.headers
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16le-and-meta-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16le-and-meta.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16le-vs-http-trail.html
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16le-vs-http-trail.html.headers
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16le-vs-http.html
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/utf-16le-vs-http.html.headers
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/xml-and-meta-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/xml-and-meta.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/xml-vs-http-trail.html
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/xml-vs-http-trail.html.headers
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/xml-vs-http.html
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/xml-vs-http.html.headers
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/zero-around-equals-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/zero-around-equals.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/zero-around-label-trail.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/support/zero-around-label.htm
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/xmldecl-1.html
+Tests/LibWeb/Text/input/wpt-import/html/syntax/xmldecl/xmldecl-2.html
 Tests/LibWeb/Text/input/wpt-import/html/webappapis/dynamic-markup-insertion/opening-the-input-stream/015-1.html
 Tests/LibWeb/Text/input/wpt-import/html/webappapis/dynamic-markup-insertion/opening-the-input-stream/015.html
 Tests/LibWeb/Text/input/wpt-import/html/webappapis/dynamic-markup-insertion/opening-the-input-stream/016-1.html
@@ -15606,6 +16046,7 @@ Tests/LibWebSocket/CMakeLists.txt
 Tests/LibWebSocket/TestWebSocket.cpp
 Tests/LibWebView/CMakeLists.txt
 Tests/LibWebView/RustCrashReport.rs
+Tests/LibWebView/TestApplicationDestruction.cpp
 Tests/LibWebView/TestApplyHistoryStep.cpp
 Tests/LibWebView/TestAutocomplete.cpp
 Tests/LibWebView/TestAutocompleteMuxer.cpp
@@ -15629,7 +16070,6 @@ Tests/LibWebView/TestInputMethodState.cpp
 Tests/LibWebView/TestLinkHoverStatus.cpp
 Tests/LibWebView/TestNavigationLoader.cpp
 Tests/LibWebView/TestOmnibox.cpp
-Tests/LibWebView/TestPausedDebuggerOverlay.cpp
 Tests/LibWebView/TestPerformanceMonitorWidget.cpp
 Tests/LibWebView/TestProcessReaper.cpp
 Tests/LibWebView/TestProfile.cpp
@@ -15652,6 +16092,7 @@ Tests/LibWebView/test-webdriver-delete-session.py
 Tests/LibWebView/test-webdriver-error-keep-alive.py
 Tests/LibWebView/test-webdriver-session-history.py
 Tests/LibWebView/test-webdriver-site-zoom.py
+Tests/LibWebView/test-webdriver-worker-terminated-while-starting.py
 Tests/LibXML/TestParser.cpp
 Tests/Manual/FormMonitor/README.md
 Tests/Manual/FormMonitor/test-form-crossorigin.html
@@ -26648,13 +27089,14 @@ Tools/test-download-server/test-files/safe-file.txt
 Tools/test-download-server/test-files/test-image.png
 ```
 
-### UI (161 files)
+### UI (163 files)
 ```
 UI/Android/build.gradle.kts
 UI/Android/src/main/cpp/LadybirdActivity.cpp
 UI/Android/src/main/cpp/WebContentService.cpp
 UI/Android/src/main/cpp/WebViewImplementationNative.cpp
 UI/Android/src/main/cpp/WebViewImplementationNative.h
+UI/Android/src/main/cpp/WebViewImplementationNativeJNI.cpp
 UI/Android/vcpkg_android.cmake
 UI/AppKit/Application/Application.h
 UI/AppKit/Application/Application.mm
@@ -26669,6 +27111,7 @@ UI/AppKit/Interface/Autocomplete.h
 UI/AppKit/Interface/Autocomplete.mm
 UI/AppKit/Interface/BookmarksBar.h
 UI/AppKit/Interface/BookmarksBar.mm
+UI/AppKit/Interface/Event.h
 UI/AppKit/Interface/Event.mm
 UI/AppKit/Interface/InfoBar.h
 UI/AppKit/Interface/InfoBar.mm
@@ -26813,8 +27256,9 @@ UI/cmake/InstallRules.cmake
 UI/cmake/ResourceFiles.cmake
 ```
 
-### Utilities (5 files)
+### Utilities (6 files)
 ```
+Utilities/CMakeLists.txt
 Utilities/dump-html-tokens.cpp
 Utilities/dump-html-tree.cpp
 Utilities/js.cpp
